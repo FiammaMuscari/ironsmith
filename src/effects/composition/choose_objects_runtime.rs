@@ -501,10 +501,8 @@ pub(crate) fn run_choose_objects(
         ctx.clear_object_tag(effect.tag.as_str());
     }
 
-    Ok(
-        EffectOutcome::with_objects(chosen.clone())
-            .with_execution_fact(ExecutionFact::ChosenObjects(chosen)),
-    )
+    Ok(EffectOutcome::with_objects(chosen.clone())
+        .with_execution_fact(ExecutionFact::ChosenObjects(chosen)))
 }
 
 #[cfg(test)]
@@ -512,7 +510,7 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::decision::DecisionMaker;
-    use crate::effect::{ExecutionFact};
+    use crate::effect::ExecutionFact;
     use crate::executor::ExecutionContext;
     use crate::filter::ObjectFilter;
     use crate::ids::{CardId, PlayerId};

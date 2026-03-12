@@ -3,7 +3,7 @@
 use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
-    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+    ObjectApplyResultPolicy, apply_single_target_object_from_spec, apply_to_selected_objects,
 };
 use crate::event_processor::{EventOutcome, process_destroy};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -97,9 +97,12 @@ impl EffectExecutor for DestroyEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Handle targeted effects with special single-target behavior
         if self.spec.is_target() && self.spec.is_single() {
-            return apply_single_target_object_from_context(game, ctx, |game, ctx, object_id| {
-                Self::destroy_object(game, ctx, object_id)
-            });
+            return apply_single_target_object_from_spec(
+                game,
+                ctx,
+                &self.spec,
+                |game, ctx, object_id| Self::destroy_object(game, ctx, object_id),
+            );
         }
 
         // For all/multi-target effects, count only successful destructions.

@@ -349,11 +349,12 @@ fn compute_any_targets_with_view(
         }
     }
 
-    // All creatures and planeswalkers on battlefield
+    // All creatures, planeswalkers, and battles on the battlefield
     for &obj_id in &game.battlefield {
         if let Some(obj) = game.object(obj_id) {
             if !view.object_has_card_type(obj_id, CardType::Creature)
                 && !view.object_has_card_type(obj_id, CardType::Planeswalker)
+                && !view.object_has_card_type(obj_id, CardType::Battle)
             {
                 continue;
             }
@@ -503,6 +504,22 @@ mod tests {
         obj
     }
 
+    fn create_battle(id: u32, name: &str, controller: PlayerId) -> Object {
+        let card = CardBuilder::new(CardId::from_raw(id), name)
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
+            .card_types(vec![CardType::Battle])
+            .build();
+
+        let mut obj = Object::from_card(
+            ObjectId::from_raw(id as u64),
+            &card,
+            controller,
+            Zone::Battlefield,
+        );
+        obj.controller = controller;
+        obj
+    }
+
     fn add_static_ability(obj: &mut Object, ability: StaticAbility) {
         obj.abilities.push(Ability {
             kind: AbilityKind::Static(ability),
@@ -591,6 +608,29 @@ mod tests {
         assert!(
             result.is_legal(),
             "Controller should be able to target own hexproof creature"
+        );
+    }
+
+    #[test]
+    fn test_any_target_includes_battles() {
+        let mut game = create_test_game();
+        let p0 = PlayerId::from_index(0);
+        let p1 = PlayerId::from_index(1);
+
+        let source = create_creature(1, "Source Creature", p0);
+        let battle = create_battle(2, "Invasion of Test", p1);
+        let battle_id = battle.id;
+        let source_id = source.id;
+
+        game.add_object(source);
+        game.add_object(battle);
+
+        let legal_targets =
+            compute_legal_targets(&game, &ChooseSpec::AnyTarget, p0, Some(source_id));
+
+        assert!(
+            legal_targets.contains(&Target::Object(battle_id)),
+            "battle permanents should be legal 'any target' choices"
         );
     }
 

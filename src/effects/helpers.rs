@@ -354,23 +354,35 @@ pub fn resolve_value(
         }
 
         Value::SourcePower => {
-            let obj = game
-                .object(ctx.source)
-                .ok_or(ExecutionError::ObjectNotFound(ctx.source))?;
-            game.calculated_power(ctx.source)
-                .or_else(|| obj.power())
-                .ok_or_else(|| ExecutionError::UnresolvableValue("Source has no power".to_string()))
+            if let Some(obj) = game.object(ctx.source) {
+                game.calculated_power(ctx.source)
+                    .or_else(|| obj.power())
+                    .ok_or_else(|| {
+                        ExecutionError::UnresolvableValue("Source has no power".to_string())
+                    })
+            } else if let Some(snapshot) = &ctx.source_snapshot {
+                snapshot.power.ok_or_else(|| {
+                    ExecutionError::UnresolvableValue("Source had no power".to_string())
+                })
+            } else {
+                Err(ExecutionError::ObjectNotFound(ctx.source))
+            }
         }
 
         Value::SourceToughness => {
-            let obj = game
-                .object(ctx.source)
-                .ok_or(ExecutionError::ObjectNotFound(ctx.source))?;
-            game.calculated_toughness(ctx.source)
-                .or_else(|| obj.toughness())
-                .ok_or_else(|| {
-                    ExecutionError::UnresolvableValue("Source has no toughness".to_string())
+            if let Some(obj) = game.object(ctx.source) {
+                game.calculated_toughness(ctx.source)
+                    .or_else(|| obj.toughness())
+                    .ok_or_else(|| {
+                        ExecutionError::UnresolvableValue("Source has no toughness".to_string())
+                    })
+            } else if let Some(snapshot) = &ctx.source_snapshot {
+                snapshot.toughness.ok_or_else(|| {
+                    ExecutionError::UnresolvableValue("Source had no toughness".to_string())
                 })
+            } else {
+                Err(ExecutionError::ObjectNotFound(ctx.source))
+            }
         }
 
         Value::PowerOf(target_spec) => {
@@ -887,26 +899,17 @@ pub fn resolve_player_from_spec(
     match spec {
         // Target wrapper - look in ctx.targets for a player target
         ChooseSpec::Target(inner) => {
-            // First check ctx.targets for a player
-            for target in &ctx.targets {
-                if let ResolvedTarget::Player(id) = target {
-                    return Ok(*id);
-                }
+            if let Some(player_id) = matching_player_targets_for_spec(game, spec, ctx).first() {
+                return Ok(*player_id);
             }
-            // If no player in targets, try to resolve the inner spec
             resolve_player_from_spec(game, inner, ctx)
         }
 
         // Player filter - delegate to resolve_player_filter
         ChooseSpec::Player(filter) => resolve_player_filter(game, filter, ctx),
         ChooseSpec::PlayerOrPlaneswalker(filter) => {
-            for target in &ctx.targets {
-                if let ResolvedTarget::Player(id) = target {
-                    let filter_ctx = ctx.filter_context(game);
-                    if filter.matches_player(*id, &filter_ctx) {
-                        return Ok(*id);
-                    }
-                }
+            if let Some(player_id) = matching_player_targets_for_spec(game, spec, ctx).first() {
+                return Ok(*player_id);
             }
             resolve_player_filter(game, filter, ctx)
         }
@@ -1220,6 +1223,70 @@ pub fn normalize_object_selection(
     selected
 }
 
+fn matching_object_targets_for_spec(
+    game: &GameState,
+    spec: &ChooseSpec,
+    ctx: &ExecutionContext,
+) -> Vec<ObjectId> {
+    if !ctx.target_assignments.is_empty() {
+        let assigned: Vec<ObjectId> = ctx
+            .target_assignments
+            .iter()
+            .filter(|assignment| assignment.spec == *spec || assignment.spec.base() == spec.base())
+            .flat_map(|assignment| ctx.targets[assignment.range.clone()].iter())
+            .filter_map(|target| match target {
+                ResolvedTarget::Object(id) => Some(*id),
+                ResolvedTarget::Player(_) => None,
+            })
+            .collect();
+        if !assigned.is_empty() {
+            return assigned;
+        }
+    }
+
+    ctx.targets
+        .iter()
+        .filter_map(|target| {
+            let ResolvedTarget::Object(id) = target else {
+                return None;
+            };
+            validate_target(game, target, spec, ctx).then_some(*id)
+        })
+        .collect()
+}
+
+fn matching_player_targets_for_spec(
+    game: &GameState,
+    spec: &ChooseSpec,
+    ctx: &ExecutionContext,
+) -> Vec<PlayerId> {
+    if !ctx.target_assignments.is_empty() {
+        let assigned: Vec<PlayerId> = ctx
+            .target_assignments
+            .iter()
+            .filter(|assignment| assignment.spec == *spec || assignment.spec.base() == spec.base())
+            .flat_map(|assignment| ctx.targets[assignment.range.clone()].iter())
+            .filter_map(|target| match target {
+                ResolvedTarget::Player(id) => Some(*id),
+                ResolvedTarget::Object(_) => None,
+            })
+            .collect();
+        if !assigned.is_empty() {
+            return assigned;
+        }
+    }
+
+    ctx.targets
+        .iter()
+        .filter_map(|target| {
+            let ResolvedTarget::Player(id) = target else {
+                return None;
+            };
+            validate_target(game, target, spec, ctx).then_some(*id)
+        })
+        .collect()
+}
+
 // ============================================================================
 // Target Validation
 // ============================================================================
@@ -1372,6 +1439,31 @@ pub fn apply_single_target_object_from_context(
     Ok(EffectOutcome::target_invalid())
 }
 
+/// Apply a single-target object operation using `spec` to pick the matching
+/// object from `ctx.targets`.
+pub fn apply_single_target_object_from_spec(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    spec: &ChooseSpec,
+    mut apply: impl FnMut(
+        &mut GameState,
+        &mut ExecutionContext,
+        ObjectId,
+    ) -> Result<Option<OutcomeStatus>, ExecutionError>,
+) -> Result<EffectOutcome, ExecutionError> {
+    let object_id = match resolve_single_object_from_spec(game, spec, ctx) {
+        Ok(object_id) => object_id,
+        Err(ExecutionError::InvalidTarget) => return Ok(EffectOutcome::target_invalid()),
+        Err(err) => return Err(err),
+    };
+
+    if let Some(status) = apply(game, ctx, object_id)? {
+        return Ok(EffectOutcome::from_status(status));
+    }
+
+    Ok(EffectOutcome::resolved())
+}
+
 /// Resolve a ChooseSpec to a list of ObjectIds.
 ///
 /// For targeted/chosen specs, returns the objects from ctx.targets.
@@ -1407,18 +1499,7 @@ pub fn resolve_objects_from_spec(
                 _ => {}
             }
 
-            // Extract object targets from the resolved targets
-            let objects: Vec<ObjectId> = ctx
-                .targets
-                .iter()
-                .filter_map(|t| {
-                    if let ResolvedTarget::Object(id) = t {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let objects = matching_object_targets_for_spec(game, spec, ctx);
 
             if objects.is_empty() {
                 return Err(ExecutionError::InvalidTarget);
@@ -1673,18 +1754,7 @@ pub fn resolve_players_from_spec(
     match spec {
         // Target/WithCount wrappers - delegate to inner
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
-            // First check ctx.targets for players
-            let players: Vec<PlayerId> = ctx
-                .targets
-                .iter()
-                .filter_map(|t| {
-                    if let ResolvedTarget::Player(id) = t {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let players = matching_player_targets_for_spec(game, spec, ctx);
 
             if !players.is_empty() {
                 return Ok(players);
@@ -1696,18 +1766,7 @@ pub fn resolve_players_from_spec(
 
         // Player filter - resolve to matching players
         ChooseSpec::Player(filter) | ChooseSpec::PlayerOrPlaneswalker(filter) => {
-            // First check targets
-            let players: Vec<PlayerId> = ctx
-                .targets
-                .iter()
-                .filter_map(|t| {
-                    if let ResolvedTarget::Player(id) = t {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let players = matching_player_targets_for_spec(game, spec, ctx);
 
             if !players.is_empty() {
                 return Ok(players);
@@ -1875,10 +1934,29 @@ fn resolve_player_filter_to_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
     use crate::ids::{ObjectId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::types::CardType;
+    use crate::zone::Zone;
 
     fn new_test_game() -> GameState {
         GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    fn add_battlefield_permanent(
+        game: &mut GameState,
+        id_raw: u32,
+        name: &str,
+        controller: PlayerId,
+        card_types: Vec<CardType>,
+    ) -> ObjectId {
+        let card = CardBuilder::new(crate::ids::CardId::from_raw(id_raw), name)
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+            .card_types(card_types)
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
     }
 
     #[test]
@@ -2059,19 +2137,101 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_objects_from_spec_filters_out_other_selected_object_targets() {
+        let mut game = new_test_game();
+        let alice = game.players[0].id;
+        let bob = game.players[1].id;
+        let source_id = game.new_object_id();
+
+        let creature_id = add_battlefield_permanent(
+            &mut game,
+            100,
+            "Target Creature",
+            bob,
+            vec![CardType::Creature],
+        );
+        let land_id =
+            add_battlefield_permanent(&mut game, 101, "Target Land", bob, vec![CardType::Land]);
+
+        let ctx = ExecutionContext::new_default(source_id, alice).with_targets(vec![
+            ResolvedTarget::Object(creature_id),
+            ResolvedTarget::Object(land_id),
+        ])
+        .with_target_assignments(vec![
+            crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::creature()),
+                range: 0..1,
+            },
+            crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::Object(crate::filter::ObjectFilter::land())),
+                range: 1..2,
+            },
+        ]);
+
+        let resolved =
+            resolve_objects_from_spec(&game, &ChooseSpec::target(ChooseSpec::creature()), &ctx)
+                .expect("creature target should resolve");
+
+        assert_eq!(
+            resolved,
+            vec![creature_id],
+            "resolving a specific target clause should not include unrelated object targets from the same spell"
+        );
+    }
+
+    #[test]
+    fn test_resolve_players_from_spec_filters_out_other_selected_player_targets() {
+        let mut game = new_test_game();
+        let alice = game.players[0].id;
+        let bob = game.players[1].id;
+        let source_id = game.new_object_id();
+
+        let ctx = ExecutionContext::new_default(source_id, alice).with_targets(vec![
+            ResolvedTarget::Player(alice),
+            ResolvedTarget::Player(bob),
+        ])
+        .with_target_assignments(vec![
+            crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Specific(alice))),
+                range: 0..1,
+            },
+            crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Specific(bob))),
+                range: 1..2,
+            },
+        ]);
+
+        let resolved = resolve_players_from_spec(
+            &game,
+            &ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Specific(bob))),
+            &ctx,
+        )
+        .expect("player target should resolve");
+
+        assert_eq!(
+            resolved,
+            vec![bob],
+            "resolving one player-target clause should not include unrelated player targets from the same spell"
+        );
+    }
+
+    #[test]
     fn test_apply_to_selected_objects_count_policy() {
         let mut game = new_test_game();
         let player_id = game.players[0].id;
         let source_id = game.new_object_id();
         let target_1 = game.new_object_id();
         let target_2 = game.new_object_id();
+        let spec = ChooseSpec::target(ChooseSpec::creature())
+            .with_count(crate::effect::ChoiceCount::any_number());
         let mut ctx = ExecutionContext::new_default(source_id, player_id).with_targets(vec![
             ResolvedTarget::Object(target_1),
             ResolvedTarget::Object(target_2),
-        ]);
-
-        let spec = ChooseSpec::target(ChooseSpec::creature())
-            .with_count(crate::effect::ChoiceCount::any_number());
+        ])
+        .with_target_assignments(vec![crate::game_state::TargetAssignment {
+            spec: spec.clone(),
+            range: 0..2,
+        }]);
         let mut seen = Vec::new();
         let result = apply_to_selected_objects(
             &mut game,
@@ -2098,7 +2258,11 @@ mod tests {
         let source_id = game.new_object_id();
         let target_id = game.new_object_id();
         let mut ctx = ExecutionContext::new_default(source_id, player_id)
-            .with_targets(vec![ResolvedTarget::Object(target_id)]);
+            .with_targets(vec![ResolvedTarget::Object(target_id)])
+            .with_target_assignments(vec![crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::creature()),
+                range: 0..1,
+            }]);
 
         let spec = ChooseSpec::target(ChooseSpec::creature());
         let result = apply_to_selected_objects(
@@ -2112,7 +2276,10 @@ mod tests {
 
         assert_eq!(result.selected_count, 1);
         assert_eq!(result.applied_count, 0);
-        assert_eq!(result.outcome.status, crate::effect::OutcomeStatus::Succeeded);
+        assert_eq!(
+            result.outcome.status,
+            crate::effect::OutcomeStatus::Succeeded
+        );
     }
 
     #[test]

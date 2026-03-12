@@ -1,6 +1,6 @@
 //! Attach arbitrary objects to a target permanent.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};

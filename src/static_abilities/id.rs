@@ -32,6 +32,7 @@ pub enum StaticAbilityId {
     Fear,
     Skulk,
     Flanking,
+    UmbraArmor,
     Landwalk,
     CantBeBlockedAsLongAsDefendingPlayerControlsCardType,
     CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes,
@@ -245,6 +246,7 @@ impl StaticAbilityId {
             | Fear
             | Skulk
             | Flanking
+            | UmbraArmor
             | Landwalk
             | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
             | CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes

@@ -119,7 +119,9 @@ impl ExileEffect {
             );
 
             match result {
-                EventOutcome::Prevented => return Ok(Some(crate::effect::OutcomeStatus::Prevented)),
+                EventOutcome::Prevented => {
+                    return Ok(Some(crate::effect::OutcomeStatus::Prevented));
+                }
                 EventOutcome::Proceed(result) => {
                     if let Some(new_id) = result.new_object_id
                         && result.final_zone == Zone::Exile
@@ -413,7 +415,7 @@ impl CostExecutableEffect for ExileEffect {
 mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
-    use crate::effect::{ChoiceCount};
+    use crate::effect::ChoiceCount;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

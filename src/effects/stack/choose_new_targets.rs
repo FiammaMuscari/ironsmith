@@ -11,7 +11,7 @@ use crate::events::spells::BecomesTargetedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry, Target};
 use crate::target::{ChooseSpec, PlayerFilter};
-use crate::targeting::compute_legal_targets;
+use crate::targeting::{compute_legal_targets, normalize_targets_for_requirements};
 use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
@@ -125,46 +125,6 @@ fn extract_requirements(
     Some(requirements)
 }
 
-fn normalize_target_choice(
-    requirements: &[TargetRequirementContext],
-    proposed: Vec<Target>,
-) -> Option<Vec<Target>> {
-    let mut out = Vec::new();
-    let mut cursor = 0usize;
-
-    for req in requirements {
-        let mut selected = Vec::new();
-        let max_for_req = req.max_targets.unwrap_or(req.min_targets.max(1));
-        let end = (cursor + max_for_req).min(proposed.len());
-
-        for target in &proposed[cursor..end] {
-            if req.legal_targets.contains(target) {
-                selected.push(*target);
-            }
-        }
-        cursor = end;
-
-        if selected.len() < req.min_targets {
-            for legal in &req.legal_targets {
-                if selected.len() >= req.min_targets {
-                    break;
-                }
-                if !selected.contains(legal) {
-                    selected.push(*legal);
-                }
-            }
-        }
-
-        if selected.len() < req.min_targets {
-            return None;
-        }
-
-        out.extend(selected);
-    }
-
-    Some(out)
-}
-
 impl EffectExecutor for ChooseNewTargetsEffect {
     fn execute(
         &self,
@@ -233,7 +193,8 @@ impl EffectExecutor for ChooseNewTargetsEffect {
             let targets_ctx =
                 TargetsContext::new(chooser, object_id, "copy".to_string(), requirements.clone());
             let proposed = ctx.decision_maker.decide_targets(game, &targets_ctx);
-            let Some(new_targets) = normalize_target_choice(&requirements, proposed) else {
+            let Some(new_targets) = normalize_targets_for_requirements(&requirements, proposed)
+            else {
                 if self.may {
                     continue;
                 }

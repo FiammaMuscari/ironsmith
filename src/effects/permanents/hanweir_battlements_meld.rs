@@ -1,6 +1,6 @@
 //! Hanweir Battlements meld effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::zones::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
@@ -71,11 +71,7 @@ impl EffectExecutor for HanweirBattlementsMeldEffect {
             melded_id,
             BattlefieldEntryOptions::specific(ctx.controller, false),
         ) {
-            BattlefieldEntryOutcome::Moved(new_id) => {
-                Ok(EffectOutcome::with_objects(vec![
-                    new_id,
-                ]))
-            }
+            BattlefieldEntryOutcome::Moved(new_id) => Ok(EffectOutcome::with_objects(vec![new_id])),
             BattlefieldEntryOutcome::Prevented => {
                 game.remove_object(melded_id);
                 Ok(EffectOutcome::impossible())

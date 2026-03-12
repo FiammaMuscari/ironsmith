@@ -17,6 +17,7 @@ use crate::events::damage::matchers::{
     DamageFromSelfMatcher, DamageToObjectMatcher, DamageToPlayerOrObjectMatcher,
     DamageToSelfCombatMatcher, DamageToSelfFromSourceFilterMatcher,
 };
+use crate::events::permanents::matchers::AttachedPermanentWouldBeDestroyedMatcher;
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
     ThisWouldEnterBattlefieldMatcher, ThisWouldGoToGraveyardMatcher, WouldEnterBattlefieldMatcher,
@@ -1392,6 +1393,42 @@ impl StaticAbilityKind for PreventDamageToSelfRemoveCounter {
     }
 }
 
+/// Umbra armor.
+///
+/// If the permanent this Aura is attached to would be destroyed, instead
+/// remove all damage marked on that permanent and destroy this Aura.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UmbraArmor;
+
+impl StaticAbilityKind for UmbraArmor {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::UmbraArmor
+    }
+
+    fn display(&self) -> String {
+        "Umbra armor".to_string()
+    }
+
+    fn is_keyword(&self) -> bool {
+        true
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            AttachedPermanentWouldBeDestroyedMatcher::new(source),
+            ReplacementAction::Instead(vec![Effect::new(crate::effects::UmbraArmorEffect::new(
+                source,
+            ))]),
+        ))
+    }
+}
+
 /// Permanents matching a filter enter the battlefield tapped.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnterTappedForFilter {
@@ -2576,13 +2613,15 @@ impl StaticAbilityKind for UnsupportedParserLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::CardBuilder;
+    use crate::StaticAbility;
+    use crate::card::{CardBuilder, PowerToughness};
     use crate::events::DamageEvent;
     use crate::events::EventContext;
     use crate::events::zones::ZoneChangeEvent;
     use crate::game_event::DamageTarget;
-    use crate::ids::CardId;
-    use crate::types::CardType;
+    use crate::ids::{CardId, PlayerId};
+    use crate::rules::state_based::apply_state_based_actions_with;
+    use crate::types::{CardType, Subtype};
     use crate::zone::Zone;
 
     #[test]
@@ -3154,5 +3193,109 @@ mod tests {
         assert_eq!(remove.counter_type, CounterType::PlusOnePlusOne);
         assert_eq!(remove.count, Value::Fixed(1));
         assert!(matches!(remove.target, ChooseSpec::Source));
+    }
+
+    #[test]
+    fn test_umbra_armor_replaces_destroy_effect() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let creature = CardBuilder::new(CardId::new(), "Protected Bear")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+        game.mark_damage(creature_id, 2);
+
+        let mut aura_def = crate::cards::CardDefinition::new(
+            CardBuilder::new(CardId::new(), "Umbra Shell")
+                .card_types(vec![CardType::Enchantment])
+                .subtypes(vec![Subtype::Aura])
+                .build(),
+        );
+        aura_def
+            .abilities
+            .push(crate::ability::Ability::static_ability(
+                StaticAbility::umbra_armor(),
+            ));
+        let aura_id = game.create_object_from_definition(&aura_def, alice, Zone::Battlefield);
+        game.object_mut(aura_id).expect("aura exists").attached_to = Some(creature_id);
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .attachments
+            .push(aura_id);
+
+        let result = crate::event_processor::process_destroy_full(&mut game, creature_id, None);
+        assert_eq!(result, crate::event_processor::DestroyResult::Replaced);
+        assert!(
+            game.object(creature_id).is_some(),
+            "creature should survive"
+        );
+        assert_eq!(
+            game.damage_on(creature_id),
+            0,
+            "umbra armor should clear marked damage"
+        );
+        assert_eq!(
+            game.player(alice)
+                .expect("alice exists")
+                .graveyard
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .any(|obj| obj.name == "Umbra Shell"),
+            true,
+            "umbra armor aura should be destroyed"
+        );
+    }
+
+    #[test]
+    fn test_umbra_armor_replaces_lethal_damage_state_based_destruction() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let creature = CardBuilder::new(CardId::new(), "Protected Bear")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+        game.mark_damage(creature_id, 2);
+
+        let mut aura_def = crate::cards::CardDefinition::new(
+            CardBuilder::new(CardId::new(), "Umbra Shell")
+                .card_types(vec![CardType::Enchantment])
+                .subtypes(vec![Subtype::Aura])
+                .build(),
+        );
+        aura_def
+            .abilities
+            .push(crate::ability::Ability::static_ability(
+                StaticAbility::umbra_armor(),
+            ));
+        let aura_id = game.create_object_from_definition(&aura_def, alice, Zone::Battlefield);
+        game.object_mut(aura_id).expect("aura exists").attached_to = Some(creature_id);
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .attachments
+            .push(aura_id);
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        assert!(
+            apply_state_based_actions_with(&mut game, &mut dm),
+            "lethal damage should apply a state-based action"
+        );
+        assert!(
+            game.object(creature_id).is_some(),
+            "creature should survive"
+        );
+        assert_eq!(game.damage_on(creature_id), 0);
+        assert!(
+            game.player(alice)
+                .expect("alice exists")
+                .graveyard
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .any(|obj| obj.name == "Umbra Shell"),
+            "umbra armor aura should be in the graveyard after replacing lethal damage"
+        );
     }
 }

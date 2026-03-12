@@ -1,5 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import HoverArtOverlay from "./HoverArtOverlay";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { useGame } from "@/context/GameContext";
@@ -23,8 +22,6 @@ const INLINE_EXPANDED_MIN_HEIGHT = 152;
 const INLINE_EXPANDED_SAFE_GAP = 12;
 const INLINE_EXPANDED_BOTTOM_GAP = 4;
 const INLINE_EXPANDED_RIGHT_BLEED = 8;
-const VIEWED_CARD_COMPACT_HEIGHT = 74;
-
 function inspectorBorderStyle(accent) {
   if (!accent) return undefined;
   return {
@@ -63,6 +60,7 @@ function objectExistsInState(state, objectId) {
 
   for (const entry of getVisibleStackObjects(state)) {
     if (String(entry?.id) === needle) return true;
+    if (String(entry?.inspect_object_id) === needle) return true;
   }
 
   if ((state?.viewed_cards?.card_ids || []).some((id) => String(id) === needle)) {
@@ -123,6 +121,14 @@ function locateObjectInState(state, objectId) {
   return null;
 }
 
+function canPersistPinnedInspector(location) {
+  if (!location) return false;
+  if (location.viewVisibility === "public") return true;
+  if (location.viewVisibility === "private") return false;
+  if (location.zone === "hand") return location.side === "self";
+  return true;
+}
+
 function preferredInlinePlacement(location) {
   if (location?.viewVisibility === "private") {
     return { dock: "bottom", side: "right" };
@@ -168,54 +174,8 @@ function decisionReferencesObject(decision, objectId) {
   return false;
 }
 
-function ViewedCardsHeader({
-  label,
-  index,
-  total,
-  canCycle,
-  onCyclePointerDown,
-  onCycleClick,
-}) {
-  const buttonClass = canCycle
-    ? "flex h-5 w-5 items-center justify-center rounded border border-[#35506c]/78 bg-[rgba(11,19,29,0.92)] text-[#cfe3fb] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
-    : "flex h-5 w-5 items-center justify-center rounded border border-[#273748]/72 bg-[rgba(11,19,29,0.72)] text-[#5c7591]";
-  return (
-    <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#314558]/85 bg-[rgba(7,14,22,0.96)] px-1.5">
-      <button
-        type="button"
-        className={buttonClass}
-        aria-label={`Show previous ${label.toLowerCase()} card`}
-        disabled={!canCycle}
-        onPointerDown={(event) => onCyclePointerDown(event, -1)}
-        onClick={(event) => onCycleClick(event, -1)}
-      >
-        <ChevronLeft className="h-3.5 w-3.5" />
-      </button>
-      <div className="min-w-0 px-2 text-center">
-        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8eb7de]">
-          {label}
-        </div>
-        <div className="text-[10px] text-[#d7e8fb]">
-          {index + 1}/{total}
-        </div>
-      </div>
-      <button
-        type="button"
-        className={buttonClass}
-        aria-label={`Show next ${label.toLowerCase()} card`}
-        disabled={!canCycle}
-        onPointerDown={(event) => onCyclePointerDown(event, 1)}
-        onClick={(event) => onCycleClick(event, 1)}
-      >
-        <ChevronRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
 export default function RightRail({
   pinnedObjectId,
-  onInspectObject = null,
   suppressFallback = false,
   inspectorBottomOffset = DEFAULT_INSPECTOR_BOTTOM_OFFSET,
   inline = false,
@@ -224,8 +184,6 @@ export default function RightRail({
   inlineHostSide = "right",
   inlineExpandedSide = "right",
   allowTopInlinePlacement = false,
-  forceInlineExpanded = false,
-  fullArtInlineExpanded = false,
 }) {
   const { state } = useGame();
   const [preferredInlineWidth, setPreferredInlineWidth] = useState(null);
@@ -250,44 +208,34 @@ export default function RightRail({
   const resolvingCastObjectId = state?.stack_size > 0 && topStackObject && !topStackObject.ability_kind
     ? String(topStackObject.inspect_object_id ?? topStackObject.id)
     : null;
-  const resolvingCastStableId = resolvingCastObjectId && topStackObject?.stable_id != null
-    ? Number(topStackObject.stable_id)
-    : null;
   const pinnedInspectorObjectId = pinnedObjectId != null ? String(pinnedObjectId) : null;
   const focusedDecision = isFocusedDecision(decision);
   const pinnedInspectorIsViewedCard = isViewedCardObject(state, pinnedInspectorObjectId);
+  const pinnedInspectorLocation = useMemo(
+    () => locateObjectInState(state, pinnedInspectorObjectId),
+    [pinnedInspectorObjectId, state]
+  );
+  const pinnedInspectorCanPersist = canPersistPinnedInspector(pinnedInspectorLocation);
   const relevantPinnedObjectId = focusedDecision && pinnedInspectorObjectId != null
     ? (
-      decisionReferencesObject(decision, pinnedInspectorObjectId) || pinnedInspectorIsViewedCard
+      decisionReferencesObject(decision, pinnedInspectorObjectId)
+      || pinnedInspectorIsViewedCard
+      || pinnedInspectorCanPersist
         ? pinnedInspectorObjectId
         : null
     )
     : pinnedInspectorObjectId;
   const relevantHoveredObjectId = hoveredObjectId;
   const fallbackDecisionObjectId = suppressFallback ? null : (resolvingCastObjectId ?? topStackObjectId);
-  const viewedCardIds = useMemo(
-    () => state?.viewed_cards?.card_ids || [],
-    [state?.viewed_cards?.card_ids]
-  );
-  const preferredViewedObjectId = useMemo(() => {
-    if (viewedCardIds.length === 0) return null;
-    if (isViewedCardObject(state, relevantHoveredObjectId)) return relevantHoveredObjectId;
-    if (isViewedCardObject(state, relevantPinnedObjectId)) return relevantPinnedObjectId;
-    return String(viewedCardIds[0]);
-  }, [relevantHoveredObjectId, relevantPinnedObjectId, state, viewedCardIds]);
-
   // During focused decision steps, keep the resolving stack object as a fallback.
   // Live hover should always win, even if the current decision does not reference it.
   const decisionLockedObjectId = focusedDecision
     ? (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId)
     : null;
 
-  const selectedObjectId = preferredViewedObjectId
-    ?? (
-      focusedDecision
-        ? decisionLockedObjectId
-        : (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId)
-    );
+  const selectedObjectId = focusedDecision
+    ? decisionLockedObjectId
+    : (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId);
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;
@@ -310,18 +258,6 @@ export default function RightRail({
   const preferredPlacement = useMemo(
     () => preferredInlinePlacement(selectedObjectLocation),
     [selectedObjectLocation]
-  );
-  const viewedCardIndex = validSelectedObjectId == null
-    ? -1
-    : viewedCardIds.findIndex((id) => String(id) === String(validSelectedObjectId));
-  const viewedCardsLabel = state?.viewed_cards?.visibility === "public" ? "Revealed" : "Look";
-  const hasViewedCards = viewedCardIds.length > 0;
-  const effectiveViewedCardIndex = viewedCardIndex >= 0 ? viewedCardIndex : 0;
-  const canCycleViewedCards = (
-    inline
-    && hasViewedCards
-    && viewedCardIds.length > 1
-    && typeof onInspectObject === "function"
   );
   const resolvedInlineDockPlacement = (
     preferredPlacement.dock === "top" && !allowTopInlinePlacement
@@ -352,8 +288,7 @@ export default function RightRail({
     && (inlineExpanded || hoveredObjectId != null || pinnedInspectorObjectId != null);
   const useExpandedInlineInspector =
     shouldRenderExpandedInlineInspector
-    && (forceInlineExpanded || hoveredObjectId != null || pinnedInspectorObjectId != null);
-  const inspectorSuppressStableId = focusedDecision ? null : resolvingCastStableId;
+    && (hoveredObjectId != null || pinnedInspectorObjectId != null);
   const inlineWidth = useMemo(() => {
     const preferred = Number.isFinite(preferredInlineWidth)
       ? Math.round(preferredInlineWidth)
@@ -366,7 +301,6 @@ export default function RightRail({
       : INSPECTOR_INLINE_FALLBACK_WIDTH;
     return clampNumber(preferred, INSPECTOR_INLINE_MIN_WIDTH, INSPECTOR_INLINE_MAX_WIDTH_PX);
   }, [preferredInlineWidth]);
-  const showViewedCardsHeader = inline && hasViewedCards && shouldShowRail;
   const expandedInlineWidth = useMemo(() => {
     const preferred = Number.isFinite(preferredExpandedInlineWidth)
       ? Math.round(preferredExpandedInlineWidth)
@@ -524,9 +458,6 @@ export default function RightRail({
         width: shouldShowRail
           ? (useExpandedInlineInspector ? `${expandedInlineWidth}px` : inlineWidth)
           : "0px",
-        height: shouldShowRail && showViewedCardsHeader && !useExpandedInlineInspector
-          ? `${VIEWED_CARD_COMPACT_HEIGHT}px`
-          : undefined,
       }
       : {
         width: INSPECTOR_OVERLAY_WIDTH,
@@ -538,7 +469,6 @@ export default function RightRail({
       inline,
       inlineWidth,
       inspectorBottomOffset,
-      showViewedCardsHeader,
       shouldShowRail,
       useExpandedInlineInspector,
     ]
@@ -546,29 +476,6 @@ export default function RightRail({
   const expandedInlineShellOffset = inlineExpandedSide === "left"
     ? { left: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, right: "auto", transformOrigin: "bottom left" }
     : { left: "auto", right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, transformOrigin: "bottom right" };
-  const cycleViewedCard = useCallback((direction) => {
-    if (!canCycleViewedCards) return;
-    const nextIndex = (
-      effectiveViewedCardIndex + direction + viewedCardIds.length
-    ) % viewedCardIds.length;
-    const nextObjectId = viewedCardIds[nextIndex];
-    if (nextObjectId == null) return;
-    onInspectObject(nextObjectId);
-  }, [canCycleViewedCards, effectiveViewedCardIndex, onInspectObject, viewedCardIds]);
-
-  const handleCyclePointerDown = useCallback((event, direction) => {
-    event.preventDefault();
-    event.stopPropagation();
-    cycleViewedCard(direction);
-  }, [cycleViewedCard]);
-
-  const handleCycleClick = useCallback((event, direction) => {
-    if (event.detail !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    cycleViewedCard(direction);
-  }, [cycleViewedCard]);
-
   return (
     <aside
       ref={railRef}
@@ -593,20 +500,9 @@ export default function RightRail({
           style={inspectorBorderStyle(inspectorAccent)}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            {showViewedCardsHeader && (
-              <ViewedCardsHeader
-                label={viewedCardsLabel}
-                index={effectiveViewedCardIndex}
-                total={viewedCardIds.length}
-                canCycle={canCycleViewedCards}
-                onCyclePointerDown={handleCyclePointerDown}
-                onCycleClick={handleCycleClick}
-              />
-            )}
             <div className="relative min-h-0 flex-1 overflow-hidden">
               <HoverArtOverlay
                 objectId={shouldShowRail ? validSelectedObjectId : null}
-                suppressStableId={inspectorSuppressStableId}
                 compact={inline}
                 onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
                 onInspectorAccentChange={useExpandedInlineInspector ? null : setInspectorAccent}
@@ -629,26 +525,13 @@ export default function RightRail({
             }}
           >
             <div className="flex h-full min-h-0 flex-col overflow-hidden">
-              {showViewedCardsHeader && (
-                <ViewedCardsHeader
-                  label={viewedCardsLabel}
-                  index={effectiveViewedCardIndex}
-                  total={viewedCardIds.length}
-                  canCycle={canCycleViewedCards}
-                  onCyclePointerDown={handleCyclePointerDown}
-                  onCycleClick={handleCycleClick}
-                />
-              )}
               <div className="min-h-0 flex-1 overflow-hidden">
                 <HoverArtOverlay
                   objectId={shouldShowRail ? validSelectedObjectId : null}
-                  suppressStableId={inspectorSuppressStableId}
-                  displayMode={fullArtInlineExpanded ? "full-art" : "inspector"}
+                  displayMode="inspector"
                   availableInspectorWidth={expandedInlineWidth}
                   availableInspectorHeight={expandedInlineHeight}
-                  onPreferredInspectorWidthChange={
-                    fullArtInlineExpanded ? null : setPreferredExpandedInlineWidth
-                  }
+                  onPreferredInspectorWidthChange={setPreferredExpandedInlineWidth}
                   onInspectorAccentChange={useExpandedInlineInspector ? setInspectorAccent : null}
                 />
               </div>

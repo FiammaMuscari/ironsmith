@@ -104,6 +104,8 @@ pub struct PendingCast {
     pub x_value: Option<u32>,
     /// Targets that have been chosen so far.
     pub chosen_targets: Vec<Target>,
+    /// Target requirement assignments bound to `chosen_targets`.
+    pub chosen_target_assignments: Vec<crate::game_state::TargetAssignment>,
     /// Target requirements that still need to be fulfilled.
     pub remaining_requirements: Vec<TargetRequirement>,
     /// The casting method (normal or alternative like flashback).
@@ -169,6 +171,7 @@ impl PendingCast {
             stage,
             x_value,
             chosen_targets: Vec::new(),
+            chosen_target_assignments: Vec::new(),
             remaining_requirements,
             casting_method,
             optional_costs_paid,
@@ -579,6 +582,8 @@ pub struct PendingActivation {
     pub effects: Vec<crate::effect::Effect>,
     /// Targets that have been chosen so far.
     pub chosen_targets: Vec<Target>,
+    /// Target requirement assignments bound to `chosen_targets`.
+    pub chosen_target_assignments: Vec<crate::game_state::TargetAssignment>,
     /// Target requirements that still need to be fulfilled.
     pub remaining_requirements: Vec<TargetRequirement>,
     /// The computed mana cost to pay.
@@ -650,6 +655,7 @@ impl PendingActivation {
             stage,
             effects,
             chosen_targets: Vec::new(),
+            chosen_target_assignments: Vec::new(),
             remaining_requirements,
             mana_cost_to_pay,
             payment_trace,

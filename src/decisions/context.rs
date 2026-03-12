@@ -297,6 +297,8 @@ pub struct SelectableOption {
     pub description: String,
     /// Whether this option is currently legal to select.
     pub legal: bool,
+    /// Optional object this option is associated with for richer UI rendering.
+    pub object_id: Option<ObjectId>,
 }
 
 impl SelectableOption {
@@ -306,6 +308,7 @@ impl SelectableOption {
             index,
             description: description.into(),
             legal: true,
+            object_id: None,
         }
     }
 
@@ -315,7 +318,13 @@ impl SelectableOption {
             index,
             description: description.into(),
             legal,
+            object_id: None,
         }
+    }
+
+    pub fn with_object(mut self, object_id: ObjectId) -> Self {
+        self.object_id = Some(object_id);
+        self
     }
 }
 

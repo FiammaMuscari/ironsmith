@@ -2,7 +2,7 @@
 
 use crate::decision::DecisionMaker;
 use crate::decisions::context::{SelectOptionsContext, SelectableOption};
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};

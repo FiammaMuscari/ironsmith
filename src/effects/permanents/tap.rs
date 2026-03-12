@@ -267,7 +267,11 @@ mod tests {
 
         let source = game.new_object_id();
         let mut ctx = ExecutionContext::new_default(source, alice)
-            .with_targets(vec![ResolvedTarget::Object(fake_id)]);
+            .with_targets(vec![ResolvedTarget::Object(fake_id)])
+            .with_target_assignments(vec![crate::game_state::TargetAssignment {
+                spec: ChooseSpec::target(ChooseSpec::creature()),
+                range: 0..1,
+            }]);
 
         let effect = TapEffect::target(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();

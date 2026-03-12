@@ -120,7 +120,11 @@ mod tests {
 
         assert_eq!(
             result.value,
-            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Red, ManaSymbol::Blue, ManaSymbol::Green])
+            crate::effect::OutcomeValue::ManaAdded(vec![
+                ManaSymbol::Red,
+                ManaSymbol::Blue,
+                ManaSymbol::Green
+            ])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.red, 1);
         assert_eq!(game.player(alice).unwrap().mana_pool.blue, 1);

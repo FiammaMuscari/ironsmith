@@ -85,6 +85,8 @@ pub struct Card {
     pub defense: Option<u32>,
     /// Reference to other face for DFCs/MDFCs
     pub other_face: Option<CardId>,
+    /// Linked face name for on-demand compilation without a global registry preload.
+    pub other_face_name: Option<String>,
     /// Layout semantics for linked-face cards.
     pub linked_face_layout: LinkedFaceLayout,
     /// True if this is a token (not a real card)
@@ -261,6 +263,7 @@ pub struct CardBuilder {
     loyalty: Option<u32>,
     defense: Option<u32>,
     other_face: Option<CardId>,
+    other_face_name: Option<String>,
     linked_face_layout: LinkedFaceLayout,
     is_token: bool,
 }
@@ -360,6 +363,11 @@ impl CardBuilder {
         self
     }
 
+    pub fn other_face_name(mut self, name: impl Into<String>) -> Self {
+        self.other_face_name = Some(name.into());
+        self
+    }
+
     pub fn linked_face_layout(mut self, layout: LinkedFaceLayout) -> Self {
         self.linked_face_layout = layout;
         self
@@ -385,6 +393,7 @@ impl CardBuilder {
             loyalty: self.loyalty,
             defense: self.defense,
             other_face: self.other_face,
+            other_face_name: self.other_face_name,
             linked_face_layout: self.linked_face_layout,
             is_token: self.is_token,
         }

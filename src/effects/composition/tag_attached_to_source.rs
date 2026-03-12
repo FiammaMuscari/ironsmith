@@ -1,6 +1,6 @@
 //! Tag the object attached to the source (equipment/aura) for later reference.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;

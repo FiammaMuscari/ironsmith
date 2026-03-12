@@ -23,7 +23,7 @@
 //! ```
 
 use crate::alternative_cast::AlternativeCastingMethod;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};

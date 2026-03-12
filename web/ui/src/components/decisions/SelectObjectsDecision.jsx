@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
-import { useHoveredObjectId } from "@/context/HoverContext";
+import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import DecisionSummary from "./DecisionSummary";
+import HighlightedDecisionText from "./HighlightedDecisionText";
+import { getPlayerAccent } from "@/lib/player-colors";
+import { buildObjectControllerById } from "@/lib/decision-object-meta";
 
 const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -18,8 +21,8 @@ export default function SelectObjectsDecision({
   hideDescription = false,
   layout = "panel",
 }) {
-  const { dispatch } = useGame();
-  const hoveredObjectId = useHoveredObjectId();
+  const { dispatch, state } = useGame();
+  const { hoveredObjectId, hoverCard, clearHover } = useHover();
   const stripLayout = layout === "strip";
   const candidates = useMemo(() => decision.candidates || [], [decision.candidates]);
   const [selected, setSelected] = useState(new Set());
@@ -32,6 +35,10 @@ export default function SelectObjectsDecision({
     const dynamicMax = Math.round(420 - (oracleHeight * 0.55));
     return Math.max(180, Math.min(360, dynamicMax));
   }, [inspectorOracleTextHeight]);
+  const objectControllerById = useMemo(
+    () => buildObjectControllerById(state),
+    [state]
+  );
 
   const scopedCandidates = useMemo(() => {
     if (hoveredObjectId == null) return candidates;
@@ -145,6 +152,10 @@ export default function SelectObjectsDecision({
               const isSelected = selected.has(c.id);
               const isUnavailable = !isSelected && selected.size >= max;
               const isDisabled = !canAct || !c.legal || isUnavailable;
+              const controllerId = objectControllerById.get(String(c.id));
+              const accent = controllerId == null || Number(controllerId) === Number(state?.perspective)
+                ? null
+                : getPlayerAccent(state?.players || [], controllerId);
               return (
                 <Button
                   key={c.id}
@@ -171,8 +182,14 @@ export default function SelectObjectsDecision({
                     if (isDisabled || event.detail !== 0) return;
                     toggleObject(c.id);
                   }}
+                  onMouseEnter={() => hoverCard(c.id)}
+                  onMouseLeave={clearHover}
                 >
-                  {c.name}
+                  <HighlightedDecisionText
+                    text={c.name}
+                    highlightText={c.name}
+                    highlightColor={accent?.hex || null}
+                  />
                 </Button>
               );
             })}

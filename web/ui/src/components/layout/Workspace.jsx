@@ -78,10 +78,6 @@ function shouldExpandInlineInspector(player, objectId) {
   return false;
 }
 
-function sameObjectId(left, right) {
-  return left != null && right != null && String(left) === String(right);
-}
-
 function rectContainsPoint(rect, x, y, fuzz = 0) {
   if (!rect) return false;
   return (
@@ -97,11 +93,6 @@ function stackSelectionKeys(entry) {
     .filter((value) => value != null)
     .map((value) => String(value));
   return Array.from(new Set(keys));
-}
-
-function getPrimaryViewedCardId(viewedCards) {
-  const nextViewedId = viewedCards?.card_ids?.[0];
-  return nextViewedId == null ? null : String(nextViewedId);
 }
 
 function getAutoRevealZoneCards(player, zone) {
@@ -185,7 +176,6 @@ export default function Workspace({
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
-  const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
   const [zoneActivityByPlayer, setZoneActivityByPlayer] = useState({});
@@ -216,10 +206,7 @@ export default function Workspace({
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
-  const forceInlineInspectorExpanded = sameObjectId(expandedInspectorObjectId, selectedObjectId);
-  const forceInlineInspectorFullArt = sameObjectId(expandedInspectorObjectId, selectedObjectId);
-  const inlineInspectorExpanded =
-    shouldExpandInlineInspector(me, selectedObjectId) || forceInlineInspectorExpanded;
+  const inlineInspectorExpanded = shouldExpandInlineInspector(me, selectedObjectId);
   const handLaneOpen = handLaneHovered;
   const decision = state?.decision || null;
   const combatDeclarationActive = decision?.kind === "attackers" || decision?.kind === "blockers";
@@ -247,15 +234,6 @@ export default function Workspace({
     }
     return ids;
   }, [decision]);
-  const activeViewedCards = state?.viewed_cards || null;
-  const primaryViewedCardId = useMemo(
-    () => getPrimaryViewedCardId(activeViewedCards),
-    [activeViewedCards]
-  );
-  const activeViewedCardIds = useMemo(
-    () => new Set((activeViewedCards?.card_ids || []).map((id) => String(id))),
-    [activeViewedCards?.card_ids]
-  );
   const stackTargetPresentation = useMemo(
     () => buildStackTargetPresentation(state, zoneViews, selectedObjectId),
     [selectedObjectId, state, zoneViews]
@@ -286,25 +264,10 @@ export default function Workspace({
         String(currentSelection) === invalidSelection ? null : currentSelection
       ));
       setPinnedInspectorObjectId((currentPinned) => (
-        sameObjectId(currentPinned, invalidSelection) ? null : currentPinned
-      ));
-      setExpandedInspectorObjectId((currentExpanded) => (
-        sameObjectId(currentExpanded, invalidSelection) ? null : currentExpanded
+        currentPinned != null && String(currentPinned) === invalidSelection ? null : currentPinned
       ));
     });
   }, [selectedObjectId, selectedObjectIsValid]);
-
-  useEffect(() => {
-    if (primaryViewedCardId == null) return;
-    const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
-    if (selectedKey != null && activeViewedCardIds.has(selectedKey)) return;
-    queueMicrotask(() => {
-      setSelectedObjectId(primaryViewedCardId);
-      setPinnedInspectorObjectId(primaryViewedCardId);
-      setExpandedInspectorObjectId(null);
-      setSuppressFallbackInspector(false);
-    });
-  }, [activeViewedCardIds, primaryViewedCardId, selectedObjectId]);
 
   useEffect(() => {
     const stackObjects = getVisibleStackObjects(state);
@@ -326,9 +289,6 @@ export default function Workspace({
           return nextTopId;
         });
         setPinnedInspectorObjectId(null);
-        setExpandedInspectorObjectId((currentExpanded) => (
-          currentExpanded == null ? currentExpanded : null
-        ));
       });
     }
 
@@ -393,7 +353,6 @@ export default function Workspace({
       startTransition(() => {
         setSelectedObjectId(null);
         setPinnedInspectorObjectId(null);
-        setExpandedInspectorObjectId(null);
         setSuppressFallbackInspector(true);
         setZoneActivityByPlayer((current) => {
           const next = { ...current };
@@ -466,7 +425,6 @@ export default function Workspace({
     queueMicrotask(() => {
       setSelectedObjectId(null);
       setPinnedInspectorObjectId(null);
-      setExpandedInspectorObjectId(null);
     });
   }, [combatDeclarationActive]);
 
@@ -630,7 +588,6 @@ export default function Workspace({
       }
       setSelectedObjectId(objectId);
       setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
-      setExpandedInspectorObjectId(null);
       setSuppressFallbackInspector(false);
       if (objectId != null) hoverCard(objectId);
     },
@@ -645,20 +602,6 @@ export default function Workspace({
       setStatus,
       state?.perspective,
     ]
-  );
-
-  const handleExpandInspector = useCallback(
-    (objectId) => {
-      if (combatDeclarationActive || objectId == null) return;
-      setSelectedObjectId(objectId);
-      setPinnedInspectorObjectId(String(objectId));
-      setExpandedInspectorObjectId((currentExpanded) => (
-        sameObjectId(currentExpanded, objectId) ? null : String(objectId)
-      ));
-      setSuppressFallbackInspector(false);
-      hoverCard(objectId);
-    },
-    [combatDeclarationActive, hoverCard]
   );
 
   const handleNoticeCopy = useCallback(
@@ -759,7 +702,6 @@ export default function Workspace({
         if (!combatDeclarationActive && ds.objectId != null) {
           setSelectedObjectId(ds.objectId);
           setPinnedInspectorObjectId(null);
-          setExpandedInspectorObjectId(null);
           setSuppressFallbackInspector(false);
         }
         return;
@@ -770,7 +712,6 @@ export default function Workspace({
       if (!combatDeclarationActive) {
         setSelectedObjectId(ds.objectId != null ? ds.objectId : null);
         setPinnedInspectorObjectId(null);
-        setExpandedInspectorObjectId(null);
         setSuppressFallbackInspector(false);
       }
       clearHover();
@@ -812,10 +753,9 @@ export default function Workspace({
       );
       if (!inDeadZone) return;
 
-      setSelectedObjectId(primaryViewedCardId);
-      setPinnedInspectorObjectId(primaryViewedCardId);
-      setExpandedInspectorObjectId(null);
-      setSuppressFallbackInspector(primaryViewedCardId == null);
+      setSelectedObjectId(null);
+      setPinnedInspectorObjectId(null);
+      setSuppressFallbackInspector(true);
       clearHover();
     };
 
@@ -823,7 +763,7 @@ export default function Workspace({
     return () => {
       document.removeEventListener("pointerdown", onDeadZonePointerDown, true);
     };
-  }, [clearHover, decision, primaryViewedCardId, state?.perspective]);
+  }, [clearHover, decision, state?.perspective]);
 
   return (
     <section
@@ -911,7 +851,6 @@ export default function Workspace({
         <TableCore
           selectedObjectId={selectedObjectId}
           onInspect={handleInspectObject}
-          onExpandInspector={handleExpandInspector}
           zoneViews={effectiveZoneViews}
           zoneActivityByPlayer={zoneActivityByPlayer}
           deckLoadingMode={deckLoadingMode}
@@ -937,8 +876,6 @@ export default function Workspace({
               inlineDockPlacement="top"
               allowTopInlinePlacement
               inlineExpanded={inlineInspectorExpanded}
-              forceInlineExpanded={forceInlineInspectorExpanded}
-              fullArtInlineExpanded={forceInlineInspectorFullArt}
             />
           </div>
         </div>
@@ -962,8 +899,6 @@ export default function Workspace({
               inlineExpandedSide="left"
               allowTopInlinePlacement
               inlineExpanded={inlineInspectorExpanded}
-              forceInlineExpanded={forceInlineInspectorExpanded}
-              fullArtInlineExpanded={forceInlineInspectorFullArt}
             />
           </div>
         </div>
@@ -1016,8 +951,6 @@ export default function Workspace({
             inline
             allowTopInlinePlacement={opponentsInspectorDockTop != null}
             inlineExpanded={inlineInspectorExpanded}
-            forceInlineExpanded={forceInlineInspectorExpanded}
-            fullArtInlineExpanded={forceInlineInspectorFullArt}
           />
         </div>
       </div>
@@ -1039,8 +972,6 @@ export default function Workspace({
               inlineExpandedSide="left"
               allowTopInlinePlacement={opponentsInspectorDockTop != null}
               inlineExpanded={inlineInspectorExpanded}
-              forceInlineExpanded={forceInlineInspectorExpanded}
-              fullArtInlineExpanded={forceInlineInspectorFullArt}
             />
           </div>
         </div>

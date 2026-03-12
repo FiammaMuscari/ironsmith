@@ -3,7 +3,7 @@
 use super::battlefield_entry::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -104,7 +104,11 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        Some(&self.target)
+        if self.target.is_target() {
+            Some(&self.target)
+        } else {
+            None
+        }
     }
 
     fn target_description(&self) -> &'static str {
@@ -375,10 +379,16 @@ mod tests {
 
     #[test]
     fn test_put_onto_battlefield_get_target_spec() {
-        let effect = PutOntoBattlefieldEffect::you_control(
+        let targeted_effect = PutOntoBattlefieldEffect::you_control(
+            ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature())),
+            false,
+        );
+        assert!(targeted_effect.get_target_spec().is_some());
+
+        let non_target_effect = PutOntoBattlefieldEffect::you_control(
             ChooseSpec::Object(ObjectFilter::creature()),
             false,
         );
-        assert!(effect.get_target_spec().is_some());
+        assert!(non_target_effect.get_target_spec().is_none());
     }
 }

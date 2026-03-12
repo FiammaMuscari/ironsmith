@@ -87,7 +87,6 @@ impl EffectExecutor for MonstrosityEffect {
 
         // Return a special result that indicates monstrosity happened
         // The game loop will need to generate the BecameMonstrous event
-        Ok(EffectOutcome::monstrosity_applied(source_id, n_value,
-            ))
+        Ok(EffectOutcome::monstrosity_applied(source_id, n_value))
     }
 }

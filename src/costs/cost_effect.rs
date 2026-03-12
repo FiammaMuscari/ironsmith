@@ -93,8 +93,7 @@ impl CostPayer for CostEffect {
             game.queue_trigger_event(ctx.provenance, event);
         }
 
-        let removed_marker_total =
-            outcome.total_marker_changes(|event| event.is_removed());
+        let removed_marker_total = outcome.total_marker_changes(|event| event.is_removed());
 
         if ctx.x_value.is_none()
             && removed_marker_total > 0
@@ -406,7 +405,9 @@ mod tests {
         let mut dm = SelectFirstDecisionMaker;
         let mut ctx = CostContext::new(source, alice, &mut dm);
 
-        let result = cost.pay(&mut game, &mut ctx).expect("cost should be payable");
+        let result = cost
+            .pay(&mut game, &mut ctx)
+            .expect("cost should be payable");
 
         assert_eq!(result, CostPaymentResult::Paid);
         assert_eq!(ctx.x_value, Some(2));

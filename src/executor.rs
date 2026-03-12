@@ -12,7 +12,7 @@ use crate::cost::OptionalCostsPaid;
 use crate::decision::DecisionMaker;
 use crate::effect::{Effect, EffectId, EffectOutcome, Value};
 use crate::events::cause::EventCause;
-use crate::game_state::GameState;
+use crate::game_state::{GameState, TargetAssignment};
 use crate::ids::{ObjectId, PlayerId};
 use crate::provenance::{ProvNodeId, ProvenanceNodeKind};
 use crate::snapshot::ObjectSnapshot;
@@ -94,6 +94,8 @@ pub struct ExecutionContext<'a> {
     pub controller: PlayerId,
     /// Resolved targets for the effect.
     pub targets: Vec<ResolvedTarget>,
+    /// Active target requirement assignments for the current execution scope.
+    pub target_assignments: Vec<TargetAssignment>,
     /// X value (for spells with X in cost).
     pub x_value: Option<u32>,
     /// Outcomes of previously executed effects (for WithId/If).
@@ -160,6 +162,7 @@ impl std::fmt::Debug for ExecutionContext<'_> {
             .field("source", &self.source)
             .field("controller", &self.controller)
             .field("targets", &self.targets)
+            .field("target_assignments", &self.target_assignments)
             .field("x_value", &self.x_value)
             .field("effect_outcomes", &self.effect_outcomes)
             .field("iterated_player", &self.iterated_player)
@@ -201,6 +204,7 @@ impl<'a> ExecutionContext<'a> {
             source,
             controller,
             targets: Vec::new(),
+            target_assignments: Vec::new(),
             x_value: None,
             effect_outcomes: HashMap::new(),
             iterated_player: None,
@@ -240,6 +244,7 @@ impl<'a> ExecutionContext<'a> {
             source,
             controller,
             targets: Vec::new(),
+            target_assignments: Vec::new(),
             x_value: None,
             effect_outcomes: HashMap::new(),
             iterated_player: None,
@@ -269,6 +274,7 @@ impl<'a> ExecutionContext<'a> {
             source: self.source,
             controller: self.controller,
             targets: self.targets,
+            target_assignments: self.target_assignments,
             x_value: self.x_value,
             effect_outcomes: self.effect_outcomes,
             iterated_player: self.iterated_player,
@@ -346,6 +352,13 @@ impl<'a> ExecutionContext<'a> {
     /// Set resolved targets.
     pub fn with_targets(mut self, targets: Vec<ResolvedTarget>) -> Self {
         self.targets = targets;
+        self.target_assignments.clear();
+        self
+    }
+
+    /// Set active target assignments for this execution scope.
+    pub fn with_target_assignments(mut self, target_assignments: Vec<TargetAssignment>) -> Self {
+        self.target_assignments = target_assignments;
         self
     }
 
@@ -356,8 +369,24 @@ impl<'a> ExecutionContext<'a> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let original_targets = std::mem::replace(&mut self.targets, targets);
+        let original_target_assignments =
+            std::mem::take(&mut self.target_assignments);
         let result = f(self);
         self.targets = original_targets;
+        self.target_assignments = original_target_assignments;
+        result
+    }
+
+    /// Temporarily override active target assignments while running a closure.
+    pub fn with_temp_target_assignments<R>(
+        &mut self,
+        target_assignments: Vec<TargetAssignment>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let original_target_assignments =
+            std::mem::replace(&mut self.target_assignments, target_assignments);
+        let result = f(self);
+        self.target_assignments = original_target_assignments;
         result
     }
 

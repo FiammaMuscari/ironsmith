@@ -178,11 +178,12 @@ function samePriorityActionDescriptor(left, right) {
 function buildOptionDescriptor(option) {
   return {
     description: String(option?.description || ""),
+    object_id: option?.object_id == null ? null : Number(option.object_id),
   };
 }
 
 function sameOptionDescriptor(left, right) {
-  return left.description === right.description;
+  return left.description === right.description && left.object_id === right.object_id;
 }
 
 function buildOrdinalDescriptor(items, targetIndex, buildDescriptor, sameDescriptor) {
@@ -550,6 +551,10 @@ export function GameProvider({ children }) {
           holdReason = "no pass action available";
           break;
         }
+        if (passAction.label && passAction.label !== "Pass priority") {
+          holdReason = "custom pass action";
+          break;
+        }
 
         st = await currentGame.dispatch({ type: "priority_action", action_index: passAction.index });
         autoPasses += 1;
@@ -595,6 +600,10 @@ export function GameProvider({ children }) {
             if (holdReason) break;
             const passAction = (st.decision.actions || []).find((a) => a.kind === "pass_priority");
             if (!passAction) { holdReason = "no pass action available"; break; }
+            if (passAction.label && passAction.label !== "Pass priority") {
+              holdReason = "custom pass action";
+              break;
+            }
             if (autoPasses >= 80) { holdReason = "auto-pass safety limit reached"; break; }
             st = await currentGame.dispatch({ type: "priority_action", action_index: passAction.index });
             autoPasses += 1;

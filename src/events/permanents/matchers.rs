@@ -161,6 +161,40 @@ impl ReplacementMatcher for ThisWouldBeDestroyedMatcher {
     }
 }
 
+/// Matches when the permanent this Aura is attached to would be destroyed.
+#[derive(Debug, Clone, Copy)]
+pub struct AttachedPermanentWouldBeDestroyedMatcher {
+    pub aura: crate::ids::ObjectId,
+}
+
+impl AttachedPermanentWouldBeDestroyedMatcher {
+    pub const fn new(aura: crate::ids::ObjectId) -> Self {
+        Self { aura }
+    }
+}
+
+impl ReplacementMatcher for AttachedPermanentWouldBeDestroyedMatcher {
+    fn matches_event(&self, event: &dyn GameEventType, ctx: &EventContext) -> bool {
+        if event.event_kind() != EventKind::Destroy {
+            return false;
+        }
+
+        let Some(destroy) = downcast_event::<DestroyEvent>(event) else {
+            return false;
+        };
+
+        let Some(aura) = ctx.game.object(self.aura) else {
+            return false;
+        };
+
+        aura.attached_to == Some(destroy.permanent)
+    }
+
+    fn display(&self) -> String {
+        "When the permanent this Aura is attached to would be destroyed".to_string()
+    }
+}
+
 /// Matches when a permanent matching the filter would be sacrificed.
 #[derive(Debug, Clone)]
 pub struct WouldBeSacrificedMatcher {

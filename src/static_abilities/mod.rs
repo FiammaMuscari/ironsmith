@@ -1296,6 +1296,10 @@ impl StaticAbility {
         Self::new(Flanking)
     }
 
+    pub fn umbra_armor() -> Self {
+        Self::new(UmbraArmor)
+    }
+
     pub fn phasing() -> Self {
         Self::new(Phasing)
     }

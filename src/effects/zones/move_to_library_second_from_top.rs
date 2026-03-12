@@ -1,6 +1,6 @@
 //! Move an object to second from top of its owner's library.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::event_processor::EventOutcome;

@@ -7,8 +7,8 @@ use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::effect::{EffectOutcome, ExecutionFact, Until};
 use crate::effects::EffectExecutor;
-use crate::effects::player::CastTaggedEffect;
 use crate::effects::helpers::normalize_object_selection;
+use crate::effects::player::CastTaggedEffect;
 use crate::effects::zones::apply_zone_change;
 use crate::event_processor::EventOutcome;
 use crate::events::permanents::SacrificeEvent;
@@ -52,12 +52,14 @@ impl EffectExecutor for BackupEffect {
             ctx,
         )?;
 
-        let mut outcomes = vec![crate::effects::PutCountersEffect::new(
-            CounterType::PlusOnePlusOne,
-            self.amount,
-            ChooseSpec::SpecificObject(target),
-        )
-        .execute(game, ctx)?];
+        let mut outcomes = vec![
+            crate::effects::PutCountersEffect::new(
+                CounterType::PlusOnePlusOne,
+                self.amount,
+                ChooseSpec::SpecificObject(target),
+            )
+            .execute(game, ctx)?,
+        ];
 
         if target != ctx.source {
             for ability in &self.granted_abilities {

@@ -4,7 +4,7 @@
 //! semantic no-op that can still be referenced by compiled text and auditing.
 
 use crate::decisions::context::ViewCardsContext;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -52,9 +52,7 @@ impl EffectExecutor for RevealTaggedEffect {
                     .view_cards(game, viewer, &card_ids, &view_ctx);
             }
         }
-        Ok(EffectOutcome::count(
-            count as i32,
-        ))
+        Ok(EffectOutcome::count(count as i32))
     }
 }
 

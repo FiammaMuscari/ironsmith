@@ -1,6 +1,6 @@
 //! Return from graveyard to hand effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::event_processor::EventOutcome;

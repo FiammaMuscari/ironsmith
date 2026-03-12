@@ -16,6 +16,12 @@ import {
 } from "@/lib/trigger-ordering";
 import { normalizeDecisionText } from "./decisionText";
 import DecisionSummary from "./DecisionSummary";
+import HighlightedDecisionText from "./HighlightedDecisionText";
+import { getPlayerAccent } from "@/lib/player-colors";
+import {
+  buildObjectControllerById,
+  buildObjectNameById,
+} from "@/lib/decision-object-meta";
 
 const STRIP_ITEM_BASE_CLASS = "h-auto min-h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-left text-[12px] font-semibold text-[rgba(206,223,242,0.52)] whitespace-nowrap transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -77,6 +83,33 @@ function optionsSignature(options) {
     .join("|");
 }
 
+function optionAccent(state, objectControllerById, opt) {
+  const objectId = opt?.object_id;
+  if (objectId == null) return null;
+  const controllerId = opt?.object_controller != null
+    ? Number(opt.object_controller)
+    : objectControllerById.get(String(objectId));
+  if (controllerId == null || Number(controllerId) === Number(state?.perspective)) {
+    return null;
+  }
+  return getPlayerAccent(state?.players || [], controllerId);
+}
+
+function optionLabelContent(state, objectNameById, objectControllerById, opt) {
+  const normalizedText = normalizeDecisionText(opt.description);
+  const objectName = opt?.object_id != null
+    ? objectNameById.get(String(opt.object_id)) || ""
+    : "";
+  const accent = optionAccent(state, objectControllerById, opt);
+  return (
+    <HighlightedDecisionText
+      text={normalizedText}
+      highlightText={objectName}
+      highlightColor={accent?.hex || null}
+    />
+  );
+}
+
 function useAnimatedRows(rows, showRows, hideDelayMs = 180) {
   const [visibleRows, setVisibleRows] = useState(rows);
   const hideTimerRef = useRef(null);
@@ -116,6 +149,7 @@ function HoverHint({ text }) {
 
 function OptionButton({
   opt,
+  content = null,
   canAct,
   onClick,
   isHighlighted,
@@ -160,7 +194,7 @@ function OptionButton({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
-      <SymbolText text={normalizeDecisionText(opt.description)} />
+      {content || <SymbolText text={normalizeDecisionText(opt.description)} />}
     </Button>
   );
 }
@@ -210,6 +244,7 @@ function useExternalSubmitAction(onSubmitActionChange, action) {
 export default function SelectOptionsDecision({
   decision,
   canAct,
+  selectedObjectId = null,
   inspectorOracleTextHeight = 0,
   inlineSubmit = true,
   onSubmitActionChange = null,
@@ -277,6 +312,7 @@ export default function SelectOptionsDecision({
       <SingleSelectDecision
         decision={decision}
         canAct={canAct}
+        selectedObjectId={selectedObjectId}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
         layout={layout}
@@ -288,6 +324,7 @@ export default function SelectOptionsDecision({
     <MultiSelectDecision
       decision={decision}
       canAct={canAct}
+      selectedObjectId={selectedObjectId}
       inspectorOracleTextHeight={inspectorOracleTextHeight}
       inlineSubmit={inlineSubmit}
       onSubmitActionChange={onSubmitActionChange}
@@ -300,6 +337,7 @@ export default function SelectOptionsDecision({
 function SingleSelectDecision({
   decision,
   canAct,
+  selectedObjectId = null,
   onSubmitActionChange = null,
   hideDescription = false,
   layout = "panel",
@@ -307,6 +345,8 @@ function SingleSelectDecision({
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
   const stripLayout = layout === "strip";
+  const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
+  const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
   const options = useMemo(() => decision.options || [], [decision.options]);
   const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
   const castFlowDecision = useMemo(() => isSpellCastFlowDecision(decision), [decision]);
@@ -336,6 +376,7 @@ function SingleSelectDecision({
     () => (paymentDecision ? options.filter((opt) => !isPaymentOptionDescription(opt.description)) : options),
     [options, paymentDecision]
   );
+  const activeObjectId = hoveredObjectId ?? selectedObjectId;
   const legalDisplayOptions = useMemo(
     () => displayOptions.filter((opt) => opt.legal !== false),
     [displayOptions]
@@ -360,8 +401,8 @@ function SingleSelectDecision({
     return "Submit (1/1)";
   }, [singleLegalOption]);
   const contextual = useMemo(
-    () => buildContextualOptions(displayOptions, hoveredObjectId),
-    [displayOptions, hoveredObjectId]
+    () => buildContextualOptions(displayOptions, activeObjectId),
+    [activeObjectId, displayOptions]
   );
   const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
   const showHoverHint = contextual.waitingForHover && options.some((opt) => opt.object_id != null);
@@ -409,7 +450,7 @@ function SingleSelectDecision({
             <Description decision={decision} hideDescription={hideDescription} layout={layout} />
           )}
           {showHoverHint && (
-            <HoverHint text="Hover a related card to show its available choices." />
+            <HoverHint text="Hover or select a related card to show its available choices." />
           )}
         </div>
         <div className={cn(
@@ -427,8 +468,9 @@ function SingleSelectDecision({
                 <OptionButton
                   key={opt.index}
                   opt={opt}
+                  content={optionLabelContent(state, objectNameById, objectControllerById, opt)}
                   canAct={canAct}
-                  isHighlighted={objId != null && hoveredObjectId === objId}
+                  isHighlighted={objId != null && String(activeObjectId) === objId}
                   horizontal={stripLayout}
                   onClick={() =>
                     dispatch(
@@ -459,15 +501,18 @@ function SingleSelectDecision({
 function MultiSelectDecision({
   decision,
   canAct,
+  selectedObjectId = null,
   inspectorOracleTextHeight = 0,
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
   layout = "panel",
 }) {
-  const { dispatch } = useGame();
+  const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
   const stripLayout = layout === "strip";
+  const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
+  const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
   const rawOptions = useMemo(() => decision.options || [], [decision.options]);
   const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
   const options = useMemo(
@@ -475,6 +520,7 @@ function MultiSelectDecision({
     [rawOptions, paymentDecision]
   );
   const [selected, setSelected] = useState(new Set());
+  const activeObjectId = hoveredObjectId ?? selectedObjectId;
   const min = decision.min ?? 0;
   const max = decision.max ?? options.length;
   const optionsMaxHeight = useMemo(() => {
@@ -484,8 +530,8 @@ function MultiSelectDecision({
     return Math.max(180, Math.min(360, dynamicMax));
   }, [inspectorOracleTextHeight]);
   const contextual = useMemo(
-    () => buildContextualOptions(options, hoveredObjectId),
-    [options, hoveredObjectId]
+    () => buildContextualOptions(options, activeObjectId),
+    [activeObjectId, options]
   );
   const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
   const visibleOptionIndexSet = useMemo(
@@ -538,7 +584,7 @@ function MultiSelectDecision({
           )}
           <SectionHeader text={`Select ${min === max ? min : `${min}–${max}`}`} />
           {showHoverHint && (
-            <HoverHint text="Hover a related card to show its choices. You can keep previous selections." />
+            <HoverHint text="Hover or select a related card to show its choices. You can keep previous selections." />
           )}
         </div>
         <div
@@ -555,12 +601,13 @@ function MultiSelectDecision({
           )}>
             {visibleOptions.map((opt) => {
               const objId = opt.object_id != null ? String(opt.object_id) : null;
-              const isHighlighted = objId != null && hoveredObjectId === objId;
+              const isHighlighted = objId != null && String(activeObjectId) === objId;
               const isSelected = selected.has(opt.index);
               return (
                 <OptionButton
                   key={opt.index}
                   opt={opt}
+                  content={optionLabelContent(state, objectNameById, objectControllerById, opt)}
                   canAct={canAct}
                   isHighlighted={isHighlighted}
                   isSelected={isSelected}

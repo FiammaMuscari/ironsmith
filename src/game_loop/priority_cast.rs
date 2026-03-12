@@ -56,9 +56,10 @@ pub(super) fn collect_available_casting_methods(
     if from_zone == Zone::Hand {
         if spell.linked_face_layout == crate::card::LinkedFaceLayout::Split {
             if can_cast_spell(game, player, spell, &CastingMethod::SplitOtherHalf)
-                && let Some(other_def) = spell
-                    .other_face
-                    .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
+                && let Some(other_def) = crate::cards::linked_face_definition_by_name_or_id(
+                    spell.other_face_name.as_deref(),
+                    spell.other_face,
+                )
             {
                 let cost_desc = other_def
                     .card
@@ -436,11 +437,17 @@ pub(super) fn format_alternative_method(
         }
         AlternativeCastingMethod::Plot { cost } => {
             let cost_desc = format_mana_cost_simple(cost);
-            ("Plot".to_string(), format!("{} to plot, free later", cost_desc))
+            (
+                "Plot".to_string(),
+                format!("{} to plot, free later", cost_desc),
+            )
         }
         AlternativeCastingMethod::Suspend { cost, time } => {
             let cost_desc = format_mana_cost_simple(cost);
-            ("Suspend".to_string(), format!("{cost_desc} with {time} time counters"))
+            (
+                "Suspend".to_string(),
+                format!("{cost_desc} with {time} time counters"),
+            )
         }
         AlternativeCastingMethod::Disturb { cost } => {
             let cost_desc = format_mana_cost_simple(cost);
@@ -448,7 +455,10 @@ pub(super) fn format_alternative_method(
         }
         AlternativeCastingMethod::Overload { cost, .. } => {
             let cost_desc = format_mana_cost_simple(cost);
-            ("Overload".to_string(), format!("{cost_desc} with each-mode text"))
+            (
+                "Overload".to_string(),
+                format!("{cost_desc} with each-mode text"),
+            )
         }
         AlternativeCastingMethod::Flashback { .. } => {
             let cost_desc = method
@@ -1015,6 +1025,7 @@ pub(super) fn finalize_pending_spell_cast(
         pending.from_zone,
         pending.caster,
         pending.chosen_targets,
+        pending.chosen_target_assignments,
         pending.x_value,
         pending.casting_method,
         pending.optional_costs_paid,
@@ -2802,6 +2813,7 @@ pub(super) fn continue_activation(
                     .with_source_snapshot(pending.source_snapshot.clone())
                     .with_tagged_objects(pending.tagged_objects.clone());
             entry.targets = pending.chosen_targets.clone();
+            entry.target_assignments = pending.chosen_target_assignments.clone();
 
             // Pass X value to stack entry so it's available during resolution
             if let Some(x) = pending.x_value {

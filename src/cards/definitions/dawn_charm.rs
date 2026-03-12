@@ -81,6 +81,7 @@ mod tests {
             controller: caster,
             is_ability: false,
             targets,
+            target_assignments: vec![],
             x_value: None,
             ability_effects: None,
             casting_method: crate::alternative_cast::CastingMethod::Normal,

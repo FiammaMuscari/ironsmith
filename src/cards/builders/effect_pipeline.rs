@@ -954,12 +954,14 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Soulbond => "Soulbond".to_string(),
         KeywordAction::Soulshift(amount) => format!("Soulshift {amount}"),
         KeywordAction::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
+        KeywordAction::Scavenge(cost) => format!("Scavenge {}", cost.to_oracle()),
         KeywordAction::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
         KeywordAction::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
         KeywordAction::Backup(amount) => format!("Backup {amount}"),
         KeywordAction::Cipher => "Cipher".to_string(),
         KeywordAction::Dash(cost) => format!("Dash {}", cost.to_oracle()),
         KeywordAction::Plot(cost) => format!("Plot {}", cost.to_oracle()),
+        KeywordAction::Mobilize(amount) => format!("Mobilize {amount}"),
         KeywordAction::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
         KeywordAction::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
         KeywordAction::Overload(cost) => format!("Overload {}", cost.to_oracle()),
@@ -980,6 +982,7 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Shadow => "Shadow".to_string(),
         KeywordAction::Horsemanship => "Horsemanship".to_string(),
         KeywordAction::Flanking => "Flanking".to_string(),
+        KeywordAction::UmbraArmor => "Umbra armor".to_string(),
         KeywordAction::Landwalk(subtype) => {
             let mut subtype = subtype.to_string().to_ascii_lowercase();
             subtype.push_str("walk");

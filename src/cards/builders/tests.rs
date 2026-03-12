@@ -3130,6 +3130,285 @@ fn test_parse_multikicker_and_entwine_keyword_lines_compile_to_optional_costs() 
 }
 
 #[test]
+fn test_parse_squad_keyword_line_compiles_to_optional_cost_and_etb_copy_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Squad Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Soldier])
+        .power_toughness(PowerToughness::fixed(3, 3))
+        .parse_text("Squad {2}\nFlying")
+        .expect("squad keyword line should parse");
+
+    assert_eq!(def.optional_costs.len(), 1, "expected one squad cost");
+    let squad = &def.optional_costs[0];
+    assert_eq!(squad.label, "Squad");
+    assert!(squad.repeatable, "squad should be repeatable");
+    let mana = squad
+        .cost
+        .mana_cost()
+        .expect("squad should preserve mana cost");
+    assert_eq!(mana.to_oracle(), "{2}");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("squad {2}"),
+        "expected squad optional-cost line, got {rendered}"
+    );
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("CreateTokenCopyEffect") && debug.contains("TimesPaidLabel(\"Squad\")"),
+        "expected squad ETB copy trigger, got {debug}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker") && !debug.contains("MarkerText(\"Squad"),
+        "squad should not fall back to a marker, got {debug}"
+    );
+}
+
+#[test]
+fn test_squad_trigger_creates_token_copies_equal_to_times_paid() {
+    use crate::ability::AbilityKind;
+    use crate::cost::OptionalCostsPaid;
+    use crate::executor::{ExecutionContext, execute_effect};
+    use crate::object::ObjectKind;
+    use crate::tests::test_helpers::setup_two_player_game;
+    use crate::zone::Zone;
+
+    let mut game = setup_two_player_game();
+    let alice = PlayerId::from_index(0);
+    let def = CardDefinitionBuilder::new(CardId::new(), "Squad Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Soldier])
+        .power_toughness(PowerToughness::fixed(3, 3))
+        .parse_text("Squad {2}\nFlying")
+        .expect("squad keyword line should parse");
+
+    let source = game.create_object_from_definition(&def, alice, Zone::Battlefield);
+    let mut paid = OptionalCostsPaid::from_costs(&def.optional_costs);
+    paid.pay_times(0, 2);
+    game.object_mut(source)
+        .expect("source object exists")
+        .optional_costs_paid = paid.clone();
+
+    let effects = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) if triggered.trigger.display().contains("enters") => {
+                Some(triggered.effects.clone())
+            }
+            _ => None,
+        })
+        .expect("squad ETB trigger should exist");
+
+    let mut ctx = ExecutionContext::new_default(source, alice).with_optional_costs_paid(paid);
+    for effect in &effects {
+        execute_effect(&mut game, effect, &mut ctx).expect("squad effect should resolve");
+    }
+
+    let squad_objects: Vec<_> = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .filter(|obj| obj.controller == alice && obj.name == "Squad Test")
+        .collect();
+    assert_eq!(
+        squad_objects.len(),
+        3,
+        "expected original plus two squad copies"
+    );
+
+    let token_count = squad_objects
+        .iter()
+        .filter(|obj| obj.kind == ObjectKind::Token)
+        .count();
+    assert_eq!(token_count, 2, "expected two squad-created tokens");
+}
+
+#[test]
+fn test_parse_scavenge_keyword_line_compiles_to_graveyard_activated_ability() {
+    use crate::zone::Zone;
+
+    let def = CardDefinitionBuilder::new(CardId::new(), "Scavenge Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Zombie])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .parse_text("Scavenge {2}{G}")
+        .expect("scavenge keyword line should parse");
+
+    let (ability, activated) = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some((ability, activated)),
+            _ => None,
+        })
+        .expect("scavenge should compile to an activated ability");
+
+    assert_eq!(ability.functional_zones, vec![Zone::Graveyard]);
+    assert_eq!(ability.text.as_deref(), Some("Scavenge {2}{G}"));
+
+    let debug = format!("{:?}", activated);
+    assert!(
+        debug.contains("SourcePower")
+            && debug.contains("PlusOnePlusOne")
+            && debug.contains("ExileEffect"),
+        "expected scavenge cost/effect lowering, got {debug}"
+    );
+}
+
+#[test]
+fn test_scavenge_uses_source_snapshot_power_after_source_is_exiled() {
+    use crate::ability::AbilityKind;
+    use crate::executor::{ExecutionContext, ResolvedTarget, execute_effect};
+    use crate::snapshot::ObjectSnapshot;
+    use crate::zone::Zone;
+
+    let mut game = crate::tests::test_helpers::setup_two_player_game();
+    let alice = PlayerId::from_index(0);
+
+    let scavenge_def = CardDefinitionBuilder::new(CardId::new(), "Scavenge Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Zombie])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .parse_text("Scavenge {2}{G}")
+        .expect("scavenge keyword line should parse");
+    let source = game.create_object_from_definition(&scavenge_def, alice, Zone::Graveyard);
+
+    let target_def = CardDefinitionBuilder::new(CardId::new(), "Target Grizzly")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Bear])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    let target = game.create_object_from_definition(&target_def, alice, Zone::Battlefield);
+
+    let effect = scavenge_def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => activated.effects.first().cloned(),
+            _ => None,
+        })
+        .expect("scavenge activated effect should exist");
+
+    let source_snapshot =
+        ObjectSnapshot::from_object(game.object(source).expect("source object exists"), &game);
+    let moved_source = game
+        .move_object(source, Zone::Exile)
+        .expect("source should move to exile to simulate paying scavenge");
+    assert!(
+        game.object(moved_source)
+            .is_some_and(|obj| obj.zone == Zone::Exile),
+        "source should be exiled after paying scavenge"
+    );
+
+    let mut ctx = ExecutionContext::new_default(source, alice)
+        .with_targets(vec![ResolvedTarget::Object(target)])
+        .with_source_snapshot(source_snapshot);
+    execute_effect(&mut game, &effect, &mut ctx).expect("scavenge effect should resolve");
+
+    let target_obj = game.object(target).expect("target creature exists");
+    assert_eq!(
+        target_obj
+            .counters
+            .get(&crate::object::CounterType::PlusOnePlusOne),
+        Some(&4),
+        "scavenge should use the exiled source card's power via source snapshot"
+    );
+}
+
+#[test]
+fn test_parse_mobilize_keyword_line_compiles_to_attack_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mobilize Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Warrior])
+        .power_toughness(PowerToughness::fixed(3, 3))
+        .parse_text("Mobilize 2")
+        .expect("mobilize keyword line should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("ThisAttacksTrigger")
+            && debug.contains("CreateTokenEffect")
+            && debug.contains("sacrifice_at_next_end_step: true"),
+        "expected mobilize attack trigger lowering, got {debug}"
+    );
+    assert!(
+        !debug.contains("MarkerText(\"Mobilize 2\")"),
+        "mobilize should not fall back to marker text, got {debug}"
+    );
+}
+
+#[test]
+fn test_mobilize_trigger_creates_attacking_warriors() {
+    use crate::ability::AbilityKind;
+    use crate::combat_state::{AttackTarget, AttackerInfo, CombatState};
+    use crate::executor::{ExecutionContext, execute_effect};
+    use crate::zone::Zone;
+
+    let mut game = crate::tests::test_helpers::setup_two_player_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mobilize Test")
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Warrior])
+        .power_toughness(PowerToughness::fixed(3, 3))
+        .parse_text("Mobilize 2")
+        .expect("mobilize keyword line should parse");
+    let source = game.create_object_from_definition(&def, alice, Zone::Battlefield);
+
+    game.combat = Some(CombatState {
+        attackers: vec![AttackerInfo {
+            creature: source,
+            target: AttackTarget::Player(bob),
+        }],
+        ..CombatState::default()
+    });
+
+    let effects = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered)
+                if triggered.trigger.display().contains("attacks") =>
+            {
+                Some(triggered.effects.clone())
+            }
+            _ => None,
+        })
+        .expect("mobilize trigger should exist");
+
+    let mut ctx = ExecutionContext::new_default(source, alice);
+    for effect in &effects {
+        execute_effect(&mut game, effect, &mut ctx).expect("mobilize effect should resolve");
+    }
+
+    let warrior_ids: Vec<_> = game
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            game.object(id)
+                .is_some_and(|obj| obj.controller == alice && obj.name == "Warrior")
+        })
+        .collect();
+    assert_eq!(warrior_ids.len(), 2, "expected two mobilize tokens");
+    assert!(warrior_ids.iter().all(|&id| game.is_tapped(id)));
+
+    let combat = game.combat.as_ref().expect("combat should exist");
+    let warrior_attackers = combat
+        .attackers
+        .iter()
+        .filter(|attacker| warrior_ids.contains(&attacker.creature))
+        .count();
+    assert_eq!(
+        warrior_attackers, 2,
+        "mobilize tokens should enter attacking"
+    );
+}
+
+#[test]
 fn test_parse_named_counter_types_fall_back_to_named_counter() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Named Counter Probe")
         .card_types(vec![CardType::Creature])
@@ -9274,6 +9553,26 @@ fn parse_banding_keyword_line() {
     assert!(
         compiled.contains("banding"),
         "expected banding marker in compiled output, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_umbra_armor_keyword_line_lowers_to_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Umbra Armor Variant")
+        .card_types(vec![CardType::Enchantment])
+        .subtypes(vec![Subtype::Aura])
+        .parse_text("Umbra armor")
+        .expect("umbra armor keyword line should parse");
+
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled.contains("Umbra armor"),
+        "expected umbra armor text in compiled output, got {compiled}"
+    );
+    let debug = format!("{def:?}");
+    assert!(
+        !debug.contains("KeywordMarker") && !debug.contains("MarkerText"),
+        "umbra armor should lower to a real static ability, got {debug}"
     );
 }
 

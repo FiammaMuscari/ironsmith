@@ -1,6 +1,6 @@
 //! Move all counters effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;

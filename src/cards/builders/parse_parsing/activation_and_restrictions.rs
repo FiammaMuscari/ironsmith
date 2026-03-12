@@ -1467,6 +1467,10 @@ pub(crate) fn parse_multikicker_line(
     parse_optional_cost_keyword_line(tokens, "multikicker", OptionalCost::multikicker)
 }
 
+pub(crate) fn parse_squad_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+    parse_optional_cost_keyword_line(tokens, "squad", OptionalCost::squad)
+}
+
 pub(crate) fn parse_entwine_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "entwine", OptionalCost::entwine)
 }
@@ -5823,6 +5827,21 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Marker("outlast"));
     }
 
+    if words.first().copied() == Some("scavenge") {
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Scavenge(cost));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("scavenge"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("scavenge"));
+    }
+
     if words.first().copied() == Some("unearth") {
         if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
             && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
@@ -5954,8 +5973,13 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     }
 
     if words.first().copied() == Some("mobilize") {
+        if let Some(amount_word) = words.get(1)
+            && let Ok(amount) = amount_word.parse::<u32>()
+        {
+            return Some(KeywordAction::Mobilize(amount));
+        }
         if words.len() == 1 {
-            return Some(KeywordAction::MarkerText("Mobilize".to_string()));
+            return Some(KeywordAction::Marker("mobilize"));
         }
         return marker_text_from_words(&words).map(KeywordAction::MarkerText);
     }
@@ -6006,7 +6030,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     }
 
     if words.starts_with(&["umbra", "armor"]) {
-        return Some(KeywordAction::MarkerText("Umbra armor".to_string()));
+        return Some(KeywordAction::UmbraArmor);
     }
 
     if words.first().copied() == Some("echo") {
@@ -6234,12 +6258,10 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
                 | "modular"
                 | "ninjutsu"
                 | "outlast"
-                | "scavenge"
                 | "suspend"
                 | "vanishing"
                 | "offering"
                 | "specialize"
-                | "squad"
                 | "spectacle"
                 | "graft"
                 | "backup"

@@ -216,7 +216,6 @@ mod tests {
 
     #[test]
     fn test_regeneration_shield_prevents_destruction() {
-
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
 
@@ -244,7 +243,10 @@ mod tests {
 
         // Result should be Replaced (regeneration kicked in)
         assert!(
-            matches!(result.unwrap().status, crate::effect::OutcomeStatus::Replaced),
+            matches!(
+                result.unwrap().status,
+                crate::effect::OutcomeStatus::Replaced
+            ),
             "Destroy should return Replaced when regeneration is used"
         );
 
@@ -407,7 +409,10 @@ mod tests {
 
         // Result should be TargetInvalid since artifacts can't be regenerated
         assert!(
-            matches!(result.unwrap().status, crate::effect::OutcomeStatus::TargetInvalid),
+            matches!(
+                result.unwrap().status,
+                crate::effect::OutcomeStatus::TargetInvalid
+            ),
             "Regenerate should return TargetInvalid for non-creature targets"
         );
 
@@ -422,7 +427,6 @@ mod tests {
 
     #[test]
     fn test_regeneration_does_not_work_if_creature_loses_creature_type() {
-
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
 

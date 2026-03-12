@@ -5,7 +5,7 @@
 //! immediately during resolution and returns an outcome that can be used by
 //! subsequent "If you don't" clauses.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::zones::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
@@ -120,9 +120,7 @@ impl EffectExecutor for CastTaggedEffect {
                 ) {
                     BattlefieldEntryOutcome::Moved(new_id) => {
                         queue_effect_driven_land_play(game, ctx, new_id, caster, from_zone);
-                        Ok(EffectOutcome::with_objects(vec![
-                            new_id,
-                        ]))
+                        Ok(EffectOutcome::with_objects(vec![new_id]))
                     }
                     BattlefieldEntryOutcome::Prevented => {
                         game.remove_object(copy_id);
@@ -170,13 +168,9 @@ impl EffectExecutor for CastTaggedEffect {
             ) {
                 BattlefieldEntryOutcome::Moved(new_id) => {
                     queue_effect_driven_land_play(game, ctx, new_id, ctx.controller, from_zone);
-                    Ok(EffectOutcome::with_objects(vec![
-                        new_id,
-                    ]))
+                    Ok(EffectOutcome::with_objects(vec![new_id]))
                 }
-                BattlefieldEntryOutcome::Prevented => {
-                    Ok(EffectOutcome::impossible())
-                }
+                BattlefieldEntryOutcome::Prevented => Ok(EffectOutcome::impossible()),
             };
         }
 
@@ -210,6 +204,7 @@ impl EffectExecutor for CastTaggedEffect {
             object_id: new_id,
             controller: caster,
             targets: vec![],
+            target_assignments: vec![],
             x_value,
             ability_effects: None,
             is_ability: false,

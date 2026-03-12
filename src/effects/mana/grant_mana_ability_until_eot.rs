@@ -5,7 +5,7 @@
 //! If you do, add {C}."
 
 use crate::ability::ActivatedAbility;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, GrantedManaAbility};

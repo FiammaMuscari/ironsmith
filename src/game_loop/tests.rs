@@ -475,8 +475,6 @@ fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_trigger
 
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);
-    let bob = PlayerId::from_index(1);
-    let bob = PlayerId::from_index(1);
     let upkeep_event = TriggerEvent::new_with_provenance(
         BeginningOfUpkeepEvent::new(alice),
         crate::provenance::ProvNodeId::default(),
@@ -1333,6 +1331,115 @@ fn test_extract_target_specs_two_distinct_targets_create_two_requirements() {
 }
 
 #[test]
+fn test_distinct_object_target_clauses_resolve_against_their_own_selected_targets() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+    let source_id = game.new_object_id();
+
+    let creature_id = create_creature(&mut game, "Marked Creature", bob, 2, 2);
+    let land_card = CardBuilder::new(CardId::from_raw(5_001), "Marked Land")
+        .card_types(vec![CardType::Land])
+        .build();
+    let land_id = game.create_object_from_card(&land_card, bob, Zone::Battlefield);
+
+    let mut ctx = ExecutionContext::new_default(source_id, alice).with_targets(vec![
+        crate::executor::ResolvedTarget::Object(creature_id),
+        crate::executor::ResolvedTarget::Object(land_id),
+    ])
+    .with_target_assignments(vec![
+        crate::game_state::TargetAssignment {
+            spec: ChooseSpec::target(ChooseSpec::creature()),
+            range: 0..1,
+        },
+        crate::game_state::TargetAssignment {
+            spec: ChooseSpec::target(ChooseSpec::Object(crate::filter::ObjectFilter::land())),
+            range: 1..2,
+        },
+    ]);
+
+    let destroy_creature =
+        Effect::new(crate::effects::DestroyEffect::target(ChooseSpec::creature()));
+    let destroy_land = Effect::new(crate::effects::DestroyEffect::target(ChooseSpec::Object(
+        crate::filter::ObjectFilter::land(),
+    )));
+
+    crate::executor::execute_effect(&mut game, &destroy_creature, &mut ctx)
+        .expect("creature-destroy effect should resolve");
+    crate::executor::execute_effect(&mut game, &destroy_land, &mut ctx)
+        .expect("land-destroy effect should resolve");
+
+    assert!(
+        !game.battlefield.contains(&creature_id),
+        "the creature target should leave the battlefield after the first clause resolves"
+    );
+    assert!(
+        !game.battlefield.contains(&land_id),
+        "the land target should leave the battlefield after the second clause resolves instead of reusing the first object target"
+    );
+    assert_eq!(
+        game.player(bob).expect("bob exists").graveyard.len(),
+        2,
+        "both selected targets should end up in Bob's graveyard"
+    );
+}
+
+#[test]
+fn test_stack_resolution_keeps_distinct_target_clause_assignments_when_one_target_goes_invalid() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let creature_id = create_creature(&mut game, "Marked Creature", bob, 2, 2);
+    let land_card = CardBuilder::new(CardId::from_raw(5_003), "Marked Land")
+        .card_types(vec![CardType::Land])
+        .build();
+    let land_id = game.create_object_from_card(&land_card, bob, Zone::Battlefield);
+
+    let spell_card = CardBuilder::new(CardId::from_raw(5_004), "Split Destruction")
+        .card_types(vec![CardType::Sorcery])
+        .build();
+    let spell_def = crate::cards::CardDefinition::spell(
+        spell_card,
+        vec![
+            Effect::new(crate::effects::DestroyEffect::target(ChooseSpec::creature())),
+            Effect::new(crate::effects::DestroyEffect::target(ChooseSpec::Object(
+                crate::filter::ObjectFilter::land(),
+            ))),
+        ],
+    );
+    let spell_id = game.create_object_from_definition(&spell_def, alice, Zone::Stack);
+    game.push_to_stack(
+        StackEntry::new(spell_id, alice)
+            .with_targets(vec![Target::Object(creature_id), Target::Object(land_id)])
+            .with_target_assignments(vec![
+                crate::game_state::TargetAssignment {
+                    spec: ChooseSpec::target(ChooseSpec::creature()),
+                    range: 0..1,
+                },
+                crate::game_state::TargetAssignment {
+                    spec: ChooseSpec::target(ChooseSpec::Object(crate::filter::ObjectFilter::land())),
+                    range: 1..2,
+                },
+            ]),
+    );
+
+    game.move_object(land_id, Zone::Graveyard);
+
+    super::resolve_stack_entry(&mut game).expect("spell should resolve");
+
+    assert!(
+        !game.battlefield.contains(&creature_id),
+        "the still-legal creature target should be destroyed"
+    );
+    assert_eq!(
+        game.player(bob).expect("bob exists").graveyard.len(),
+        2,
+        "the invalid land target should stay gone and the creature should still be destroyed"
+    );
+}
+
+#[test]
 fn test_extract_target_specs_exactly_two_targets_uses_single_requirement_with_count_two() {
     use crate::cards::CardDefinitionBuilder;
 
@@ -1375,6 +1482,30 @@ fn test_extract_target_specs_exactly_two_targets_uses_single_requirement_with_co
                 .legal_targets
                 .contains(&Target::Object(creature_b)),
         "expected both creatures to be legal targets, got {:?}",
+        requirements
+    );
+}
+
+#[test]
+fn test_non_target_put_onto_battlefield_choice_does_not_create_target_requirement() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let land_card = CardBuilder::new(CardId::from_raw(5_002), "Choice Land")
+        .card_types(vec![CardType::Land])
+        .build();
+    game.create_object_from_card(&land_card, alice, Zone::Hand);
+    let effects = vec![Effect::new(
+        crate::effects::PutOntoBattlefieldEffect::you_control(
+            ChooseSpec::Object(crate::filter::ObjectFilter::land().in_zone(Zone::Hand)),
+            false,
+        ),
+    )];
+
+    let requirements = extract_target_requirements(&game, &effects, alice, None);
+
+    assert!(
+        requirements.is_empty(),
+        "resolution-time choices like 'put a land card from your hand onto the battlefield' should not prompt for targets: {:?}",
         requirements
     );
 }
@@ -4235,7 +4366,6 @@ fn test_bosh_iron_golem_uses_sacrificed_artifact_mana_value_for_damage() {
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);
     let bob = PlayerId::from_index(1);
-
     game.turn.phase = Phase::FirstMain;
     game.turn.step = None;
     game.turn.active_player = alice;
@@ -4399,12 +4529,10 @@ fn test_yawgmoth_sacrifice_activation_targets_before_paying_costs() {
         "Yawgmoth, Thran Physician",
         "Black Lotus",
     ]);
-    eprintln!("registry loaded");
     let yawgmoth_def = registry
         .get("Yawgmoth, Thran Physician")
         .expect("Yawgmoth, Thran Physician should be present in registry");
     let yawgmoth_id = game.create_object_from_definition(yawgmoth_def, alice, Zone::Battlefield);
-    eprintln!("yawgmoth created");
 
     let fodder = CardBuilder::new(CardId::new(), "Fodder")
         .card_types(vec![CardType::Creature])
@@ -4570,7 +4698,6 @@ fn test_yawgmoth_proliferate_activation_prompts_discard_choice() {
 
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);
-    let bob = PlayerId::from_index(1);
 
     game.turn.phase = Phase::FirstMain;
     game.turn.step = None;
@@ -5859,40 +5986,58 @@ fn test_split_card_cast_prompt_offers_front_back_and_fuse_methods() {
         .mana_pool
         .add(ManaSymbol::Red, 1);
 
-    let breaking = crate::cards::builtin_registry()
+    let registry =
+        crate::cards::CardRegistry::with_builtin_cards_for_names(["Breaking", "Grizzly Bears"]);
+    let breaking = registry
         .get("Breaking")
-        .expect("Breaking should be available in generated registry");
-    let grizzly = crate::cards::builtin_registry()
+        .expect("Breaking should be available in test registry");
+    let grizzly = registry
         .get("Grizzly Bears")
-        .expect("Grizzly Bears should exist in builtin registry");
+        .expect("Grizzly Bears should exist in test registry");
     game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
     let split_id = game.create_object_from_definition(breaking, alice, Zone::Hand);
 
     let mut state = PriorityLoopState::new(game.players_in_game());
     let mut trigger_queue = TriggerQueue::new();
+    let mut dm = AutoPassDecisionMaker;
     let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
         spell_id: split_id,
         from_zone: Zone::Hand,
         casting_method: CastingMethod::Normal,
     });
-    let progress =
-        apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response)
-            .expect("split cast should start successfully");
+    let progress = apply_priority_response_with_dm(
+        &mut game,
+        &mut trigger_queue,
+        &mut state,
+        &cast_response,
+        &mut dm,
+    )
+    .expect("split cast should start successfully");
 
     let ctx = match progress {
-        GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::SelectOptions(
-            ctx,
-        )) => ctx,
+        GameProgress::NeedsDecisionCtx(
+            crate::decisions::context::DecisionContext::SelectOptions(ctx),
+        ) => ctx,
         other => panic!(
             "expected casting-method selection prompt for split card, got {:?}",
             other
         ),
     };
 
-    let descriptions: Vec<String> = ctx.options.iter().map(|opt| opt.description.clone()).collect();
-    assert_eq!(descriptions.len(), 3, "split card should offer three cast methods");
+    let descriptions: Vec<String> = ctx
+        .options
+        .iter()
+        .map(|opt| opt.description.clone())
+        .collect();
+    assert_eq!(
+        descriptions.len(),
+        3,
+        "split card should offer three cast methods"
+    );
     assert!(
-        descriptions.iter().any(|desc| desc.contains("Breaking: {U}{B}")),
+        descriptions
+            .iter()
+            .any(|desc| desc.contains("Breaking: {U}{B}")),
         "front half should be available, got {descriptions:?}"
     );
     assert!(
@@ -5902,7 +6047,9 @@ fn test_split_card_cast_prompt_offers_front_back_and_fuse_methods() {
         "back half should be available, got {descriptions:?}"
     );
     assert!(
-        descriptions.iter().any(|desc| desc.contains("Fuse: {4}{U}{B}{B}{R}"))
+        descriptions
+            .iter()
+            .any(|desc| desc.contains("Fuse: {4}{U}{B}{B}{R}"))
             || descriptions
                 .iter()
                 .any(|desc| desc.contains("Fuse: {U}{B}{4}{B}{R}")),
@@ -5916,12 +6063,14 @@ fn test_split_other_half_cast_uses_back_face_characteristics_on_stack() {
     let alice = PlayerId::from_index(0);
     let bob = PlayerId::from_index(1);
 
-    let breaking = crate::cards::builtin_registry()
+    let registry =
+        crate::cards::CardRegistry::with_builtin_cards_for_names(["Breaking", "Grizzly Bears"]);
+    let breaking = registry
         .get("Breaking")
-        .expect("Breaking should be available in generated registry");
-    let grizzly = crate::cards::builtin_registry()
+        .expect("Breaking should be available in test registry");
+    let grizzly = registry
         .get("Grizzly Bears")
-        .expect("Grizzly Bears should exist in builtin registry");
+        .expect("Grizzly Bears should exist in test registry");
     let reanimate_target = game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
 
     let split_id = game.create_object_from_definition(breaking, alice, Zone::Hand);
@@ -5934,27 +6083,27 @@ fn test_split_other_half_cast_uses_back_face_characteristics_on_stack() {
     )
     .expect("back-half split cast should move to stack");
 
-    let stack_obj = game.object(stack_id).expect("stack split spell should exist");
+    let stack_obj = game
+        .object(stack_id)
+        .expect("stack split spell should exist");
     assert_eq!(stack_obj.name, "Entering");
     assert!(stack_obj.card_types.contains(&CardType::Sorcery));
 
     let mut dm = SelectFirstDecisionMaker;
-    game.stack
-        .push(StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::SplitOtherHalf));
-    resolve_stack_entry_with(&mut game, &mut dm).expect("back-half split spell should resolve");
-    assert_eq!(
-        game.object(reanimate_target)
-            .expect("reanimated creature should still exist")
-            .zone,
-        Zone::Battlefield,
-        "back-half split spell should resolve using Entering's effect"
+    game.stack.push(
+        StackEntry::new(stack_id, alice)
+            .with_targets(vec![Target::Object(reanimate_target)])
+            .with_casting_method(CastingMethod::SplitOtherHalf),
     );
-    assert_eq!(
-        game.object(reanimate_target)
-            .expect("reanimated creature should still exist")
-            .controller,
-        alice,
-        "Entering should return the creature under the caster's control"
+    resolve_stack_entry_with(&mut game, &mut dm).expect("back-half split spell should resolve");
+    let reanimated = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .find(|obj| obj.name == "Grizzly Bears" && obj.controller == alice);
+    assert!(
+        reanimated.is_some(),
+        "Entering should return a creature card from a graveyard under the caster's control"
     );
 }
 
@@ -5964,12 +6113,14 @@ fn test_fused_split_cast_combines_effects_and_resolves_in_order() {
     let alice = PlayerId::from_index(0);
     let bob = PlayerId::from_index(1);
 
-    let breaking = crate::cards::builtin_registry()
+    let registry =
+        crate::cards::CardRegistry::with_builtin_cards_for_names(["Breaking", "Grizzly Bears"]);
+    let breaking = registry
         .get("Breaking")
-        .expect("Breaking should be available in generated registry");
-    let grizzly = crate::cards::builtin_registry()
+        .expect("Breaking should be available in test registry");
+    let grizzly = registry
         .get("Grizzly Bears")
-        .expect("Grizzly Bears should exist in builtin registry");
+        .expect("Grizzly Bears should exist in test registry");
     let reanimate_target = game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
 
     for idx in 0..8 {
@@ -5989,10 +6140,16 @@ fn test_fused_split_cast_combines_effects_and_resolves_in_order() {
     )
     .expect("fused split cast should move to stack");
 
-    let stack_obj = game.object(stack_id).expect("fused split spell should exist");
+    let stack_obj = game
+        .object(stack_id)
+        .expect("fused split spell should exist");
     assert_eq!(stack_obj.name, "Breaking // Entering");
     assert_eq!(
-        stack_obj.mana_cost.as_ref().map(|cost| cost.to_oracle()).as_deref(),
+        stack_obj
+            .mana_cost
+            .as_ref()
+            .map(|cost| cost.to_oracle())
+            .as_deref(),
         Some("{U}{B}{4}{B}{R}"),
         "fused split spell should use the combined mana cost on stack"
     );
@@ -6000,7 +6157,7 @@ fn test_fused_split_cast_combines_effects_and_resolves_in_order() {
     let mut dm = SelectFirstDecisionMaker;
     game.stack.push(
         StackEntry::new(stack_id, alice)
-            .with_targets(vec![Target::Player(bob)])
+            .with_targets(vec![Target::Player(bob), Target::Object(reanimate_target)])
             .with_casting_method(CastingMethod::Fuse),
     );
     let library_before = game.player(bob).expect("bob exists").library.len();
@@ -6010,19 +6167,14 @@ fn test_fused_split_cast_combines_effects_and_resolves_in_order() {
         library_before.saturating_sub(8),
         "front-half fused effect should mill eight cards"
     );
-    assert_eq!(
-        game.object(reanimate_target)
-            .expect("reanimated creature should still exist")
-            .zone,
-        Zone::Battlefield,
-        "back-half fused effect should resolve after Breaking"
-    );
-    assert_eq!(
-        game.object(reanimate_target)
-            .expect("reanimated creature should still exist")
-            .controller,
-        alice,
-        "Entering half of fused spell should return the creature under the caster's control"
+    let reanimated = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .find(|obj| obj.name == "Grizzly Bears" && obj.controller == alice);
+    assert!(
+        reanimated.is_some(),
+        "Entering half of fused spell should return a creature under the caster's control"
     );
 }
 

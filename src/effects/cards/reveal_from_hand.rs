@@ -3,7 +3,7 @@
 use crate::decision::FallbackStrategy;
 use crate::decisions::context::ViewCardsContext;
 use crate::decisions::{ChooseObjectsSpec, make_decision_with_fallback};
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::helpers::normalize_object_selection;
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};

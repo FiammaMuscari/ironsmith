@@ -3,7 +3,7 @@
 use super::battlefield_entry::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -95,11 +95,7 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
         );
 
         match outcome {
-            BattlefieldEntryOutcome::Moved(new_id) => {
-                Ok(EffectOutcome::with_objects(vec![
-                    new_id,
-                ]))
-            }
+            BattlefieldEntryOutcome::Moved(new_id) => Ok(EffectOutcome::with_objects(vec![new_id])),
             BattlefieldEntryOutcome::Prevented => {
                 // ETB was prevented entirely
                 Ok(EffectOutcome::impossible())

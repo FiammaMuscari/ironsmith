@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::StdRng};
@@ -17,6 +18,7 @@ use crate::prevention::PreventionEffectManager;
 use crate::provenance::{ProvNodeId, ProvenanceGraph, ProvenanceNodeKind};
 use crate::replacement::{ReplacementEffectId, ReplacementEffectManager};
 use crate::static_abilities::StaticAbility;
+use crate::target::ChooseSpec;
 use crate::triggers::TriggerIdentity;
 use crate::types::Subtype;
 use crate::zone::Zone;
@@ -941,12 +943,20 @@ pub enum Target {
     Player(PlayerId),
 }
 
+/// A chosen target requirement bound to a range within the flattened target list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetAssignment {
+    pub spec: ChooseSpec,
+    pub range: Range<usize>,
+}
+
 /// An entry on the stack.
 #[derive(Debug, Clone)]
 pub struct StackEntry {
     pub object_id: ObjectId,
     pub controller: PlayerId,
     pub targets: Vec<Target>,
+    pub target_assignments: Vec<TargetAssignment>,
     pub x_value: Option<u32>,
     /// For triggered/activated abilities, the effects to execute.
     /// For spells, this is None and effects come from the spell itself.
@@ -1015,6 +1025,7 @@ impl StackEntry {
             object_id,
             controller,
             targets: Vec::new(),
+            target_assignments: Vec::new(),
             x_value: None,
             ability_effects: None,
             is_ability: false,
@@ -1045,6 +1056,7 @@ impl StackEntry {
             object_id: source_id,
             controller,
             targets: Vec::new(),
+            target_assignments: Vec::new(),
             x_value: None,
             ability_effects: Some(effects),
             is_ability: true,
@@ -1073,6 +1085,11 @@ impl StackEntry {
 
     pub fn with_targets(mut self, targets: Vec<Target>) -> Self {
         self.targets = targets;
+        self
+    }
+
+    pub fn with_target_assignments(mut self, target_assignments: Vec<TargetAssignment>) -> Self {
+        self.target_assignments = target_assignments;
         self
     }
 
@@ -4461,7 +4478,8 @@ impl GameState {
 
     /// Mark a card as plotted by a player on the current turn.
     pub fn set_plotted(&mut self, id: ObjectId, player: PlayerId) {
-        self.plotted_cards.insert(id, (player, self.turn.turn_number));
+        self.plotted_cards
+            .insert(id, (player, self.turn.turn_number));
     }
 
     /// Clear plot state for a card.

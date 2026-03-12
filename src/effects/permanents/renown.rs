@@ -1,6 +1,6 @@
 //! Renown keyword effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::events::other::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};

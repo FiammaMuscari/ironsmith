@@ -1,6 +1,6 @@
 //! Evolve keyword effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::events::EnterBattlefieldEvent;
 use crate::events::other::{KeywordActionEvent, KeywordActionKind};

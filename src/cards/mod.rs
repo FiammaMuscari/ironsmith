@@ -443,6 +443,7 @@ impl CardRegistry {
         maybe_register!(windswept_heath);
         maybe_register!(lightning_greaves);
         maybe_register!(selfless_spirit);
+        maybe_register!(serum_powder);
         maybe_register!(mother_of_runes);
         maybe_register!(giver_of_runes);
         maybe_register!(selfless_savior);
@@ -457,6 +458,7 @@ impl CardRegistry {
         maybe_register!(culling_the_weak);
         maybe_register!(fleshbag_marauder);
         maybe_register!(generous_gift);
+        maybe_register!(gemstone_caverns);
         maybe_register!(godless_shrine);
         maybe_register!(hanweir_battlements);
         maybe_register!(hanweir_garrison);
@@ -504,13 +506,23 @@ impl CardRegistry {
         if let Some(def) = self.cards.get(name) {
             return Some(def);
         }
-        let canonical = self.aliases.get(name)?;
+        let canonical = self
+            .aliases
+            .get(name)
+            .or_else(|| self.aliases.get(&normalize_card_lookup_name(name)))?;
         self.cards.get(canonical)
     }
 
     /// Register an alternate name for an existing definition.
     pub fn register_alias(&mut self, alias: impl Into<String>, canonical: impl Into<String>) {
-        self.aliases.insert(alias.into(), canonical.into());
+        let alias = alias.into();
+        let canonical = canonical.into();
+        self.aliases.insert(alias.clone(), canonical.clone());
+
+        let normalized = normalize_card_lookup_name(&alias);
+        if !normalized.is_empty() && normalized != alias {
+            self.aliases.insert(normalized, canonical);
+        }
     }
 
     /// Look up a card by CardId.
@@ -630,6 +642,19 @@ fn normalize_card_lookup_name(name: &str) -> String {
 pub fn builtin_registry() -> &'static CardRegistry {
     static REGISTRY: OnceLock<CardRegistry> = OnceLock::new();
     REGISTRY.get_or_init(CardRegistry::with_builtin_cards)
+}
+
+pub fn linked_face_definition_by_name_or_id(
+    name: Option<&str>,
+    id: Option<CardId>,
+) -> Option<CardDefinition> {
+    if let Some(name) = name
+        && let Ok(definition) = CardRegistry::try_compile_card(name)
+    {
+        return Some(definition);
+    }
+
+    id.and_then(|card_id| builtin_registry().get_by_id(card_id).cloned())
 }
 
 const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line fallback:";
@@ -835,6 +860,8 @@ mod tests {
     use crate::static_abilities::StaticAbility;
     use crate::types::CardType;
     use crate::zone::Zone;
+    #[cfg(feature = "generated-registry")]
+    use crate::{game_state::GameState, ids::PlayerId};
 
     #[test]
     fn test_card_definition_creation() {
@@ -937,12 +964,80 @@ mod tests {
         let front = registry
             .get("Breaking")
             .expect("split front face should load from generated registry");
-        assert_eq!(front.card.linked_face_layout, crate::card::LinkedFaceLayout::Split);
-        assert!(front.has_fuse, "fuse metadata should be preserved on split card");
+        assert_eq!(
+            front.card.linked_face_layout,
+            crate::card::LinkedFaceLayout::Split
+        );
+        assert!(
+            front.has_fuse,
+            "fuse metadata should be preserved on split card"
+        );
 
         assert!(
             registry.get("Breaking // Entering").is_some(),
             "combined split-card name should resolve via generated registry alias"
+        );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn generated_registry_includes_flavor_name_aliases() {
+        let mut registry = CardRegistry::new();
+        registry.ensure_cards_loaded(["T-60 Power Armor", "Sunset Sarsaparilla Machine"]);
+
+        assert_eq!(
+            CardRegistry::generated_parser_card_parse_source("T-60 Power Armor")
+                .map(|(name, _)| name),
+            Some("T-45 Power Armor".to_string())
+        );
+        assert_eq!(
+            CardRegistry::generated_parser_card_parse_source("Sunset Sarsaparilla Machine")
+                .map(|(name, _)| name),
+            Some("Nuka-Cola Vending Machine".to_string())
+        );
+
+        assert!(registry.get("T-60 Power Armor").is_some());
+        assert!(registry.get("t-60 power armor").is_some());
+        assert!(registry.get("Sunset Sarsaparilla Machine").is_some());
+        assert!(registry.get("sunset sarsaparilla machine").is_some());
+
+        let mut game = GameState::new(vec!["Alice".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let hand_definition = registry
+            .get("T-60 Power Armor")
+            .expect("flavor alias should resolve")
+            .clone();
+        let hand_id = game.create_object_from_definition(&hand_definition, alice, Zone::Hand);
+        assert_eq!(
+            game.object(hand_id).expect("hand object should exist").name,
+            "T-45 Power Armor"
+        );
+
+        for alias in ["T-60 Power Armor", "Sunset Sarsaparilla Machine"] {
+            let definition = registry
+                .get(alias)
+                .expect("deck alias should resolve")
+                .clone();
+            game.create_object_from_definition(&definition, alice, Zone::Library);
+        }
+
+        let library_names: Vec<String> = game
+            .player(alice)
+            .expect("alice should exist")
+            .library
+            .iter()
+            .filter_map(|&id| game.object(id).map(|object| object.name.clone()))
+            .collect();
+        assert!(
+            library_names.iter().any(|name| name == "T-45 Power Armor"),
+            "expected canonical T-45 Power Armor in library, got {library_names:?}"
+        );
+        assert!(
+            library_names
+                .iter()
+                .any(|name| name == "Nuka-Cola Vending Machine"),
+            "expected canonical Nuka-Cola Vending Machine in library, got {library_names:?}"
         );
     }
 
@@ -1385,8 +1480,25 @@ mod tests {
 
     #[cfg(feature = "generated-registry")]
     #[test]
-    fn try_compile_card_rejects_generated_unsupported_definitions() {
-        let error = CardRegistry::try_compile_card("Sicarian Infiltrator")
+    fn try_compile_card_accepts_generated_supported_definitions() {
+        let definition = CardRegistry::try_compile_card("Sicarian Infiltrator")
+            .expect("supported generated definition should compile");
+        assert_eq!(definition.name(), "Sicarian Infiltrator");
+    }
+
+    #[test]
+    fn reject_unsupported_generated_definition_returns_error() {
+        let card = CardBuilder::new(CardId::new(), "Rejected Fallback")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let fallback = Ability::static_ability(StaticAbility::unsupported_parser_line(
+            "reject me",
+            "ParseError(\"mock\")",
+        ));
+        let mut definition = CardDefinition::new(card);
+        definition.abilities.push(fallback);
+
+        let error = reject_unsupported_generated_definition(definition)
             .expect_err("unsupported generated fallback should be rejected");
         assert!(
             error.to_ascii_lowercase().contains("unsupported"),

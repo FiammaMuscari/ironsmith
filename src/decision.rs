@@ -14,6 +14,7 @@ use crate::game_state::{GameState, Phase, Target};
 use crate::ids::{ObjectId, PlayerId};
 use crate::special_actions::SpecialAction;
 use crate::target::ChooseSpec;
+use crate::targeting::normalize_targets_for_requirements;
 use crate::zone::Zone;
 use crate::{CounterType, ManaSymbol, Step};
 use std::cell::RefCell;
@@ -63,6 +64,24 @@ pub enum FallbackStrategy {
 pub enum LegalAction {
     /// Pass priority to the next player.
     PassPriority,
+
+    /// Keep the current opening hand during pregame mulligans.
+    KeepOpeningHand,
+
+    /// Take a normal mulligan during pregame.
+    TakeMulligan,
+
+    /// Use Serum Powder's pregame mulligan replacement from hand.
+    SerumPowderMulligan { card_id: ObjectId },
+
+    /// Finish the current player's pregame actions and move to the next player.
+    ContinuePregame,
+
+    /// Finish pregame actions and begin the first turn.
+    BeginGame,
+
+    /// Begin the game with Gemstone Caverns on the battlefield from hand.
+    BeginWithGemstoneCaverns { card_id: ObjectId },
 
     /// Cast a spell from a zone.
     CastSpell {
@@ -1618,8 +1637,12 @@ pub fn spell_mana_cost_for_cast(
 ) -> Option<crate::mana::ManaCost> {
     let base_cost = match casting_method {
         CastingMethod::Normal => spell.mana_cost.clone(),
-        CastingMethod::SplitOtherHalf => linked_face_definition(spell).and_then(|def| def.card.mana_cost),
-        CastingMethod::Fuse => spell_view_for_fused_split_cast(spell).and_then(|view| view.mana_cost),
+        CastingMethod::SplitOtherHalf => {
+            linked_face_definition(spell).and_then(|def| def.card.mana_cost)
+        }
+        CastingMethod::Fuse => {
+            spell_view_for_fused_split_cast(spell).and_then(|view| view.mana_cost)
+        }
         CastingMethod::Alternative(idx) => {
             if let Some(method) = spell.alternative_casts.get(*idx) {
                 if matches!(
@@ -1740,8 +1763,13 @@ fn can_cast_spell_with_view(
     // Check mana availability with cost reductions applied
     if let Some(base_cost) = base_mana_cost.as_ref() {
         // Calculate effective cost after applying cost reductions (Affinity, etc.)
-        let effective_cost =
-            calculate_effective_mana_cost_with_view(game, player, spell_for_checks, base_cost, view);
+        let effective_cost = calculate_effective_mana_cost_with_view(
+            game,
+            player,
+            spell_for_checks,
+            base_cost,
+            view,
+        );
 
         // For X spells, check if they can pay at least X=0
         // For non-X spells, check if they can pay the full cost (x_value=0)
@@ -1928,22 +1956,22 @@ fn get_mana_cost_for_method<'a>(
     method.mana_cost().or(spell.mana_cost.as_ref())
 }
 
-fn spell_view_for_disturb_cast(
-    spell: &crate::object::Object,
-) -> Option<crate::object::Object> {
-    let other_face = spell.other_face?;
-    let other_def = crate::cards::builtin_registry().get_by_id(other_face)?;
+fn spell_view_for_disturb_cast(spell: &crate::object::Object) -> Option<crate::object::Object> {
+    let other_def = crate::cards::linked_face_definition_by_name_or_id(
+        spell.other_face_name.as_deref(),
+        spell.other_face,
+    )?;
     let mut view = spell.clone();
-    view.apply_definition_face(other_def);
+    view.apply_definition_face(&other_def);
     view.ensure_aura_cast_spell_effect();
     Some(view)
 }
 
-fn linked_face_definition(
-    spell: &crate::object::Object,
-) -> Option<crate::cards::CardDefinition> {
-    let other_face = spell.other_face?;
-    crate::cards::builtin_registry().get_by_id(other_face).cloned()
+fn linked_face_definition(spell: &crate::object::Object) -> Option<crate::cards::CardDefinition> {
+    crate::cards::linked_face_definition_by_name_or_id(
+        spell.other_face_name.as_deref(),
+        spell.other_face,
+    )
 }
 
 fn spell_view_for_split_other_half_cast(
@@ -1959,9 +1987,7 @@ fn spell_view_for_split_other_half_cast(
     Some(view)
 }
 
-fn spell_view_for_fused_split_cast(
-    spell: &crate::object::Object,
-) -> Option<crate::object::Object> {
+fn spell_view_for_fused_split_cast(spell: &crate::object::Object) -> Option<crate::object::Object> {
     if spell.linked_face_layout != crate::card::LinkedFaceLayout::Split || !spell.has_fuse {
         return None;
     }
@@ -3930,12 +3956,7 @@ pub trait DecisionMaker {
         _game: &GameState,
         ctx: &crate::decisions::context::TargetsContext,
     ) -> Vec<Target> {
-        // Default: select first valid target for each requirement with min > 0
-        ctx.requirements
-            .iter()
-            .filter(|r| r.min_targets > 0)
-            .filter_map(|r| r.legal_targets.first().cloned())
-            .collect()
+        normalize_targets_for_requirements(&ctx.requirements, Vec::new()).unwrap_or_default()
     }
 }
 
@@ -5950,6 +5971,24 @@ fn zone_label(zone: Zone) -> &'static str {
 pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> String {
     match action {
         LegalAction::PassPriority => "Pass".to_string(),
+        LegalAction::KeepOpeningHand => "Keep hand".to_string(),
+        LegalAction::TakeMulligan => "Mulligan".to_string(),
+        LegalAction::SerumPowderMulligan { card_id } => {
+            let name = game
+                .object(*card_id)
+                .map(|o| o.name.as_str())
+                .unwrap_or("Serum Powder");
+            format!("Use {}", name)
+        }
+        LegalAction::ContinuePregame => "Continue".to_string(),
+        LegalAction::BeginGame => "Begin game".to_string(),
+        LegalAction::BeginWithGemstoneCaverns { card_id } => {
+            let name = game
+                .object(*card_id)
+                .map(|o| o.name.as_str())
+                .unwrap_or("Gemstone Caverns");
+            format!("Begin with {}", name)
+        }
         LegalAction::PlayLand { land_id } => {
             let name = game
                 .object(*land_id)
@@ -5968,10 +6007,10 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> Str
                         format!("{} ({})", obj.name, format_mana_cost(obj))
                     }
                     crate::alternative_cast::CastingMethod::SplitOtherHalf => {
-                        if let Some(other_def) = obj
-                            .other_face
-                            .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
-                        {
+                        if let Some(other_def) = crate::cards::linked_face_definition_by_name_or_id(
+                            obj.other_face_name.as_deref(),
+                            obj.other_face,
+                        ) {
                             let cost = other_def
                                 .card
                                 .mana_cost
@@ -5994,11 +6033,14 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> Str
                         .as_ref()
                         .map(format_mana_cost_from_cost)
                         .unwrap_or_else(|| format_mana_cost(obj));
-                        if let Some(other_def) = obj
-                            .other_face
-                            .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
-                        {
-                            format!("{} // {} [Fuse] ({})", obj.name, other_def.card.name, fused_cost)
+                        if let Some(other_def) = crate::cards::linked_face_definition_by_name_or_id(
+                            obj.other_face_name.as_deref(),
+                            obj.other_face,
+                        ) {
+                            format!(
+                                "{} // {} [Fuse] ({})",
+                                obj.name, other_def.card.name, fused_cost
+                            )
                         } else {
                             format!("{} [Fuse] ({})", obj.name, fused_cost)
                         }
@@ -7125,6 +7167,7 @@ mod tests {
     use crate::ability::Ability;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::color::ColorSet;
+    use crate::decisions::context::{TargetRequirementContext, TargetsContext};
     use crate::effect::{Effect, Value};
     use crate::filter::Comparison;
     use crate::grant::Grantable;
@@ -7170,6 +7213,28 @@ mod tests {
 
         // Should have play land action
         assert!(actions.contains(&LegalAction::PlayLand { land_id }));
+    }
+
+    #[test]
+    fn test_select_first_decision_maker_supports_multi_target_requirement() {
+        let first = Target::Object(ObjectId::from_raw(1));
+        let second = Target::Object(ObjectId::from_raw(2));
+        let ctx = TargetsContext::new(
+            PlayerId::from_index(0),
+            ObjectId::from_raw(99),
+            "test spell",
+            vec![TargetRequirementContext {
+                description: "two targets".to_string(),
+                legal_targets: vec![first, second],
+                min_targets: 2,
+                max_targets: Some(2),
+            }],
+        );
+
+        let mut dm = SelectFirstDecisionMaker;
+        let chosen = dm.decide_targets(&setup_game(), &ctx);
+
+        assert_eq!(chosen, vec![first, second]);
     }
 
     /// Tests computation of legal attackers during declare attackers step.
@@ -9830,11 +9895,12 @@ mod tests {
             .mana_pool
             .add(ManaSymbol::Green, 1);
 
-        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(781), "Suspend Runtime")
-            .card_types(vec![CardType::Sorcery])
-            .with_spell_effect(vec![Effect::gain_life(1)])
-            .suspend(2, ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
-            .build();
+        let def =
+            crate::cards::CardDefinitionBuilder::new(CardId::from_raw(781), "Suspend Runtime")
+                .card_types(vec![CardType::Sorcery])
+                .with_spell_effect(vec![Effect::gain_life(1)])
+                .suspend(2, ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+                .build();
         let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
 
         let mut dm = crate::decision::SelectFirstDecisionMaker;
@@ -9849,7 +9915,10 @@ mod tests {
         let exiled_id = *game.exile.first().expect("card should be exiled");
         let exiled = game.object(exiled_id).expect("exiled card should exist");
         assert_eq!(exiled.zone, Zone::Exile);
-        assert_eq!(game.counter_count(exiled_id, crate::object::CounterType::Time), 2);
+        assert_eq!(
+            game.counter_count(exiled_id, crate::object::CounterType::Time),
+            2
+        );
     }
 
     #[test]
@@ -9937,26 +10006,41 @@ mod tests {
             .mana_pool
             .add(ManaSymbol::Red, 1);
 
-        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(782), "Spectacle Probe")
-            .mana_cost(ManaCost::from_pips(vec![
-                vec![ManaSymbol::Generic(2)],
-                vec![ManaSymbol::Red],
-            ]))
-            .card_types(vec![CardType::Sorcery])
-            .with_spell_effect(vec![Effect::gain_life(1)])
-            .spectacle(ManaCost::from_pips(vec![vec![ManaSymbol::Red]]))
-            .build();
+        let def =
+            crate::cards::CardDefinitionBuilder::new(CardId::from_raw(782), "Spectacle Probe")
+                .mana_cost(ManaCost::from_pips(vec![
+                    vec![ManaSymbol::Generic(2)],
+                    vec![ManaSymbol::Red],
+                ]))
+                .card_types(vec![CardType::Sorcery])
+                .with_spell_effect(vec![Effect::gain_life(1)])
+                .spectacle(ManaCost::from_pips(vec![vec![ManaSymbol::Red]]))
+                .build();
         let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
         let card = game.object(card_id).expect("spectacle card should exist");
         assert!(
-            !can_cast_with_alternative_from_hand(&game, alice, card, card_id, &card.alternative_casts[0]),
+            !can_cast_with_alternative_from_hand(
+                &game,
+                alice,
+                card,
+                card_id,
+                &card.alternative_casts[0]
+            ),
             "spectacle alternative should not be available before an opponent loses life"
         );
 
         game.life_lost_this_turn.insert(bob, 1);
-        let card = game.object(card_id).expect("spectacle card should still exist");
+        let card = game
+            .object(card_id)
+            .expect("spectacle card should still exist");
         assert!(
-            can_cast_with_alternative_from_hand(&game, alice, card, card_id, &card.alternative_casts[0]),
+            can_cast_with_alternative_from_hand(
+                &game,
+                alice,
+                card,
+                card_id,
+                &card.alternative_casts[0]
+            ),
             "spectacle alternative should become available once an opponent has lost life"
         );
     }

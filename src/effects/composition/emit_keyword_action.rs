@@ -4,7 +4,7 @@
 //! This effect provides a generic way to emit a KeywordActionEvent as part of an
 //! effect/cost pipeline so triggers can observe it.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};

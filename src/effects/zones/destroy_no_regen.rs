@@ -7,7 +7,7 @@
 use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
-    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+    ObjectApplyResultPolicy, apply_single_target_object_from_spec, apply_to_selected_objects,
 };
 use crate::event_processor::{EventOutcome, process_destroy};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -83,9 +83,12 @@ impl EffectExecutor for DestroyNoRegenerationEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         if self.spec.is_target() && self.spec.is_single() {
-            return apply_single_target_object_from_context(game, ctx, |game, ctx, object_id| {
-                Self::destroy_object_no_regen(game, ctx, object_id)
-            });
+            return apply_single_target_object_from_spec(
+                game,
+                ctx,
+                &self.spec,
+                |game, ctx, object_id| Self::destroy_object_no_regen(game, ctx, object_id),
+            );
         }
 
         let apply_result = match apply_to_selected_objects(
@@ -106,9 +109,7 @@ impl EffectExecutor for DestroyNoRegenerationEffect {
             Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
 
-        Ok(EffectOutcome::count(
-            apply_result.applied_count as i32,
-        ))
+        Ok(EffectOutcome::count(apply_result.applied_count as i32))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

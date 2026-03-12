@@ -51,10 +51,15 @@ fn turn_face_up_spec(object: &crate::object::Object) -> Option<TurnFaceUpSpec> {
 }
 
 fn foretell_cost(object: &crate::object::Object) -> Option<crate::mana::ManaCost> {
-    object.alternative_casts.iter().find_map(|method| match method {
-        crate::alternative_cast::AlternativeCastingMethod::Foretell { cost } => Some(cost.clone()),
-        _ => None,
-    })
+    object
+        .alternative_casts
+        .iter()
+        .find_map(|method| match method {
+            crate::alternative_cast::AlternativeCastingMethod::Foretell { cost } => {
+                Some(cost.clone())
+            }
+            _ => None,
+        })
 }
 
 fn plot_cost(object: &crate::object::Object) -> Option<crate::mana::ManaCost> {
@@ -65,13 +70,18 @@ fn plot_cost(object: &crate::object::Object) -> Option<crate::mana::ManaCost> {
 }
 
 fn suspend_spec(object: &crate::object::Object) -> Option<(u32, crate::mana::ManaCost)> {
-    object
-        .alternative_casts
-        .iter()
-        .find_map(|method| method.suspend_spec().map(|(time, cost)| (time, cost.clone())))
+    object.alternative_casts.iter().find_map(|method| {
+        method
+            .suspend_spec()
+            .map(|(time, cost)| (time, cost.clone()))
+    })
 }
 
-fn spell_has_suspend_timing(game: &GameState, player: PlayerId, object: &crate::object::Object) -> bool {
+fn spell_has_suspend_timing(
+    game: &GameState,
+    player: PlayerId,
+    object: &crate::object::Object,
+) -> bool {
     let is_sorcery_speed = object.has_card_type(CardType::Sorcery)
         || object.has_card_type(CardType::Creature)
         || object.has_card_type(CardType::Artifact)
@@ -93,7 +103,10 @@ fn spell_has_suspend_timing(game: &GameState, player: PlayerId, object: &crate::
         && crate::turn::is_sorcery_timing(game)
 }
 
-fn has_sorcery_speed_special_action_timing(game: &GameState, player: PlayerId) -> Result<(), ActionError> {
+fn has_sorcery_speed_special_action_timing(
+    game: &GameState,
+    player: PlayerId,
+) -> Result<(), ActionError> {
     if game.turn.active_player != player {
         return Err(ActionError::NotActivePlayer);
     }
@@ -611,9 +624,10 @@ fn can_foretell(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result
         return Err(ActionError::InvalidTiming);
     }
 
-    let foretell_action_cost = crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![
-        vec![crate::mana::ManaSymbol::Generic(2)],
-    ]));
+    let foretell_action_cost =
+        crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
+            crate::mana::ManaSymbol::Generic(2),
+        ]]));
     let check_ctx = CostCheckContext::new(card_id, player);
     for cost in foretell_action_cost.costs() {
         can_pay_with_check_context(&*cost.0, game, &check_ctx)
@@ -634,9 +648,10 @@ fn perform_foretell(
                 source: card_id,
                 controller: player,
             });
-    let foretell_action_cost = crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![
-        vec![crate::mana::ManaSymbol::Generic(2)],
-    ]));
+    let foretell_action_cost =
+        crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
+            crate::mana::ManaSymbol::Generic(2),
+        ]]));
     let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
     let mut cost_ctx =
         CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);

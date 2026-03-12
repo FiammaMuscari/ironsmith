@@ -6,6 +6,7 @@ use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
 use crate::target::ChooseSpec;
+use crate::targeting::normalize_targets_for_requirements;
 
 /// Effect that creates a reflexive triggered ability from a prior effect result.
 ///
@@ -85,22 +86,59 @@ fn choose_reflexive_targets(
                 max_targets: count.max,
             }],
         );
-        let mut selected = ctx.decision_maker.decide_targets(game, &targets_ctx);
-
-        if selected.len() < count.min {
-            selected = legal_targets.iter().take(count.min).copied().collect();
-        }
-        if let Some(max_targets) = count.max {
-            selected.truncate(max_targets);
-        }
-        if selected.len() < count.min {
-            return None;
-        }
+        let selected = ctx.decision_maker.decide_targets(game, &targets_ctx);
+        let selected = normalize_targets_for_requirements(&targets_ctx.requirements, selected)?;
 
         chosen_targets.extend(selected);
     }
 
     Some(chosen_targets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choose_reflexive_targets;
+    use crate::cards::definitions::{grizzly_bears, lightning_bolt};
+    use crate::decision::DecisionMaker;
+    use crate::decisions::context::TargetsContext;
+    use crate::effect::ChoiceCount;
+    use crate::executor::ExecutionContext;
+    use crate::game_state::{GameState, Target};
+    use crate::ids::PlayerId;
+    use crate::target::ChooseSpec;
+    use crate::zone::Zone;
+
+    struct DuplicateTargetDecisionMaker {
+        target: Target,
+    }
+
+    impl DecisionMaker for DuplicateTargetDecisionMaker {
+        fn decide_targets(&mut self, _game: &GameState, _ctx: &TargetsContext) -> Vec<Target> {
+            vec![self.target, self.target]
+        }
+    }
+
+    #[test]
+    fn reflexive_targets_are_normalized_per_requirement() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = game.create_object_from_definition(&lightning_bolt(), alice, Zone::Stack);
+        let first = game.create_object_from_definition(&grizzly_bears(), alice, Zone::Battlefield);
+        let second = game.create_object_from_definition(&grizzly_bears(), alice, Zone::Battlefield);
+
+        let mut dm = DuplicateTargetDecisionMaker {
+            target: Target::Object(first),
+        };
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        let choices =
+            vec![ChooseSpec::target(ChooseSpec::creature()).with_count(ChoiceCount::exactly(2))];
+
+        let selected = choose_reflexive_targets(&game, &mut ctx, &choices).expect("valid targets");
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0], Target::Object(first));
+        assert_eq!(selected[1], Target::Object(second));
+    }
 }
 
 impl EffectExecutor for ReflexiveTriggerEffect {

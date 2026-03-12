@@ -1,6 +1,31 @@
 use super::*;
 use crate::triggers::Trigger;
 
+pub(super) fn active_target_assignments_for_effect(
+    game: &GameState,
+    effect: &Effect,
+    controller: PlayerId,
+    source_id: ObjectId,
+    chosen_modes: Option<&[usize]>,
+    consumed_modal_selection: &mut bool,
+    assignments: &[crate::game_state::TargetAssignment],
+    cursor: &mut usize,
+) -> Vec<crate::game_state::TargetAssignment> {
+    let requirements = extract_target_requirements_for_effect_with_state(
+        game,
+        effect,
+        controller,
+        Some(source_id),
+        chosen_modes,
+        consumed_modal_selection,
+    );
+    let count = requirements.len();
+    let start = *cursor;
+    let end = start.saturating_add(count).min(assignments.len());
+    *cursor = end;
+    assignments[start..end].to_vec()
+}
+
 // ============================================================================
 // Stack Resolution
 // ============================================================================
@@ -86,7 +111,8 @@ pub(super) fn resolve_stack_entry_full(
 
     // Convert targets and validate them
     // Per MTG Rule 608.2b, if ALL targets are now illegal, the spell/ability fizzles
-    let (valid_targets, all_targets_invalid) = validate_stack_entry_targets(game, &entry);
+    let (valid_targets, valid_target_assignments, all_targets_invalid) =
+        validate_stack_entry_targets(game, &entry);
 
     // If the spell/ability had targets and ALL are now invalid, it fizzles
     if !entry.targets.is_empty() && all_targets_invalid {
@@ -126,7 +152,9 @@ pub(super) fn resolve_stack_entry_full(
     // If no triggering event is set (shouldn't happen for triggered abilities),
     // we allow the ability to proceed rather than creating a fake event
 
-    ctx = ctx.with_targets(valid_targets);
+    ctx = ctx
+        .with_targets(valid_targets)
+        .with_target_assignments(valid_target_assignments.clone());
 
     // Snapshot target objects for "last known information" before effects execute
     // This allows effects to access power/controller of targets even after they're exiled
@@ -147,8 +175,23 @@ pub(super) fn resolve_stack_entry_full(
     let etb_replacement_result: Option<(bool, bool, Zone)> = None;
 
     let mut all_events = Vec::new();
+    let mut consumed_modal_selection = false;
+    let mut assignment_cursor = 0usize;
     for effect in &effects {
-        if let Ok(outcome) = execute_effect(game, effect, &mut ctx) {
+        let effect_target_assignments = active_target_assignments_for_effect(
+            game,
+            effect,
+            entry.controller,
+            entry.object_id,
+            entry.chosen_modes.as_deref(),
+            &mut consumed_modal_selection,
+            &valid_target_assignments,
+            &mut assignment_cursor,
+        );
+        let outcome = ctx.with_temp_target_assignments(effect_target_assignments, |ctx| {
+            execute_effect(game, effect, ctx)
+        });
+        if let Ok(outcome) = outcome {
             all_events.extend(outcome.events);
         }
     }
@@ -319,9 +362,11 @@ pub(super) fn resolve_stack_entry_full(
                         ),
                         crate::effect::Until::EndOfTurn,
                     )
-                    .with_source_type(crate::continuous::EffectSourceType::Resolution {
-                        locked_targets: vec![result.new_id],
-                    });
+                    .with_source_type(
+                        crate::continuous::EffectSourceType::Resolution {
+                            locked_targets: vec![result.new_id],
+                        },
+                    );
                     let _ = crate::executor::execute_effect(
                         game,
                         &crate::effect::Effect::new(dash_haste),

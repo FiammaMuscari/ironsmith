@@ -7,7 +7,6 @@ import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
 export default function TableCore({
   selectedObjectId,
   onInspect,
-  onExpandInspector,
   zoneViews,
   zoneActivityByPlayer = {},
   deckLoadingMode,
@@ -45,7 +44,6 @@ export default function TableCore({
         opponents={opponents}
         selectedObjectId={selectedObjectId}
         onInspect={onInspect}
-        onExpandInspector={onExpandInspector}
         zoneViews={zoneViews}
         zoneActivityByPlayer={zoneActivityByPlayer}
         legalTargetPlayerIds={legalTargetPlayerIds}
@@ -60,7 +58,6 @@ export default function TableCore({
         player={me}
         selectedObjectId={selectedObjectId}
         onInspect={onInspect}
-        onExpandInspector={onExpandInspector}
         zoneViews={zoneViews}
         zoneActivity={zoneActivityByPlayer[String(me?.id ?? me?.index ?? "")] || {}}
         legalTargetPlayerIds={legalTargetPlayerIds}

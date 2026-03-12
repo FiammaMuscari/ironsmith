@@ -51,6 +51,7 @@ function decisionKey(decision) {
 export default function DecisionRouter({
   decision,
   canAct,
+  selectedObjectId = null,
   inspectorOracleTextHeight = 0,
   inlineSubmit = true,
   onSubmitActionChange = null,
@@ -101,6 +102,7 @@ export default function DecisionRouter({
           key={key}
           decision={decision}
           canAct={canAct}
+          selectedObjectId={selectedObjectId}
           inspectorOracleTextHeight={inspectorOracleTextHeight}
           inlineSubmit={inlineSubmit}
           onSubmitActionChange={onSubmitActionChange}

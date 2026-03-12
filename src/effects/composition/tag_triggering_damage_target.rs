@@ -1,6 +1,6 @@
 //! Tag the triggering damage target object snapshot for later reference.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::events::DamageEvent;
 use crate::executor::{ExecutionContext, ExecutionError};

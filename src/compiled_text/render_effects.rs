@@ -6727,7 +6727,10 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
     {
         return "Manifest dread".to_string();
     }
-    if effect.downcast_ref::<crate::effects::CipherEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::CipherEffect>()
+        .is_some()
+    {
         return "Cipher".to_string();
     }
     if let Some(backup) = effect.downcast_ref::<crate::effects::BackupEffect>() {
@@ -8948,7 +8951,7 @@ pub(super) fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> S
     match label {
         "Replicate" => format!("Replicate—{}.", cost_text.trim_end_matches('.')),
         // Most optional-cost keywords render with a space-separated payload.
-        "Kicker" | "Multikicker" | "Buyback" | "Entwine" => {
+        "Kicker" | "Multikicker" | "Buyback" | "Entwine" | "Squad" => {
             if cost_text.trim().is_empty() {
                 label.to_string()
             } else {

@@ -263,6 +263,27 @@ fn finalize_cipher_effects(mut definition: CardDefinition) -> CardDefinition {
     definition
 }
 
+fn finalize_squad_abilities(mut definition: CardDefinition) -> CardDefinition {
+    if !definition
+        .optional_costs
+        .iter()
+        .any(|cost| cost.label == "Squad")
+    {
+        return definition;
+    }
+
+    let squad_trigger = Ability::triggered(
+        Trigger::this_enters_battlefield(),
+        vec![Effect::new(crate::effects::CreateTokenCopyEffect::new(
+            ChooseSpec::Source,
+            Value::TimesPaidLabel("Squad"),
+            PlayerFilter::You,
+        ))],
+    );
+    definition.abilities.push(squad_trigger);
+    definition
+}
+
 fn finalize_definition(
     definition: CardDefinition,
     original_builder: &CardDefinitionBuilder,
@@ -270,7 +291,8 @@ fn finalize_definition(
 ) -> Result<CardDefinition, CardTextError> {
     let definition = finalize_overload_definitions(definition, original_builder, original_text)?;
     let definition = finalize_backup_abilities(definition);
-    Ok(finalize_cipher_effects(definition))
+    let definition = finalize_cipher_effects(definition);
+    Ok(finalize_squad_abilities(definition))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,12 +346,14 @@ pub(crate) enum KeywordAction {
     Soulbond,
     Soulshift(u32),
     Outlast(ManaCost),
+    Scavenge(ManaCost),
     Unearth(ManaCost),
     Ninjutsu(ManaCost),
     Backup(u32),
     Cipher,
     Dash(ManaCost),
     Plot(ManaCost),
+    Mobilize(u32),
     Suspend {
         time: u32,
         cost: ManaCost,
@@ -371,6 +395,7 @@ pub(crate) enum KeywordAction {
     Shadow,
     Horsemanship,
     Flanking,
+    UmbraArmor,
     Landwalk(Subtype),
     Bloodthirst(u32),
     Rampage(u32),
@@ -467,6 +492,7 @@ impl KeywordAction {
                 | Self::Shadow
                 | Self::Horsemanship
                 | Self::Flanking
+                | Self::UmbraArmor
                 | Self::Landwalk(_)
                 | Self::Bloodthirst(_)
                 | Self::Rampage(_)
@@ -572,12 +598,14 @@ impl KeywordAction {
             Self::Soulbond => "Soulbond".to_string(),
             Self::Soulshift(amount) => format!("Soulshift {amount}"),
             Self::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
+            Self::Scavenge(cost) => format!("Scavenge {}", cost.to_oracle()),
             Self::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
             Self::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
             Self::Backup(amount) => format!("Backup {amount}"),
             Self::Cipher => "Cipher".to_string(),
             Self::Dash(cost) => format!("Dash {}", cost.to_oracle()),
             Self::Plot(cost) => format!("Plot {}", cost.to_oracle()),
+            Self::Mobilize(amount) => format!("Mobilize {amount}"),
             Self::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
             Self::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
             Self::Overload(cost) => format!("Overload {}", cost.to_oracle()),
@@ -609,6 +637,7 @@ impl KeywordAction {
             Self::Shadow => "Shadow".to_string(),
             Self::Horsemanship => "Horsemanship".to_string(),
             Self::Flanking => "Flanking".to_string(),
+            Self::UmbraArmor => "Umbra armor".to_string(),
             Self::Landwalk(subtype) => {
                 let mut subtype = subtype.to_string().to_ascii_lowercase();
                 subtype.push_str("walk");
@@ -2413,12 +2442,14 @@ impl CardDefinitionBuilder {
             KeywordAction::Soulbond => self.soulbond(),
             KeywordAction::Soulshift(amount) => self.soulshift(amount),
             KeywordAction::Outlast(cost) => self.outlast(cost),
+            KeywordAction::Scavenge(cost) => self.scavenge(cost),
             KeywordAction::Unearth(cost) => self.unearth(cost),
             KeywordAction::Ninjutsu(cost) => self.ninjutsu(cost),
             KeywordAction::Backup(amount) => self.backup(amount),
             KeywordAction::Cipher => self.cipher(),
             KeywordAction::Dash(cost) => self.dash(cost),
             KeywordAction::Plot(cost) => self.plot(cost),
+            KeywordAction::Mobilize(amount) => self.mobilize(amount),
             KeywordAction::Suspend { time, cost } => self.suspend(time, cost),
             KeywordAction::Disturb(cost) => self.disturb(cost),
             KeywordAction::Overload(cost) => self.overload(cost),
@@ -2455,6 +2486,9 @@ impl CardDefinitionBuilder {
             KeywordAction::Horsemanship => self.horsemanship(),
             KeywordAction::Flanking => {
                 self.with_ability(Ability::static_ability(StaticAbility::flanking()))
+            }
+            KeywordAction::UmbraArmor => {
+                self.with_ability(Ability::static_ability(StaticAbility::umbra_armor()))
             }
             KeywordAction::Landwalk(subtype) => {
                 self.with_ability(Ability::static_ability(StaticAbility::landwalk(subtype)))
@@ -3254,6 +3288,40 @@ impl CardDefinitionBuilder {
                 mana_cost: total_cost,
                 effects: vec![Effect::new(crate::effects::UnearthEffect::new())],
                 choices: vec![],
+                timing: ActivationTiming::SorcerySpeed,
+                additional_restrictions: Vec::new(),
+                activation_restrictions: vec![],
+                mana_output: None,
+                activation_condition: None,
+                mana_usage_restrictions: vec![],
+            }),
+            functional_zones: vec![Zone::Graveyard],
+            text: Some(text),
+        })
+    }
+
+    /// Add scavenge with a mana cost.
+    ///
+    /// Scavenge means "{cost}, Exile this card from your graveyard: Put a number
+    /// of +1/+1 counters equal to this card's power on target creature. Activate
+    /// only as a sorcery."
+    pub fn scavenge(self, cost: ManaCost) -> Self {
+        let text = format!("Scavenge {}", cost.to_oracle());
+        let total_cost = TotalCost::from_costs(vec![
+            crate::costs::Cost::mana(cost),
+            crate::costs::Cost::exile_self(),
+        ]);
+        let target = ChooseSpec::target(ChooseSpec::creature());
+
+        self.with_ability(Ability {
+            kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+                mana_cost: total_cost,
+                effects: vec![Effect::put_counters(
+                    CounterType::PlusOnePlusOne,
+                    Value::SourcePower,
+                    target.clone(),
+                )],
+                choices: vec![target],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
                 activation_restrictions: vec![],
@@ -4257,6 +4325,27 @@ impl CardDefinitionBuilder {
         )
     }
 
+    /// Add mobilize N.
+    ///
+    /// Mobilize means "Whenever this creature attacks, create N tapped and
+    /// attacking 1/1 red Warrior creature tokens. Sacrifice them at the
+    /// beginning of the next end step."
+    pub fn mobilize(self, amount: u32) -> Self {
+        let text = format!("Mobilize {amount}");
+        let effect = crate::effects::CreateTokenEffect::new(
+            Self::mobilize_warrior_token(),
+            amount,
+            PlayerFilter::You,
+        )
+        .tapped()
+        .attacking()
+        .sacrifice_at_next_end_step();
+
+        self.with_ability(
+            Ability::triggered(Trigger::this_attacks(), vec![Effect::new(effect)]).with_text(&text),
+        )
+    }
+
     /// Add shadow.
     pub fn shadow(self) -> Self {
         self.with_ability(Ability::static_ability(StaticAbility::shadow()).with_text("Shadow"))
@@ -4858,6 +4947,16 @@ impl CardDefinitionBuilder {
             .subtypes(vec![Subtype::Phyrexian, Subtype::Germ])
             .color_indicator(ColorSet::BLACK)
             .power_toughness(PowerToughness::fixed(0, 0))
+            .build()
+    }
+
+    fn mobilize_warrior_token() -> CardDefinition {
+        CardDefinitionBuilder::new(CardId::new(), "Warrior")
+            .token()
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Warrior])
+            .color_indicator(ColorSet::RED)
+            .power_toughness(PowerToughness::fixed(1, 1))
             .build()
     }
 

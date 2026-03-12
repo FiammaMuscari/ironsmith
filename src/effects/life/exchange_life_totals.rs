@@ -1,6 +1,6 @@
 //! Exchange life totals effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::event_processor::process_life_gain_with_event;

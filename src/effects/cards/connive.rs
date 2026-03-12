@@ -1,6 +1,6 @@
 //! Connive effect implementation.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::DrawCardsEffect;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{normalize_object_selection, resolve_objects_from_spec};

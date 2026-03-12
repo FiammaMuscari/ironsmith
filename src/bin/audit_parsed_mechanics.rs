@@ -239,9 +239,25 @@ fn build_parse_input(card: &Value) -> Option<CardInput> {
     if is_non_playable(type_line, oracle_text, card) {
         return None;
     }
-    let oracle_text = oracle_text?.trim().to_string();
+    let mut oracle_text = oracle_text?.trim().to_string();
     if oracle_text.is_empty() {
         return None;
+    }
+    if card.get("layout").and_then(Value::as_str) == Some("split") {
+        let stripped = oracle_text
+            .lines()
+            .filter(|line| {
+                let normalized = line.trim().to_ascii_lowercase();
+                !(normalized == "fuse"
+                    || normalized
+                        .strip_prefix("fuse ")
+                        .is_some_and(|rest| rest.starts_with('(')))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !stripped.trim().is_empty() {
+            oracle_text = stripped;
+        }
     }
 
     let power = pick_field(card, face, "power");

@@ -107,7 +107,9 @@ mod tests {
             PlayerFilter::Any,
             vec![Effect::lose_life_player(1, PlayerFilter::IteratedPlayer)],
         );
-        let result = effect.execute(&mut game, &mut ctx).expect("effect should resolve");
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect should resolve");
 
         assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).expect("alice").life, 19);

@@ -314,7 +314,7 @@ impl CostExecutableEffect for DiscardEffect {
 mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
-    use crate::effect::{ExecutionFact};
+    use crate::effect::ExecutionFact;
     use crate::events::cards::DiscardEvent;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};

@@ -2907,53 +2907,49 @@ pub(super) fn propose_spell_cast(
             }
 
             if let crate::alternative_cast::AlternativeCastingMethod::Disturb { .. } = method {
-                let other_face = obj.other_face.ok_or_else(|| {
-                    GameLoopError::InvalidState("Disturb spell is missing other face metadata".to_string())
+                let other_def = crate::cards::linked_face_definition_by_name_or_id(
+                    obj.other_face_name.as_deref(),
+                    obj.other_face,
+                )
+                .ok_or_else(|| {
+                    GameLoopError::InvalidState(
+                        "Disturb back face definition could not be resolved".to_string(),
+                    )
                 })?;
-                let other_def = crate::cards::builtin_registry()
-                    .get_by_id(other_face)
-                    .ok_or_else(|| {
-                        GameLoopError::InvalidState(format!(
-                            "Disturb back face {:?} not found in builtin registry",
-                            other_face
-                        ))
-                    })?;
-                obj.apply_definition_face(other_def);
+                obj.apply_definition_face(&other_def);
             }
 
-            if let crate::alternative_cast::AlternativeCastingMethod::Overload { effects, .. } = method {
+            if let crate::alternative_cast::AlternativeCastingMethod::Overload { effects, .. } =
+                method
+            {
                 obj.spell_effect = Some(effects.clone());
             }
         }
 
         match casting_method {
             CastingMethod::SplitOtherHalf => {
-                let other_face = obj.other_face.ok_or_else(|| {
-                    GameLoopError::InvalidState("Split spell is missing other face metadata".to_string())
+                let other_def = crate::cards::linked_face_definition_by_name_or_id(
+                    obj.other_face_name.as_deref(),
+                    obj.other_face,
+                )
+                .ok_or_else(|| {
+                    GameLoopError::InvalidState(
+                        "Split back face definition could not be resolved".to_string(),
+                    )
                 })?;
-                let other_def = crate::cards::builtin_registry()
-                    .get_by_id(other_face)
-                    .ok_or_else(|| {
-                        GameLoopError::InvalidState(format!(
-                            "Split back face {:?} not found in builtin registry",
-                            other_face
-                        ))
-                    })?;
-                obj.apply_definition_face(other_def);
+                obj.apply_definition_face(&other_def);
             }
             CastingMethod::Fuse => {
-                let other_face = obj.other_face.ok_or_else(|| {
-                    GameLoopError::InvalidState("Fused split spell is missing other face metadata".to_string())
+                let other_def = crate::cards::linked_face_definition_by_name_or_id(
+                    obj.other_face_name.as_deref(),
+                    obj.other_face,
+                )
+                .ok_or_else(|| {
+                    GameLoopError::InvalidState(
+                        "Fused split back face definition could not be resolved".to_string(),
+                    )
                 })?;
-                let other_def = crate::cards::builtin_registry()
-                    .get_by_id(other_face)
-                    .ok_or_else(|| {
-                        GameLoopError::InvalidState(format!(
-                            "Fused split back face {:?} not found in builtin registry",
-                            other_face
-                        ))
-                    })?;
-                obj.apply_fused_split_spell_overlay(other_def);
+                obj.apply_fused_split_spell_overlay(&other_def);
             }
             _ => {}
         }
@@ -2998,6 +2994,7 @@ pub(super) fn finalize_spell_cast(
     from_zone: Zone,
     caster: PlayerId,
     targets: Vec<Target>,
+    target_assignments: Vec<crate::game_state::TargetAssignment>,
     x_value: Option<u32>,
     casting_method: CastingMethod,
     optional_costs_paid: OptionalCostsPaid,
@@ -3194,6 +3191,7 @@ pub(super) fn finalize_spell_cast(
     // Create stack entry with targets, X value, casting method, optional costs, and chosen modes
     let mut entry = StackEntry::new(new_id, caster)
         .with_targets(targets.clone())
+        .with_target_assignments(target_assignments)
         .with_casting_method(casting_method)
         .with_optional_costs_paid(optional_costs_paid)
         .with_chosen_modes(chosen_modes)

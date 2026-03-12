@@ -162,7 +162,8 @@ export default function DecisionPanel({ inspectorOracleTextHeight = 0 }) {
     : null;
   const stackSize = state?.stack_size || 0;
   const holdingPriority = holdRule === "always";
-  const passLabel = holdingPriority
+  const hasCustomPassLabel = !!passAction?.label && passAction.label !== "Pass priority";
+  const passLabel = holdingPriority || hasCustomPassLabel
     ? passAction?.label || "Pass priority"
     : `→ ${nextPriorityAdvanceLabel(state?.phase, state?.step, stackSize)}`;
   const passColorKey = priorityPassButtonColor(state?.phase, state?.step, stackSize);

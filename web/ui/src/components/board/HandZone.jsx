@@ -64,7 +64,9 @@ function buildPlayableMaps(state, player) {
       action.kind === "cast_spell"
       || action.kind === "play_land"
       || action.kind === "activate_ability"
-      || action.kind === "activate_mana_ability";
+      || action.kind === "activate_mana_ability"
+      || action.kind === "serum_powder_mulligan"
+      || action.kind === "begin_with_gemstone_caverns";
 
     if (isHandCard && isHandInteraction) {
       if (!handPlayable.has(objId)) handPlayable.set(objId, []);

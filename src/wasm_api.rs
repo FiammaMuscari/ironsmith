@@ -28,6 +28,7 @@ use crate::ids::{
     ObjectId, PlayerId, reset_runtime_id_counters, restore_id_counters, snapshot_id_counters,
 };
 use crate::mana::ManaSymbol;
+use crate::targeting::{normalize_targets_for_requirements, validate_flat_target_assignment};
 use crate::triggers::TriggerQueue;
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
@@ -376,9 +377,16 @@ struct ViewedCardsSnapshot {
     subject: u8,
     zone: String,
     visibility: String,
+    cards: Vec<ViewedCardSnapshot>,
     card_ids: Vec<u64>,
     source: Option<u64>,
     description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ViewedCardSnapshot {
+    id: u64,
+    name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -942,6 +950,17 @@ impl GameSnapshot {
                     } else {
                         "private".to_string()
                     },
+                    cards: view
+                        .cards
+                        .iter()
+                        .map(|id| ViewedCardSnapshot {
+                            id: id.0,
+                            name: game
+                                .object(*id)
+                                .map(|obj| obj.name.clone())
+                                .unwrap_or_else(|| format!("Card #{}", id.0)),
+                        })
+                        .collect(),
                     card_ids: view.cards.iter().map(|id| id.0).collect(),
                     source: view.source.map(|id| id.0),
                     description: view.description.clone(),
@@ -971,6 +990,8 @@ struct OptionView {
     legal: bool,
     repeatable: bool,
     max_count: Option<u32>,
+    object_id: Option<u64>,
+    object_controller: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1114,6 +1135,8 @@ impl DecisionView {
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: None,
+                        object_controller: None,
                     },
                     OptionView {
                         index: 0,
@@ -1121,6 +1144,8 @@ impl DecisionView {
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: None,
+                        object_controller: None,
                     },
                 ],
                 source_id: resolve_source_id(boolean.source),
@@ -1175,6 +1200,11 @@ impl DecisionView {
                                 legal: opt.legal,
                                 repeatable,
                                 max_count,
+                                object_id: opt.object_id.map(|id| id.0),
+                                object_controller: opt
+                                    .object_id
+                                    .and_then(|id| game.object(id))
+                                    .map(|obj| obj.controller.0),
                             }
                         })
                         .collect()
@@ -1200,6 +1230,8 @@ impl DecisionView {
                         legal: mode.legal,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: None,
+                        object_controller: None,
                     })
                     .collect(),
                 source_id: resolve_source_id(modes.source),
@@ -1225,6 +1257,8 @@ impl DecisionView {
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: None,
+                        object_controller: None,
                     })
                     .collect(),
                 source_id: resolve_source_id(hybrid.source),
@@ -1242,12 +1276,14 @@ impl DecisionView {
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(index, (_, name))| OptionView {
+                    .map(|(index, (object_id, name))| OptionView {
                         index,
                         description: name.clone(),
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: Some(object_id.0),
+                        object_controller: game.object(*object_id).map(|obj| obj.controller.0),
                     })
                     .collect(),
                 source_id: resolve_source_id(order.source),
@@ -1274,6 +1310,16 @@ impl DecisionView {
                         legal: true,
                         repeatable: true,
                         max_count: Some(distribute.total),
+                        object_id: match &target.target {
+                            Target::Object(object_id) => Some(object_id.0),
+                            _ => None,
+                        },
+                        object_controller: match &target.target {
+                            Target::Object(object_id) => {
+                                game.object(*object_id).map(|obj| obj.controller.0)
+                            }
+                            _ => None,
+                        },
                     })
                     .collect(),
                 source_id: resolve_source_id(distribute.source),
@@ -1303,6 +1349,8 @@ impl DecisionView {
                             legal: true,
                             repeatable: repeatable_colors,
                             max_count: Some(if repeatable_colors { colors.count } else { 1 }),
+                            object_id: None,
+                            object_controller: None,
                         })
                         .collect(),
                     source_id: resolve_source_id(colors.source),
@@ -1333,6 +1381,8 @@ impl DecisionView {
                         legal: *available > 0,
                         repeatable: *available > 1,
                         max_count: Some(*available),
+                        object_id: None,
+                        object_controller: None,
                     })
                     .collect(),
                 source_id: resolve_source_id(counters.source),
@@ -1379,6 +1429,15 @@ impl DecisionView {
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
+                        object_id: proliferate
+                            .eligible_permanents
+                            .get(index)
+                            .map(|(id, _)| id.0),
+                        object_controller: proliferate
+                            .eligible_permanents
+                            .get(index)
+                            .and_then(|(id, _)| game.object(*id))
+                            .map(|obj| obj.controller.0),
                     })
                     .chain(proliferate.eligible_players.iter().enumerate().map(
                         |(offset, (_, name))| OptionView {
@@ -1387,6 +1446,8 @@ impl DecisionView {
                             legal: true,
                             repeatable: false,
                             max_count: Some(1),
+                            object_id: None,
+                            object_controller: None,
                         },
                     ))
                     .collect(),
@@ -1772,11 +1833,8 @@ impl DecisionMaker for WasmReplayDecisionMaker {
             }
             _ => {
                 self.capture_once_for_game(game, DecisionContext::Targets(ctx.clone()));
-                ctx.requirements
-                    .iter()
-                    .filter(|requirement| requirement.min_targets > 0)
-                    .filter_map(|requirement| requirement.legal_targets.first().cloned())
-                    .collect()
+                normalize_targets_for_requirements(&ctx.requirements, Vec::new())
+                    .unwrap_or_default()
             }
         }
     }
@@ -1949,6 +2007,8 @@ pub struct WasmGame {
     registry: CardRegistry,
     trigger_queue: TriggerQueue,
     priority_state: PriorityLoopState,
+    pregame: Option<PregameState>,
+    match_format: MatchFormatInput,
     pending_decision: Option<DecisionContext>,
     pending_replay_action: Option<PendingReplayAction>,
     /// Checkpoint at the start of the current user-initiated spell/ability
@@ -2055,6 +2115,59 @@ enum MatchFormatInput {
     Commander,
 }
 
+#[derive(Debug, Clone)]
+struct PregameState {
+    opening_hand_size: usize,
+    format: MatchFormatInput,
+    mulligans_taken: HashMap<PlayerId, u32>,
+    stage: PregameStage,
+}
+
+#[derive(Debug, Clone)]
+enum PregameStage {
+    MulliganDecision {
+        undecided_players: Vec<PlayerId>,
+        round_mulliganers: Vec<PlayerId>,
+    },
+    BottomCards {
+        queue: Vec<PlayerId>,
+        pending_order: Option<(PlayerId, Vec<ObjectId>)>,
+    },
+    OpeningActions {
+        current_index: usize,
+        pending_gemstone_exile: Option<(PlayerId, ObjectId)>,
+    },
+}
+
+impl PregameState {
+    fn new(turn_order: &[PlayerId], opening_hand_size: usize, format: MatchFormatInput) -> Self {
+        Self {
+            opening_hand_size,
+            format,
+            mulligans_taken: HashMap::new(),
+            stage: PregameStage::MulliganDecision {
+                undecided_players: turn_order.to_vec(),
+                round_mulliganers: Vec::new(),
+            },
+        }
+    }
+
+    fn free_mulligan_count(&self) -> u32 {
+        match self.format {
+            MatchFormatInput::Commander => 1,
+            MatchFormatInput::Normal => 0,
+        }
+    }
+
+    fn cards_to_bottom(&self, player: PlayerId) -> usize {
+        self.mulligans_taken
+            .get(&player)
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(self.free_mulligan_count()) as usize
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
     console_error_panic_hook::set_once();
@@ -2072,6 +2185,8 @@ impl WasmGame {
             registry: CardRegistry::new(),
             trigger_queue: TriggerQueue::new(),
             priority_state,
+            pregame: None,
+            match_format: MatchFormatInput::Normal,
             pending_decision: None,
             pending_replay_action: None,
             pending_action_checkpoint: None,
@@ -2126,6 +2241,7 @@ impl WasmGame {
 
         let opening_hand_size = config.opening_hand_size.unwrap_or(7);
         self.initialize_empty_match(config.player_names, config.starting_life, config.seed);
+        self.match_format = config.format;
 
         if let MatchFormatInput::Commander = config.format {
             let Some(decks) = config.decks.as_ref() else {
@@ -2792,6 +2908,10 @@ impl WasmGame {
             .take()
             .ok_or_else(|| JsValue::from_str("no pending decision to dispatch"))?;
 
+        if self.pregame.is_some() {
+            return self.dispatch_pregame_decision(pending_ctx, command);
+        }
+
         // If this decision came from the TurnRunner, route through runner.respond_*()
         if self.runner_pending_decision {
             self.runner_pending_decision = false;
@@ -3076,7 +3196,14 @@ impl WasmGame {
     fn priority_action_starts_cancelable_action_chain(action: &LegalAction) -> bool {
         !matches!(
             action,
-            LegalAction::PassPriority | LegalAction::PlayLand { .. }
+            LegalAction::PassPriority
+                | LegalAction::PlayLand { .. }
+                | LegalAction::KeepOpeningHand
+                | LegalAction::TakeMulligan
+                | LegalAction::SerumPowderMulligan { .. }
+                | LegalAction::ContinuePregame
+                | LegalAction::BeginGame
+                | LegalAction::BeginWithGemstoneCaverns { .. }
         )
     }
 
@@ -3887,6 +4014,8 @@ impl WasmGame {
         reset_runtime_id_counters();
         self.game = GameState::new(player_names, starting_life);
         self.game.set_random_seed(seed);
+        self.match_format = MatchFormatInput::Normal;
+        self.pregame = None;
     }
 
     fn populate_demo_libraries(&mut self) -> Result<(), JsValue> {
@@ -3962,12 +4091,625 @@ impl WasmGame {
         Ok(())
     }
 
+    fn player_hand_ids(&self, player: PlayerId) -> Vec<ObjectId> {
+        self.game
+            .player(player)
+            .map(|player| player.hand.clone())
+            .unwrap_or_default()
+    }
+
+    fn build_hand_selectable_objects(
+        &self,
+        player: PlayerId,
+    ) -> Vec<crate::decisions::context::SelectableObject> {
+        self.player_hand_ids(player)
+            .into_iter()
+            .map(|id| {
+                let name = self
+                    .game
+                    .object(id)
+                    .map(|object| object.name.clone())
+                    .unwrap_or_else(|| format!("Card {}", id.0));
+                crate::decisions::context::SelectableObject::new(id, name)
+            })
+            .collect()
+    }
+
+    fn shuffle_hand_into_library_and_draw(&mut self, player: PlayerId, opening_hand_size: usize) {
+        let hand_ids = self.player_hand_ids(player);
+        for id in hand_ids {
+            let _ = self.game.move_object(id, Zone::Library);
+        }
+        self.game.shuffle_player_library(player);
+        let _ = self.game.draw_cards(player, opening_hand_size);
+    }
+
+    fn move_cards_to_library_bottom(&mut self, ordered_cards_bottom_first: &[ObjectId]) {
+        for card_id in ordered_cards_bottom_first.iter().rev().copied() {
+            let Some(owner) = self.game.object(card_id).map(|object| object.owner) else {
+                continue;
+            };
+            let Some(new_id) = self.game.move_object(card_id, Zone::Library) else {
+                continue;
+            };
+            let Some(player) = self.game.player_mut(owner) else {
+                continue;
+            };
+            let Some(index) = player
+                .library
+                .iter()
+                .rposition(|candidate| *candidate == new_id)
+            else {
+                continue;
+            };
+            let moved = player.library.remove(index);
+            player.library.insert(0, moved);
+        }
+    }
+
+    fn normalize_pregame_state(&mut self) -> Result<(), JsValue> {
+        loop {
+            let Some(pregame) = self.pregame.as_ref() else {
+                return Ok(());
+            };
+
+            match &pregame.stage {
+                PregameStage::MulliganDecision {
+                    undecided_players,
+                    round_mulliganers,
+                } if undecided_players.is_empty() => {
+                    if round_mulliganers.is_empty() {
+                        let queue = self
+                            .game
+                            .turn_order
+                            .iter()
+                            .copied()
+                            .filter(|player| pregame.cards_to_bottom(*player) > 0)
+                            .collect();
+                        if let Some(pregame) = self.pregame.as_mut() {
+                            pregame.stage = PregameStage::BottomCards {
+                                queue,
+                                pending_order: None,
+                            };
+                        }
+                        continue;
+                    }
+
+                    let opening_hand_size = pregame.opening_hand_size;
+                    let mulliganers = round_mulliganers.clone();
+                    if let Some(pregame) = self.pregame.as_mut() {
+                        for player in &mulliganers {
+                            *pregame.mulligans_taken.entry(*player).or_insert(0) += 1;
+                        }
+                    }
+                    for player in mulliganers.iter().copied() {
+                        self.shuffle_hand_into_library_and_draw(player, opening_hand_size);
+                    }
+                    if let Some(pregame) = self.pregame.as_mut() {
+                        pregame.stage = PregameStage::MulliganDecision {
+                            undecided_players: mulliganers,
+                            round_mulliganers: Vec::new(),
+                        };
+                    }
+                    continue;
+                }
+                PregameStage::BottomCards {
+                    queue,
+                    pending_order,
+                } if queue.is_empty() && pending_order.is_none() => {
+                    if let Some(pregame) = self.pregame.as_mut() {
+                        pregame.stage = PregameStage::OpeningActions {
+                            current_index: 0,
+                            pending_gemstone_exile: None,
+                        };
+                    }
+                    continue;
+                }
+                PregameStage::OpeningActions {
+                    current_index,
+                    pending_gemstone_exile,
+                } if pending_gemstone_exile.is_none()
+                    && *current_index >= self.game.turn_order.len() =>
+                {
+                    self.pregame = None;
+                    continue;
+                }
+                _ => return Ok(()),
+            }
+        }
+    }
+
+    fn build_pregame_decision(&self) -> Result<Option<DecisionContext>, JsValue> {
+        let Some(pregame) = self.pregame.as_ref() else {
+            return Ok(None);
+        };
+
+        let ctx = match &pregame.stage {
+            PregameStage::MulliganDecision {
+                undecided_players, ..
+            } => {
+                let Some(player) = undecided_players.first().copied() else {
+                    return Ok(None);
+                };
+                let mut actions = vec![LegalAction::KeepOpeningHand, LegalAction::TakeMulligan];
+                actions.extend(
+                    self.player_hand_ids(player)
+                        .into_iter()
+                        .filter_map(|card_id| {
+                            let is_serum_powder = self
+                                .game
+                                .object(card_id)
+                                .is_some_and(|object| object.name == "Serum Powder");
+                            is_serum_powder.then_some(LegalAction::SerumPowderMulligan { card_id })
+                        }),
+                );
+                DecisionContext::Priority(crate::decisions::context::PriorityContext::new(
+                    player, actions,
+                ))
+            }
+            PregameStage::BottomCards {
+                queue,
+                pending_order,
+            } => {
+                if let Some((player, selected_cards)) = pending_order {
+                    let items = selected_cards
+                        .iter()
+                        .filter_map(|id| {
+                            self.game
+                                .object(*id)
+                                .map(|object| (*id, object.name.clone()))
+                        })
+                        .collect();
+                    DecisionContext::Order(crate::decisions::context::OrderContext::new(
+                        *player,
+                        None,
+                        "Order the selected cards for the bottom of your library. The first option becomes the bottom-most card.",
+                        items,
+                    ))
+                } else {
+                    let Some(player) = queue.first().copied() else {
+                        return Ok(None);
+                    };
+                    let amount = pregame.cards_to_bottom(player);
+                    DecisionContext::SelectObjects(
+                        crate::decisions::context::SelectObjectsContext::new(
+                            player,
+                            None,
+                            format!("Choose {amount} card(s) to put on the bottom of your library"),
+                            self.build_hand_selectable_objects(player),
+                            amount,
+                            Some(amount),
+                        ),
+                    )
+                }
+            }
+            PregameStage::OpeningActions {
+                current_index,
+                pending_gemstone_exile,
+            } => {
+                let Some(player) = self.game.turn_order.get(*current_index).copied() else {
+                    return Ok(None);
+                };
+                if let Some((exiling_player, source)) = pending_gemstone_exile {
+                    if *exiling_player != player {
+                        return Err(JsValue::from_str(
+                            "pregame gemstone exile prompt is out of sync with turn order",
+                        ));
+                    }
+                    DecisionContext::SelectObjects(
+                        crate::decisions::context::SelectObjectsContext::new(
+                            player,
+                            Some(*source),
+                            "Choose a card from your hand to exile for Gemstone Caverns",
+                            self.build_hand_selectable_objects(player),
+                            1,
+                            Some(1),
+                        ),
+                    )
+                } else {
+                    let is_last_player = *current_index + 1 >= self.game.turn_order.len();
+                    let mut actions = vec![if is_last_player {
+                        LegalAction::BeginGame
+                    } else {
+                        LegalAction::ContinuePregame
+                    }];
+                    let starting_player = self.game.turn_order.first().copied();
+                    let hand_ids = self.player_hand_ids(player);
+                    let can_use_gemstone = starting_player != Some(player) && hand_ids.len() >= 2;
+                    if can_use_gemstone {
+                        actions.extend(hand_ids.into_iter().filter_map(|card_id| {
+                            let is_gemstone = self
+                                .game
+                                .object(card_id)
+                                .is_some_and(|object| object.name == "Gemstone Caverns");
+                            is_gemstone.then_some(LegalAction::BeginWithGemstoneCaverns { card_id })
+                        }));
+                    }
+                    DecisionContext::Priority(crate::decisions::context::PriorityContext::new(
+                        player, actions,
+                    ))
+                }
+            }
+        };
+
+        Ok(Some(ctx))
+    }
+
+    fn apply_pregame_priority_action(&mut self, action: LegalAction) -> Result<(), JsValue> {
+        match action {
+            LegalAction::KeepOpeningHand => {
+                let Some(PregameState {
+                    stage:
+                        PregameStage::MulliganDecision {
+                            undecided_players, ..
+                        },
+                    ..
+                }) = self.pregame.as_mut()
+                else {
+                    return Err(JsValue::from_str(
+                        "keep hand is only legal during mulligan decisions",
+                    ));
+                };
+                if undecided_players.is_empty() {
+                    return Err(JsValue::from_str(
+                        "no player is waiting on a mulligan decision",
+                    ));
+                }
+                undecided_players.remove(0);
+            }
+            LegalAction::TakeMulligan => {
+                let Some(PregameState {
+                    stage:
+                        PregameStage::MulliganDecision {
+                            undecided_players,
+                            round_mulliganers,
+                        },
+                    ..
+                }) = self.pregame.as_mut()
+                else {
+                    return Err(JsValue::from_str(
+                        "mulligan is only legal during mulligan decisions",
+                    ));
+                };
+                let Some(player) = undecided_players.first().copied() else {
+                    return Err(JsValue::from_str(
+                        "no player is waiting on a mulligan decision",
+                    ));
+                };
+                undecided_players.remove(0);
+                round_mulliganers.push(player);
+            }
+            LegalAction::SerumPowderMulligan { card_id } => {
+                let player = match self.pregame.as_ref() {
+                    Some(PregameState {
+                        stage:
+                            PregameStage::MulliganDecision {
+                                undecided_players, ..
+                            },
+                        ..
+                    }) => undecided_players.first().copied(),
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    JsValue::from_str("Serum Powder can only be used while mulliganing")
+                })?;
+                let hand_ids = self.player_hand_ids(player);
+                if !hand_ids.contains(&card_id) {
+                    return Err(JsValue::from_str(
+                        "Serum Powder must be in the current player's hand",
+                    ));
+                }
+                let is_serum_powder = self
+                    .game
+                    .object(card_id)
+                    .is_some_and(|object| object.name == "Serum Powder");
+                if !is_serum_powder {
+                    return Err(JsValue::from_str("selected card is not Serum Powder"));
+                }
+                let draw_count = hand_ids.len();
+                for id in hand_ids {
+                    let _ = self.game.move_object(id, Zone::Exile);
+                }
+                let _ = self.game.draw_cards(player, draw_count);
+            }
+            LegalAction::ContinuePregame | LegalAction::BeginGame => {
+                let Some(PregameState {
+                    stage:
+                        PregameStage::OpeningActions {
+                            current_index,
+                            pending_gemstone_exile,
+                        },
+                    ..
+                }) = self.pregame.as_mut()
+                else {
+                    return Err(JsValue::from_str(
+                        "continue is only legal during pregame opening actions",
+                    ));
+                };
+                if pending_gemstone_exile.is_some() {
+                    return Err(JsValue::from_str(
+                        "Gemstone Caverns requires exiling a card before continuing",
+                    ));
+                }
+                *current_index += 1;
+            }
+            LegalAction::BeginWithGemstoneCaverns { card_id } => {
+                let player = match self.pregame.as_ref() {
+                    Some(PregameState {
+                        stage:
+                            PregameStage::OpeningActions {
+                                current_index,
+                                pending_gemstone_exile: None,
+                            },
+                        ..
+                    }) => self.game.turn_order.get(*current_index).copied(),
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    JsValue::from_str(
+                        "Gemstone Caverns can only be used during pregame opening actions",
+                    )
+                })?;
+                let starting_player = self.game.turn_order.first().copied();
+                let hand_ids = self.player_hand_ids(player);
+                if starting_player == Some(player) {
+                    return Err(JsValue::from_str(
+                        "the starting player can't use Gemstone Caverns before the game",
+                    ));
+                }
+                if hand_ids.len() < 2 {
+                    return Err(JsValue::from_str(
+                        "Gemstone Caverns requires another card in hand to exile",
+                    ));
+                }
+                if !hand_ids.contains(&card_id) {
+                    return Err(JsValue::from_str(
+                        "Gemstone Caverns must be in the current player's hand",
+                    ));
+                }
+                let is_gemstone = self
+                    .game
+                    .object(card_id)
+                    .is_some_and(|object| object.name == "Gemstone Caverns");
+                if !is_gemstone {
+                    return Err(JsValue::from_str("selected card is not Gemstone Caverns"));
+                }
+                let Some(new_id) = self.game.move_object(card_id, Zone::Battlefield) else {
+                    return Err(JsValue::from_str(
+                        "failed to move Gemstone Caverns to battlefield",
+                    ));
+                };
+                let _ = self
+                    .game
+                    .add_counters(new_id, crate::object::CounterType::Luck, 1);
+                let Some(PregameState {
+                    stage:
+                        PregameStage::OpeningActions {
+                            pending_gemstone_exile,
+                            ..
+                        },
+                    ..
+                }) = self.pregame.as_mut()
+                else {
+                    return Err(JsValue::from_str(
+                        "pregame opening actions disappeared while resolving Gemstone Caverns",
+                    ));
+                };
+                *pending_gemstone_exile = Some((player, new_id));
+            }
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "illegal pregame priority action: {other:?}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn dispatch_pregame_decision(
+        &mut self,
+        pending_ctx: DecisionContext,
+        command: UiCommand,
+    ) -> Result<JsValue, JsValue> {
+        let restore =
+            |this: &mut Self, ctx: DecisionContext, err: JsValue| -> Result<JsValue, JsValue> {
+                this.pending_decision = Some(ctx);
+                Err(err)
+            };
+
+        match (&pending_ctx, command) {
+            (DecisionContext::Priority(priority), UiCommand::PriorityAction { action_index }) => {
+                let action =
+                    resolve_priority_action_by_index(priority, action_index).ok_or_else(|| {
+                        JsValue::from_str(&format!("invalid priority action index: {action_index}"))
+                    });
+                let action = match action {
+                    Ok(action) => action,
+                    Err(err) => return restore(self, pending_ctx, err),
+                };
+                if let Err(err) = self.apply_pregame_priority_action(action) {
+                    return restore(self, pending_ctx, err);
+                }
+            }
+            (DecisionContext::SelectObjects(objects), UiCommand::SelectObjects { object_ids }) => {
+                let legal_ids: Vec<u64> = objects
+                    .candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id.0)
+                    .collect();
+                if let Err(err) =
+                    validate_object_selection(objects.min, objects.max, &object_ids, &legal_ids)
+                {
+                    return restore(self, pending_ctx, err);
+                }
+                let selected: Vec<ObjectId> =
+                    object_ids.into_iter().map(ObjectId::from_raw).collect();
+                enum PregameSelectResolution {
+                    BottomNow,
+                    BottomNeedsOrdering(PlayerId),
+                    GemstoneExile(ObjectId),
+                }
+
+                let resolution = match self.pregame.as_ref().map(|pregame| &pregame.stage) {
+                    Some(PregameStage::BottomCards {
+                        queue,
+                        pending_order,
+                    }) if pending_order.is_none() => {
+                        let Some(player) = queue.first().copied() else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("no player is waiting to bottom cards"),
+                            );
+                        };
+                        if selected.len() <= 1 {
+                            PregameSelectResolution::BottomNow
+                        } else {
+                            PregameSelectResolution::BottomNeedsOrdering(player)
+                        }
+                    }
+                    Some(PregameStage::OpeningActions {
+                        pending_gemstone_exile,
+                        ..
+                    }) if pending_gemstone_exile.is_some() => {
+                        let Some(card_id) = selected.first().copied() else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("expected exactly one card to exile"),
+                            );
+                        };
+                        PregameSelectResolution::GemstoneExile(card_id)
+                    }
+                    _ => {
+                        return restore(
+                            self,
+                            pending_ctx,
+                            JsValue::from_str("unexpected select_objects command during pregame"),
+                        );
+                    }
+                };
+
+                match resolution {
+                    PregameSelectResolution::BottomNow => {
+                        self.move_cards_to_library_bottom(&selected);
+                        let Some(PregameStage::BottomCards { queue, .. }) =
+                            self.pregame.as_mut().map(|pregame| &mut pregame.stage)
+                        else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("pregame bottoming state disappeared"),
+                            );
+                        };
+                        if !queue.is_empty() {
+                            queue.remove(0);
+                        }
+                    }
+                    PregameSelectResolution::BottomNeedsOrdering(player) => {
+                        let Some(PregameStage::BottomCards { pending_order, .. }) =
+                            self.pregame.as_mut().map(|pregame| &mut pregame.stage)
+                        else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("pregame bottoming state disappeared"),
+                            );
+                        };
+                        *pending_order = Some((player, selected));
+                    }
+                    PregameSelectResolution::GemstoneExile(card_id) => {
+                        let _ = self.game.move_object(card_id, Zone::Exile);
+                        let Some(PregameStage::OpeningActions {
+                            pending_gemstone_exile,
+                            ..
+                        }) = self.pregame.as_mut().map(|pregame| &mut pregame.stage)
+                        else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("pregame gemstone state disappeared"),
+                            );
+                        };
+                        *pending_gemstone_exile = None;
+                    }
+                }
+            }
+            (DecisionContext::Order(order), UiCommand::SelectOptions { option_indices }) => {
+                let legal: Vec<usize> = (0..order.items.len()).collect();
+                if let Err(err) = validate_option_selection(
+                    order.items.len(),
+                    Some(order.items.len()),
+                    &option_indices,
+                    &legal,
+                ) {
+                    return restore(self, pending_ctx, err);
+                }
+                if unique_indices(&option_indices).len() != order.items.len() {
+                    return restore(
+                        self,
+                        pending_ctx,
+                        JsValue::from_str("ordering requires each option index exactly once"),
+                    );
+                }
+                let selected_cards = match self.pregame.as_mut().map(|pregame| &mut pregame.stage) {
+                    Some(PregameStage::BottomCards { pending_order, .. }) => {
+                        let Some((_, selected_cards)) = pending_order.take() else {
+                            return restore(
+                                self,
+                                pending_ctx,
+                                JsValue::from_str("no selected cards are waiting to be ordered"),
+                            );
+                        };
+                        selected_cards
+                    }
+                    _ => {
+                        return restore(
+                            self,
+                            pending_ctx,
+                            JsValue::from_str("unexpected ordering command during pregame"),
+                        );
+                    }
+                };
+                let ordered_cards: Vec<ObjectId> = option_indices
+                    .into_iter()
+                    .filter_map(|index| selected_cards.get(index).copied())
+                    .collect();
+                self.move_cards_to_library_bottom(&ordered_cards);
+                if let Some(PregameStage::BottomCards { queue, .. }) =
+                    self.pregame.as_mut().map(|pregame| &mut pregame.stage)
+                    && !queue.is_empty()
+                {
+                    queue.remove(0);
+                }
+            }
+            _ => {
+                return restore(
+                    self,
+                    pending_ctx,
+                    JsValue::from_str("command type does not match pregame decision"),
+                );
+            }
+        }
+
+        self.pending_decision = None;
+        self.advance_until_decision()?;
+        self.snapshot()
+    }
+
     fn finish_match_setup(&mut self, opening_hand_size: usize) -> Result<(), JsValue> {
         self.reset_runtime_state();
         let player_ids: Vec<PlayerId> = self.game.players.iter().map(|p| p.id).collect();
         for player_id in player_ids {
             let _ = self.game.draw_cards(player_id, opening_hand_size);
         }
+        self.pregame = Some(PregameState::new(
+            &self.game.turn_order,
+            opening_hand_size,
+            self.match_format,
+        ));
         self.recompute_ui_decision()
     }
 
@@ -3985,6 +4727,7 @@ impl WasmGame {
         self.priority_state = PriorityLoopState::new(self.game.players.len());
         self.priority_state
             .set_auto_choose_single_pip_payment(false);
+        self.pregame = None;
         self.pending_decision = None;
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
@@ -4037,6 +4780,20 @@ impl WasmGame {
 
     fn advance_until_decision(&mut self) -> Result<(), JsValue> {
         use crate::turn_runner::TurnAction;
+
+        if self.pregame.is_some() {
+            for _ in 0..64 {
+                self.normalize_pregame_state()?;
+                if let Some(ctx) = self.build_pregame_decision()? {
+                    self.pending_decision = Some(ctx);
+                    self.runner_pending_decision = false;
+                    return Ok(());
+                }
+                if self.pregame.is_none() {
+                    break;
+                }
+            }
+        }
 
         // Lazily create the TurnRunner on first call.
         if self.runner.is_none() {
@@ -5390,6 +6147,22 @@ fn action_drag_metadata(
 ) -> (&'static str, Option<u64>, Option<String>, Option<String>) {
     match action {
         LegalAction::PassPriority => ("pass_priority", None, None, None),
+        LegalAction::KeepOpeningHand => ("pass_priority", None, None, None),
+        LegalAction::TakeMulligan => ("take_mulligan", None, None, None),
+        LegalAction::SerumPowderMulligan { card_id } => (
+            "serum_powder_mulligan",
+            Some(card_id.0),
+            Some(zone_name(Zone::Hand)),
+            None,
+        ),
+        LegalAction::ContinuePregame => ("pass_priority", None, None, None),
+        LegalAction::BeginGame => ("pass_priority", None, None, None),
+        LegalAction::BeginWithGemstoneCaverns { card_id } => (
+            "begin_with_gemstone_caverns",
+            Some(card_id.0),
+            Some(zone_name(Zone::Hand)),
+            Some(zone_name(Zone::Battlefield)),
+        ),
         LegalAction::PlayLand { land_id } => (
             "play_land",
             Some(land_id.0),
@@ -5444,6 +6217,16 @@ fn zone_name(zone: Zone) -> String {
 fn describe_action(game: &GameState, action: &LegalAction) -> String {
     match action {
         LegalAction::PassPriority => "Pass priority".to_string(),
+        LegalAction::KeepOpeningHand => "Keep hand".to_string(),
+        LegalAction::TakeMulligan => "Mulligan".to_string(),
+        LegalAction::SerumPowderMulligan { card_id } => {
+            format!("Use {}", object_name(game, *card_id))
+        }
+        LegalAction::ContinuePregame => "Continue".to_string(),
+        LegalAction::BeginGame => "Begin game".to_string(),
+        LegalAction::BeginWithGemstoneCaverns { card_id } => {
+            format!("Begin with {}", object_name(game, *card_id))
+        }
         LegalAction::PlayLand { land_id } => {
             format!("Play {}", object_name(game, *land_id))
         }
@@ -5561,6 +6344,9 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
             }
             crate::special_actions::SpecialAction::Foretell { card_id } => {
                 format!("Foretell {}", object_name(game, *card_id))
+            }
+            crate::special_actions::SpecialAction::Plot { card_id } => {
+                format!("Plot {}", object_name(game, *card_id))
             }
             crate::special_actions::SpecialAction::ActivateManaAbility { permanent_id, .. } => {
                 format!(
@@ -6030,8 +6816,7 @@ fn validate_object_selection(
 ///
 /// Validates that:
 /// - Each selected target is legal in at least one requirement
-/// - Total count meets the aggregate min across all requirements
-/// - Total count does not exceed the aggregate max
+/// - The flattened target list can be assigned to the requirements in order
 fn convert_and_validate_targets(
     ctx: &crate::decisions::context::TargetsContext,
     inputs: Vec<TargetInput>,
@@ -6064,36 +6849,10 @@ fn convert_and_validate_targets(
         }
     }
 
-    // Aggregate min/max across requirements.
-    let total_min: usize = ctx.requirements.iter().map(|r| r.min_targets).sum();
-    let total_max: Option<usize> = {
-        let mut sum: usize = 0;
-        let mut unbounded = false;
-        for req in &ctx.requirements {
-            match req.max_targets {
-                Some(max) => sum = sum.saturating_add(max),
-                None => {
-                    unbounded = true;
-                    break;
-                }
-            }
-        }
-        if unbounded { None } else { Some(sum) }
-    };
-
-    if converted.len() < total_min {
-        return Err(JsValue::from_str(&format!(
-            "must select at least {total_min} target(s), got {}",
-            converted.len()
-        )));
-    }
-    if let Some(max) = total_max {
-        if converted.len() > max {
-            return Err(JsValue::from_str(&format!(
-                "must select at most {max} target(s), got {}",
-                converted.len()
-            )));
-        }
+    if !validate_flat_target_assignment(&ctx.requirements, &converted) {
+        return Err(JsValue::from_str(
+            "targets do not satisfy the targeting requirements in order",
+        ));
     }
 
     Ok(converted)
@@ -6102,15 +6861,18 @@ fn convert_and_validate_targets(
 #[cfg(test)]
 mod tests {
     use super::{
-        GameSnapshot, PendingReplayAction, ReplayOutcome, ReplayRoot, TargetChoiceView, WasmGame,
-        build_object_details_snapshot, build_stack_object_snapshot,
+        GameSnapshot, MatchFormatInput, PendingReplayAction, PregameState, ReplayOutcome,
+        ReplayRoot, TargetChoiceView, TargetInput, WasmGame, build_object_details_snapshot,
+        build_stack_object_snapshot, convert_and_validate_targets,
     };
     use crate::ability::Ability;
     use crate::alternative_cast::CastingMethod;
     use crate::card::CardBuilder;
+    use crate::cards::CardRegistry;
     use crate::cards::definitions::{
-        basic_island, basic_mountain, emrakul_the_promised_end, grizzly_bears, lightning_bolt,
-        ornithopter, polluted_delta, urzas_saga, yawgmoth_thran_physician,
+        basic_island, basic_mountain, emrakul_the_promised_end, gemstone_caverns, grizzly_bears,
+        lightning_bolt, ornithopter, polluted_delta, serum_powder, urzas_saga,
+        yawgmoth_thran_physician,
     };
     use crate::continuous::ContinuousEffect;
     use crate::cost::OptionalCostsPaid;
@@ -6118,7 +6880,7 @@ mod tests {
     use crate::decision::{GameProgress, LegalAction};
     use crate::decisions::context::{
         BooleanContext, DecisionContext, PriorityContext, SelectObjectsContext, SelectableObject,
-        SelectableOption,
+        SelectableOption, TargetRequirementContext, TargetsContext,
     };
     use crate::effect::{Effect, Until};
     use crate::events::spells::SpellCastEvent;
@@ -6132,7 +6894,149 @@ mod tests {
     use crate::types::CardType;
     use crate::wasm_api::colors_for_context;
     use crate::zone::Zone;
+    use serde::Deserialize;
     use serde_json::json;
+
+    fn setup_pregame_match(format: MatchFormatInput) -> WasmGame {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(vec!["Alice".to_string(), "Bob".to_string()], 20, 1);
+        wasm.match_format = format;
+        wasm
+    }
+
+    fn seed_filler_cards(
+        wasm: &mut WasmGame,
+        player: PlayerId,
+        zone: Zone,
+        count: usize,
+    ) -> Vec<ObjectId> {
+        (0..count)
+            .map(|_| {
+                wasm.game
+                    .create_object_from_definition(&ornithopter(), player, zone)
+            })
+            .collect()
+    }
+
+    fn start_pregame(wasm: &mut WasmGame, opening_hand_size: usize, format: MatchFormatInput) {
+        wasm.pregame = Some(PregameState::new(
+            &wasm.game.turn_order,
+            opening_hand_size,
+            format,
+        ));
+        wasm.advance_until_decision()
+            .expect("pregame should produce a decision");
+    }
+
+    fn dispatch_matching_priority_action<F>(wasm: &mut WasmGame, predicate: F)
+    where
+        F: FnMut(&LegalAction) -> bool,
+    {
+        let index = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx
+                .actions
+                .iter()
+                .position(predicate)
+                .expect("expected matching priority action"),
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": index,
+            }))
+            .expect("priority action should serialize"),
+        )
+        .expect("priority action should succeed");
+    }
+
+    fn dispatch_select_objects(wasm: &mut WasmGame, object_ids: &[u64]) {
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_objects",
+                "object_ids": object_ids,
+            }))
+            .expect("select_objects should serialize"),
+        )
+        .expect("select_objects should succeed");
+    }
+
+    #[test]
+    fn convert_and_validate_targets_rejects_wrong_requirement_order() {
+        let first = Target::Object(ObjectId::from_raw(1));
+        let second = Target::Object(ObjectId::from_raw(2));
+        let ctx = TargetsContext::new(
+            PlayerId::from_index(0),
+            ObjectId::from_raw(99),
+            "test spell",
+            vec![
+                TargetRequirementContext {
+                    description: "first target".to_string(),
+                    legal_targets: vec![first],
+                    min_targets: 1,
+                    max_targets: Some(1),
+                },
+                TargetRequirementContext {
+                    description: "second target".to_string(),
+                    legal_targets: vec![second],
+                    min_targets: 1,
+                    max_targets: Some(1),
+                },
+            ],
+        );
+
+        let err = convert_and_validate_targets(
+            &ctx,
+            vec![
+                TargetInput::Object { object: 2 },
+                TargetInput::Object { object: 1 },
+            ],
+        )
+        .expect_err("reversed targets should be rejected");
+
+        assert_eq!(
+            err.as_string().as_deref(),
+            Some("targets do not satisfy the targeting requirements in order")
+        );
+    }
+
+    #[test]
+    fn convert_and_validate_targets_accepts_unbounded_then_fixed_sequence() {
+        let a = Target::Object(ObjectId::from_raw(1));
+        let b = Target::Object(ObjectId::from_raw(2));
+        let c = Target::Object(ObjectId::from_raw(3));
+        let ctx = TargetsContext::new(
+            PlayerId::from_index(0),
+            ObjectId::from_raw(99),
+            "test spell",
+            vec![
+                TargetRequirementContext {
+                    description: "any number".to_string(),
+                    legal_targets: vec![a, b],
+                    min_targets: 0,
+                    max_targets: None,
+                },
+                TargetRequirementContext {
+                    description: "last target".to_string(),
+                    legal_targets: vec![c],
+                    min_targets: 1,
+                    max_targets: Some(1),
+                },
+            ],
+        );
+
+        let converted = convert_and_validate_targets(
+            &ctx,
+            vec![
+                TargetInput::Object { object: 1 },
+                TargetInput::Object { object: 2 },
+                TargetInput::Object { object: 3 },
+            ],
+        )
+        .expect("valid unbounded assignment");
+
+        assert_eq!(converted, vec![a, b, c]);
+    }
 
     #[test]
     fn object_details_reports_calculated_battlefield_power_toughness() {
@@ -6292,6 +7196,83 @@ mod tests {
             result.failed_to_parse,
             vec!["Sicarian Infiltrator".to_string()]
         );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn load_decks_accepts_alternative_card_names() {
+        #[derive(Debug, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DeckLoadResultView {
+            loaded: u32,
+            failed: Vec<String>,
+            failed_below_threshold: Vec<String>,
+            failed_to_parse: Vec<String>,
+        }
+
+        let mut wasm = WasmGame::new();
+        let decks_js = serde_wasm_bindgen::to_value(&vec![
+            vec![
+                "T-60 Power Armor".to_string(),
+                "Sunset Sarsaparilla Machine".to_string(),
+            ],
+            Vec::<String>::new(),
+        ])
+        .expect("should encode deck lists");
+        let result = wasm.load_decks(decks_js).expect("deck load should succeed");
+        let result: DeckLoadResultView =
+            serde_wasm_bindgen::from_value(result).expect("should decode deck load result");
+
+        assert_eq!(result.loaded, 2);
+        assert!(result.failed.is_empty());
+        assert!(result.failed_below_threshold.is_empty());
+        assert!(result.failed_to_parse.is_empty());
+
+        let alice = wasm
+            .game
+            .player(PlayerId::from_index(0))
+            .expect("alice should exist");
+        let library_names: Vec<String> = alice
+            .library
+            .iter()
+            .filter_map(|&id| wasm.game.object(id).map(|object| object.name.clone()))
+            .collect();
+
+        assert!(
+            library_names.iter().any(|name| name == "T-45 Power Armor"),
+            "expected canonical T-45 Power Armor in library, got {library_names:?}"
+        );
+        assert!(
+            library_names
+                .iter()
+                .any(|name| name == "Nuka-Cola Vending Machine"),
+            "expected canonical Nuka-Cola Vending Machine in library, got {library_names:?}"
+        );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn add_card_to_hand_accepts_alternative_card_names() {
+        let mut wasm = WasmGame::new();
+
+        let flavor_id = wasm
+            .add_card_to_hand(0, "T-60 Power Armor".to_string())
+            .expect("should add flavor-name alias to hand");
+        let printed_id = wasm
+            .add_card_to_hand(0, "Sunset Sarsaparilla Machine".to_string())
+            .expect("should add flavor-name alias to hand");
+
+        let flavor_card = wasm
+            .game
+            .object(ObjectId::from_raw(flavor_id))
+            .expect("flavor-name object should exist");
+        let printed_card = wasm
+            .game
+            .object(ObjectId::from_raw(printed_id))
+            .expect("printed-name object should exist");
+
+        assert_eq!(flavor_card.name, "T-45 Power Armor");
+        assert_eq!(printed_card.name, "Nuka-Cola Vending Machine");
     }
 
     #[test]
@@ -9087,5 +10068,261 @@ mod tests {
             vec![forest_b],
             "second land-choice snapshot should only offer the remaining land"
         );
+    }
+
+    #[test]
+    fn pregame_mulligan_prompt_offers_keep_and_mulligan() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Normal);
+        start_pregame(&mut wasm, 7, MatchFormatInput::Normal);
+
+        let actions = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => &ctx.actions,
+            other => panic!("expected pregame priority decision, got {other:?}"),
+        };
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, LegalAction::KeepOpeningHand))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, LegalAction::TakeMulligan))
+        );
+    }
+
+    #[test]
+    fn commander_first_mulligan_is_free() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Commander);
+        let alice = PlayerId::from_index(0);
+
+        seed_filler_cards(&mut wasm, alice, Zone::Hand, 7);
+        seed_filler_cards(&mut wasm, alice, Zone::Library, 7);
+        start_pregame(&mut wasm, 7, MatchFormatInput::Commander);
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::TakeMulligan)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => {
+                assert_eq!(ctx.player, alice, "pregame should move to opening actions");
+                assert!(
+                    ctx.actions
+                        .iter()
+                        .any(|action| matches!(action, LegalAction::ContinuePregame))
+                );
+            }
+            other => panic!("expected opening-actions priority prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn commander_second_mulligan_bottoms_one_card() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Commander);
+        let alice = PlayerId::from_index(0);
+
+        seed_filler_cards(&mut wasm, alice, Zone::Hand, 7);
+        seed_filler_cards(&mut wasm, alice, Zone::Library, 7);
+        start_pregame(&mut wasm, 7, MatchFormatInput::Commander);
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::TakeMulligan)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::TakeMulligan)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectObjects(ctx)) => {
+                assert_eq!(ctx.player, alice);
+                assert_eq!(ctx.min, 1);
+                assert_eq!(ctx.max, Some(1));
+            }
+            other => panic!("expected one-card bottoming prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serum_powder_redraws_without_counting_as_a_mulligan() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Normal);
+        let alice = PlayerId::from_index(0);
+
+        let serum_id = wasm
+            .game
+            .create_object_from_definition(&serum_powder(), alice, Zone::Hand);
+        seed_filler_cards(&mut wasm, alice, Zone::Hand, 6);
+        seed_filler_cards(&mut wasm, alice, Zone::Library, 7);
+        start_pregame(&mut wasm, 7, MatchFormatInput::Normal);
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(
+                action,
+                LegalAction::SerumPowderMulligan { card_id } if *card_id == serum_id
+            )
+        });
+
+        assert_eq!(
+            wasm.game
+                .player(alice)
+                .expect("alice should exist")
+                .hand
+                .len(),
+            7,
+            "Serum Powder should redraw the same hand size"
+        );
+        assert_eq!(
+            wasm.game
+                .player(alice)
+                .expect("alice should exist")
+                .exile
+                .len(),
+            7,
+            "Serum Powder should exile the original opening hand"
+        );
+        assert_eq!(
+            wasm.pregame
+                .as_ref()
+                .and_then(|pregame| pregame.mulligans_taken.get(&alice).copied())
+                .unwrap_or(0),
+            0,
+            "Serum Powder should not increment the mulligan count"
+        );
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::Priority(_))),
+            "the same player should remain on the mulligan prompt"
+        );
+    }
+
+    #[test]
+    fn gemstone_caverns_appears_for_non_starting_player_in_opening_actions() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Normal);
+        let bob = PlayerId::from_index(1);
+
+        seed_filler_cards(&mut wasm, PlayerId::from_index(0), Zone::Hand, 7);
+        let gemstone_id =
+            wasm.game
+                .create_object_from_definition(&gemstone_caverns(), bob, Zone::Hand);
+        seed_filler_cards(&mut wasm, bob, Zone::Hand, 1);
+        start_pregame(&mut wasm, 7, MatchFormatInput::Normal);
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::ContinuePregame)
+        });
+
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => {
+                assert_eq!(ctx.player, bob);
+                assert!(ctx.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        LegalAction::BeginWithGemstoneCaverns { card_id }
+                            if *card_id == gemstone_id
+                    )
+                }));
+                assert!(
+                    ctx.actions
+                        .iter()
+                        .any(|action| matches!(action, LegalAction::BeginGame))
+                );
+            }
+            other => panic!("expected Bob's opening-actions prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gemstone_caverns_moves_to_battlefield_and_prompts_for_exile() {
+        let mut wasm = setup_pregame_match(MatchFormatInput::Normal);
+        let bob = PlayerId::from_index(1);
+
+        seed_filler_cards(&mut wasm, PlayerId::from_index(0), Zone::Hand, 7);
+        let _gemstone_id =
+            wasm.game
+                .create_object_from_definition(&gemstone_caverns(), bob, Zone::Hand);
+        let exile_card = seed_filler_cards(&mut wasm, bob, Zone::Hand, 1)
+            .into_iter()
+            .next()
+            .expect("expected filler card in hand");
+        start_pregame(&mut wasm, 7, MatchFormatInput::Normal);
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::KeepOpeningHand)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::ContinuePregame)
+        });
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::BeginWithGemstoneCaverns { .. })
+        });
+
+        let gemstone_on_battlefield = wasm.game.battlefield.iter().copied().find(|id| {
+            wasm.game
+                .object(*id)
+                .is_some_and(|object| object.name == "Gemstone Caverns")
+        });
+        let gemstone_on_battlefield =
+            gemstone_on_battlefield.expect("Gemstone Caverns should move to the battlefield");
+        assert_eq!(
+            wasm.game
+                .object(gemstone_on_battlefield)
+                .and_then(|object| object.counters.get(&CounterType::Luck).copied()),
+            Some(1),
+            "Gemstone Caverns should enter with a luck counter"
+        );
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectObjects(ctx)) => {
+                assert_eq!(ctx.player, bob);
+                assert_eq!(ctx.min, 1);
+                assert_eq!(ctx.max, Some(1));
+            }
+            other => panic!("expected Gemstone exile prompt, got {other:?}"),
+        }
+
+        dispatch_select_objects(&mut wasm, &[exile_card.0]);
+
+        assert!(
+            wasm.game
+                .player(bob)
+                .expect("bob should exist")
+                .exile
+                .iter()
+                .any(|id| wasm
+                    .game
+                    .object(*id)
+                    .is_some_and(|object| object.name == "Ornithopter")),
+            "the chosen card should be exiled"
+        );
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => {
+                assert_eq!(ctx.player, bob);
+                assert!(
+                    ctx.actions
+                        .iter()
+                        .any(|action| matches!(action, LegalAction::BeginGame))
+                );
+            }
+            other => panic!("expected Bob to resume opening actions, got {other:?}"),
+        }
     }
 }

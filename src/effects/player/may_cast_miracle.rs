@@ -7,7 +7,7 @@
 //! that was drawn. This is more robust than storing card_id/owner because
 //! it automatically handles zone changes.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::events::other::CardsDrawnEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -137,6 +137,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
                 object_id: new_id,
                 controller: owner,
                 targets: vec![],
+                target_assignments: vec![],
                 x_value,
                 ability_effects: None,
                 is_ability: false,

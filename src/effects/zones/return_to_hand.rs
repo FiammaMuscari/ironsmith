@@ -2,7 +2,7 @@
 
 use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::helpers::{
-    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+    ObjectApplyResultPolicy, apply_single_target_object_from_spec, apply_to_selected_objects,
 };
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::event_processor::EventOutcome;
@@ -100,7 +100,9 @@ impl ReturnToHandEffect {
             );
 
             match result {
-                EventOutcome::Prevented => return Ok(Some(crate::effect::OutcomeStatus::Prevented)),
+                EventOutcome::Prevented => {
+                    return Ok(Some(crate::effect::OutcomeStatus::Prevented));
+                }
                 EventOutcome::Proceed(_) => {
                     return Ok(None); // Successfully returned
                 }
@@ -130,9 +132,12 @@ impl EffectExecutor for ReturnToHandEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Handle targeted effects with special single-target behavior
         if self.spec.is_target() && self.spec.is_single() {
-            return apply_single_target_object_from_context(game, ctx, |game, ctx, object_id| {
-                Self::return_object(game, ctx, object_id)
-            });
+            return apply_single_target_object_from_spec(
+                game,
+                ctx,
+                &self.spec,
+                |game, ctx, object_id| Self::return_object(game, ctx, object_id),
+            );
         }
 
         // For all/multi-target effects, count successful moves to hand.

@@ -5,7 +5,7 @@
 //! Reminder text example:
 //! "To behold an Elemental, choose an Elemental you control or reveal an Elemental card from your hand."
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;

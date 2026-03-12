@@ -1,7 +1,7 @@
 //! Exile cards from the top of a library until one matches a filter, then
 //! grant temporary play permission for that exiled card until end of turn.
 
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -76,8 +76,6 @@ impl EffectExecutor for ExileUntilMatchGrantPlayEffect {
             },
         );
 
-        Ok(EffectOutcome::with_objects(vec![
-            candidate_id,
-        ]))
+        Ok(EffectOutcome::with_objects(vec![candidate_id]))
     }
 }

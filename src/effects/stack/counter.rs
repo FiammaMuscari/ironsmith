@@ -1,7 +1,7 @@
 //! Counter spell effect implementation.
 
 use crate::ability::AbilityKind;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};

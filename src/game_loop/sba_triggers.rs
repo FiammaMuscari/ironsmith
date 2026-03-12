@@ -371,7 +371,8 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
     }
     apply_keyword_payment_tags_for_resolution(game, &entry, &mut ctx);
 
-    let (valid_targets, all_targets_invalid) = validate_stack_entry_targets(game, &entry);
+    let (valid_targets, valid_target_assignments, all_targets_invalid) =
+        validate_stack_entry_targets(game, &entry);
     if !entry.targets.is_empty() && all_targets_invalid {
         return;
     }
@@ -390,7 +391,9 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
         return;
     }
 
-    ctx = ctx.with_targets(valid_targets);
+    ctx = ctx
+        .with_targets(valid_targets)
+        .with_target_assignments(valid_target_assignments.clone());
     ctx.snapshot_targets(game);
 
     let effects = if let Some(ref ability_effects) = entry.ability_effects {
@@ -402,8 +405,23 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
     };
 
     let mut all_events = Vec::new();
+    let mut consumed_modal_selection = false;
+    let mut assignment_cursor = 0usize;
     for effect in &effects {
-        if let Ok(outcome) = execute_effect(game, effect, &mut ctx) {
+        let effect_target_assignments = super::stack_resolution::active_target_assignments_for_effect(
+            game,
+            effect,
+            entry.controller,
+            entry.object_id,
+            entry.chosen_modes.as_deref(),
+            &mut consumed_modal_selection,
+            &valid_target_assignments,
+            &mut assignment_cursor,
+        );
+        let outcome = ctx.with_temp_target_assignments(effect_target_assignments, |ctx| {
+            execute_effect(game, effect, ctx)
+        });
+        if let Ok(outcome) = outcome {
             all_events.extend(outcome.events);
         }
     }
@@ -572,6 +590,7 @@ pub(super) fn create_triggered_stack_entry_with_targets(
 
     // Select targets for each target spec
     let mut chosen_targets = Vec::new();
+    let mut target_assignments = Vec::new();
     for target_spec in &trigger.ability.choices {
         let count = target_spec.count();
 
@@ -631,11 +650,18 @@ pub(super) fn create_triggered_stack_entry_with_targets(
             return None;
         }
 
+        let start = chosen_targets.len();
         chosen_targets.extend(selected_targets);
+        let end = chosen_targets.len();
+        target_assignments.push(crate::game_state::TargetAssignment {
+            spec: target_spec.clone(),
+            range: start..end,
+        });
     }
 
     // Add the chosen targets to the stack entry
     entry.targets = chosen_targets;
+    entry.target_assignments = target_assignments;
 
     Some(entry)
 }

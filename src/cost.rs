@@ -161,6 +161,16 @@ impl OptionalCost {
         }
     }
 
+    /// Create a squad cost (may be paid any number of times).
+    pub fn squad(cost: TotalCost) -> Self {
+        Self {
+            label: "Squad",
+            cost,
+            repeatable: true,
+            returns_to_hand: false,
+        }
+    }
+
     /// Create a custom optional cost with a specific label.
     pub fn custom(label: &'static str, cost: TotalCost) -> Self {
         Self {

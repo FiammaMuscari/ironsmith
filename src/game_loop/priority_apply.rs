@@ -13,6 +13,37 @@ pub(super) fn stage_after_activation_announcements(pending: &PendingActivation) 
     }
 }
 
+fn build_target_assignments(
+    requirements: &[TargetRequirement],
+    targets: &[Target],
+    offset: usize,
+) -> Result<Vec<crate::game_state::TargetAssignment>, GameLoopError> {
+    let requirement_contexts = requirements
+        .iter()
+        .map(|requirement| crate::decisions::context::TargetRequirementContext {
+            description: requirement.description.clone(),
+            legal_targets: requirement.legal_targets.clone(),
+            min_targets: requirement.min_targets,
+            max_targets: requirement.max_targets,
+        })
+        .collect::<Vec<_>>();
+
+    let Some(ranges) = crate::targeting::assigned_target_ranges(&requirement_contexts, targets) else {
+        return Err(GameLoopError::InvalidState(
+            "targets do not satisfy the stored targeting requirements".to_string(),
+        ));
+    };
+
+    Ok(requirements
+        .iter()
+        .zip(ranges)
+        .map(|(requirement, range)| crate::game_state::TargetAssignment {
+            spec: requirement.spec.clone(),
+            range: (offset + range.start)..(offset + range.end),
+        })
+        .collect())
+}
+
 pub fn apply_priority_response_with_dm(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
@@ -243,6 +274,14 @@ pub fn apply_priority_response_with_dm(
                 PriorityResult::PhaseEnds => Ok(GameProgress::Continue),
             }
         }
+        LegalAction::KeepOpeningHand
+        | LegalAction::TakeMulligan
+        | LegalAction::SerumPowderMulligan { .. }
+        | LegalAction::ContinuePregame
+        | LegalAction::BeginGame
+        | LegalAction::BeginWithGemstoneCaverns { .. } => Err(GameLoopError::InvalidState(
+            "Pregame actions can't be used during the normal priority loop".to_string(),
+        )),
         LegalAction::PlayLand { land_id } => {
             // Play the land with ETB replacement handling
             let player = game
@@ -1049,8 +1088,14 @@ pub(super) fn apply_targets_response(
 ) -> Result<GameProgress, GameLoopError> {
     // Check for pending activation first
     if let Some(mut pending) = state.pending_activation.take() {
+        let assignments = build_target_assignments(
+            &pending.remaining_requirements,
+            targets,
+            pending.chosen_targets.len(),
+        )?;
         // Combine previously chosen targets with new ones
         pending.chosen_targets.extend(targets.iter().cloned());
+        pending.chosen_target_assignments.extend(assignments);
         pending.remaining_requirements.clear();
 
         pending.stage = stage_after_activation_announcements(&pending);
@@ -1062,9 +1107,18 @@ pub(super) fn apply_targets_response(
         GameLoopError::InvalidState("No pending cast for targets response".to_string())
     })?;
 
+    let assignments = build_target_assignments(
+        &pending.remaining_requirements,
+        targets,
+        pending.chosen_targets.len(),
+    )?;
+
     // Combine previously chosen targets with new ones
+    let mut pending = pending;
     let mut all_targets = pending.chosen_targets.clone();
     all_targets.extend(targets.iter().cloned());
+    pending.chosen_target_assignments.extend(assignments);
+    pending.remaining_requirements.clear();
 
     // Continue to mana payment stage
     continue_to_mana_payment(

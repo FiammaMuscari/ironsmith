@@ -3,7 +3,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -108,6 +108,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
                         object_id: new_id,
                         controller: caster_id,
                         targets: vec![],
+                        target_assignments: vec![],
                         x_value,
                         ability_effects: None,
                         is_ability: false,

@@ -5,6 +5,7 @@ use crate::decisions::{ModesSpec, make_decision, specs::ModeOption};
 use crate::effect::{EffectMode, EffectOutcome, ExecutionFact};
 use crate::effects::helpers::resolve_value;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
+use crate::game_state::TargetAssignment;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::targeting::compute_legal_targets;
@@ -72,6 +73,29 @@ fn find_source_activated_ability_index(
         return fallback_indices.first().copied();
     }
     None
+}
+
+fn active_target_assignments_for_inner_effect(
+    game: &GameState,
+    effect: &crate::effect::Effect,
+    ctx: &ExecutionContext,
+    consumed_modal_selection: &mut bool,
+    assignments: &[TargetAssignment],
+    cursor: &mut usize,
+) -> Vec<TargetAssignment> {
+    let requirements = crate::game_loop::extract_target_requirements_for_effect_with_state(
+        game,
+        effect,
+        ctx.controller,
+        Some(ctx.source),
+        ctx.chosen_modes.as_deref(),
+        consumed_modal_selection,
+    );
+    let count = requirements.len();
+    let start = *cursor;
+    let end = start.saturating_add(count).min(assignments.len());
+    *cursor = end;
+    assignments[start..end].to_vec()
 }
 
 pub(crate) fn run_choose_mode(
@@ -177,10 +201,24 @@ pub(crate) fn run_choose_mode(
     }
 
     let mut outcomes = Vec::new();
+    let available_assignments = ctx.target_assignments.clone();
+    let mut assignment_cursor = 0usize;
+    let mut consumed_modal_selection = false;
     for &idx in &valid_chosen_indices {
         if let Some(mode) = effect.modes.get(idx) {
             for inner in &mode.effects {
-                outcomes.push(execute_effect(game, inner, ctx)?);
+                let inner_target_assignments = active_target_assignments_for_inner_effect(
+                    game,
+                    inner,
+                    ctx,
+                    &mut consumed_modal_selection,
+                    &available_assignments,
+                    &mut assignment_cursor,
+                );
+                let outcome = ctx.with_temp_target_assignments(inner_target_assignments, |ctx| {
+                    execute_effect(game, inner, ctx)
+                })?;
+                outcomes.push(outcome);
             }
         }
     }
@@ -194,6 +232,11 @@ mod tests {
     use super::*;
     use crate::effect::{Effect, EffectMode};
     use crate::effects::ChooseModeEffect;
+    use crate::game_state::TargetAssignment;
+    use crate::ids::CardId;
+    use crate::target::ChooseSpec;
+    use crate::types::CardType;
+    use crate::zone::Zone;
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
@@ -214,9 +257,71 @@ mod tests {
         let result = run_choose_mode(&effect, &mut game, &mut ctx).expect("choose mode resolves");
 
         assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
-        assert!(result
-            .execution_facts()
-            .contains(&ExecutionFact::ChosenOptions(vec![1])));
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::ChosenOptions(vec![1]))
+        );
         assert_eq!(game.player(alice).expect("alice").life, 22);
+    }
+
+    #[test]
+    fn choose_mode_scopes_targets_per_selected_mode() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = game.new_object_id();
+
+        let creature_card = crate::card::CardBuilder::new(CardId::from_raw(6_000), "Marked Creature")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(crate::card::PowerToughness::fixed(2, 2))
+            .build();
+        let creature = game.create_object_from_card(&creature_card, bob, Zone::Battlefield);
+        let land_card = crate::card::CardBuilder::new(CardId::from_raw(6_001), "Marked Land")
+            .card_types(vec![CardType::Land])
+            .build();
+        let land = game.create_object_from_card(&land_card, bob, Zone::Battlefield);
+
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_chosen_modes(Some(vec![0, 1]))
+            .with_targets(vec![
+                crate::executor::ResolvedTarget::Object(creature),
+                crate::executor::ResolvedTarget::Object(land),
+            ])
+            .with_target_assignments(vec![
+                TargetAssignment {
+                    spec: ChooseSpec::target(ChooseSpec::creature()),
+                    range: 0..1,
+                },
+                TargetAssignment {
+                    spec: ChooseSpec::target(ChooseSpec::Object(
+                        crate::filter::ObjectFilter::land(),
+                    )),
+                    range: 1..2,
+                },
+            ]);
+
+        let effect = ChooseModeEffect::choose_exactly(
+            2,
+            vec![
+                EffectMode::new(
+                    "Destroy target creature",
+                    vec![Effect::new(crate::effects::DestroyEffect::target(
+                        ChooseSpec::creature(),
+                    ))],
+                ),
+                EffectMode::new(
+                    "Destroy target land",
+                    vec![Effect::new(crate::effects::DestroyEffect::target(ChooseSpec::Object(
+                        crate::filter::ObjectFilter::land(),
+                    )))],
+                ),
+            ],
+        );
+
+        run_choose_mode(&effect, &mut game, &mut ctx).expect("choose mode resolves");
+
+        assert!(!game.battlefield.contains(&creature));
+        assert!(!game.battlefield.contains(&land));
     }
 }

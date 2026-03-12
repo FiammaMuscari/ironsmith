@@ -113,49 +113,6 @@ function collectCardObjectIds(card) {
   return ids.filter((id) => Number.isFinite(id));
 }
 
-function actionSignature(action) {
-  return `${action?.kind || ""}|${action?.from_zone || ""}|${String(action?.label || "").trim().toLowerCase()}`;
-}
-
-function resolveSinglePriorityCardAction(state, card) {
-  const decision = state?.decision;
-  if (!decision || decision.kind !== "priority" || decision.player !== state?.perspective) {
-    return null;
-  }
-
-  const objectIds = collectCardObjectIds(card);
-  if (objectIds.length === 0) return null;
-  const objectIdSet = new Set(objectIds.map((id) => String(id)));
-  const candidateActions = (decision.actions || []).filter((action) =>
-    action.kind !== "pass_priority"
-    && action.object_id != null
-    && objectIdSet.has(String(action.object_id))
-  );
-  if (candidateActions.length === 0) return null;
-
-  const uniqueActionKinds = new Set(candidateActions.map(actionSignature));
-  if (uniqueActionKinds.size !== 1) return null;
-  return candidateActions[0];
-}
-
-function resolveSingleObjectBoundOption(state, card) {
-  const decision = state?.decision;
-  if (!decision || decision.kind !== "select_options" || decision.player !== state?.perspective) {
-    return null;
-  }
-
-  const objectIds = collectCardObjectIds(card);
-  if (objectIds.length === 0) return null;
-  const objectIdSet = new Set(objectIds.map((id) => String(id)));
-  const candidateOptions = (decision.options || []).filter((option) =>
-    option?.legal !== false
-    && option?.object_id != null
-    && objectIdSet.has(String(option.object_id))
-  );
-
-  return candidateOptions.length === 1 ? candidateOptions[0] : null;
-}
-
 function ZoneCountInline({ player }) {
   const counts = zoneCounts(player);
   return (
@@ -174,14 +131,13 @@ export default function MyZone({
   player,
   selectedObjectId,
   onInspect,
-  onExpandInspector,
   zoneViews = ["battlefield"],
   zoneActivity = {},
   legalTargetPlayerIds = new Set(),
   legalTargetObjectIds = new Set(),
 }) {
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
-  const { state, dispatch } = useGame();
+  const { state } = useGame();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
 
   const transientZoneViews = Object.keys(zoneActivity || {});
@@ -240,41 +196,10 @@ export default function MyZone({
       }
     }
 
-    const singleObjectBoundOption = resolveSingleObjectBoundOption(state, card);
-    if (singleObjectBoundOption) {
-      dispatch(
-        { type: "select_options", option_indices: [singleObjectBoundOption.index] },
-        singleObjectBoundOption.description || "Selected option"
-      );
-      return;
-    }
-
-    const singlePriorityAction = resolveSinglePriorityCardAction(state, card);
-    if (singlePriorityAction) {
-      dispatch(
-        { type: "priority_action", action_index: singlePriorityAction.index },
-        singlePriorityAction.label
-      );
-      return;
-    }
-
-    // Always inspect
     onInspect?.(card.id);
   };
 
   const handleCardPointerDown = useCallback((event, card) => {
-    const singleObjectBoundOption = resolveSingleObjectBoundOption(state, card);
-    if (singleObjectBoundOption) {
-      if (!registerPointerDown(event) || event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dispatch(
-        { type: "select_options", option_indices: [singleObjectBoundOption.index] },
-        singleObjectBoundOption.description || "Selected option"
-      );
-      return;
-    }
-
     if (!canPickTargetFromBoard || !registerPointerDown(event)) return;
     const candidateObjectIds = collectCardObjectIds(card);
     const matchedTargetId = candidateObjectIds.find((id) => legalTargetObjectIds.has(id));
@@ -286,7 +211,7 @@ export default function MyZone({
         detail: { target: { kind: "object", object: matchedTargetId } },
       })
     );
-  }, [canPickTargetFromBoard, dispatch, legalTargetObjectIds, registerPointerDown, state]);
+  }, [canPickTargetFromBoard, legalTargetObjectIds, registerPointerDown]);
 
   const dispatchPlayerTargetChoice = useCallback(() => {
     if (!canPickTargetFromBoard || !isPlayerLegalTarget) return;
@@ -435,7 +360,6 @@ export default function MyZone({
                     selectedObjectId={selectedObjectId}
                     onCardClick={handleCardClick}
                     onCardPointerDown={handleCardPointerDown}
-                    onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
                     activatableMap={activatableMap}
                     legalTargetObjectIds={legalTargetObjectIds}
                     allowVerticalScroll={entry.zone === "hand" || reserveSideColumn}

@@ -475,7 +475,6 @@ function InspectorArtImageLayers({
 
 export default function HoverArtOverlay({
   objectId,
-  suppressStableId = null,
   stackTimelineHeight = 0,
   compact = false,
   displayMode = "inspector",
@@ -634,11 +633,6 @@ export default function HoverArtOverlay({
     [state, objectIdNum]
   );
   const groupedCardCount = objectFamilyIds.size;
-
-  const suppressObject =
-    suppressStableId != null
-    && details != null
-    && Number(details.stable_id) === Number(suppressStableId);
 
   const semanticScore = Number(details?.semantic_score);
   const hasSemanticScore = Number.isFinite(semanticScore);
@@ -1342,7 +1336,16 @@ export default function HoverArtOverlay({
     lineHeight: INSPECTOR_RULES_LINE_HEIGHT / INSPECTOR_RULES_FONT_SIZE,
   };
 
-  if (!imageUrl || imageErrored || suppressObject) return null;
+  const showImageBackdrop = !!imageUrl && !imageErrored;
+  const hasRenderableContent = Boolean(
+    objectName
+    || typeLine
+    || zoneLine
+    || metadataLines.length > 0
+    || manaCost
+    || statsText
+    || displayRulesLines.length > 0
+  );
 
   if (isFullArtMode) {
     return (
@@ -1353,14 +1356,21 @@ export default function HoverArtOverlay({
         <div className="absolute inset-[10px] overflow-hidden rounded-[18px] border border-[#5fa8ff]/35 bg-[rgba(4,8,14,0.92)] shadow-[0_0_0_1px_rgba(95,168,255,0.12),0_0_28px_rgba(68,149,246,0.2),0_28px_52px_rgba(0,0,0,0.48)]">
           <div className="absolute inset-0 bg-[radial-gradient(78%_62%_at_50%_24%,rgba(98,170,255,0.14),rgba(6,10,16,0)_62%)]" />
           <div className="absolute inset-[10px] rounded-[14px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))]" />
-          <InspectorArtImageLayers
-            imageUrl={imageUrl}
-            objectName={objectName}
-            fullArt
-            onError={setFailedImageUrl}
-          />
+          {showImageBackdrop && (
+            <InspectorArtImageLayers
+              imageUrl={imageUrl}
+              objectName={objectName}
+              fullArt
+              onError={setFailedImageUrl}
+            />
+          )}
           {copyDebugButton}
           {similarityBadge}
+          {!showImageBackdrop && !hasRenderableContent && (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[13px] font-semibold uppercase tracking-[0.14em] text-[#b5d3f2]">
+              Card details unavailable
+            </div>
+          )}
         </div>
         <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2">
           <div className="flex max-w-[72%] flex-col items-start gap-1.5">
@@ -1430,13 +1440,16 @@ export default function HoverArtOverlay({
         compact ? "pointer-events-auto" : "pointer-events-none"
       )}
     >
-      <div className="hover-art-slice-in absolute inset-0">
-        <InspectorArtImageLayers
-          imageUrl={imageUrl}
-          objectName={objectName}
-          onError={setFailedImageUrl}
-        />
-      </div>
+      <div className="absolute inset-0 bg-[radial-gradient(120%_84%_at_50%_18%,rgba(92,156,236,0.18),rgba(6,11,18,0)_52%),linear-gradient(180deg,rgba(4,8,13,0.94),rgba(7,12,18,0.98))]" />
+      {showImageBackdrop && (
+        <div className="hover-art-slice-in absolute inset-0">
+          <InspectorArtImageLayers
+            imageUrl={imageUrl}
+            objectName={objectName}
+            onError={setFailedImageUrl}
+          />
+        </div>
+      )}
       {copyDebugButton}
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.16)_48%,rgba(0,0,0,0.3)_100%)]" />
       <div className="absolute inset-0 overflow-hidden">
@@ -1550,6 +1563,11 @@ export default function HoverArtOverlay({
             </div>
           </div>
         </div>
+        {!showImageBackdrop && !hasRenderableContent && (
+          <div className="absolute inset-0 flex items-center justify-center px-5 text-center text-[12px] font-semibold uppercase tracking-[0.14em] text-[#b5d3f2]">
+            Card details unavailable
+          </div>
+        )}
       </div>
       {similarityBadge}
     </div>

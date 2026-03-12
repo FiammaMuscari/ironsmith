@@ -17,7 +17,9 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry, Target};
 use crate::ids::PlayerId;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
-use crate::targeting::compute_legal_targets;
+use crate::targeting::{
+    assigned_target_ranges, compute_legal_targets, normalize_targets_for_requirements,
+};
 use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
@@ -135,61 +137,6 @@ fn extract_requirements(
     }
 
     Some(requirements)
-}
-
-fn normalize_target_choice(
-    requirements: &[TargetRequirementContext],
-    proposed: Vec<Target>,
-) -> Option<Vec<Target>> {
-    let mut out = Vec::new();
-    let mut cursor = 0usize;
-
-    for req in requirements {
-        let mut selected = Vec::new();
-        let max_for_req = req.max_targets.unwrap_or(req.min_targets.max(1));
-        let end = (cursor + max_for_req).min(proposed.len());
-
-        for target in &proposed[cursor..end] {
-            if req.legal_targets.contains(target) {
-                selected.push(*target);
-            }
-        }
-        cursor = end;
-
-        if selected.len() < req.min_targets {
-            for legal in &req.legal_targets {
-                if selected.len() >= req.min_targets {
-                    break;
-                }
-                if !selected.contains(legal) {
-                    selected.push(*legal);
-                }
-            }
-        }
-
-        if selected.len() < req.min_targets {
-            return None;
-        }
-
-        out.extend(selected);
-    }
-
-    Some(out)
-}
-
-fn target_slices_for_requirements(
-    requirements: &[TargetRequirementContext],
-    total_targets: usize,
-) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut cursor = 0usize;
-    for req in requirements {
-        let max_for_req = req.max_targets.unwrap_or(req.min_targets.max(1));
-        let end = (cursor + max_for_req).min(total_targets);
-        ranges.push(cursor..end);
-        cursor = end;
-    }
-    ranges
 }
 
 fn filter_targets_with_restriction(
@@ -352,7 +299,9 @@ impl EffectExecutor for RetargetStackObjectEffect {
             match &self.mode {
                 RetargetMode::All => {
                     let mut adjusted = requirements.clone();
-                    let slices = target_slices_for_requirements(&adjusted, entry.targets.len());
+                    let Some(slices) = assigned_target_ranges(&adjusted, &entry.targets) else {
+                        continue;
+                    };
 
                     for (req, range) in adjusted.iter_mut().zip(slices.iter()) {
                         let existing_targets = entry.targets.get(range.clone()).unwrap_or(&[]);
@@ -401,7 +350,8 @@ impl EffectExecutor for RetargetStackObjectEffect {
                     let targets_ctx =
                         TargetsContext::new(chooser_id, object_id, source_name, adjusted.clone());
                     let proposed = ctx.decision_maker.decide_targets(game, &targets_ctx);
-                    let Some(new_targets) = normalize_target_choice(&adjusted, proposed) else {
+                    let Some(new_targets) = normalize_targets_for_requirements(&adjusted, proposed)
+                    else {
                         continue;
                     };
 
@@ -442,7 +392,9 @@ impl EffectExecutor for RetargetStackObjectEffect {
                     }
 
                     let mut eligible_indices = Vec::new();
-                    let slices = target_slices_for_requirements(&requirements, entry.targets.len());
+                    let Some(slices) = assigned_target_ranges(&requirements, &entry.targets) else {
+                        continue;
+                    };
                     for (req, range) in requirements.iter().zip(slices.iter()) {
                         let legal = filter_targets_with_restriction(
                             req.legal_targets.clone(),

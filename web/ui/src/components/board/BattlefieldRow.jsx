@@ -339,7 +339,6 @@ export default function BattlefieldRow({
   onInspect,
   onCardClick,
   onCardPointerDown,
-  onExpandInspector,
   activatableMap,
   legalTargetObjectIds = new Set(),
   allowVerticalScroll = false,
@@ -856,11 +855,6 @@ export default function BattlefieldRow({
             isNew={isNew}
             isBumped={isBumped}
             bumpDirection={bumpDir}
-            onContextMenu={!compact && onExpandInspector ? (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onExpandInspector(card.id);
-            } : undefined}
             onClick={onCardClick ? (e) => onCardClick(e, card) : () => onInspect?.(card.id)}
             onPointerDown={
               isCombatCandidate

@@ -10,6 +10,7 @@ use crate::decisions::context::{
 use crate::decisions::spec::{DecisionPrimitive, DecisionSpec};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::targeting::normalize_targets_for_requirements;
 
 // ============================================================================
 // SacrificeSpec - Choose permanent(s) to sacrifice
@@ -837,6 +838,20 @@ impl TargetRequirement {
     }
 }
 
+fn runtime_requirements(
+    requirements: &[TargetRequirement],
+) -> Vec<crate::decisions::context::TargetRequirementContext> {
+    requirements
+        .iter()
+        .map(|req| crate::decisions::context::TargetRequirementContext {
+            description: req.description.clone(),
+            legal_targets: req.legal_targets.clone(),
+            min_targets: req.min_targets,
+            max_targets: req.max_targets,
+        })
+        .collect()
+}
+
 /// Specification for choosing targets for a spell or ability.
 #[derive(Debug, Clone)]
 pub struct TargetsSpec {
@@ -890,11 +905,8 @@ impl DecisionSpec for TargetsSpec {
     }
 
     fn default_response(&self, _strategy: FallbackStrategy) -> Vec<crate::game_state::Target> {
-        // Default: pick first legal target for each requirement
-        self.requirements
-            .iter()
-            .filter_map(|r| r.legal_targets.first().cloned())
-            .collect()
+        let requirements = runtime_requirements(&self.requirements);
+        normalize_targets_for_requirements(&requirements, Vec::new()).unwrap_or_default()
     }
 
     fn build_context(
@@ -967,6 +979,8 @@ impl DecisionSpec for TargetsSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::FallbackStrategy;
+    use crate::game_state::Target;
 
     #[test]
     fn test_sacrifice_spec() {
@@ -1042,5 +1056,26 @@ mod tests {
         let max_response = spec.default_response(FallbackStrategy::Maximum);
         assert_eq!(max_response.permanents, perms);
         assert_eq!(max_response.players, players);
+    }
+
+    #[test]
+    fn test_targets_spec_default_response_supports_multi_target_requirement() {
+        let first = Target::Object(ObjectId::from_raw(2));
+        let second = Target::Object(ObjectId::from_raw(3));
+        let spec = TargetsSpec::new(
+            ObjectId::from_raw(1),
+            "test spell",
+            vec![TargetRequirement {
+                description: "two targets".to_string(),
+                legal_targets: vec![first, second],
+                min_targets: 2,
+                max_targets: Some(2),
+            }],
+        );
+
+        assert_eq!(
+            spec.default_response(FallbackStrategy::FirstOption),
+            vec![first, second]
+        );
     }
 }

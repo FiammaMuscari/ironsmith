@@ -331,9 +331,7 @@ impl AlternativeCastingMethod {
             | Self::Plot { .. }
             | Self::Suspend { .. }
             | Self::Disturb { .. }
-            | Self::Overload { .. } => {
-                AlternativeCastRequirements::default()
-            }
+            | Self::Overload { .. } => AlternativeCastRequirements::default(),
             Self::Escape { exile_count, .. } => AlternativeCastRequirements {
                 exile_from_graveyard: *exile_count,
                 ..Default::default()
@@ -341,9 +339,7 @@ impl AlternativeCastingMethod {
             Self::Flashback { .. }
             | Self::Miracle { .. }
             | Self::Madness { .. }
-            | Self::Foretell { .. } => {
-                AlternativeCastRequirements::default()
-            }
+            | Self::Foretell { .. } => AlternativeCastRequirements::default(),
             Self::Composed { .. } => AlternativeCastRequirements::default(),
             Self::MindbreakTrap { .. } => AlternativeCastRequirements::default(),
             Self::Bestow { .. } => AlternativeCastRequirements::default(),
@@ -593,7 +589,10 @@ mod tests {
 
         assert_eq!(plot.cast_from_zone(), Zone::Exile);
         assert!(!plot.exiles_after_resolution());
-        assert_eq!(plot.plot_cost().map(ManaCost::to_oracle).as_deref(), Some("{1}{R}"));
+        assert_eq!(
+            plot.plot_cost().map(ManaCost::to_oracle).as_deref(),
+            Some("{1}{R}")
+        );
         assert_eq!(plot.name(), "Plot");
     }
 

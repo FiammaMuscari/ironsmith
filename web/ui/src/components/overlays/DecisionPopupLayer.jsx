@@ -5,17 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DecisionRouter from "@/components/decisions/DecisionRouter";
 import { normalizeDecisionText } from "@/components/decisions/decisionText";
-import DecisionMiniInspector from "@/components/overlays/DecisionMiniInspector";
 import { animate, cancelMotion, snappySpring, stagger } from "@/lib/motion/anime";
 import { SymbolText } from "@/lib/mana-symbols";
 import { nextPriorityAdvanceLabel } from "@/lib/constants";
+import HighlightedDecisionText from "@/components/decisions/HighlightedDecisionText";
+import { getPlayerAccent } from "@/lib/player-colors";
+import {
+  buildObjectControllerById,
+  buildObjectNameById,
+} from "@/lib/decision-object-meta";
 import {
   defaultTriggerOrderingOrder,
   isTriggerOrderingDecision,
   normalizeTriggerOrderingOrder,
 } from "@/lib/trigger-ordering";
 import { cn } from "@/lib/utils";
-import { getVisibleStackObjects } from "@/lib/stack-targets";
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -55,47 +59,6 @@ function actionTargetsObjectName(action, lowerName) {
     || label.startsWith(`play ${lowerName}`)
     || label.startsWith(`tap ${lowerName}:`)
   );
-}
-
-function buildObjectNameById(players, stackObjects) {
-  const map = new Map();
-  const register = (id, name) => {
-    if (id == null) return;
-    const key = String(id);
-    if (!key) return;
-    const text = String(name || "").trim();
-    if (!text) return;
-    map.set(key, text);
-  };
-
-  for (const player of players || []) {
-    for (const card of player?.hand_cards || []) {
-      register(card?.id, card?.name);
-    }
-    for (const card of player?.graveyard_cards || []) {
-      register(card?.id, card?.name);
-    }
-    for (const card of player?.exile_cards || []) {
-      register(card?.id, card?.name);
-    }
-    for (const card of player?.command_cards || []) {
-      register(card?.id, card?.name);
-    }
-    for (const card of player?.battlefield || []) {
-      register(card?.id, card?.name);
-      if (Array.isArray(card?.member_ids)) {
-        for (const memberId of card.member_ids) {
-          register(memberId, card?.name);
-        }
-      }
-    }
-  }
-
-  for (const stackObject of stackObjects || []) {
-    register(stackObject?.id, stackObject?.name);
-  }
-
-  return map;
 }
 
 function buildBattlefieldFamilies(players) {
@@ -189,7 +152,23 @@ function buildObjectFamilyIds(players, objectId) {
   return ids;
 }
 
-function PriorityActionPillLabel({ text, viewportRef, carouselResetVersion = 0 }) {
+function resolveObjectAccent(players, perspective, controllerById, objectId, explicitControllerId = null) {
+  const controllerId = explicitControllerId != null
+    ? Number(explicitControllerId)
+    : controllerById.get(String(objectId));
+  if (controllerId == null || Number(controllerId) === Number(perspective)) {
+    return null;
+  }
+  return getPlayerAccent(players || [], controllerId);
+}
+
+function PriorityActionPillLabel({
+  text,
+  viewportRef,
+  carouselResetVersion = 0,
+  highlightText = "",
+  highlightColor = null,
+}) {
   const displayText = useMemo(() => normalizeDecisionText(text), [text]);
   const containerRef = useRef(null);
   const measureRef = useRef(null);
@@ -298,10 +277,18 @@ function PriorityActionPillLabel({ text, viewportRef, carouselResetVersion = 0 }
     return (
       <span ref={containerRef} className="relative block min-w-0 overflow-hidden" style={{ textOverflow: "clip" }}>
         <span ref={measureRef} className="absolute left-0 top-0 invisible inline-block whitespace-nowrap pointer-events-none">
-          <SymbolText text={displayText} style={{ whiteSpace: "nowrap" }} />
+          <HighlightedDecisionText
+            text={displayText}
+            highlightText={highlightText}
+            highlightColor={highlightColor}
+          />
         </span>
         <span className="block min-w-0 overflow-hidden whitespace-nowrap" style={{ textOverflow: "clip" }}>
-          <SymbolText text={displayText} style={{ whiteSpace: "nowrap" }} />
+          <HighlightedDecisionText
+            text={displayText}
+            highlightText={highlightText}
+            highlightColor={highlightColor}
+          />
         </span>
       </span>
     );
@@ -310,17 +297,29 @@ function PriorityActionPillLabel({ text, viewportRef, carouselResetVersion = 0 }
   return (
     <span ref={containerRef} className="relative block min-w-0 overflow-hidden" style={{ textOverflow: "clip" }}>
       <span ref={measureRef} className="absolute left-0 top-0 invisible inline-block whitespace-nowrap pointer-events-none">
-        <SymbolText text={displayText} style={{ whiteSpace: "nowrap" }} />
+        <HighlightedDecisionText
+          text={displayText}
+          highlightText={highlightText}
+          highlightColor={highlightColor}
+        />
       </span>
       <span
         ref={marqueeRef}
         className="inline-flex whitespace-nowrap will-change-transform"
       >
         <span className="pr-7">
-          <SymbolText text={displayText} style={{ whiteSpace: "nowrap" }} />
+          <HighlightedDecisionText
+            text={displayText}
+            highlightText={highlightText}
+            highlightColor={highlightColor}
+          />
         </span>
         <span aria-hidden="true" className="pr-7">
-          <SymbolText text={displayText} style={{ whiteSpace: "nowrap" }} />
+          <HighlightedDecisionText
+            text={displayText}
+            highlightText={highlightText}
+            highlightColor={highlightColor}
+          />
         </span>
       </span>
     </span>
@@ -330,6 +329,10 @@ function PriorityActionPillLabel({ text, viewportRef, carouselResetVersion = 0 }
 function PriorityActionStrip({
   groups,
   canAct,
+  players,
+  perspective,
+  objectNameById,
+  objectControllerById,
   hoveredObjectFamilyIds,
   selectedObjectFamilyIds,
   selectedActionIndices,
@@ -625,6 +628,15 @@ function PriorityActionStrip({
         {displayGroups.map(({ key, cycle, group }) => {
           const isInteractiveCycle = cycle === middleLoopIndex;
           const linkedActive = isGroupHoveredLinked(group) || isGroupSelectedLinked(group);
+          const highlightName = group.hoverObjectId != null
+            ? objectNameById.get(String(group.hoverObjectId)) || ""
+            : "";
+          const accent = resolveObjectAccent(
+            players,
+            perspective,
+            objectControllerById,
+            group.hoverObjectId
+          );
           const setNodeRef = (node) => {
             const existing = groupNodeRefs.current.get(group.key) || [];
             if (node) {
@@ -659,6 +671,8 @@ function PriorityActionStrip({
                 text={group.label}
                 viewportRef={viewportRef}
                 carouselResetVersion={carouselResetByGroupKey[group.key] || 0}
+                highlightText={highlightName}
+                highlightColor={accent?.hex || null}
               />
             </>
           );
@@ -738,11 +752,18 @@ function buildViewedCardsIdentity(viewedCards) {
   ].join("|");
 }
 
-function ViewedCardsStripStep({
+function ViewedCardsStrip({
   label,
   description = "",
   sourceName = "",
   cards = [],
+  players = [],
+  perspective = null,
+  objectControllerById = new Map(),
+  hoveredObjectId = null,
+  selectedObjectId = null,
+  onCardHoverStart,
+  onCardHoverEnd,
 }) {
   const normalizedSourceName = String(sourceName || "").trim();
   const normalizedDescription = String(description || "").trim();
@@ -768,14 +789,34 @@ function ViewedCardsStripStep({
         <div className="action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden">
           <div className="flex w-max min-w-full items-center gap-1.5 pb-0.5">
             {cards.length > 0 ? cards.map((card) => (
-              <div
+              <button
                 key={card.id}
-                className="inline-flex max-w-[220px] items-center rounded-sm border border-[#35506c]/78 bg-[rgba(12,22,34,0.72)] px-2 py-1 text-[12px] text-[#eef6ff] shadow-[0_0_12px_rgba(72,120,166,0.18)]"
+                type="button"
+                className={cn(
+                  "inline-flex max-w-[220px] items-center rounded-sm border px-2 py-1 text-[12px] text-[#eef6ff] shadow-[0_0_12px_rgba(72,120,166,0.18)] transition-all",
+                  String(hoveredObjectId) === String(card.id) || String(selectedObjectId) === String(card.id)
+                    ? "border-[#bfe0ff] bg-[rgba(220,236,255,0.16)] shadow-[0_0_12px_rgba(236,245,255,0.3)]"
+                    : "border-[#35506c]/78 bg-[rgba(12,22,34,0.72)] hover:border-[#bfe0ff] hover:bg-[rgba(220,236,255,0.16)]"
+                )}
+                onMouseEnter={() => onCardHoverStart?.(card)}
+                onMouseLeave={() => onCardHoverEnd?.()}
               >
                 <span className="truncate">
-                  <SymbolText text={normalizeDecisionText(card.name)} />
+                  <HighlightedDecisionText
+                    text={normalizeDecisionText(card.name)}
+                    highlightText={normalizeDecisionText(card.name)}
+                    highlightColor={
+                      resolveObjectAccent(
+                        players,
+                        perspective,
+                        objectControllerById,
+                        card.id,
+                        card.controller
+                      )?.hex || null
+                    }
+                  />
                 </span>
-              </div>
+              </button>
             )) : (
               <div className="text-[12px] italic text-[#89a7c7]">
                 No cards visible.
@@ -785,65 +826,6 @@ function ViewedCardsStripStep({
         </div>
       </div>
     </div>
-  );
-}
-
-function resolveDecisionMiniInspectorStackObject(stackObjects = [], selectedObjectId = null) {
-  if (!Array.isArray(stackObjects) || stackObjects.length === 0) return null;
-  const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
-  if (selectedKey != null) {
-    const selectedEntry = stackObjects.find((entry) => (
-      String(entry?.inspect_object_id ?? entry?.id) === selectedKey
-      || String(entry?.id) === selectedKey
-    ));
-    if (selectedEntry) return selectedEntry;
-  }
-  return stackObjects[0] || null;
-}
-
-function decisionSourceMatchesStackObject(decision, stackObject) {
-  if (!decision || !stackObject) return false;
-  const sourceId = decision?.source_id == null ? null : String(decision.source_id);
-  const sourceName = String(decision?.source_name || "").trim().toLowerCase();
-  const stackId = stackObject?.id == null ? null : String(stackObject.id);
-  const inspectId = stackObject?.inspect_object_id == null ? null : String(stackObject.inspect_object_id);
-  const stackName = String(stackObject?.name || "").trim().toLowerCase();
-
-  if (sourceId && (sourceId === stackId || sourceId === inspectId)) return true;
-  return Boolean(sourceName && stackName && sourceName === stackName);
-}
-
-function resolveDecisionMiniInspectorStackObjectForDecision(
-  decision,
-  stackObjects = [],
-  selectedObjectId = null
-) {
-  if (!Array.isArray(stackObjects) || stackObjects.length === 0) return null;
-
-  const selectedEntry = resolveDecisionMiniInspectorStackObject(stackObjects, selectedObjectId);
-  if (decisionSourceMatchesStackObject(decision, selectedEntry)) {
-    return selectedEntry;
-  }
-
-  const matchingEntry = stackObjects.find((entry) => decisionSourceMatchesStackObject(decision, entry));
-  if (matchingEntry) return matchingEntry;
-
-  if (!decision || decision.kind === "priority") {
-    return selectedEntry;
-  }
-
-  return null;
-}
-
-function shouldShowDecisionMiniInspector(decision, stackObject) {
-  if (!decision && !stackObject) return false;
-  if (stackObject) return true;
-  return Boolean(
-    decision.source_id != null
-    || String(decision.source_name || "").trim()
-    || String(decision.context_text || "").trim()
-    || String(decision.consequence_text || "").trim()
-    || String(decision.description || "").trim()
   );
 }
 
@@ -911,14 +893,6 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const isPriorityDecision = decision?.kind === "priority";
   const isCombatDecision = decision?.kind === "attackers" || decision?.kind === "blockers";
   const decisionActions = useMemo(() => decision?.actions || [], [decision]);
-  const displayedStackObject = useMemo(
-    () => resolveDecisionMiniInspectorStackObjectForDecision(
-      decision,
-      getVisibleStackObjects(state),
-      selectedObjectId
-    ),
-    [decision, selectedObjectId, state]
-  );
   const passAction = useMemo(
     () => decisionActions.find((action) => action.kind === "pass_priority"),
     [decisionActions]
@@ -931,9 +905,9 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
   const stackSize = Number(state?.stack_size || 0);
   const showPriorityAdvanceButton = !!passAction;
-  const showDecisionMiniInspector = shouldShowDecisionMiniInspector(decision, displayedStackObject);
   const canCancelDecision = canAct && !!state?.cancelable;
-  const passLabel = holdRule === "always"
+  const hasCustomPassLabel = !!passAction?.label && passAction.label !== "Pass priority";
+  const passLabel = holdRule === "always" || hasCustomPassLabel
     ? (passAction?.label || "Pass priority")
     : `→ ${nextPriorityAdvanceLabel(state?.phase, state?.step, stackSize)}`;
   const battlefieldFamilies = useMemo(
@@ -946,9 +920,14 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   );
   const priorityActionCount = otherActions.length;
   const objectNameById = useMemo(
-    () => buildObjectNameById(state?.players, getVisibleStackObjects(state)),
+    () => buildObjectNameById(state),
     [state]
   );
+  const objectControllerById = useMemo(
+    () => buildObjectControllerById(state),
+    [state]
+  );
+  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}|${decision?.context_text || ""}|${decision?.consequence_text || ""}`;
   const viewedCards = state?.viewed_cards || null;
   const viewedCardsLabel = viewedCards?.visibility === "public" ? "Revealed" : "Look";
   const viewedCardsIdentity = useMemo(
@@ -956,14 +935,24 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     [viewedCards]
   );
   const [acknowledgedViewedCardsToken, setAcknowledgedViewedCardsToken] = useState("");
-  const viewedCardsToken = viewedCardsIdentity || "";
+  const viewedCardsToken = viewedCardsIdentity ? `${decisionIdentity}|${viewedCardsIdentity}` : "";
   const showViewedCardsStep = Boolean(viewedCardsToken)
     && acknowledgedViewedCardsToken !== viewedCardsToken;
   const viewedCardEntries = useMemo(
-    () => (viewedCards?.card_ids || []).map((id) => ({
-      id: String(id),
-      name: objectNameById.get(String(id)) || `Card #${id}`,
-    })),
+    () => {
+      if (Array.isArray(viewedCards?.cards) && viewedCards.cards.length > 0) {
+        return viewedCards.cards.map((card) => ({
+          id: String(card.id),
+          name: card.name || `Card #${card.id}`,
+          controller: viewedCards?.subject,
+        }));
+      }
+      return (viewedCards?.card_ids || []).map((id) => ({
+        id: String(id),
+        name: objectNameById.get(String(id)) || `Card #${id}`,
+        controller: viewedCards?.subject,
+      }));
+    },
     [objectNameById, viewedCards]
   );
   const viewedCardsSourceName = (() => {
@@ -1024,7 +1013,15 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     clearHoverLinkedObjects();
     clearHover();
   }, [canAct, clearHoverLinkedObjects, clearHover]);
-  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}|${decision?.context_text || ""}|${decision?.consequence_text || ""}`;
+  const handleViewedCardHoverStart = useCallback((card) => {
+    if (!card?.id) return;
+    clearHoverLinkedObjects();
+    hoverCard(card.id);
+  }, [clearHoverLinkedObjects, hoverCard]);
+  const handleViewedCardHoverEnd = useCallback(() => {
+    clearHoverLinkedObjects();
+    clearHover();
+  }, [clearHoverLinkedObjects, clearHover]);
   const [submitState, setSubmitState] = useState({ key: "", action: null });
   const handleSubmitActionChange = useCallback(
     (nextAction) => {
@@ -1058,11 +1055,6 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     setAcknowledgedViewedCardsToken(viewedCardsToken);
   }, [viewedCardsToken]);
 
-  useEffect(() => {
-    if (viewedCardsToken) return;
-    setAcknowledgedViewedCardsToken("");
-  }, [viewedCardsToken]);
-
   if (!decision || isCombatDecision) return null;
   if (isPriorityDecision && !passAction) return null;
 
@@ -1072,15 +1064,6 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
         <div
           className="priority-inline-panel pointer-events-auto relative flex w-full flex-col rounded bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
         >
-          {showDecisionMiniInspector && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-full mb-1">
-              <DecisionMiniInspector
-                decision={decision}
-                stackObject={displayedStackObject}
-                className="h-auto max-h-[132px] rounded-t border-l-0 border-b border-[#2f4662]/70 shadow-[0_10px_24px_rgba(0,0,0,0.34)]"
-              />
-            </div>
-          )}
           {isPriorityDecision ? (
             showViewedCardsStep ? (
               <div className="flex min-h-[46px] items-stretch gap-2">
@@ -1101,11 +1084,18 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 >
                   Done
                 </Button>
-                <ViewedCardsStripStep
+                <ViewedCardsStrip
                   label={viewedCardsLabel}
                   description={viewedCards?.description || ""}
                   sourceName={viewedCardsSourceName}
                   cards={viewedCardEntries}
+                  players={state?.players || []}
+                  perspective={state?.perspective}
+                  objectControllerById={objectControllerById}
+                  hoveredObjectId={hoveredObjectId}
+                  selectedObjectId={selectedObjectId}
+                  onCardHoverStart={handleViewedCardHoverStart}
+                  onCardHoverEnd={handleViewedCardHoverEnd}
                 />
               </div>
             ) : (
@@ -1137,6 +1127,10 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 <PriorityActionStrip
                   groups={actionGroups}
                   canAct={canAct}
+                  players={state?.players || []}
+                  perspective={state?.perspective}
+                  objectNameById={objectNameById}
+                  objectControllerById={objectControllerById}
                   hoveredObjectFamilyIds={hoveredObjectFamilyIds}
                   selectedObjectFamilyIds={selectedObjectFamilyIds}
                   selectedActionIndices={selectedActionIndices}
@@ -1151,7 +1145,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               <div className="flex min-h-[46px] items-stretch gap-2">
                 <div className={cn(
                   "shrink-0 flex self-stretch items-stretch gap-2",
-                  showDecisionMiniInspector ? "min-w-[396px]" : "min-w-[420px]"
+                  "min-w-[420px]"
                 )}>
                   <Button
                     variant="ghost"
@@ -1207,7 +1201,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                     showActionCount={false}
                     className="min-w-[104px]"
                   />
-                  {!showDecisionMiniInspector && !triggerOrderingDecision && (
+                  {!triggerOrderingDecision && (
                     <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
                       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                         {resolveDecisionTitle(decision)}
@@ -1223,19 +1217,27 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 <div className="min-w-0 flex-1 overflow-hidden">
                   {canAct ? (
                     showViewedCardsStep ? (
-                      <ViewedCardsStripStep
+                      <ViewedCardsStrip
                         label={viewedCardsLabel}
                         description={viewedCards?.description || ""}
                         sourceName={viewedCardsSourceName}
                         cards={viewedCardEntries}
+                        players={state?.players || []}
+                        perspective={state?.perspective}
+                        objectControllerById={objectControllerById}
+                        hoveredObjectId={hoveredObjectId}
+                        selectedObjectId={selectedObjectId}
+                        onCardHoverStart={handleViewedCardHoverStart}
+                        onCardHoverEnd={handleViewedCardHoverEnd}
                       />
                     ) : (!triggerOrderingDecision && (
                       <DecisionRouter
                         decision={decision}
                         canAct={canAct}
+                        selectedObjectId={selectedObjectId}
                         inlineSubmit={false}
                         onSubmitActionChange={handleSubmitActionChange}
-                        hideDescription={showDecisionMiniInspector}
+                        hideDescription={false}
                         layout="strip"
                       />
                     ))
@@ -1382,16 +1384,27 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
       <div className="border-b border-[#2f4662]/70 px-2 py-1.5">
         {isPriorityDecision ? (
           showViewedCardsStep ? (
-            <ViewedCardsStripStep
+            <ViewedCardsStrip
               label={viewedCardsLabel}
               description={viewedCards?.description || ""}
               sourceName={viewedCardsSourceName}
               cards={viewedCardEntries}
+              players={state?.players || []}
+              perspective={state?.perspective}
+              objectControllerById={objectControllerById}
+              hoveredObjectId={hoveredObjectId}
+              selectedObjectId={selectedObjectId}
+              onCardHoverStart={handleViewedCardHoverStart}
+              onCardHoverEnd={handleViewedCardHoverEnd}
             />
           ) : (
             <PriorityActionStrip
               groups={actionGroups}
               canAct={canAct}
+              players={state?.players || []}
+              perspective={state?.perspective}
+              objectNameById={objectNameById}
+              objectControllerById={objectControllerById}
               hoveredObjectFamilyIds={hoveredObjectFamilyIds}
               selectedObjectFamilyIds={selectedObjectFamilyIds}
               selectedActionIndices={selectedActionIndices}
@@ -1403,16 +1416,24 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
         ) : (
           <div className="min-w-0">
             {showViewedCardsStep ? (
-              <ViewedCardsStripStep
+              <ViewedCardsStrip
                 label={viewedCardsLabel}
                 description={viewedCards?.description || ""}
                 sourceName={viewedCardsSourceName}
                 cards={viewedCardEntries}
+                players={state?.players || []}
+                perspective={state?.perspective}
+                objectControllerById={objectControllerById}
+                hoveredObjectId={hoveredObjectId}
+                selectedObjectId={selectedObjectId}
+                onCardHoverStart={handleViewedCardHoverStart}
+                onCardHoverEnd={handleViewedCardHoverEnd}
               />
             ) : (!triggerOrderingDecision && (
               <DecisionRouter
                 decision={decision}
                 canAct={canAct}
+                selectedObjectId={selectedObjectId}
                 inlineSubmit={false}
                 onSubmitActionChange={handleSubmitActionChange}
                 hideDescription={false}

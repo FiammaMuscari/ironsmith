@@ -492,6 +492,7 @@ mod tests {
             subtypes: vec![],
             oracle_text: String::new(),
             other_face: None,
+            other_face_name: None,
             linked_face_layout: crate::card::LinkedFaceLayout::None,
             base_power: Some(PtValue::Fixed(power)),
             base_toughness: Some(PtValue::Fixed(toughness)),

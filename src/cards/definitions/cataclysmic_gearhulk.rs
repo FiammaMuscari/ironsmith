@@ -39,7 +39,7 @@ mod tests {
     use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
     use crate::color::Color;
-    use crate::effect::{Effect};
+    use crate::effect::Effect;
     use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, PlayerId};

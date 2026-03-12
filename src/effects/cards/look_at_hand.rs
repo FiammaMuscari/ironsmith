@@ -1,7 +1,7 @@
 //! Look at hand effect implementation.
 
 use crate::decisions::context::ViewCardsContext;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_players_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};

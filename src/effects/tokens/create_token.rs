@@ -404,7 +404,9 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         let created_id = match result.value {
-            crate::effect::OutcomeValue::Objects(ids) => *ids.first().expect("expected created token"),
+            crate::effect::OutcomeValue::Objects(ids) => {
+                *ids.first().expect("expected created token")
+            }
             other => panic!("expected created token object ids, got {other:?}"),
         };
 

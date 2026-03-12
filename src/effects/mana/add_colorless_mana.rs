@@ -63,9 +63,7 @@ impl EffectExecutor for AddColorlessManaEffect {
         );
 
         let mana_added: Vec<ManaSymbol> = (0..count).map(|_| ManaSymbol::Colorless).collect();
-        Ok(EffectOutcome::mana_added(
-            mana_added,
-        ))
+        Ok(EffectOutcome::mana_added(mana_added))
     }
 
     fn producible_mana_symbols(
@@ -172,7 +170,10 @@ mod tests {
 
         assert_eq!(
             result.value,
-            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Colorless, ManaSymbol::Colorless])
+            crate::effect::OutcomeValue::ManaAdded(vec![
+                ManaSymbol::Colorless,
+                ManaSymbol::Colorless
+            ])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.colorless, 0);
         assert_eq!(game.player(bob).unwrap().mana_pool.colorless, 2);

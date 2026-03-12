@@ -23,6 +23,7 @@ mod saddle;
 mod soulbond_pair;
 mod tap;
 mod transform;
+mod umbra_armor;
 mod unearth;
 mod untap;
 
@@ -46,5 +47,6 @@ pub use saddle::{BecomeSaddledUntilEotEffect, SaddleCostEffect};
 pub use soulbond_pair::SoulbondPairEffect;
 pub use tap::TapEffect;
 pub use transform::TransformEffect;
+pub use umbra_armor::UmbraArmorEffect;
 pub use unearth::UnearthEffect;
 pub use untap::UntapEffect;

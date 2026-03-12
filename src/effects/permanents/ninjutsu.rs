@@ -9,7 +9,7 @@
 use crate::combat_state::{AttackTarget, AttackerInfo, get_attack_target, is_unblocked};
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::zones::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
@@ -278,13 +278,9 @@ impl EffectExecutor for NinjutsuEffect {
                         target: attack_target,
                     });
                 }
-                Ok(EffectOutcome::with_objects(vec![
-                    new_id,
-                ]))
+                Ok(EffectOutcome::with_objects(vec![new_id]))
             }
-            BattlefieldEntryOutcome::Prevented => {
-                Ok(EffectOutcome::prevented())
-            }
+            BattlefieldEntryOutcome::Prevented => Ok(EffectOutcome::prevented()),
         }
     }
 }

@@ -15,7 +15,7 @@
 
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::events::PermanentTappedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};

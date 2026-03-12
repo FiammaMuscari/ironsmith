@@ -6,7 +6,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
@@ -126,6 +126,7 @@ impl EffectExecutor for CascadeEffect {
                         object_id: new_id,
                         controller: ctx.controller,
                         targets: vec![],
+                        target_assignments: vec![],
                         x_value,
                         ability_effects: None,
                         is_ability: false,

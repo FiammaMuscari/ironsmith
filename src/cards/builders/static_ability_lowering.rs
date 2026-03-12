@@ -106,6 +106,7 @@ pub(crate) fn static_ability_for_keyword_action(action: KeywordAction) -> Option
         KeywordAction::Shadow => Some(StaticAbility::shadow()),
         KeywordAction::Horsemanship => Some(StaticAbility::horsemanship()),
         KeywordAction::Flanking => Some(StaticAbility::flanking()),
+        KeywordAction::UmbraArmor => Some(StaticAbility::umbra_armor()),
         KeywordAction::Landwalk(subtype) => Some(StaticAbility::landwalk(subtype)),
         KeywordAction::Bloodthirst(amount) => Some(StaticAbility::bloodthirst(amount)),
         KeywordAction::Rampage(amount) => {

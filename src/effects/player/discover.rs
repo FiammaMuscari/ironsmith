@@ -122,6 +122,7 @@ impl EffectExecutor for DiscoverEffect {
                         object_id: new_id,
                         controller: player_id,
                         targets: vec![],
+                        target_assignments: vec![],
                         x_value,
                         ability_effects: None,
                         is_ability: false,

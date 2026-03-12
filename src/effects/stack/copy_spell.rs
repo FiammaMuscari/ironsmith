@@ -143,9 +143,7 @@ impl EffectExecutor for CopySpellEffect {
             );
         }
 
-        Ok(EffectOutcome::with_objects(
-            created_ids,
-        ))
+        Ok(EffectOutcome::with_objects(created_ids))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

@@ -17,10 +17,12 @@
 //! - [`compute_legal_targets`] - Compute all legal targets for a target spec
 //! - [`validate_targets`] - Validate targets during resolution
 
+mod assignment;
 mod computation;
 mod types;
 mod ward;
 
+pub use assignment::*;
 pub use computation::*;
 pub use types::*;
 pub use ward::*;

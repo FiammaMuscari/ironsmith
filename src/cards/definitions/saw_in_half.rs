@@ -31,7 +31,7 @@ pub fn saw_in_half() -> CardDefinition {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::{EffectOutcome};
+    use crate::effect::EffectOutcome;
     use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -303,7 +303,10 @@ mod tests {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
         let outcomes = execute_saw_in_half(&mut game, alice, None);
-        assert_eq!(outcomes[0].status, crate::effect::OutcomeStatus::TargetInvalid);
+        assert_eq!(
+            outcomes[0].status,
+            crate::effect::OutcomeStatus::TargetInvalid
+        );
     }
 
     #[test]

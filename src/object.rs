@@ -288,6 +288,8 @@ pub struct Object {
     ///
     /// This is copied from `Card::other_face` when the object is created.
     pub other_face: Option<CardId>,
+    /// Linked face name for on-demand compilation without a global registry preload.
+    pub other_face_name: Option<String>,
     /// Layout semantics for linked-face cards.
     pub linked_face_layout: LinkedFaceLayout,
     pub base_power: Option<PtValue>,
@@ -384,6 +386,7 @@ impl Object {
             subtypes: card.subtypes.clone(),
             oracle_text: card.oracle_text.clone(),
             other_face: card.other_face,
+            other_face_name: card.other_face_name.clone(),
             linked_face_layout: card.linked_face_layout,
             base_power,
             base_toughness,
@@ -447,6 +450,7 @@ impl Object {
         self.subtypes = def.card.subtypes.clone();
         self.oracle_text = def.card.oracle_text.clone();
         self.other_face = def.card.other_face;
+        self.other_face_name = def.card.other_face_name.clone();
         self.linked_face_layout = def.card.linked_face_layout;
         self.base_power = base_power;
         self.base_toughness = base_toughness;
@@ -531,6 +535,7 @@ impl Object {
                 loyalty: self.base_loyalty,
                 defense: self.base_defense,
                 other_face: self.other_face,
+                other_face_name: self.other_face_name.clone(),
                 linked_face_layout: self.linked_face_layout,
                 is_token: matches!(self.kind, ObjectKind::Token),
             },
@@ -573,6 +578,7 @@ impl Object {
             subtypes,
             oracle_text: String::new(),
             other_face: None,
+            other_face_name: None,
             linked_face_layout: LinkedFaceLayout::None,
             base_power: power.map(PtValue::Fixed),
             base_toughness: toughness.map(PtValue::Fixed),
@@ -618,6 +624,7 @@ impl Object {
             subtypes: source.subtypes.clone(),
             oracle_text: source.oracle_text.clone(),
             other_face: source.other_face,
+            other_face_name: source.other_face_name.clone(),
             linked_face_layout: source.linked_face_layout,
             base_power: source.base_power,
             base_toughness: source.base_toughness,
@@ -682,6 +689,7 @@ impl Object {
             subtypes: Vec::new(),
             oracle_text: String::new(),
             other_face: None,
+            other_face_name: None,
             linked_face_layout: LinkedFaceLayout::None,
             base_power: None,
             base_toughness: None,
@@ -719,6 +727,7 @@ impl Object {
         self.subtypes = source.subtypes.clone();
         self.oracle_text = source.oracle_text.clone();
         self.other_face = source.other_face;
+        self.other_face_name = source.other_face_name.clone();
         self.linked_face_layout = source.linked_face_layout;
         self.base_power = source.base_power;
         self.base_toughness = source.base_toughness;
@@ -772,9 +781,8 @@ impl Object {
             return;
         };
 
-        let target_spec = crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-            filter,
-        ));
+        let target_spec =
+            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(filter));
         self.spell_effect = Some(vec![crate::effect::Effect::attach_to(target_spec)]);
     }
 
@@ -1175,6 +1183,7 @@ impl Object {
             subtypes: def.card.subtypes.clone(),
             oracle_text: def.card.oracle_text.clone(),
             other_face: def.card.other_face,
+            other_face_name: def.card.other_face_name.clone(),
             linked_face_layout: def.card.linked_face_layout,
             base_power: def.card.power_toughness.map(|pt| pt.power),
             base_toughness: def.card.power_toughness.map(|pt| pt.toughness),

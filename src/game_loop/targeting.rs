@@ -640,6 +640,27 @@ pub(super) fn extract_target_requirements_from_effect_internal(
     }
 }
 
+pub(crate) fn extract_target_requirements_for_effect_with_state(
+    game: &GameState,
+    effect: &Effect,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+    consumed_modal_selection: &mut bool,
+) -> Vec<TargetRequirement> {
+    let mut requirements = Vec::new();
+    extract_target_requirements_from_effect_internal(
+        game,
+        effect,
+        caster,
+        source_id,
+        chosen_modes,
+        consumed_modal_selection,
+        &mut requirements,
+    );
+    requirements
+}
+
 /// Extract target requirements from a list of effects with optional mode choices.
 pub(super) fn extract_target_requirements_with_modes(
     game: &GameState,
@@ -887,9 +908,53 @@ pub(super) fn stack_entry_validation_target_specs(
 pub(super) fn validate_stack_entry_targets(
     game: &GameState,
     entry: &StackEntry,
-) -> (Vec<ResolvedTarget>, bool) {
+) -> (
+    Vec<ResolvedTarget>,
+    Vec<crate::game_state::TargetAssignment>,
+    bool,
+) {
     if entry.targets.is_empty() {
-        return (Vec::new(), false);
+        return (Vec::new(), Vec::new(), false);
+    }
+
+    if !entry.target_assignments.is_empty() {
+        let mut valid_targets = Vec::new();
+        let mut valid_assignments = Vec::with_capacity(entry.target_assignments.len());
+        let mut invalid_count = 0usize;
+
+        for assignment in &entry.target_assignments {
+            let legal_targets = compute_legal_targets_with_tagged_objects(
+                game,
+                &assignment.spec,
+                entry.controller,
+                Some(entry.object_id),
+                if entry.tagged_objects.is_empty() {
+                    None
+                } else {
+                    Some(&entry.tagged_objects)
+                },
+            );
+
+            let start = valid_targets.len();
+            for target in &entry.targets[assignment.range.clone()] {
+                if legal_targets.contains(target) {
+                    valid_targets.push(match target {
+                        Target::Object(id) => ResolvedTarget::Object(*id),
+                        Target::Player(id) => ResolvedTarget::Player(*id),
+                    });
+                } else {
+                    invalid_count += 1;
+                }
+            }
+            let end = valid_targets.len();
+            valid_assignments.push(crate::game_state::TargetAssignment {
+                spec: assignment.spec.clone(),
+                range: start..end,
+            });
+        }
+
+        let all_invalid = invalid_count == entry.targets.len();
+        return (valid_targets, valid_assignments, all_invalid);
     }
 
     let validation_specs = stack_entry_validation_target_specs(game, entry);
@@ -929,5 +994,5 @@ pub(super) fn validate_stack_entry_targets(
     }
 
     let all_invalid = invalid_count == entry.targets.len();
-    (valid_targets, all_invalid)
+    (valid_targets, Vec::new(), all_invalid)
 }
