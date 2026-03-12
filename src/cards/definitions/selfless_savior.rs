@@ -29,7 +29,6 @@ mod tests {
     use crate::ability::ActivationTiming;
     use crate::card::CardBuilder;
     use crate::color::Color;
-    use crate::effect::EffectResult;
     use crate::executor::execute_effect;
     use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::game_state::GameState;
@@ -192,10 +191,8 @@ mod tests {
         let result = execute_effect(&mut game, ability, &mut ctx).unwrap();
 
         assert!(
-            matches!(
-                result.result,
-                EffectResult::Resolved | EffectResult::Count(1)
-            ),
+            result.status == crate::effect::OutcomeStatus::Succeeded
+                || result.value == crate::effect::OutcomeValue::Count(1),
             "Expected effect to resolve successfully"
         );
 

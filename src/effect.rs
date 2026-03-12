@@ -6,19 +6,22 @@
 //! ## Effect Results and Outcomes
 //!
 //! Effects return an `EffectOutcome` when executed, which contains:
-//! - An `EffectResult` indicating what happened (success/failure variants)
-//! - A `Vec<TriggerEvent>` of events that occurred during execution
+//! - An `OutcomeStatus` control-flow status
+//! - An `OutcomeValue` structured payload
+//! - A `Vec<TriggerEvent>` of game events that occurred during execution
+//! - A `Vec<ExecutionFact>` of non-triggerable execution metadata
 //!
-//! `EffectResult` variants:
-//! - Success variants: `Count(n)`, `Resolved`, `ManaAdded`, `Objects`
-//! - Failure variants: `Declined`, `TargetInvalid`, `Prevented`, `Protected`, `Impossible`
+//! `OutcomeStatus` carries control flow (`Succeeded`, `Declined`, `TargetInvalid`,
+//! `Prevented`, `Protected`, `Impossible`, `Replaced`), while `OutcomeValue`
+//! carries structured payloads like counts, object IDs, mana added, or
+//! monstrosity application.
 //!
 //! Effects can be labeled with `EffectId` using `Effect::with_id`, and later effects
 //! can reference those results using `Effect::if_` with an `EffectPredicate`.
 
 use crate::effects::EffectExecutor;
 use crate::game_state::GameState;
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
 use crate::tag::TagKey;
@@ -178,124 +181,58 @@ impl From<i32> for ChoiceCount {
     }
 }
 
-/// The result of executing an effect.
-///
-/// Each effect produces a result that indicates what happened. Results are
-/// categorized as either success (something happened) or failure (nothing happened).
-///
-/// For "if you do" logic, use `something_happened()` which returns true for
-/// success variants where the count > 0 or a single-target effect resolved.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EffectResult {
-    // === Success variants ===
-    /// Effect produced a numeric count.
-    ///
-    /// Used for: cards drawn, damage dealt, life gained/lost, tokens created,
-    /// permanents sacrificed, counters placed, etc.
-    ///
-    /// Note: `Count(0)` is technically a success (effect executed) but
-    /// `something_happened()` returns false for it.
-    Count(i32),
-
-    /// Single-target effect resolved successfully.
-    ///
-    /// Used for: destroy, exile, counter, tap/untap, return to hand, etc.
-    Resolved,
-
-    /// Mana was added to a player's mana pool.
-    ManaAdded(Vec<ManaSymbol>),
-
-    /// Specific objects were affected.
-    ///
-    /// Used when effects need to track which objects were affected for
-    /// later reference (e.g., "exile that token at end of combat").
-    Objects(Vec<ObjectId>),
-
-    /// Monstrosity was applied to a creature.
-    ///
-    /// Used to trigger "when this becomes monstrous" abilities.
-    MonstrosityApplied { creature: ObjectId, n: u32 },
-
-    // === Failure variants ===
+/// Control-flow status of an effect execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutcomeStatus {
+    /// Effect executed successfully.
+    #[default]
+    Succeeded,
     /// Player declined a "you may" choice.
     Declined,
-
     /// Target was invalid (doesn't exist, wrong zone, wrong characteristics).
     TargetInvalid,
-
     /// Effect was actively prevented (e.g., damage prevention shield).
     Prevented,
-
     /// Target was protected (indestructible, hexproof, "can't be countered", etc.).
     Protected,
-
     /// Effect was impossible to perform (empty library, no sacrifice targets, etc.).
     Impossible,
-
     /// Effect was replaced by another effect.
-    ///
-    /// Note: Usually still counts as "success" since something happened,
-    /// just not what was originally intended.
     Replaced,
 }
 
-impl EffectResult {
-    /// Create a success result with a count.
-    pub fn count(n: i32) -> Self {
-        Self::Count(n)
-    }
-
-    /// Create a success result for a resolved single-target effect.
-    pub fn resolved() -> Self {
-        Self::Resolved
-    }
-
-    /// Create a failure result for a declined choice.
-    pub fn declined() -> Self {
-        Self::Declined
-    }
-
-    /// Is this a success result (not a failure variant)?
-    pub fn is_success(&self) -> bool {
-        matches!(
+impl OutcomeStatus {
+    pub fn is_success(self) -> bool {
+        !matches!(
             self,
-            Self::Count(_)
-                | Self::Resolved
-                | Self::ManaAdded(_)
-                | Self::Objects(_)
-                | Self::MonstrosityApplied { .. }
-                | Self::Replaced
+            Self::Declined
+                | Self::TargetInvalid
+                | Self::Prevented
+                | Self::Protected
+                | Self::Impossible
         )
     }
 
-    /// Is this a failure result?
-    pub fn is_failure(&self) -> bool {
+    pub fn is_failure(self) -> bool {
         !self.is_success()
     }
+}
 
-    /// Did something actually happen?
-    ///
-    /// This is the typical "if you do" check:
-    /// - `Count(n)` where n > 0: true
-    /// - `Resolved`: true
-    /// - `ManaAdded(_)`: true
-    /// - `Objects(_)` where non-empty: true
-    /// - `MonstrosityApplied`: true
-    /// - `Replaced`: true (something happened, just different)
-    /// - Everything else: false
-    pub fn something_happened(&self) -> bool {
-        match self {
-            Self::Count(n) => *n > 0,
-            Self::Resolved => true,
-            Self::ManaAdded(mana) => !mana.is_empty(),
-            Self::Objects(objs) => !objs.is_empty(),
-            Self::MonstrosityApplied { .. } => true,
-            Self::Replaced => true,
-            _ => false,
-        }
-    }
+/// Structured payload emitted by an effect execution.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum OutcomeValue {
+    #[default]
+    None,
+    Count(i32),
+    ManaAdded(Vec<ManaSymbol>),
+    Objects(Vec<ObjectId>),
+    MonstrosityApplied {
+        creature: ObjectId,
+        n: u32,
+    },
+}
 
-    /// Get the count value, if this is a Count result.
+impl OutcomeValue {
     pub fn as_count(&self) -> Option<i32> {
         match self {
             Self::Count(n) => Some(*n),
@@ -303,15 +240,32 @@ impl EffectResult {
         }
     }
 
-    /// Get the count value, defaulting to 0 for non-Count results.
     pub fn count_or_zero(&self) -> i32 {
         self.as_count().unwrap_or(0)
     }
-}
 
-impl Default for EffectResult {
-    fn default() -> Self {
-        Self::Resolved
+    pub fn objects(&self) -> Option<&[ObjectId]> {
+        match self {
+            Self::Objects(ids) => Some(ids.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn mana_added(&self) -> Option<&[ManaSymbol]> {
+        match self {
+            Self::ManaAdded(mana) => Some(mana.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn something_happened(&self) -> bool {
+        match self {
+            Self::None => false,
+            Self::Count(n) => *n > 0,
+            Self::ManaAdded(mana) => !mana.is_empty(),
+            Self::Objects(objs) => !objs.is_empty(),
+            Self::MonstrosityApplied { .. } => true,
+        }
     }
 }
 
@@ -319,9 +273,44 @@ impl Default for EffectResult {
 // Effect Outcome (result + events)
 // ============================================================================
 
-/// The outcome of executing an effect, including both the result and any events.
+/// Non-triggerable metadata emitted during effect execution.
 ///
-/// This type combines an `EffectResult` with a list of `TriggerEvent`s that occurred
+/// These facts complement domain events: they capture control-flow-relevant
+/// resolution details that are not game events and should not be fed into the
+/// trigger or replacement systems.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionFact {
+    Accepted,
+    Declined,
+    TargetInvalid,
+    Prevented,
+    Protected,
+    Impossible,
+    Replaced,
+    ChosenObjects(Vec<ObjectId>),
+    AffectedObjects(Vec<ObjectId>),
+    ChosenOptions(Vec<usize>),
+    ChosenNumber(u32),
+}
+
+impl ExecutionFact {
+    fn from_status(status: OutcomeStatus) -> Vec<Self> {
+        match status {
+            OutcomeStatus::Declined => vec![Self::Declined],
+            OutcomeStatus::TargetInvalid => vec![Self::TargetInvalid],
+            OutcomeStatus::Prevented => vec![Self::Prevented],
+            OutcomeStatus::Protected => vec![Self::Protected],
+            OutcomeStatus::Impossible => vec![Self::Impossible],
+            OutcomeStatus::Replaced => vec![Self::Replaced],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The outcome of executing an effect, including emitted game events and
+/// non-triggerable execution facts.
+///
+/// This type combines an explicit status/value pair with a list of `TriggerEvent`s that occurred
 /// during execution. This enables centralized trigger checking in the game loop -
 /// instead of effects directly firing triggers, they return events that the game
 /// loop can process.
@@ -343,34 +332,181 @@ impl Default for EffectResult {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectOutcome {
-    /// The result of the effect execution.
-    pub result: EffectResult,
+    /// Control-flow status of the effect execution.
+    pub status: OutcomeStatus,
+    /// Structured payload preserved for later consumers.
+    pub value: OutcomeValue,
     /// Events that occurred during execution (for trigger checking).
     pub events: Vec<crate::triggers::TriggerEvent>,
+    /// Non-triggerable execution metadata preserved across composition.
+    pub execution_facts: Vec<ExecutionFact>,
 }
 
 impl EffectOutcome {
-    /// Create an outcome from just a result (no events).
-    pub fn from_result(result: EffectResult) -> Self {
+    fn is_meaningful(status: OutcomeStatus, value: &OutcomeValue) -> bool {
+        status != OutcomeStatus::Succeeded || !matches!(value, OutcomeValue::None)
+    }
+
+    fn derive_summary(results: &[(OutcomeStatus, OutcomeValue)]) -> (OutcomeStatus, OutcomeValue) {
+        let meaningful = results
+            .iter()
+            .filter(|(status, value)| Self::is_meaningful(*status, value))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let Some((first_status, first_value)) = meaningful.first().cloned() else {
+            return (OutcomeStatus::Succeeded, OutcomeValue::None);
+        };
+        if meaningful.len() == 1 {
+            return (first_status, first_value);
+        }
+        if meaningful
+            .iter()
+            .all(|(status, value)| *status == first_status && *value == first_value)
+        {
+            return (first_status, first_value);
+        }
+        (OutcomeStatus::Succeeded, OutcomeValue::None)
+    }
+
+    fn derive_summary_summing_counts(
+        results: &[(OutcomeStatus, OutcomeValue)],
+    ) -> (OutcomeStatus, OutcomeValue) {
+        let mut total_count = 0;
+        let mut saw_count = false;
+        let mut non_count_meaningful = Vec::new();
+
+        for (status, value) in results {
+            match (*status, value) {
+                (OutcomeStatus::Succeeded, OutcomeValue::Count(n)) => {
+                    saw_count = true;
+                    total_count += n;
+                }
+                (OutcomeStatus::Succeeded, OutcomeValue::None) => {}
+                other => non_count_meaningful.push((other.0, other.1.clone())),
+            }
+        }
+
+        if saw_count && non_count_meaningful.is_empty() {
+            return (OutcomeStatus::Succeeded, OutcomeValue::Count(total_count));
+        }
+
+        Self::derive_summary(results)
+    }
+
+    fn aggregate_with_summary(
+        outcomes: impl IntoIterator<Item = EffectOutcome>,
+        summary_fn: fn(&[(OutcomeStatus, OutcomeValue)]) -> (OutcomeStatus, OutcomeValue),
+    ) -> Self {
+        let mut results = Vec::new();
+        let mut all_events = Vec::new();
+        let mut all_execution_facts = Vec::new();
+
+        for outcome in outcomes {
+            results.push((outcome.status, outcome.value));
+            all_events.extend(outcome.events);
+            all_execution_facts.extend(outcome.execution_facts);
+        }
+
+        let (status, value) = summary_fn(&results);
+        Self::with_details(status, value, all_events, all_execution_facts)
+    }
+
+    /// Create an outcome from just a status (no payload, no events).
+    pub fn from_status(status: OutcomeStatus) -> Self {
+        let value = OutcomeValue::None;
         Self {
-            result,
+            execution_facts: ExecutionFact::from_status(status),
+            status,
+            value,
             events: Vec::new(),
         }
     }
 
-    /// Create an outcome with both result and events.
-    pub fn new(result: EffectResult, events: Vec<crate::triggers::TriggerEvent>) -> Self {
-        Self { result, events }
+    /// Create an outcome from just a payload (successful, no events).
+    pub fn from_value(value: OutcomeValue) -> Self {
+        let status = OutcomeStatus::Succeeded;
+        Self {
+            execution_facts: Vec::new(),
+            status,
+            value,
+            events: Vec::new(),
+        }
+    }
+
+    /// Create an outcome with both status/value and events.
+    pub fn new(
+        status: OutcomeStatus,
+        value: OutcomeValue,
+        events: Vec<crate::triggers::TriggerEvent>,
+    ) -> Self {
+        Self {
+            execution_facts: ExecutionFact::from_status(status),
+            status,
+            value,
+            events,
+        }
+    }
+
+    /// Create an outcome with status, payload, events, and explicit facts.
+    pub fn with_details(
+        status: OutcomeStatus,
+        value: OutcomeValue,
+        events: Vec<crate::triggers::TriggerEvent>,
+        execution_facts: Vec<ExecutionFact>,
+    ) -> Self {
+        Self {
+            status,
+            value,
+            events,
+            execution_facts,
+        }
     }
 
     /// Create a resolved outcome (no events).
     pub fn resolved() -> Self {
-        Self::from_result(EffectResult::Resolved)
+        Self::from_status(OutcomeStatus::Succeeded)
     }
 
     /// Create a count outcome (no events).
     pub fn count(n: i32) -> Self {
-        Self::from_result(EffectResult::Count(n))
+        Self::from_value(OutcomeValue::Count(n))
+    }
+
+    pub fn mana_added(mana: Vec<ManaSymbol>) -> Self {
+        Self::from_value(OutcomeValue::ManaAdded(mana))
+    }
+
+    pub fn with_objects(objects: Vec<ObjectId>) -> Self {
+        Self::from_value(OutcomeValue::Objects(objects))
+    }
+
+    pub fn monstrosity_applied(creature: ObjectId, n: u32) -> Self {
+        Self::from_value(OutcomeValue::MonstrosityApplied { creature, n })
+    }
+
+    pub fn declined() -> Self {
+        Self::from_status(OutcomeStatus::Declined)
+    }
+
+    pub fn target_invalid() -> Self {
+        Self::from_status(OutcomeStatus::TargetInvalid)
+    }
+
+    pub fn prevented() -> Self {
+        Self::from_status(OutcomeStatus::Prevented)
+    }
+
+    pub fn protected() -> Self {
+        Self::from_status(OutcomeStatus::Protected)
+    }
+
+    pub fn impossible() -> Self {
+        Self::from_status(OutcomeStatus::Impossible)
+    }
+
+    pub fn replaced() -> Self {
+        Self::from_status(OutcomeStatus::Replaced)
     }
 
     /// Add a single event to this outcome.
@@ -388,67 +524,140 @@ impl EffectOutcome {
         self
     }
 
+    /// Add a single execution fact to this outcome.
+    pub fn with_execution_fact(mut self, fact: ExecutionFact) -> Self {
+        self.execution_facts.push(fact);
+        self
+    }
+
+    /// Add multiple execution facts to this outcome.
+    pub fn with_execution_facts(mut self, facts: impl IntoIterator<Item = ExecutionFact>) -> Self {
+        self.execution_facts.extend(facts);
+        self
+    }
+
+    pub fn set_status(&mut self, status: OutcomeStatus) {
+        self.status = status;
+    }
+
+    pub fn set_value(&mut self, value: OutcomeValue) {
+        self.value = value;
+    }
+
     /// Aggregate multiple outcomes into a single outcome.
     ///
-    /// The result is determined by:
-    /// - If any outcome has a Count result, sum them
-    /// - Otherwise use the last non-default result
-    /// - Events are concatenated from all outcomes
+    /// Events and execution facts are concatenated from all child outcomes.
+    /// Status/value are derived conservatively and will only retain a single
+    /// meaningful payload when the composed outcomes agree on it.
     pub fn aggregate(outcomes: impl IntoIterator<Item = EffectOutcome>) -> Self {
-        let mut total_count: i32 = 0;
-        let mut has_count = false;
-        let mut last_result = EffectResult::Resolved;
-        let mut all_events = Vec::new();
-
-        for outcome in outcomes {
-            all_events.extend(outcome.events);
-            match outcome.result {
-                EffectResult::Count(n) => {
-                    total_count += n;
-                    has_count = true;
-                }
-                other => {
-                    last_result = other;
-                }
-            }
-        }
-
-        let result = if has_count {
-            EffectResult::Count(total_count)
-        } else {
-            last_result
-        };
-
-        Self {
-            result,
-            events: all_events,
-        }
+        Self::aggregate_with_summary(outcomes, Self::derive_summary)
     }
 
-    /// Get the result of this outcome.
-    pub fn result(&self) -> &EffectResult {
-        &self.result
+    /// Aggregate repeated homogeneous outcomes into a single outcome.
+    ///
+    /// This is intended for iterator-style composition (`for each`, `for each player`,
+    /// and similar constructs) where summing `Count(n)` child summaries remains
+    /// semantically meaningful. Mixed non-count summaries still fall back to the
+    /// conservative aggregate behavior.
+    pub fn aggregate_summing_counts(outcomes: impl IntoIterator<Item = EffectOutcome>) -> Self {
+        Self::aggregate_with_summary(outcomes, Self::derive_summary_summing_counts)
     }
 
-    /// Check if something happened (delegates to EffectResult::something_happened).
+    /// Check if something happened using the full outcome payload.
     pub fn something_happened(&self) -> bool {
-        self.result.something_happened()
+        EffectPredicate::Happened.evaluate_outcome(self)
     }
 
     /// Get the count value, or zero if not a Count result.
     pub fn count_or_zero(&self) -> i32 {
-        self.result.count_or_zero()
+        self.value.count_or_zero()
     }
 
     /// Get the count value if this is a Count result.
     pub fn as_count(&self) -> Option<i32> {
-        self.result.as_count()
+        self.value.as_count()
     }
-}
 
-impl From<EffectResult> for EffectOutcome {
-    fn from(result: EffectResult) -> Self {
-        Self::from_result(result)
+    /// Access explicit object IDs returned by the compatibility summary.
+    pub fn explicit_objects(&self) -> Option<&[ObjectId]> {
+        self.value.objects()
+    }
+
+    pub fn mana(&self) -> Option<&[ManaSymbol]> {
+        self.value.mana_added()
+    }
+
+    /// Access object IDs captured as chosen objects.
+    pub fn chosen_objects(&self) -> Option<&[ObjectId]> {
+        self.execution_facts.iter().find_map(|fact| match fact {
+            ExecutionFact::ChosenObjects(ids) => Some(ids.as_slice()),
+            _ => None,
+        })
+    }
+
+    /// Access object IDs captured as affected objects.
+    pub fn affected_objects(&self) -> Option<&[ObjectId]> {
+        self.execution_facts.iter().find_map(|fact| match fact {
+            ExecutionFact::AffectedObjects(ids) => Some(ids.as_slice()),
+            _ => None,
+        })
+    }
+
+    /// Access explicit object IDs returned by the outcome payload.
+    pub fn objects(&self) -> Option<&[ObjectId]> {
+        self.explicit_objects()
+    }
+
+    /// Preferred object IDs for downstream runtime consumers.
+    ///
+    /// This uses explicit object payloads first, then falls back to
+    /// chosen/affected object facts so callers do not need to pattern-match on
+    /// the compatibility summary directly.
+    pub fn output_objects(&self) -> &[ObjectId] {
+        self.explicit_objects()
+            .or_else(|| self.chosen_objects())
+            .or_else(|| self.affected_objects())
+            .unwrap_or(&[])
+    }
+
+    /// The first preferred object ID, if one exists.
+    pub fn first_output_object(&self) -> Option<ObjectId> {
+        self.output_objects().first().copied()
+    }
+
+    /// Access the preserved execution facts.
+    pub fn execution_facts(&self) -> &[ExecutionFact] {
+        &self.execution_facts
+    }
+
+    /// Returns true when any execution fact matches the predicate.
+    pub fn has_execution_fact(&self, predicate: impl Fn(&ExecutionFact) -> bool) -> bool {
+        self.execution_facts.iter().any(predicate)
+    }
+
+    /// Iterate over emitted events of a specific concrete type.
+    pub fn events_of_type<T: 'static>(&self) -> impl Iterator<Item = &T> {
+        self.events.iter().filter_map(|event| event.downcast::<T>())
+    }
+
+    /// Returns true when any emitted marker-change event matches the predicate.
+    pub fn has_marker_change(
+        &self,
+        predicate: impl Fn(&crate::events::MarkersChangedEvent) -> bool,
+    ) -> bool {
+        self.events_of_type::<crate::events::MarkersChangedEvent>()
+            .any(predicate)
+    }
+
+    /// Sum marker-change amounts matching the predicate.
+    pub fn total_marker_changes(
+        &self,
+        predicate: impl Fn(&crate::events::MarkersChangedEvent) -> bool,
+    ) -> u32 {
+        self.events_of_type::<crate::events::MarkersChangedEvent>()
+            .filter(|event| predicate(event))
+            .map(|event| event.amount)
+            .sum()
     }
 }
 
@@ -486,7 +695,7 @@ pub enum EffectPredicate {
     HappenedNotReplaced,
 
     /// Compare the count value.
-    /// Only meaningful for `EffectResult::Count` results.
+    /// Only meaningful for `OutcomeValue::Count` payloads.
     Value(Comparison),
 
     /// Player chose to do it (result is not Declined).
@@ -497,25 +706,46 @@ pub enum EffectPredicate {
 }
 
 impl EffectPredicate {
-    /// Evaluate this predicate against an effect result.
-    pub fn evaluate(&self, result: &EffectResult) -> bool {
+    /// Evaluate this predicate against a full effect outcome.
+    pub fn evaluate_outcome(&self, outcome: &EffectOutcome) -> bool {
         match self {
-            Self::Succeeded => result.is_success(),
-            Self::Failed => result.is_failure(),
-            Self::Happened => result.something_happened(),
-            Self::DidNotHappen => !result.something_happened(),
-            Self::HappenedNotReplaced => {
-                result.something_happened() && !matches!(result, EffectResult::Replaced)
-            }
-            Self::Value(cmp) => {
-                if let Some(n) = result.as_count() {
-                    cmp.evaluate(n)
-                } else {
-                    false
+            Self::Succeeded => outcome.status.is_success(),
+            Self::Failed => outcome.status.is_failure(),
+            Self::Happened => {
+                if !outcome.events.is_empty() {
+                    return true;
                 }
+                if outcome.has_execution_fact(|fact| {
+                    matches!(
+                        fact,
+                        ExecutionFact::Declined
+                            | ExecutionFact::TargetInvalid
+                            | ExecutionFact::Prevented
+                            | ExecutionFact::Protected
+                            | ExecutionFact::Impossible
+                    )
+                }) {
+                    return false;
+                }
+                outcome.status == OutcomeStatus::Replaced
+                    || (outcome.status == OutcomeStatus::Succeeded
+                        && (matches!(outcome.value, OutcomeValue::None)
+                            || outcome.value.something_happened()))
             }
-            Self::Chosen => !matches!(result, EffectResult::Declined),
-            Self::WasDeclined => matches!(result, EffectResult::Declined),
+            Self::DidNotHappen => !Self::Happened.evaluate_outcome(outcome),
+            Self::HappenedNotReplaced => {
+                Self::Happened.evaluate_outcome(outcome)
+                    && !outcome.has_execution_fact(|fact| matches!(fact, ExecutionFact::Replaced))
+                    && outcome.status != OutcomeStatus::Replaced
+            }
+            Self::Value(cmp) => outcome.as_count().is_some_and(|n| cmp.evaluate(n)),
+            Self::Chosen => {
+                !outcome.has_execution_fact(|fact| matches!(fact, ExecutionFact::Declined))
+            }
+            Self::WasDeclined => {
+                outcome.has_execution_fact(|fact| matches!(fact, ExecutionFact::Declined))
+                    || outcome.status == OutcomeStatus::Declined
+            }
         }
     }
 }
@@ -1565,6 +1795,15 @@ pub struct EffectMode {
     pub effects: Vec<Effect>,
 }
 
+impl EffectMode {
+    pub fn new(description: impl Into<String>, effects: Vec<Effect>) -> Self {
+        Self {
+            description: description.into(),
+            effects,
+        }
+    }
+}
+
 /// A condition for conditional effects.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Condition {
@@ -1753,6 +1992,9 @@ pub enum Condition {
         count: u32,
     },
 
+    /// Source object's current power is at least N.
+    SourcePowerAtLeast(u32),
+
     /// At least N mana of a specific color/type was spent to cast this spell.
     /// If `symbol` is `None`, checks total mana spent instead.
     ManaSpentToCastThisSpellAtLeast {
@@ -1829,6 +2071,9 @@ pub enum Condition {
         card_types: Vec<crate::types::CardType>,
         subtypes: Vec<crate::types::Subtype>,
     },
+
+    /// The source object is currently in the given zone.
+    SourceIsInZone(Zone),
 
     /// A timing restriction for (activated or mana) abilities.
     ///
@@ -1995,6 +2240,18 @@ impl Effect {
     pub fn bolster(amount: u32) -> Self {
         use crate::effects::BolsterEffect;
         Self::new(BolsterEffect::new(amount))
+    }
+
+    /// Create a "devour N" effect.
+    pub fn devour(multiplier: u32) -> Self {
+        use crate::effects::DevourEffect;
+        Self::new(DevourEffect::new(multiplier))
+    }
+
+    /// Create a "backup N" effect.
+    pub fn backup(amount: u32, granted_abilities: Vec<crate::ability::Ability>) -> Self {
+        use crate::effects::BackupEffect;
+        Self::new(BackupEffect::new(amount, granted_abilities))
     }
 
     /// Create a "support N" effect.
@@ -2330,6 +2587,18 @@ impl Effect {
     pub fn investigate(count: impl Into<Value>) -> Self {
         use crate::effects::InvestigateEffect;
         Self::new(InvestigateEffect::new(count))
+    }
+
+    /// Create a cipher resolution effect.
+    pub fn cipher() -> Self {
+        use crate::effects::CipherEffect;
+        Self::new(CipherEffect::new())
+    }
+
+    /// Create an effect that offers casting a copy of a specific encoded card.
+    pub fn cast_encoded_card_copy(encoded_card: StableId) -> Self {
+        use crate::effects::CastEncodedCardCopyEffect;
+        Self::new(CastEncodedCardCopyEffect::new(encoded_card))
     }
 
     /// Create a "create N tokens" effect for a specific player.
@@ -3900,62 +4169,103 @@ mod tests {
         assert!(debug_str.contains("ModifyPowerToughnessEffect"));
     }
 
-    // === EffectResult tests ===
+    // === OutcomeStatus / OutcomeValue tests ===
 
     #[test]
-    fn test_effect_result_count() {
-        let result = EffectResult::Count(3);
-        assert!(result.is_success());
-        assert!(!result.is_failure());
-        assert!(result.something_happened());
-        assert_eq!(result.as_count(), Some(3));
-        assert_eq!(result.count_or_zero(), 3);
+    fn test_outcome_value_count() {
+        let value = OutcomeValue::Count(3);
+        assert!(value.something_happened());
+        assert_eq!(value.as_count(), Some(3));
+        assert_eq!(value.count_or_zero(), 3);
     }
 
     #[test]
-    fn test_effect_result_count_zero() {
-        let result = EffectResult::Count(0);
-        assert!(result.is_success()); // Still a success (effect executed)
-        assert!(!result.something_happened()); // But nothing happened
-        assert_eq!(result.as_count(), Some(0));
+    fn test_outcome_value_count_zero() {
+        let value = OutcomeValue::Count(0);
+        assert!(!value.something_happened());
+        assert_eq!(value.as_count(), Some(0));
     }
 
     #[test]
-    fn test_effect_result_resolved() {
-        let result = EffectResult::Resolved;
-        assert!(result.is_success());
-        assert!(result.something_happened());
-        assert_eq!(result.as_count(), None);
-        assert_eq!(result.count_or_zero(), 0);
+    fn test_outcome_status_resolved() {
+        assert!(OutcomeStatus::Succeeded.is_success());
+        assert!(!OutcomeStatus::Succeeded.is_failure());
     }
 
     #[test]
-    fn test_effect_result_declined() {
-        let result = EffectResult::Declined;
-        assert!(result.is_failure());
-        assert!(!result.something_happened());
+    fn test_outcome_status_declined() {
+        assert!(OutcomeStatus::Declined.is_failure());
     }
 
     #[test]
-    fn test_effect_result_failures() {
-        for result in [
-            EffectResult::Declined,
-            EffectResult::TargetInvalid,
-            EffectResult::Prevented,
-            EffectResult::Protected,
-            EffectResult::Impossible,
+    fn test_outcome_status_failures() {
+        for status in [
+            OutcomeStatus::Declined,
+            OutcomeStatus::TargetInvalid,
+            OutcomeStatus::Prevented,
+            OutcomeStatus::Protected,
+            OutcomeStatus::Impossible,
         ] {
-            assert!(result.is_failure());
-            assert!(!result.something_happened());
+            assert!(status.is_failure());
         }
     }
 
     #[test]
-    fn test_effect_result_replaced() {
-        // Replaced is a special case - it's a success and something happened
-        let result = EffectResult::Replaced;
-        assert!(result.is_success());
-        assert!(result.something_happened());
+    fn test_outcome_status_replaced() {
+        assert!(OutcomeStatus::Replaced.is_success());
+    }
+
+    #[test]
+    fn test_effect_outcome_from_result_captures_execution_fact() {
+        let outcome = EffectOutcome::declined();
+        assert_eq!(outcome.execution_facts(), &[ExecutionFact::Declined]);
+    }
+
+    #[test]
+    fn test_effect_outcome_aggregate_preserves_execution_facts() {
+        let outcome = EffectOutcome::aggregate(vec![
+            EffectOutcome::count(1).with_execution_fact(ExecutionFact::ChosenNumber(1)),
+            EffectOutcome::declined(),
+        ]);
+
+        assert_eq!(outcome.status, OutcomeStatus::Succeeded);
+        assert_eq!(outcome.value, OutcomeValue::None);
+        assert_eq!(
+            outcome.execution_facts(),
+            &[ExecutionFact::ChosenNumber(1), ExecutionFact::Declined]
+        );
+    }
+
+    #[test]
+    fn test_effect_outcome_aggregate_preserves_identical_summary_only() {
+        let outcome =
+            EffectOutcome::aggregate(vec![EffectOutcome::declined(), EffectOutcome::declined()]);
+
+        assert_eq!(outcome.status, OutcomeStatus::Declined);
+        assert_eq!(outcome.value, OutcomeValue::None);
+    }
+
+    #[test]
+    fn test_effect_outcome_aggregate_summing_counts_sums_homogeneous_counts() {
+        let outcome = EffectOutcome::aggregate_summing_counts(vec![
+            EffectOutcome::count(1),
+            EffectOutcome::count(2),
+            EffectOutcome::count(0),
+        ]);
+
+        assert_eq!(outcome.status, OutcomeStatus::Succeeded);
+        assert_eq!(outcome.value, OutcomeValue::Count(3));
+    }
+
+    #[test]
+    fn test_effect_outcome_aggregate_summing_counts_keeps_mixed_results_conservative() {
+        let outcome = EffectOutcome::aggregate_summing_counts(vec![
+            EffectOutcome::count(1),
+            EffectOutcome::declined(),
+        ]);
+
+        assert_eq!(outcome.status, OutcomeStatus::Succeeded);
+        assert_eq!(outcome.value, OutcomeValue::None);
     }
 
     // === EffectPredicate tests ===
@@ -3963,37 +4273,37 @@ mod tests {
     #[test]
     fn test_predicate_succeeded() {
         let pred = EffectPredicate::Succeeded;
-        assert!(pred.evaluate(&EffectResult::Count(0)));
-        assert!(pred.evaluate(&EffectResult::Resolved));
-        assert!(!pred.evaluate(&EffectResult::Declined));
-        assert!(!pred.evaluate(&EffectResult::TargetInvalid));
+        assert!(pred.evaluate_outcome(&EffectOutcome::count(0)));
+        assert!(pred.evaluate_outcome(&EffectOutcome::resolved()));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::declined()));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::target_invalid()));
     }
 
     #[test]
     fn test_predicate_happened() {
         let pred = EffectPredicate::Happened;
-        assert!(pred.evaluate(&EffectResult::Count(1)));
-        assert!(!pred.evaluate(&EffectResult::Count(0)));
-        assert!(pred.evaluate(&EffectResult::Resolved));
-        assert!(!pred.evaluate(&EffectResult::Declined));
+        assert!(pred.evaluate_outcome(&EffectOutcome::count(1)));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::count(0)));
+        assert!(pred.evaluate_outcome(&EffectOutcome::resolved()));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::declined()));
     }
 
     #[test]
     fn test_predicate_did_not_happen() {
         let pred = EffectPredicate::DidNotHappen;
-        assert!(!pred.evaluate(&EffectResult::Count(1)));
-        assert!(pred.evaluate(&EffectResult::Count(0)));
-        assert!(!pred.evaluate(&EffectResult::Resolved));
-        assert!(pred.evaluate(&EffectResult::Declined));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::count(1)));
+        assert!(pred.evaluate_outcome(&EffectOutcome::count(0)));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::resolved()));
+        assert!(pred.evaluate_outcome(&EffectOutcome::declined()));
     }
 
     #[test]
     fn test_predicate_value_comparison() {
         let pred = EffectPredicate::Value(Comparison::GreaterThan(2));
-        assert!(pred.evaluate(&EffectResult::Count(3)));
-        assert!(!pred.evaluate(&EffectResult::Count(2)));
-        assert!(!pred.evaluate(&EffectResult::Count(1)));
-        assert!(!pred.evaluate(&EffectResult::Resolved)); // Not a count
+        assert!(pred.evaluate_outcome(&EffectOutcome::count(3)));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::count(2)));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::count(1)));
+        assert!(!pred.evaluate_outcome(&EffectOutcome::resolved())); // Not a count
     }
 
     #[test]
@@ -4001,12 +4311,78 @@ mod tests {
         let chosen = EffectPredicate::Chosen;
         let declined = EffectPredicate::WasDeclined;
 
-        assert!(chosen.evaluate(&EffectResult::Count(1)));
-        assert!(chosen.evaluate(&EffectResult::Resolved));
-        assert!(!chosen.evaluate(&EffectResult::Declined));
+        assert!(chosen.evaluate_outcome(&EffectOutcome::count(1)));
+        assert!(chosen.evaluate_outcome(&EffectOutcome::resolved()));
+        assert!(!chosen.evaluate_outcome(&EffectOutcome::declined()));
 
-        assert!(!declined.evaluate(&EffectResult::Count(1)));
-        assert!(declined.evaluate(&EffectResult::Declined));
+        assert!(!declined.evaluate_outcome(&EffectOutcome::count(1)));
+        assert!(declined.evaluate_outcome(&EffectOutcome::declined()));
+    }
+
+    #[test]
+    fn test_predicate_happened_uses_events_from_outcome() {
+        let outcome = EffectOutcome::with_details(
+            OutcomeStatus::Succeeded,
+            OutcomeValue::Count(0),
+            vec![crate::events::RawEvent::new_with_provenance(
+                crate::events::TapEvent {
+                    permanent: ObjectId::from_raw(1),
+                },
+                crate::provenance::ProvNodeId::default(),
+            )],
+            Vec::new(),
+        );
+
+        assert!(EffectPredicate::Happened.evaluate_outcome(&outcome));
+        assert!(!EffectPredicate::DidNotHappen.evaluate_outcome(&outcome));
+    }
+
+    #[test]
+    fn test_predicate_declined_uses_execution_facts_from_outcome() {
+        let outcome = EffectOutcome::with_details(
+            OutcomeStatus::Succeeded,
+            OutcomeValue::None,
+            Vec::new(),
+            vec![ExecutionFact::Declined],
+        );
+
+        assert!(EffectPredicate::WasDeclined.evaluate_outcome(&outcome));
+        assert!(!EffectPredicate::Chosen.evaluate_outcome(&outcome));
+        assert!(!EffectPredicate::Happened.evaluate_outcome(&outcome));
+    }
+
+    #[test]
+    fn test_effect_outcome_output_objects_prefers_summary_then_facts() {
+        let summary = EffectOutcome::with_objects(vec![ObjectId::from_raw(1)]);
+        assert_eq!(summary.output_objects(), &[ObjectId::from_raw(1)]);
+
+        let chosen = EffectOutcome::resolved()
+            .with_execution_fact(ExecutionFact::ChosenObjects(vec![ObjectId::from_raw(2)]));
+        assert_eq!(chosen.output_objects(), &[ObjectId::from_raw(2)]);
+
+        let affected = EffectOutcome::resolved()
+            .with_execution_fact(ExecutionFact::AffectedObjects(vec![ObjectId::from_raw(3)]));
+        assert_eq!(affected.first_output_object(), Some(ObjectId::from_raw(3)));
+    }
+
+    #[test]
+    fn test_effect_outcome_total_marker_changes_reads_events() {
+        let outcome =
+            EffectOutcome::resolved().with_event(crate::events::RawEvent::new_with_provenance(
+                crate::events::MarkersChangedEvent::added(
+                    crate::object::CounterType::PlusOnePlusOne,
+                    ObjectId::from_raw(7),
+                    2,
+                    None,
+                    None,
+                ),
+                crate::provenance::ProvNodeId::default(),
+            ));
+
+        assert!(outcome.has_marker_change(|event| {
+            event.is_added() && event.object() == Some(ObjectId::from_raw(7))
+        }));
+        assert_eq!(outcome.total_marker_changes(|event| event.is_added()), 2);
     }
 
     // === Comparison tests ===

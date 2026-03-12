@@ -84,6 +84,33 @@ impl EffectExecutor for ForPlayersEffect {
             })?;
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn for_players_sums_count_results_across_players() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect = ForPlayersEffect::new(
+            PlayerFilter::Any,
+            vec![Effect::lose_life_player(1, PlayerFilter::IteratedPlayer)],
+        );
+        let result = effect.execute(&mut game, &mut ctx).expect("effect should resolve");
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
+        assert_eq!(game.player(alice).expect("alice").life, 19);
+        assert_eq!(game.player(PlayerId::from_index(1)).expect("bob").life, 19);
     }
 }

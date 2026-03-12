@@ -1,6 +1,6 @@
 //! Pay energy effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::executor_trait::CostValidationError;
 use crate::effects::helpers::{resolve_player_from_spec, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
@@ -56,7 +56,7 @@ impl EffectExecutor for PayEnergyEffect {
             return Ok(EffectOutcome::count(removed as i32).with_event(event));
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Impossible))
+        Ok(EffectOutcome::impossible())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

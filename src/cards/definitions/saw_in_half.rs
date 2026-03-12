@@ -31,7 +31,7 @@ pub fn saw_in_half() -> CardDefinition {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::{EffectOutcome, EffectResult};
+    use crate::effect::{EffectOutcome};
     use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -137,7 +137,7 @@ mod tests {
         let token_ids = outcomes
             .iter()
             .find_map(|outcome| {
-                if let EffectResult::Objects(ids) = &outcome.result {
+                if let crate::effect::OutcomeValue::Objects(ids) = &outcome.value {
                     Some(ids.clone())
                 } else {
                     None
@@ -192,7 +192,7 @@ mod tests {
         let token_ids = outcomes
             .iter()
             .find_map(|outcome| {
-                if let EffectResult::Objects(ids) = &outcome.result {
+                if let crate::effect::OutcomeValue::Objects(ids) = &outcome.value {
                     Some(ids.clone())
                 } else {
                     None
@@ -228,7 +228,7 @@ mod tests {
         let token_ids = outcomes
             .iter()
             .find_map(|outcome| {
-                if let EffectResult::Objects(ids) = &outcome.result {
+                if let crate::effect::OutcomeValue::Objects(ids) = &outcome.value {
                     Some(ids.clone())
                 } else {
                     None
@@ -262,7 +262,7 @@ mod tests {
         let outcomes = execute_saw_in_half(&mut game, alice, Some(creature_id));
 
         // Should be protected, no tokens created
-        assert_eq!(outcomes[0].result, EffectResult::Protected);
+        assert_eq!(outcomes[0].status, crate::effect::OutcomeStatus::Protected);
 
         // Creature should still be on battlefield
         assert!(game.battlefield.contains(&creature_id));
@@ -279,7 +279,7 @@ mod tests {
         let token_ids = outcomes
             .iter()
             .find_map(|outcome| {
-                if let EffectResult::Objects(ids) = &outcome.result {
+                if let crate::effect::OutcomeValue::Objects(ids) = &outcome.value {
                     Some(ids.clone())
                 } else {
                     None
@@ -303,7 +303,7 @@ mod tests {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
         let outcomes = execute_saw_in_half(&mut game, alice, None);
-        assert_eq!(outcomes[0].result, EffectResult::TargetInvalid);
+        assert_eq!(outcomes[0].status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
         let token_ids = outcomes
             .iter()
             .find_map(|outcome| {
-                if let EffectResult::Objects(ids) = &outcome.result {
+                if let crate::effect::OutcomeValue::Objects(ids) = &outcome.value {
                     Some(ids.clone())
                 } else {
                     None

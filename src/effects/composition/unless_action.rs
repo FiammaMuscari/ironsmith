@@ -152,7 +152,6 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::effects::{ChooseObjectsEffect, DestroyEffect, ForEachObject, SacrificeEffect};
     use crate::filter::{ObjectFilter, TaggedOpbjectRelation};
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -251,7 +250,7 @@ mod tests {
             .expect("unless resolves");
 
         // Alternative was chosen, but no creature existed to sacrifice, so main effect applies.
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert_eq!(game.player(alice).expect("alice").life, initial_life + 3);
     }
 
@@ -299,7 +298,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("unless resolves");
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).expect("alice").life, initial_life + 2);
     }
 

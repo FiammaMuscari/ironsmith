@@ -57,8 +57,9 @@ pub use for_players::ForPlayersEffect;
 pub use if_effect::IfEffect;
 pub use may::MayEffect;
 pub use mechanic_actions::{
-    AdaptEffect, BolsterEffect, CounterAbilityEffect, ExploreEffect, ManifestDreadEffect,
-    OpenAttractionEffect, SupportEffect,
+    AdaptEffect, BackupEffect, BolsterEffect, CastEncodedCardCopyEffect, CipherEffect,
+    CounterAbilityEffect, DevourEffect, ExploreEffect, ManifestDreadEffect, OpenAttractionEffect,
+    SupportEffect,
 };
 pub use reflexive_trigger::ReflexiveTriggerEffect;
 pub use repeat_process::RepeatProcessEffect;

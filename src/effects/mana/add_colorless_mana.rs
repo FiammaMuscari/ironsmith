@@ -1,7 +1,7 @@
 //! Add colorless mana effect implementation.
 
 use super::choice_helpers::credit_repeated_mana_symbol_from_context;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -63,9 +63,9 @@ impl EffectExecutor for AddColorlessManaEffect {
         );
 
         let mana_added: Vec<ManaSymbol> = (0..count).map(|_| ManaSymbol::Colorless).collect();
-        Ok(EffectOutcome::from_result(EffectResult::ManaAdded(
+        Ok(EffectOutcome::mana_added(
             mana_added,
-        )))
+        ))
     }
 
     fn producible_mana_symbols(
@@ -98,8 +98,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![
                 ManaSymbol::Colorless,
                 ManaSymbol::Colorless,
                 ManaSymbol::Colorless
@@ -118,7 +118,7 @@ mod tests {
         let effect = AddColorlessManaEffect::you(0);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::ManaAdded(vec![]));
+        assert_eq!(result.value, crate::effect::OutcomeValue::ManaAdded(vec![]));
         assert_eq!(game.player(alice).unwrap().mana_pool.colorless, 0);
     }
 
@@ -133,7 +133,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Negative amounts are clamped to 0
-        assert_eq!(result.result, EffectResult::ManaAdded(vec![]));
+        assert_eq!(result.value, crate::effect::OutcomeValue::ManaAdded(vec![]));
         assert_eq!(game.player(alice).unwrap().mana_pool.colorless, 0);
     }
 
@@ -148,8 +148,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![
                 ManaSymbol::Colorless,
                 ManaSymbol::Colorless,
                 ManaSymbol::Colorless,
@@ -171,8 +171,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Colorless, ManaSymbol::Colorless])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Colorless, ManaSymbol::Colorless])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.colorless, 0);
         assert_eq!(game.player(bob).unwrap().mana_pool.colorless, 2);

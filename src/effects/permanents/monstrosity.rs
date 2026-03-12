@@ -1,6 +1,6 @@
 //! Monstrosity effect implementation.
 
-use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
+use crate::effect::{Effect, EffectOutcome, Value};
 use crate::effects::helpers::resolve_value;
 use crate::effects::{EffectExecutor, PutCountersEffect};
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
@@ -56,7 +56,7 @@ impl EffectExecutor for MonstrosityEffect {
 
         // Check if already monstrous
         if game.object(source_id).is_none() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
         if game.is_monstrous(source_id) {
             // Already monstrous - do nothing
@@ -75,9 +75,11 @@ impl EffectExecutor for MonstrosityEffect {
                     execute_effect(game, &Effect::new(counters_effect), ctx)
                 })?;
 
-            if let EffectResult::Count(n) = counters_outcome.result
-                && n > 0
-            {
+            if counters_outcome.has_marker_change(|event| {
+                event.is_added()
+                    && event.object() == Some(source_id)
+                    && event.marker == CounterType::PlusOnePlusOne.into()
+            }) {
                 game.continuous_effects.record_counter_change(source_id);
             }
         }
@@ -85,11 +87,7 @@ impl EffectExecutor for MonstrosityEffect {
 
         // Return a special result that indicates monstrosity happened
         // The game loop will need to generate the BecameMonstrous event
-        Ok(EffectOutcome::from_result(
-            EffectResult::MonstrosityApplied {
-                creature: source_id,
-                n: n_value,
-            },
-        ))
+        Ok(EffectOutcome::monstrosity_applied(source_id, n_value,
+            ))
     }
 }

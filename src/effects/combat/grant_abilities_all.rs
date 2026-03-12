@@ -95,7 +95,6 @@ impl EffectExecutor for GrantAbilitiesAllEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::filter::PlayerFilter;
     use crate::ids::{CardId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -136,7 +135,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Should have one continuous effect
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
@@ -162,7 +161,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Should have three continuous effects (one per ability)
         assert_eq!(game.continuous_effects.effects_sorted().len(), 3);
@@ -186,7 +185,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Should have one continuous effect
         let effects = game.continuous_effects.effects_sorted();
@@ -212,7 +211,7 @@ mod tests {
             GrantAbilitiesAllEffect::new(ObjectFilter::creature(), vec![], Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Should have no continuous effects
         assert_eq!(game.continuous_effects.effects_sorted().len(), 0);

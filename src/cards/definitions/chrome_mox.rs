@@ -25,7 +25,6 @@ mod tests {
     use super::*;
     use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
-    use crate::effect::EffectResult;
     use crate::effects::cards::ImprintFromHandEffect;
     use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
@@ -120,7 +119,7 @@ mod tests {
         game: &mut GameState,
         controller: PlayerId,
         source: ObjectId,
-    ) -> EffectResult {
+    ) -> crate::effect::OutcomeValue {
         let def = chrome_mox();
         let mana_ability = def
             .abilities
@@ -132,9 +131,9 @@ mod tests {
         };
 
         let mut ctx = ExecutionContext::new_default(source, controller);
-        let mut last_result = EffectResult::Resolved;
+        let mut last_result = crate::effect::OutcomeValue::None;
         for effect in &activated.effects {
-            last_result = effect.0.execute(game, &mut ctx).unwrap().result;
+            last_result = effect.0.execute(game, &mut ctx).unwrap().value;
         }
         last_result
     }
@@ -261,7 +260,7 @@ mod tests {
         assert!(!game.has_imprinted_cards(mox_id));
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(0));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
     }
 
@@ -275,7 +274,7 @@ mod tests {
         execute_chrome_mox_imprint_trigger(&mut game, alice, mox_id);
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(1));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().mana_pool.red, 1);
     }
 
@@ -289,7 +288,7 @@ mod tests {
         execute_chrome_mox_imprint_trigger(&mut game, alice, mox_id);
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(1));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().mana_pool.blue, 1);
     }
 
@@ -303,7 +302,7 @@ mod tests {
         execute_chrome_mox_imprint_trigger(&mut game, alice, mox_id);
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(0));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
     }
 
@@ -317,7 +316,7 @@ mod tests {
         execute_chrome_mox_imprint_trigger(&mut game, alice, mox_id);
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(1));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(1));
         let pool = &game.player(alice).unwrap().mana_pool;
         assert_eq!(pool.blue + pool.red, 1);
     }
@@ -378,7 +377,7 @@ mod tests {
         let imprinted_id = game.get_imprinted_cards(mox_id)[0];
 
         let result = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result, EffectResult::Count(1));
+        assert_eq!(result, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().mana_pool.red, 1);
 
         game.player_mut(alice).unwrap().mana_pool.red = 0;
@@ -387,7 +386,7 @@ mod tests {
         assert!(game.has_imprinted_cards(mox_id));
 
         let result2 = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);
-        assert_eq!(result2, EffectResult::Count(0));
+        assert_eq!(result2, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
     }
 

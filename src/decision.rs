@@ -408,6 +408,7 @@ fn append_granted_play_from_actions_for_card(
                 card,
                 card_id,
                 Some(mana_cost),
+                None,
                 &AdditionalCastRequirements::default(),
                 view,
             )
@@ -509,6 +510,7 @@ fn append_graveyard_granted_alternative_cast_actions_for_card(
             card,
             card_id,
             mana_cost,
+            None,
             &requirements,
             view,
         ) {
@@ -650,14 +652,46 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
     // Check for spells that can be cast from hand
     if let Some(player_obj) = game.player(player) {
         for &card_id in player_obj.hand.clone().iter() {
-            if let Some(card) = game.object(card_id)
-                && can_cast_spell_with_view(game, player, card, &CastingMethod::Normal, &view)
-            {
-                actions.push(LegalAction::CastSpell {
-                    spell_id: card_id,
-                    from_zone: Zone::Hand,
-                    casting_method: CastingMethod::Normal,
-                });
+            if let Some(card) = game.object(card_id) {
+                let can_cast_normal =
+                    can_cast_spell_with_view(game, player, card, &CastingMethod::Normal, &view);
+                if can_cast_normal {
+                    actions.push(LegalAction::CastSpell {
+                        spell_id: card_id,
+                        from_zone: Zone::Hand,
+                        casting_method: CastingMethod::Normal,
+                    });
+                }
+            }
+        }
+    }
+
+    // Check for foretell special actions from hand.
+    if let Some(player_obj) = game.player(player) {
+        for &card_id in player_obj.hand.clone().iter() {
+            let action = SpecialAction::Foretell { card_id };
+            if can_perform_check(&action, game, player).is_ok() {
+                actions.push(LegalAction::SpecialAction(action));
+            }
+        }
+    }
+
+    // Check for suspend special actions from hand.
+    if let Some(player_obj) = game.player(player) {
+        for &card_id in player_obj.hand.clone().iter() {
+            let action = SpecialAction::Suspend { card_id };
+            if can_perform_check(&action, game, player).is_ok() {
+                actions.push(LegalAction::SpecialAction(action));
+            }
+        }
+    }
+
+    // Check for plot special actions from hand.
+    if let Some(player_obj) = game.player(player) {
+        for &card_id in player_obj.hand.clone().iter() {
+            let action = SpecialAction::Plot { card_id };
+            if can_perform_check(&action, game, player).is_ok() {
+                actions.push(LegalAction::SpecialAction(action));
             }
         }
     }
@@ -716,6 +750,36 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
 
                 // Only add alternative casts if Normal is not available
                 if !has_normal_cast {
+                    if card.linked_face_layout == crate::card::LinkedFaceLayout::Split {
+                        if can_cast_spell_with_view(
+                            game,
+                            player,
+                            card,
+                            &CastingMethod::SplitOtherHalf,
+                            &view,
+                        ) {
+                            actions.push(LegalAction::CastSpell {
+                                spell_id: card_id,
+                                from_zone: Zone::Hand,
+                                casting_method: CastingMethod::SplitOtherHalf,
+                            });
+                        }
+                        if card.has_fuse
+                            && can_cast_spell_with_view(
+                                game,
+                                player,
+                                card,
+                                &CastingMethod::Fuse,
+                                &view,
+                            )
+                        {
+                            actions.push(LegalAction::CastSpell {
+                                spell_id: card_id,
+                                from_zone: Zone::Hand,
+                                casting_method: CastingMethod::Fuse,
+                            });
+                        }
+                    }
                     for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
                         if alt_cast.cast_from_zone() == Zone::Hand
                             && can_cast_with_alternative_from_hand_with_view(
@@ -1554,9 +1618,16 @@ pub fn spell_mana_cost_for_cast(
 ) -> Option<crate::mana::ManaCost> {
     let base_cost = match casting_method {
         CastingMethod::Normal => spell.mana_cost.clone(),
+        CastingMethod::SplitOtherHalf => linked_face_definition(spell).and_then(|def| def.card.mana_cost),
+        CastingMethod::Fuse => spell_view_for_fused_split_cast(spell).and_then(|view| view.mana_cost),
         CastingMethod::Alternative(idx) => {
             if let Some(method) = spell.alternative_casts.get(*idx) {
-                if method.total_cost().is_some() {
+                if matches!(
+                    method,
+                    crate::alternative_cast::AlternativeCastingMethod::Plot { .. }
+                ) {
+                    Some(crate::mana::ManaCost::new())
+                } else if method.total_cost().is_some() {
                     method.mana_cost().cloned()
                 } else {
                     method
@@ -1582,7 +1653,12 @@ pub fn spell_mana_cost_for_cast(
             if let Some(method) =
                 resolve_play_from_alternative_method(game, player, spell, *zone, *idx)
             {
-                if method.total_cost().is_some() {
+                if matches!(
+                    method,
+                    crate::alternative_cast::AlternativeCastingMethod::Plot { .. }
+                ) {
+                    Some(crate::mana::ManaCost::new())
+                } else if method.total_cost().is_some() {
                     method.mana_cost().cloned()
                 } else {
                     method
@@ -1622,26 +1698,39 @@ fn can_cast_spell_with_view(
     casting_method: &CastingMethod,
     view: &DerivedGameView<'_>,
 ) -> bool {
+    let split_view = match casting_method {
+        CastingMethod::SplitOtherHalf => match spell_view_for_split_other_half_cast(spell) {
+            Some(view) => Some(view),
+            None => return false,
+        },
+        CastingMethod::Fuse => match spell_view_for_fused_split_cast(spell) {
+            Some(view) => Some(view),
+            None => return false,
+        },
+        _ => None,
+    };
+    let spell_for_checks = split_view.as_ref().unwrap_or(spell);
+
     // Check "can't cast [matching] spells" style restrictions.
-    if violates_any_cant_cast_restriction(game, player, spell) {
+    if violates_any_cant_cast_restriction(game, player, spell_for_checks) {
         return false;
     }
 
     // Check "can't cast more than one [matching] spell each turn" style restrictions.
-    if violates_any_cast_limit(game, player, spell) {
+    if violates_any_cast_limit(game, player, spell_for_checks) {
         return false;
     }
 
     // Lands cannot be cast - they are played as a special action
-    if spell.is_land() {
+    if spell_for_checks.is_land() {
         return false;
     }
 
-    if !has_valid_spell_timing(game, player, spell, spell.id) {
+    if !has_valid_spell_timing(game, player, spell_for_checks, spell.id) {
         return false;
     }
 
-    if !spell_cast_restrictions_allow(game, player, spell) {
+    if !spell_cast_restrictions_allow(game, player, spell_for_checks) {
         return false;
     }
 
@@ -1652,7 +1741,7 @@ fn can_cast_spell_with_view(
     if let Some(base_cost) = base_mana_cost.as_ref() {
         // Calculate effective cost after applying cost reductions (Affinity, etc.)
         let effective_cost =
-            calculate_effective_mana_cost_with_view(game, player, spell, base_cost, view);
+            calculate_effective_mana_cost_with_view(game, player, spell_for_checks, base_cost, view);
 
         // For X spells, check if they can pay at least X=0
         // For non-X spells, check if they can pay the full cost (x_value=0)
@@ -1663,7 +1752,11 @@ fn can_cast_spell_with_view(
     }
 
     // Check if legal targets exist for targeted spells
-    let effects = spell.spell_effect.as_deref().unwrap_or(&[]);
+    let effects = split_view
+        .as_ref()
+        .and_then(|view| view.spell_effect.as_deref())
+        .or(spell.spell_effect.as_deref())
+        .unwrap_or(&[]);
     if !crate::game_loop::spell_has_legal_targets_with_modes_and_view(
         game,
         effects,
@@ -1702,6 +1795,7 @@ fn can_cast_with_cost_with_view(
     spell: &crate::object::Object,
     spell_id: crate::ids::ObjectId,
     mana_cost: Option<&crate::mana::ManaCost>,
+    effects_override: Option<&[crate::effect::Effect]>,
     requirements: &AdditionalCastRequirements,
     view: &DerivedGameView<'_>,
 ) -> bool {
@@ -1779,8 +1873,26 @@ fn can_cast_with_cost_with_view(
         }
     }
 
-    // Check if legal targets exist
-    let effects = spell.spell_effect.as_deref().unwrap_or(&[]);
+    // Check if legal targets exist. Aura spells often only carry an attach filter
+    // on their definition, so synthesize the cast-time attach effect when needed.
+    let synthesized_aura_effects = if effects_override.is_none()
+        && spell.spell_effect.is_none()
+        && spell.subtypes.contains(&crate::types::Subtype::Aura)
+    {
+        spell.aura_attach_filter.clone().map(|filter| {
+            vec![crate::effect::Effect::attach_to(
+                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(filter)),
+            )]
+        })
+    } else {
+        None
+    };
+    let effects = effects_override.unwrap_or_else(|| {
+        synthesized_aura_effects
+            .as_deref()
+            .or(spell.spell_effect.as_deref())
+            .unwrap_or(&[])
+    });
     if !crate::game_loop::spell_has_legal_targets_with_modes_and_view(
         game,
         effects,
@@ -1816,6 +1928,49 @@ fn get_mana_cost_for_method<'a>(
     method.mana_cost().or(spell.mana_cost.as_ref())
 }
 
+fn spell_view_for_disturb_cast(
+    spell: &crate::object::Object,
+) -> Option<crate::object::Object> {
+    let other_face = spell.other_face?;
+    let other_def = crate::cards::builtin_registry().get_by_id(other_face)?;
+    let mut view = spell.clone();
+    view.apply_definition_face(other_def);
+    view.ensure_aura_cast_spell_effect();
+    Some(view)
+}
+
+fn linked_face_definition(
+    spell: &crate::object::Object,
+) -> Option<crate::cards::CardDefinition> {
+    let other_face = spell.other_face?;
+    crate::cards::builtin_registry().get_by_id(other_face).cloned()
+}
+
+fn spell_view_for_split_other_half_cast(
+    spell: &crate::object::Object,
+) -> Option<crate::object::Object> {
+    if spell.linked_face_layout != crate::card::LinkedFaceLayout::Split {
+        return None;
+    }
+    let other_def = linked_face_definition(spell)?;
+    let mut view = spell.clone();
+    view.apply_definition_face(&other_def);
+    view.ensure_aura_cast_spell_effect();
+    Some(view)
+}
+
+fn spell_view_for_fused_split_cast(
+    spell: &crate::object::Object,
+) -> Option<crate::object::Object> {
+    if spell.linked_face_layout != crate::card::LinkedFaceLayout::Split || !spell.has_fuse {
+        return None;
+    }
+    let other_def = linked_face_definition(spell)?;
+    let mut view = spell.clone();
+    view.apply_fused_split_spell_overlay(&other_def);
+    Some(view)
+}
+
 fn can_cast_with_alternative_with_view(
     game: &GameState,
     player: PlayerId,
@@ -1823,14 +1978,56 @@ fn can_cast_with_alternative_with_view(
     method: &crate::alternative_cast::AlternativeCastingMethod,
     view: &DerivedGameView<'_>,
 ) -> bool {
+    use crate::alternative_cast::AlternativeCastingMethod;
+
+    let disturbed_view = match method {
+        AlternativeCastingMethod::Disturb { .. } => match spell_view_for_disturb_cast(spell) {
+            Some(view) => Some(view),
+            None => return false,
+        },
+        _ => None,
+    };
+    let spell_for_checks = disturbed_view.as_ref().unwrap_or(spell);
+    let effects_override = method.overload_effects().or_else(|| {
+        disturbed_view
+            .as_ref()
+            .and_then(|view| view.spell_effect.as_deref())
+    });
+    let free_plot_cost = crate::mana::ManaCost::new();
+    let mana_cost = match method {
+        AlternativeCastingMethod::Foretell { .. } => {
+            if !game.is_foretold(spell.id) {
+                return false;
+            }
+            get_mana_cost_for_method(method, spell_for_checks)
+        }
+        AlternativeCastingMethod::Plot { .. } => {
+            if !game.is_plotted_by(spell.id, player) {
+                return false;
+            }
+            let Some(plotted_turn) = game.plotted_turn(spell.id) else {
+                return false;
+            };
+            if plotted_turn >= game.turn.turn_number {
+                return false;
+            }
+            if game.turn.active_player != player || !crate::turn::is_sorcery_timing(game) {
+                return false;
+            }
+            Some(&free_plot_cost)
+        }
+        AlternativeCastingMethod::Suspend { .. } => return false,
+        _ => get_mana_cost_for_method(method, spell_for_checks),
+    };
+
     let requirements = build_requirements_for_method(method);
-    let mana_cost = get_mana_cost_for_method(method, spell);
     if !can_cast_with_cost_with_view(
         game,
         player,
-        spell,
+        spell_for_checks,
         spell.id,
         mana_cost,
+        effects_override,
         &requirements,
         view,
     ) {
@@ -1888,6 +2085,7 @@ fn can_cast_with_alternative_from_hand_with_view(
                 spell,
                 spell_id,
                 method.mana_cost(),
+                None,
                 &AdditionalCastRequirements::default(),
                 view,
             ) {
@@ -1925,6 +2123,7 @@ fn can_cast_with_alternative_from_hand_with_view(
                 spell,
                 spell_id,
                 Some(cost),
+                None,
                 &AdditionalCastRequirements::default(),
                 view,
             ) {
@@ -1964,11 +2163,12 @@ fn can_cast_with_alternative_from_hand_with_view(
                 spell,
                 spell_id,
                 Some(cost),
+                None,
                 &AdditionalCastRequirements::default(),
                 view,
             )
         }
-        _ => false,
+        _ => can_cast_with_alternative_with_view(game, player, spell, method, view),
     }
 }
 
@@ -5767,6 +5967,42 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> Str
                     crate::alternative_cast::CastingMethod::Normal => {
                         format!("{} ({})", obj.name, format_mana_cost(obj))
                     }
+                    crate::alternative_cast::CastingMethod::SplitOtherHalf => {
+                        if let Some(other_def) = obj
+                            .other_face
+                            .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
+                        {
+                            let cost = other_def
+                                .card
+                                .mana_cost
+                                .as_ref()
+                                .map(format_mana_cost_from_cost)
+                                .unwrap_or_else(|| "0".to_string());
+                            format!("{} ({})", other_def.card.name, cost)
+                        } else {
+                            format!("{} [other half]", obj.name)
+                        }
+                    }
+                    crate::alternative_cast::CastingMethod::Fuse => {
+                        let fused_cost = spell_mana_cost_for_cast(
+                            game,
+                            game.turn.priority_player.unwrap_or(obj.owner),
+                            obj,
+                            casting_method,
+                            Zone::Hand,
+                        )
+                        .as_ref()
+                        .map(format_mana_cost_from_cost)
+                        .unwrap_or_else(|| format_mana_cost(obj));
+                        if let Some(other_def) = obj
+                            .other_face
+                            .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
+                        {
+                            format!("{} // {} [Fuse] ({})", obj.name, other_def.card.name, fused_cost)
+                        } else {
+                            format!("{} [Fuse] ({})", obj.name, fused_cost)
+                        }
+                    }
                     crate::alternative_cast::CastingMethod::Alternative(idx) => {
                         // Get the alternative cost description
                         if let Some(alt_method) = obj.alternative_casts.get(*idx) {
@@ -5910,6 +6146,7 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> Str
             crate::special_actions::SpecialAction::TurnFaceUp { .. } => "Turn face up".to_string(),
             crate::special_actions::SpecialAction::Suspend { .. } => "Suspend".to_string(),
             crate::special_actions::SpecialAction::Foretell { .. } => "Foretell".to_string(),
+            crate::special_actions::SpecialAction::Plot { .. } => "Plot".to_string(),
             crate::special_actions::SpecialAction::ActivateManaAbility { .. } => {
                 "Activate mana ability".to_string()
             }
@@ -9506,6 +9743,278 @@ mod tests {
                 |a| matches!(a, LegalAction::ActivateAbility { source, .. } if *source == source_id)
             ),
             "hand-zone activated ability should be discoverable as a legal action"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_actions_includes_foretell_special_action() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Blue, 2);
+
+        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(778), "Foretell Probe")
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(3)],
+                vec![ManaSymbol::Blue],
+            ]))
+            .card_types(vec![CardType::Instant])
+            .with_spell_effect(vec![Effect::gain_life(1)])
+            .foretell(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Blue],
+            ]))
+            .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::SpecialAction(crate::special_actions::SpecialAction::Foretell {
+                    card_id: found
+                }) if *found == card_id
+            )),
+            "expected foretell special action in legal actions, got {actions:?}"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_actions_includes_suspend_special_action() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Green, 1);
+
+        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(779), "Suspend Probe")
+            .card_types(vec![CardType::Sorcery])
+            .with_spell_effect(vec![Effect::gain_life(1)])
+            .suspend(2, ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+            .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::SpecialAction(crate::special_actions::SpecialAction::Suspend {
+                    card_id: found
+                }) if *found == card_id
+            )),
+            "expected suspend special action in legal actions, got {actions:?}"
+        );
+    }
+
+    #[test]
+    fn test_suspend_special_action_exiles_with_time_counters() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Green, 1);
+
+        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(781), "Suspend Runtime")
+            .card_types(vec![CardType::Sorcery])
+            .with_spell_effect(vec![Effect::gain_life(1)])
+            .suspend(2, ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+            .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        crate::special_actions::perform(
+            crate::special_actions::SpecialAction::Suspend { card_id },
+            &mut game,
+            alice,
+            &mut dm,
+        )
+        .expect("suspend special action should resolve");
+
+        let exiled_id = *game.exile.first().expect("card should be exiled");
+        let exiled = game.object(exiled_id).expect("exiled card should exist");
+        assert_eq!(exiled.zone, Zone::Exile);
+        assert_eq!(game.counter_count(exiled_id, crate::object::CounterType::Time), 2);
+    }
+
+    #[test]
+    fn test_plot_special_action_enables_cast_on_later_turn_only() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Red, 3);
+
+        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(780), "Plot Probe")
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(4)],
+                vec![ManaSymbol::Red],
+            ]))
+            .card_types(vec![CardType::Sorcery])
+            .with_spell_effect(vec![Effect::gain_life(1)])
+            .plot(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(2)],
+                vec![ManaSymbol::Red],
+            ]))
+            .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        crate::special_actions::perform(
+            crate::special_actions::SpecialAction::Plot { card_id },
+            &mut game,
+            alice,
+            &mut dm,
+        )
+        .expect("plot special action should resolve");
+
+        let exiled_id = *game.exile.first().expect("card should be in exile");
+        let same_turn_actions = compute_legal_actions(&game, alice);
+        assert!(
+            !same_turn_actions.iter().any(|action| matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Exile,
+                    casting_method: CastingMethod::Alternative(0),
+                } if *spell_id == exiled_id
+            )),
+            "plotted card should not be castable the same turn it was plotted"
+        );
+
+        game.next_turn();
+        game.next_turn();
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let later_actions = compute_legal_actions(&game, alice);
+        assert!(
+            later_actions.iter().any(|action| matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Exile,
+                    casting_method: CastingMethod::Alternative(0),
+                } if *spell_id == exiled_id
+            )),
+            "plotted card should be castable from exile on a later turn"
+        );
+    }
+
+    #[test]
+    fn test_spectacle_condition_controls_alternative_cast_legality() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Red, 1);
+
+        let def = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(782), "Spectacle Probe")
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(2)],
+                vec![ManaSymbol::Red],
+            ]))
+            .card_types(vec![CardType::Sorcery])
+            .with_spell_effect(vec![Effect::gain_life(1)])
+            .spectacle(ManaCost::from_pips(vec![vec![ManaSymbol::Red]]))
+            .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+        let card = game.object(card_id).expect("spectacle card should exist");
+        assert!(
+            !can_cast_with_alternative_from_hand(&game, alice, card, card_id, &card.alternative_casts[0]),
+            "spectacle alternative should not be available before an opponent loses life"
+        );
+
+        game.life_lost_this_turn.insert(bob, 1);
+        let card = game.object(card_id).expect("spectacle card should still exist");
+        assert!(
+            can_cast_with_alternative_from_hand(&game, alice, card, card_id, &card.alternative_casts[0]),
+            "spectacle alternative should become available once an opponent has lost life"
+        );
+    }
+
+    #[test]
+    fn test_foretell_special_action_enables_cast_from_exile() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .mana_pool
+            .add(ManaSymbol::Blue, 4);
+
+        let def = crate::cards::CardDefinitionBuilder::new(
+            CardId::from_raw(779),
+            "Foretell Runtime Probe",
+        )
+        .mana_cost(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(3)],
+            vec![ManaSymbol::Blue],
+        ]))
+        .card_types(vec![CardType::Instant])
+        .with_spell_effect(vec![Effect::gain_life(1)])
+        .foretell(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(1)],
+            vec![ManaSymbol::Blue],
+        ]))
+        .build();
+        let card_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let mut dm = SelectFirstDecisionMaker;
+        crate::special_actions::perform(
+            crate::special_actions::SpecialAction::Foretell { card_id },
+            &mut game,
+            alice,
+            &mut dm,
+        )
+        .expect("foretell special action should succeed");
+
+        let foretold_id = *game.exile.last().expect("card should be in exile");
+        assert!(game.is_face_down(foretold_id));
+        assert!(game.is_foretold(foretold_id));
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Exile,
+                    casting_method: CastingMethod::Alternative(0),
+                } if *spell_id == foretold_id
+            )),
+            "expected foretold card to be castable from exile, got {actions:?}"
         );
     }
 

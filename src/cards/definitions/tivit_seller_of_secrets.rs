@@ -517,8 +517,6 @@ mod tests {
                 "0", // Pay {1}
                 "0", // Pay {1} (final {1} auto-paid if only one option remains)
                 "",  // Pass priority after casting
-                "",  // Keep default triggered-ability order
-                "",  // Player 1 passes priority with ETB trigger on stack
                 "",  // Player 2 passes priority with ETB trigger on stack
                 // ETB trigger resolves: council's dilemma voting
                 "1", // Tivit controller votes an additional time

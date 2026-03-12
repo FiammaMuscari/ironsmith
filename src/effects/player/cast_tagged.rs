@@ -5,7 +5,7 @@
 //! immediately during resolution and returns an outcome that can be used by
 //! subsequent "If you don't" clauses.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::zones::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
@@ -66,7 +66,7 @@ impl EffectExecutor for CastTaggedEffect {
         use crate::cost::OptionalCostsPaid;
 
         let Some(snapshot) = ctx.get_tagged(self.tag.as_str()) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         let mut object_id = snapshot.object_id;
@@ -74,13 +74,13 @@ impl EffectExecutor for CastTaggedEffect {
             if let Some(found) = game.find_object_by_stable_id(snapshot.stable_id) {
                 object_id = found;
             } else {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             }
         }
 
         let (is_land, mana_cost, from_zone, card_name, stable_id) = {
             let Some(obj) = game.object(object_id) else {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
             (
                 obj.is_land(),
@@ -100,7 +100,7 @@ impl EffectExecutor for CastTaggedEffect {
 
             let source_obj = match game.object(object_id) {
                 Some(obj) => obj.clone(),
-                None => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+                None => return Ok(EffectOutcome::target_invalid()),
             };
             let mut copy_obj = crate::object::Object::token_copy_of(&source_obj, copy_id, caster);
             copy_obj.controller = caster;
@@ -108,7 +108,7 @@ impl EffectExecutor for CastTaggedEffect {
 
             if is_land {
                 if !self.allow_land {
-                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    return Ok(EffectOutcome::target_invalid());
                 }
                 copy_obj.zone = Zone::Command;
                 game.add_object(copy_obj);
@@ -120,13 +120,13 @@ impl EffectExecutor for CastTaggedEffect {
                 ) {
                     BattlefieldEntryOutcome::Moved(new_id) => {
                         queue_effect_driven_land_play(game, ctx, new_id, caster, from_zone);
-                        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                        Ok(EffectOutcome::with_objects(vec![
                             new_id,
-                        ])))
+                        ]))
                     }
                     BattlefieldEntryOutcome::Prevented => {
                         game.remove_object(copy_id);
-                        Ok(EffectOutcome::from_result(EffectResult::Impossible))
+                        Ok(EffectOutcome::impossible())
                     }
                 };
             }
@@ -135,7 +135,7 @@ impl EffectExecutor for CastTaggedEffect {
                 && let Some(cost) = mana_cost.as_ref()
             {
                 if !game.try_pay_mana_cost(caster, None, cost, 0) {
-                    return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                    return Ok(EffectOutcome::impossible());
                 }
             }
 
@@ -148,7 +148,7 @@ impl EffectExecutor for CastTaggedEffect {
             stack_entry.source_name = Some(card_name);
             game.push_to_stack(stack_entry);
             return Ok(with_spell_cast_event(
-                EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])),
+                EffectOutcome::with_objects(vec![copy_id]),
                 game,
                 copy_id,
                 caster,
@@ -159,7 +159,7 @@ impl EffectExecutor for CastTaggedEffect {
 
         if is_land {
             if !self.allow_land {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             }
 
             return match move_to_battlefield_with_options(
@@ -170,12 +170,12 @@ impl EffectExecutor for CastTaggedEffect {
             ) {
                 BattlefieldEntryOutcome::Moved(new_id) => {
                     queue_effect_driven_land_play(game, ctx, new_id, ctx.controller, from_zone);
-                    Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    Ok(EffectOutcome::with_objects(vec![
                         new_id,
-                    ])))
+                    ]))
                 }
                 BattlefieldEntryOutcome::Prevented => {
-                    Ok(EffectOutcome::from_result(EffectResult::Impossible))
+                    Ok(EffectOutcome::impossible())
                 }
             };
         }
@@ -185,12 +185,12 @@ impl EffectExecutor for CastTaggedEffect {
             && let Some(cost) = mana_cost.as_ref()
         {
             if !game.try_pay_mana_cost(caster, None, cost, 0) {
-                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                return Ok(EffectOutcome::impossible());
             }
         }
 
         let Some(new_id) = game.move_object(object_id, Zone::Stack) else {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         };
         if let Some(obj) = game.object_mut(new_id) {
             obj.x_value = x_value;
@@ -231,7 +231,7 @@ impl EffectExecutor for CastTaggedEffect {
 
         game.push_to_stack(stack_entry);
         Ok(with_spell_cast_event(
-            EffectOutcome::from_result(EffectResult::Objects(vec![new_id])),
+            EffectOutcome::with_objects(vec![new_id]),
             game,
             new_id,
             caster,
@@ -277,7 +277,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("cast tagged should resolve");
 
-        let EffectResult::Objects(ids) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = outcome.value else {
             panic!("expected cast tagged to create a stack object");
         };
         let cast_id = ids[0];
@@ -315,7 +315,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("play tagged land should resolve");
 
-        let EffectResult::Objects(ids) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = outcome.value else {
             panic!("expected played land to move to battlefield");
         };
         let land_id = ids[0];

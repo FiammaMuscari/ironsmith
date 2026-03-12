@@ -1,7 +1,7 @@
 //! Set base power/toughness effect implementation.
 
 use crate::continuous::{EffectTarget, Modification, PtSublayer};
-use crate::effect::{Effect, EffectOutcome, EffectResult, Until, Value};
+use crate::effect::{Effect, EffectOutcome, Until, Value};
 use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
@@ -56,7 +56,7 @@ impl EffectExecutor for SetBasePowerToughnessEffect {
             .object(target_id)
             .ok_or(ExecutionError::ObjectNotFound(target_id))?;
         if !target.has_card_type(CardType::Creature) {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let apply = ApplyContinuousEffect::new(

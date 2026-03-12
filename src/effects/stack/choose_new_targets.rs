@@ -4,7 +4,7 @@
 //! by re-targeting stack objects produced by a prior effect.
 
 use crate::decisions::context::{BooleanContext, TargetRequirementContext, TargetsContext};
-use crate::effect::{ChoiceCount, EffectId, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectId, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::events::spells::BecomesTargetedEvent;
@@ -17,8 +17,8 @@ use crate::zone::Zone;
 
 /// Effect that lets a player choose new targets for stack object(s).
 ///
-/// The objects are read from a prior effect result (typically `CopySpellEffect`)
-/// that stored `EffectResult::Objects`.
+/// The objects are read from a prior effect outcome, preferring explicit
+/// object outputs and falling back to preserved chosen/affected-object facts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChooseNewTargetsEffect {
     /// Effect result ID that contains stack object IDs to retarget.
@@ -171,10 +171,13 @@ impl EffectExecutor for ChooseNewTargetsEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let object_ids = match ctx.get_result(self.from_effect) {
-            Some(EffectResult::Objects(ids)) => ids.clone(),
-            _ => return Ok(EffectOutcome::resolved()),
+        let object_ids = match ctx.get_outcome(self.from_effect) {
+            Some(outcome) => outcome.output_objects().to_vec(),
+            None => return Ok(EffectOutcome::resolved()),
         };
+        if object_ids.is_empty() {
+            return Ok(EffectOutcome::resolved());
+        }
 
         let mut changed = 0;
         let mut events = Vec::new();
@@ -196,7 +199,7 @@ impl EffectExecutor for ChooseNewTargetsEffect {
                 if self.may {
                     continue;
                 }
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
 
             if requirements.is_empty() {
@@ -234,7 +237,7 @@ impl EffectExecutor for ChooseNewTargetsEffect {
                 if self.may {
                     continue;
                 }
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
 
             if game.stack[stack_idx].targets != new_targets {
@@ -256,6 +259,6 @@ impl EffectExecutor for ChooseNewTargetsEffect {
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(changed)).with_events(events))
+        Ok(EffectOutcome::count(changed).with_events(events))
     }
 }

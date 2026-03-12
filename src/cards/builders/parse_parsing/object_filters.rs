@@ -1052,6 +1052,18 @@ pub(crate) fn parse_object_filter(
         }
     }
 
+    if let Some(relation_idx) = all_words.windows(6).position(|window| {
+        matches!(
+            window,
+            ["blocking", "or", "blocked", "by", "this", "creature"]
+                | ["blocking", "or", "blocked", "by", "this", "permanent"]
+                | ["blocking", "or", "blocked", "by", "this", "source"]
+        )
+    }) {
+        filter.in_combat_with_source = true;
+        all_words.truncate(relation_idx);
+    }
+
     let starts_with_exiled_card =
         all_words.starts_with(&["exiled", "card"]) || all_words.starts_with(&["exiled", "cards"]);
     let has_exiled_with_phrase = all_words

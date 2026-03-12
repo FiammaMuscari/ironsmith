@@ -5,7 +5,7 @@
 //! Reminder text example:
 //! "To behold an Elemental, choose an Elemental you control or reveal an Elemental card from your hand."
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -94,7 +94,7 @@ impl EffectExecutor for BeholdEffect {
         let chooser = resolve_player_filter(game, &self.chooser, ctx)?;
         let required = self.count as usize;
         if required == 0 {
-            return Ok(EffectOutcome::from_result(EffectResult::Resolved));
+            return Ok(EffectOutcome::resolved());
         }
 
         let pool = candidates(game, chooser, ctx.source, self.subtype);
@@ -120,7 +120,7 @@ impl EffectExecutor for BeholdEffect {
             make_decision(game, ctx.decision_maker, chooser, Some(ctx.source), spec)
         };
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(chosen)))
+        Ok(EffectOutcome::with_objects(chosen))
     }
 
     fn cost_description(&self) -> Option<String> {

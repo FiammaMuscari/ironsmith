@@ -1,7 +1,7 @@
 //! Look at hand effect implementation.
 
 use crate::decisions::context::ViewCardsContext;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_players_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -45,7 +45,7 @@ impl EffectExecutor for LookAtHandEffect {
 
         if players.is_empty() {
             return if self.target.is_target() {
-                Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+                Ok(EffectOutcome::target_invalid())
             } else {
                 Ok(EffectOutcome::count(0))
             };
@@ -102,7 +102,6 @@ mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -176,7 +175,7 @@ mod tests {
         let effect = LookAtHandEffect::new(ChooseSpec::target_player());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(dm.calls.len(), 1);
 
         let call = &dm.calls[0];
@@ -203,7 +202,7 @@ mod tests {
         let effect = LookAtHandEffect::reveal(ChooseSpec::target_player());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(dm.calls.len(), 2, "both players should see revealed hand");
         assert!(dm.calls.iter().all(|call| call.subject == bob));
         assert!(dm.calls.iter().all(|call| call.zone == Zone::Hand));

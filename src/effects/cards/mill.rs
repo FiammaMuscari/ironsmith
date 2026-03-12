@@ -1,6 +1,6 @@
 //! Mill effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::effects::zones::apply_zone_change;
 use crate::effects::{CostExecutableEffect, EffectExecutor};
@@ -117,10 +117,10 @@ impl EffectExecutor for MillEffect {
         }
 
         if !milled.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(milled)));
+            return Ok(EffectOutcome::with_objects(milled));
         }
         if any_prevented {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
         Ok(EffectOutcome::count(0))
     }
@@ -202,7 +202,7 @@ mod tests {
 
         let effect = MillEffect::you(2);
         let outcome = effect.execute(&mut game, &mut ctx).expect("execute mill");
-        let EffectResult::Objects(milled_ids) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(milled_ids) = outcome.value else {
             panic!("expected mill to return moved graveyard objects");
         };
 
@@ -227,7 +227,7 @@ mod tests {
 
         let effect = Effect::mill(1).tag("milled");
         let outcome = execute_effect(&mut game, &effect, &mut ctx).expect("execute tagged mill");
-        let EffectResult::Objects(milled_ids) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(milled_ids) = outcome.value else {
             panic!("expected tagged mill to return milled object ids");
         };
 

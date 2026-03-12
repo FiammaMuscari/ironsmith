@@ -4,7 +4,7 @@
 //! the source permanent. Used by Chrome Mox, Isochron Scepter, etc.
 
 use crate::decisions::{MayChooseCardSpec, make_decision};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -105,9 +105,9 @@ impl EffectExecutor for ImprintFromHandEffect {
             if let Some(exiled_id) = exiled_id {
                 // Imprint it on the source permanent
                 game.imprint_card(source_id, exiled_id);
-                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                Ok(EffectOutcome::with_objects(vec![
                     exiled_id,
-                ])))
+                ]))
             } else {
                 Ok(EffectOutcome::count(0))
             }

@@ -2,7 +2,7 @@
 
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact};
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::ObjectFilter;
@@ -73,6 +73,10 @@ fn article_for_count(min: usize, max: usize) -> &'static str {
     } else {
         "up to"
     }
+}
+
+fn should_auto_choose_single_candidate(candidates: &[ObjectId], min: usize, max: usize) -> bool {
+    candidates.len() == 1 && min == 1 && max == 1
 }
 
 fn graveyard_candidate_players(
@@ -419,7 +423,7 @@ pub(crate) fn run_choose_objects(
         && search_zones == vec![Zone::Library]
         && !game.can_search_library(chooser_id)
     {
-        return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+        return Ok(EffectOutcome::prevented());
     }
     if effect.is_search && search_zones.contains(&Zone::Library) {
         game.library_searches_this_turn.insert(chooser_id);
@@ -471,9 +475,13 @@ pub(crate) fn run_choose_objects(
     } else {
         effect.description.to_string()
     };
-    let spec = ChooseObjectsSpec::new(ctx.source, description, candidates.clone(), min, Some(max));
-    let chosen: Vec<ObjectId> =
-        make_decision(game, ctx.decision_maker, chooser_id, Some(ctx.source), spec);
+    let chosen: Vec<ObjectId> = if should_auto_choose_single_candidate(&candidates, min, max) {
+        candidates.clone()
+    } else {
+        let spec =
+            ChooseObjectsSpec::new(ctx.source, description, candidates.clone(), min, Some(max));
+        make_decision(game, ctx.decision_maker, chooser_id, Some(ctx.source), spec)
+    };
     if ctx.decision_maker.awaiting_choice() {
         ctx.clear_object_tag(effect.tag.as_str());
         return Ok(EffectOutcome::count(0));
@@ -493,7 +501,10 @@ pub(crate) fn run_choose_objects(
         ctx.clear_object_tag(effect.tag.as_str());
     }
 
-    Ok(EffectOutcome::from_result(EffectResult::Objects(chosen)))
+    Ok(
+        EffectOutcome::with_objects(chosen.clone())
+            .with_execution_fact(ExecutionFact::ChosenObjects(chosen)),
+    )
 }
 
 #[cfg(test)]
@@ -501,7 +512,7 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
+    use crate::effect::{ExecutionFact};
     use crate::executor::ExecutionContext;
     use crate::filter::ObjectFilter;
     use crate::ids::{CardId, PlayerId};
@@ -601,7 +612,7 @@ mod tests {
             .in_zone(Zone::Graveyard);
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(chosen, vec![bob_card]);
@@ -644,7 +655,7 @@ mod tests {
         let effect = ChooseObjectsEffect::new(filter, 1, PlayerFilter::You, "chosen").top_only();
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(chosen, vec![top], "expected top library card to be chosen");
@@ -666,7 +677,7 @@ mod tests {
         let effect = ChooseObjectsEffect::new(filter, 2, PlayerFilter::You, "chosen").top_only();
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(chosen.len(), 2, "expected exactly two chosen cards");
@@ -725,7 +736,7 @@ mod tests {
         .in_zone(Zone::Graveyard);
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(chosen.len(), 2);
@@ -752,7 +763,7 @@ mod tests {
             .as_search();
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         // Should only find Alice's creature, not Bob's
@@ -783,7 +794,7 @@ mod tests {
             .as_search();
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
-        let EffectResult::Objects(chosen) = outcome.result else {
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(chosen.len(), 2);
@@ -810,7 +821,7 @@ mod tests {
         .in_zone(Zone::Graveyard);
         let first_outcome =
             run_choose_objects(&first_effect, &mut game, &mut ctx).expect("first choose resolves");
-        let EffectResult::Objects(first_choice) = first_outcome.result else {
+        let crate::effect::OutcomeValue::Objects(first_choice) = first_outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(first_choice, vec![first]);
@@ -826,7 +837,7 @@ mod tests {
         .in_zone(Zone::Graveyard);
         let second_outcome = run_choose_objects(&second_effect, &mut game, &mut ctx)
             .expect("second choose resolves");
-        let EffectResult::Objects(second_choice) = second_outcome.result else {
+        let crate::effect::OutcomeValue::Objects(second_choice) = second_outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(second_choice, vec![second]);
@@ -859,7 +870,7 @@ mod tests {
         .replace_tagged_objects();
         let first_outcome =
             run_choose_objects(&first_effect, &mut game, &mut ctx).expect("first choose resolves");
-        let EffectResult::Objects(first_choice) = first_outcome.result else {
+        let crate::effect::OutcomeValue::Objects(first_choice) = first_outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(first_choice, vec![first]);
@@ -876,7 +887,7 @@ mod tests {
         .replace_tagged_objects();
         let second_outcome = run_choose_objects(&second_effect, &mut game, &mut ctx)
             .expect("second choose resolves");
-        let EffectResult::Objects(second_choice) = second_outcome.result else {
+        let crate::effect::OutcomeValue::Objects(second_choice) = second_outcome.value else {
             panic!("expected object selection result");
         };
         assert_eq!(second_choice, vec![second]);
@@ -918,13 +929,97 @@ mod tests {
         let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
 
         assert_eq!(
-            outcome.result,
-            EffectResult::Count(0),
+            outcome.value,
+            crate::effect::OutcomeValue::Count(0),
             "prompt discovery should not commit a fallback object choice"
         );
         assert!(
             ctx.get_tagged("chosen").is_none(),
             "stale chosen-object tags must be cleared while waiting for the real selection"
+        );
+    }
+
+    #[test]
+    fn test_choose_objects_auto_resolves_single_required_candidate() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let chosen_card = create_graveyard_card(&mut game, "Only Card", alice);
+        let mut dm = PromptCapturingDecisionMaker { captured: false };
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+
+        let effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Graveyard),
+            1,
+            PlayerFilter::You,
+            "chosen",
+        )
+        .in_zone(Zone::Graveyard);
+
+        let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
+
+        assert!(
+            !dm.captured,
+            "single required candidate should resolve without surfacing a decision"
+        );
+        let crate::effect::OutcomeValue::Objects(chosen) = outcome.value else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(chosen, vec![chosen_card]);
+    }
+
+    #[test]
+    fn test_choose_objects_keeps_optional_single_candidate_prompt() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let _chosen_card = create_graveyard_card(&mut game, "Only Card", alice);
+        let mut dm = PromptCapturingDecisionMaker { captured: false };
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+
+        let effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Graveyard),
+            ChoiceCount::up_to(1),
+            PlayerFilter::You,
+            "chosen",
+        )
+        .in_zone(Zone::Graveyard);
+
+        let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
+
+        assert_eq!(
+            outcome.value,
+            crate::effect::OutcomeValue::Count(0),
+            "optional singleton choices should still prompt because the player may decline"
+        );
+        assert!(
+            dm.captured,
+            "optional singleton choices should still surface a decision"
+        );
+    }
+
+    #[test]
+    fn test_choose_objects_emits_chosen_objects_fact() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let chosen_card = create_graveyard_card(&mut game, "Chosen Card", alice);
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Graveyard),
+            1,
+            PlayerFilter::You,
+            "chosen",
+        )
+        .in_zone(Zone::Graveyard);
+
+        let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
+
+        assert!(
+            outcome
+                .execution_facts()
+                .contains(&ExecutionFact::ChosenObjects(vec![chosen_card]))
         );
     }
 }

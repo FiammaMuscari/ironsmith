@@ -1,6 +1,6 @@
 //! Copy spell effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter, resolve_value};
 use crate::events::spells::SpellCopiedEvent;
@@ -87,7 +87,7 @@ impl EffectExecutor for CopySpellEffect {
             .ok_or(ExecutionError::ObjectNotFound(target_id))?;
 
         if target_obj.zone != Zone::Stack {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         // Find the corresponding stack entry for this spell
@@ -98,7 +98,7 @@ impl EffectExecutor for CopySpellEffect {
             .cloned();
 
         let Some(original_entry) = stack_entry_opt else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         let copier = resolve_player_filter(game, &self.copier, ctx)?;
@@ -143,9 +143,9 @@ impl EffectExecutor for CopySpellEffect {
             );
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(
+        Ok(EffectOutcome::with_objects(
             created_ids,
-        )))
+        ))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -204,7 +204,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should return Objects with the copy ID
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let copy_id = ids[0];
 
@@ -241,8 +241,8 @@ mod tests {
         let effect = CopySpellEffect::single(ChooseSpec::spell());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        let copy_id = match result.result {
-            EffectResult::Objects(ids) => ids[0],
+        let copy_id = match result.value {
+            crate::effect::OutcomeValue::Objects(ids) => ids[0],
             _ => panic!("Expected Objects result"),
         };
 
@@ -268,7 +268,7 @@ mod tests {
         let effect = CopySpellEffect::new(ChooseSpec::spell(), 3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 3);
 
             // Stack should have 4 entries (original + 3 copies)
@@ -325,7 +325,7 @@ mod tests {
         let effect = CopySpellEffect::single(ChooseSpec::spell());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let copy_id = ids[0];
 
             // Copy's stack entry should have same targets
@@ -359,7 +359,7 @@ mod tests {
         let effect = CopySpellEffect::single(ChooseSpec::spell());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let copy_id = ids[0];
 
             // Copy should preserve X value
@@ -389,7 +389,7 @@ mod tests {
         let effect = CopySpellEffect::single(ChooseSpec::spell());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod tests {
         let effect = CopySpellEffect::single(ChooseSpec::spell());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let copy_id = ids[0];
 
             // Copy should be controlled by Bob

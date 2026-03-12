@@ -3,10 +3,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 const VIEWABLE_ZONES = [
   { id: "battlefield", label: "Battlefield" },
   { id: "hand", label: "Hand" },
-  { id: "graveyard", label: "Graveyard" },
+  { id: "graveyard", label: "GY" },
   { id: "library", label: "Deck" },
   { id: "exile", label: "Exile" },
-  { id: "command", label: "Command" },
+  { id: "command", label: "CZ" },
 ];
 
 function normalizeZones(zones) {

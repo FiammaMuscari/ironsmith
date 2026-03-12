@@ -7,7 +7,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::events::{KeywordActionEvent, KeywordActionKind};
@@ -186,17 +186,21 @@ impl EffectExecutor for DiscoverEffect {
             }
         }
 
-        let result = if let Some(id) = selected_object {
-            EffectResult::Objects(vec![id])
+        let value = if let Some(id) = selected_object {
+            crate::effect::OutcomeValue::Objects(vec![id])
         } else {
-            EffectResult::Count(0)
+            crate::effect::OutcomeValue::Count(0)
         };
 
-        let mut outcome =
-            EffectOutcome::from_result(result).with_event(TriggerEvent::new_with_provenance(
+        let mut outcome = EffectOutcome::with_details(
+            crate::effect::OutcomeStatus::Succeeded,
+            value,
+            vec![TriggerEvent::new_with_provenance(
                 KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
                 ctx.provenance,
-            ));
+            )],
+            Vec::new(),
+        );
         if let Some((new_id, from_zone)) = casted_spell {
             outcome = outcome.with_event(register_effect_driven_spell_cast(
                 game,

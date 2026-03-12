@@ -122,7 +122,6 @@ impl EffectExecutor for RemoveUpToCountersEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -180,7 +179,7 @@ mod tests {
         let effect = RemoveUpToCountersEffect::plus_one_counters(3, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         let obj = game.object(creature_id).unwrap();
         assert_eq!(obj.counters.get(&CounterType::PlusOnePlusOne), Some(&2)); // 5 - 3
     }
@@ -205,7 +204,7 @@ mod tests {
         let effect = RemoveUpToCountersEffect::plus_one_counters(5, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2)); // Limited by available
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2)); // Limited by available
         // When all counters are removed, the entry is removed from the HashMap
         assert_eq!(
             game.counter_count(creature_id, CounterType::PlusOnePlusOne),
@@ -232,7 +231,7 @@ mod tests {
         let effect = RemoveUpToCountersEffect::plus_one_counters(3, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]

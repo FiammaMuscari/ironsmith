@@ -7084,6 +7084,14 @@ pub(super) fn describe_player_relative_condition(condition: &Condition) -> Optio
             let action = tag_action_from_name(tag.as_str())?;
             Some(format!("{action} it this way"))
         }
+        Condition::SourceIsInZone(zone) => Some(match zone {
+            Zone::Hand => "this card is in your hand".to_string(),
+            Zone::Graveyard => "this card is in your graveyard".to_string(),
+            Zone::Library => "this card is in your library".to_string(),
+            Zone::Exile => "this card is in exile".to_string(),
+            Zone::Command => "this card is in the command zone".to_string(),
+            _ => return None,
+        }),
         _ => None,
     }
 }
@@ -7469,6 +7477,9 @@ pub(super) fn describe_condition(condition: &Condition) -> String {
             "there are {count} or more {} counters on this source",
             counter_type.description()
         ),
+        Condition::SourcePowerAtLeast(min_power) => {
+            format!("this creature's power is {min_power} or more")
+        }
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
         Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
             if let Some(symbol) = symbol {
@@ -7720,6 +7731,15 @@ pub(super) fn describe_condition(condition: &Condition) -> String {
                 )
             }
         }
+        Condition::SourceIsInZone(zone) => match zone {
+            Zone::Hand => "this card is in your hand".to_string(),
+            Zone::Graveyard => "this card is in your graveyard".to_string(),
+            Zone::Library => "this card is in your library".to_string(),
+            Zone::Exile => "this card is in exile".to_string(),
+            Zone::Command => "this card is in the command zone".to_string(),
+            Zone::Battlefield => "this object is on the battlefield".to_string(),
+            Zone::Stack => "this object is on the stack".to_string(),
+        },
         Condition::ActivationTiming(timing) => {
             let label = match timing {
                 crate::ability::ActivationTiming::AnyTime => "any time",

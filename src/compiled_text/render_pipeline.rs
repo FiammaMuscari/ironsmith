@@ -55,6 +55,18 @@ pub(super) fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
             AlternativeCastingMethod::Miracle { cost } => {
                 out.push(format!("Miracle {}", cost.to_oracle()));
             }
+            AlternativeCastingMethod::Plot { cost } => {
+                out.push(format!("Plot {}", cost.to_oracle()));
+            }
+            AlternativeCastingMethod::Suspend { cost, time } => {
+                out.push(format!("Suspend {time}—{}", cost.to_oracle()));
+            }
+            AlternativeCastingMethod::Disturb { cost } => {
+                out.push(format!("Disturb {}", cost.to_oracle()));
+            }
+            AlternativeCastingMethod::Overload { cost, .. } => {
+                out.push(format!("Overload {}", cost.to_oracle()));
+            }
             AlternativeCastingMethod::Flashback { total_cost } => {
                 let costs = method.non_mana_costs();
                 let mana_cost = total_cost

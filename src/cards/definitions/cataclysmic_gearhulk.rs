@@ -39,7 +39,7 @@ mod tests {
     use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
     use crate::color::Color;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::{Effect};
     use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, PlayerId};
@@ -300,7 +300,7 @@ mod tests {
         }
 
         // Nothing should be sacrificed (lands are safe)
-        assert_eq!(result.unwrap().result, EffectResult::Count(0));
+        assert_eq!(result.unwrap().value, crate::effect::OutcomeValue::Count(0));
         assert!(game.battlefield.contains(&land1));
         assert!(game.battlefield.contains(&land2));
     }
@@ -318,7 +318,7 @@ mod tests {
             result = Some(effect.0.execute(&mut game, &mut ctx).unwrap());
         }
 
-        assert_eq!(result.unwrap().result, EffectResult::Count(0));
+        assert_eq!(result.unwrap().value, crate::effect::OutcomeValue::Count(0));
     }
 
     // ========================================

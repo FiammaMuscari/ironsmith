@@ -1,7 +1,7 @@
 //! Exile effect implementation.
 
 use crate::color::{Color, ColorSet};
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
 };
@@ -105,7 +105,7 @@ impl ExileEffect {
         ctx: &mut ExecutionContext,
         object_id: crate::ids::ObjectId,
         face_down: bool,
-    ) -> Result<Option<EffectResult>, ExecutionError> {
+    ) -> Result<Option<OutcomeStatus>, ExecutionError> {
         if let Some(obj) = game.object(object_id) {
             let from_zone = obj.zone;
 
@@ -119,7 +119,7 @@ impl ExileEffect {
             );
 
             match result {
-                EventOutcome::Prevented => return Ok(Some(EffectResult::Prevented)),
+                EventOutcome::Prevented => return Ok(Some(crate::effect::OutcomeStatus::Prevented)),
                 EventOutcome::Proceed(result) => {
                     if let Some(new_id) = result.new_object_id
                         && result.final_zone == Zone::Exile
@@ -133,15 +133,15 @@ impl ExileEffect {
                 }
                 EventOutcome::Replaced => {
                     // Replacement effects already executed
-                    return Ok(Some(EffectResult::Replaced));
+                    return Ok(Some(crate::effect::OutcomeStatus::Replaced));
                 }
                 EventOutcome::NotApplicable => {
-                    return Ok(Some(EffectResult::TargetInvalid));
+                    return Ok(Some(crate::effect::OutcomeStatus::TargetInvalid));
                 }
             }
         }
         // Object doesn't exist - target is invalid
-        Ok(Some(EffectResult::TargetInvalid))
+        Ok(Some(crate::effect::OutcomeStatus::TargetInvalid))
     }
 
     /// Check if spec uses ctx.targets (Object/Player/AnyTarget filters)
@@ -291,7 +291,7 @@ impl EffectExecutor for ExileEffect {
             },
         ) {
             Ok(result) => result,
-            Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
 
         Ok(apply_result.outcome)
@@ -413,7 +413,7 @@ impl CostExecutableEffect for ExileEffect {
 mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
-    use crate::effect::{ChoiceCount, EffectResult};
+    use crate::effect::{ChoiceCount};
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -519,7 +519,7 @@ mod tests {
             .with_targets(vec![ResolvedTarget::Object(card_id)]);
 
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.exile.len(), 1);
     }
 }

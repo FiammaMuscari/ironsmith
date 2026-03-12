@@ -1,7 +1,7 @@
 //! Modify power/toughness effect implementation.
 
 use crate::continuous::{EffectTarget, Modification};
-use crate::effect::{Effect, EffectOutcome, EffectResult, Until, Value};
+use crate::effect::{Effect, EffectOutcome, Until, Value};
 use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
@@ -90,7 +90,7 @@ impl EffectExecutor for ModifyPowerToughnessEffect {
             .ok_or(ExecutionError::ObjectNotFound(target_id))?;
 
         if !target.has_card_type(CardType::Creature) {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         // Register the continuous effect via the shared primitive.
@@ -172,7 +172,7 @@ mod tests {
             ModifyPowerToughnessEffect::new(ChooseSpec::creature(), 3, 3, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Should have added a continuous effect
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
@@ -193,7 +193,7 @@ mod tests {
             ModifyPowerToughnessEffect::shrink(ChooseSpec::creature(), 2, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 
@@ -209,7 +209,7 @@ mod tests {
         let effect = ModifyPowerToughnessEffect::source(2, 2, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 
@@ -233,7 +233,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
             ModifyPowerToughnessEffect::new(ChooseSpec::creature(), 3, 3, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -294,7 +294,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 

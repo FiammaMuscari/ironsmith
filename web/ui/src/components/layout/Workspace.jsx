@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { useCombatArrows } from "@/context/useCombatArrows";
 import { useDragActions } from "@/context/DragContext";
@@ -21,6 +21,8 @@ const HAND_PEEK_HEIGHT = 46;
 const HAND_REVEAL_HEIGHT = 164;
 const HAND_COLLAPSED_SHELL_HEIGHT = HAND_PEEK_HEIGHT;
 const HAND_LANE_HOVER_FUZZ = 6;
+const AUTO_REVEAL_ZONE_IDS = ["graveyard", "exile", "command"];
+const AUTO_REVEAL_DURATION_MS = 2000;
 
 function objectExistsInState(state, objectId) {
   if (!state || objectId == null) return false;
@@ -102,6 +104,77 @@ function getPrimaryViewedCardId(viewedCards) {
   return nextViewedId == null ? null : String(nextViewedId);
 }
 
+function getAutoRevealZoneCards(player, zone) {
+  switch (zone) {
+    case "graveyard":
+      return player?.graveyard_cards || [];
+    case "exile":
+      return player?.exile_cards || [];
+    case "command":
+      return player?.command_cards || [];
+    default:
+      return [];
+  }
+}
+
+function cloneZoneCardSnapshot(card) {
+  if (!card || typeof card !== "object") return null;
+  return {
+    ...card,
+    member_ids: Array.isArray(card.member_ids) ? [...card.member_ids] : card.member_ids,
+    member_stable_ids: Array.isArray(card.member_stable_ids)
+      ? [...card.member_stable_ids]
+      : card.member_stable_ids,
+  };
+}
+
+function buildZoneActivitySnapshot(players) {
+  const snapshot = {};
+  for (const player of players || []) {
+    const playerKey = String(player?.id ?? player?.index ?? "");
+    if (!playerKey) continue;
+    snapshot[playerKey] = {};
+    for (const zone of AUTO_REVEAL_ZONE_IDS) {
+      snapshot[playerKey][zone] = getAutoRevealZoneCards(player, zone)
+        .map((card) => cloneZoneCardSnapshot(card))
+        .filter(Boolean);
+    }
+  }
+  return snapshot;
+}
+
+function summarizeZoneActivity(previousCards = [], nextCards = []) {
+  const previousIds = new Set(previousCards.map((card) => String(card?.id ?? "")));
+  const nextIds = new Set(nextCards.map((card) => String(card?.id ?? "")));
+  const entered = nextCards.filter((card) => !previousIds.has(String(card?.id ?? "")));
+  const left = previousCards.filter((card) => !nextIds.has(String(card?.id ?? "")));
+
+  if (entered.length === 0 && left.length === 0) {
+    return null;
+  }
+
+  return entered.length >= left.length
+    ? { direction: "entered", cards: entered.length > 0 ? entered : left }
+    : { direction: "left", cards: left };
+}
+
+function buildZoneActivityLabel(activity) {
+  const names = Array.from(new Set(
+    (activity?.cards || [])
+      .map((card) => String(card?.name || "").trim())
+      .filter(Boolean)
+  )).slice(0, 2);
+  const remainder = Math.max(0, (activity?.cards?.length || 0) - names.length);
+  const prefix = activity?.direction === "left" ? "-" : "+";
+
+  if (names.length > 0) {
+    return `${prefix} ${names.join(", ")}${remainder > 0 ? ` +${remainder}` : ""}`;
+  }
+
+  const count = Math.max(1, activity?.cards?.length || 0);
+  return `${prefix} ${count} card${count === 1 ? "" : "s"}`;
+}
+
 export default function Workspace({
   zoneViews,
   deckLoadingMode,
@@ -115,14 +188,18 @@ export default function Workspace({
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
+  const [zoneActivityByPlayer, setZoneActivityByPlayer] = useState({});
   const [opponentsInspectorDockTop, setOpponentsInspectorDockTop] = useState(null);
   const [opponentsZoneHostRect, setOpponentsZoneHostRect] = useState(null);
   const [myZoneHostRect, setMyZoneHostRect] = useState(null);
   const workspaceRef = useRef(null);
   const previousStackIdsRef = useRef([]);
+  const previousZoneActivitySnapshotRef = useRef(null);
   const handRevealShellRef = useRef(null);
   const handRevealMotionRef = useRef(null);
   const handHoverCloseTimerRef = useRef(null);
+  const zoneActivityTimersRef = useRef(new Map());
+  const inspectorSuppressTimerRef = useRef(null);
   const {
     game,
     state,
@@ -135,7 +212,7 @@ export default function Workspace({
   const { endDrag } = useDragActions();
   const { clearHover, hoverCard } = useHoverActions();
 
-  const players = state?.players || [];
+  const players = useMemo(() => state?.players || [], [state?.players]);
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
@@ -194,6 +271,7 @@ export default function Workspace({
     }
     return normalizeZoneViews(Array.from(merged));
   }, [temporaryZoneViews, zoneViews]);
+  const baseVisibleZones = useMemo(() => new Set(normalizeZoneViews(zoneViews)), [zoneViews]);
   const stackArrowSignature = useMemo(
     () => stackTargetPresentation.arrows.map((arrow) => arrow.key).join("|"),
     [stackTargetPresentation.arrows]
@@ -256,6 +334,132 @@ export default function Workspace({
 
     previousStackIdsRef.current = currentStackIds;
   }, [state, selectedObjectId, combatDeclarationActive]);
+
+  useEffect(() => {
+    const currentSnapshot = buildZoneActivitySnapshot(players);
+    const previousSnapshot = previousZoneActivitySnapshotRef.current;
+    previousZoneActivitySnapshotRef.current = currentSnapshot;
+
+    if (deckLoadingMode || players.length === 0 || !previousSnapshot) {
+      return;
+    }
+
+    if (Object.keys(previousSnapshot).length !== players.length) {
+      return;
+    }
+
+    const activities = [];
+    for (const player of players) {
+      const playerKey = String(player?.id ?? player?.index ?? "");
+      const previousPlayerSnapshot = previousSnapshot[playerKey];
+      const currentPlayerSnapshot = currentSnapshot[playerKey];
+      if (!previousPlayerSnapshot || !currentPlayerSnapshot) continue;
+
+      for (const zone of AUTO_REVEAL_ZONE_IDS) {
+        const activity = summarizeZoneActivity(
+          previousPlayerSnapshot[zone],
+          currentPlayerSnapshot[zone]
+        );
+        if (!activity) continue;
+        activities.push({
+          playerKey,
+          zone,
+          direction: activity.direction,
+          label: buildZoneActivityLabel(activity),
+          replayCards: (
+            activity.direction === "left"
+            && !baseVisibleZones.has(zone)
+            && previousPlayerSnapshot[zone].length > 0
+          )
+            ? previousPlayerSnapshot[zone].map((card) => cloneZoneCardSnapshot(card)).filter(Boolean)
+            : null,
+          displayCount: (
+            activity.direction === "left"
+            && !baseVisibleZones.has(zone)
+            && previousPlayerSnapshot[zone].length > 0
+          )
+            ? previousPlayerSnapshot[zone].length
+            : null,
+          token: `${playerKey}:${zone}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        });
+      }
+    }
+
+    if (activities.length === 0) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      startTransition(() => {
+        setSelectedObjectId(null);
+        setPinnedInspectorObjectId(null);
+        setExpandedInspectorObjectId(null);
+        setSuppressFallbackInspector(true);
+        setZoneActivityByPlayer((current) => {
+          const next = { ...current };
+          for (const activity of activities) {
+            const playerActivities = { ...(next[activity.playerKey] || {}) };
+            playerActivities[activity.zone] = {
+              token: activity.token,
+              direction: activity.direction,
+              label: activity.label,
+              replayCards: activity.replayCards,
+              displayCount: activity.displayCount,
+            };
+            next[activity.playerKey] = playerActivities;
+          }
+          return next;
+        });
+      });
+    });
+
+    if (inspectorSuppressTimerRef.current) {
+      clearTimeout(inspectorSuppressTimerRef.current);
+    }
+    inspectorSuppressTimerRef.current = setTimeout(() => {
+      setSuppressFallbackInspector(false);
+      inspectorSuppressTimerRef.current = null;
+    }, AUTO_REVEAL_DURATION_MS);
+
+    for (const activity of activities) {
+      const timerKey = `${activity.playerKey}:${activity.zone}`;
+      const existingTimer = zoneActivityTimersRef.current.get(timerKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      const timeoutId = setTimeout(() => {
+        setZoneActivityByPlayer((current) => {
+          const playerActivities = current[activity.playerKey];
+          if (!playerActivities || playerActivities[activity.zone]?.token !== activity.token) {
+            return current;
+          }
+
+          const next = { ...current };
+          const nextPlayerActivities = { ...playerActivities };
+          delete nextPlayerActivities[activity.zone];
+          if (Object.keys(nextPlayerActivities).length === 0) {
+            delete next[activity.playerKey];
+          } else {
+            next[activity.playerKey] = nextPlayerActivities;
+          }
+          return next;
+        });
+        zoneActivityTimersRef.current.delete(timerKey);
+      }, AUTO_REVEAL_DURATION_MS);
+      zoneActivityTimersRef.current.set(timerKey, timeoutId);
+    }
+  }, [baseVisibleZones, deckLoadingMode, players]);
+
+  useEffect(() => () => {
+    if (inspectorSuppressTimerRef.current) {
+      clearTimeout(inspectorSuppressTimerRef.current);
+      inspectorSuppressTimerRef.current = null;
+    }
+    for (const timeoutId of zoneActivityTimersRef.current.values()) {
+      clearTimeout(timeoutId);
+    }
+    zoneActivityTimersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (!combatDeclarationActive) return;
@@ -457,12 +661,12 @@ export default function Workspace({
     [combatDeclarationActive, hoverCard]
   );
 
-  const handleNoticeClick = useCallback(
-    async (notice) => {
-      if (!notice?.copyText) return;
-      const copied = await copyTextToClipboard(notice.copyText);
+  const handleNoticeCopy = useCallback(
+    async (copyTarget) => {
+      if (!copyTarget?.copyText) return;
+      const copied = await copyTextToClipboard(copyTarget.copyText);
       if (copied) {
-        setStatus(notice.copyStatusMessage || "Copied to clipboard");
+        setStatus(copyTarget.copyStatusMessage || "Copied to clipboard");
       } else {
         setStatus("Could not copy to clipboard", true);
       }
@@ -638,7 +842,10 @@ export default function Workspace({
               : notice.tone === "error"
                 ? "border-[#9f2b2b] bg-[rgba(24,8,8,0.96)] text-[#ff7f7f] hover:border-[#c04040]"
                 : "border-[#35506c] bg-[rgba(8,13,20,0.96)] text-[#cfe3fb] hover:border-[#4d7093]";
-            const clickable = Boolean(notice.copyText);
+            const actions = Array.isArray(notice.actions)
+              ? notice.actions.filter((action) => action?.copyText)
+              : [];
+            const clickable = Boolean(notice.copyText) && actions.length === 0;
             return (
               <div
                 key={notice.id}
@@ -648,7 +855,7 @@ export default function Workspace({
                   <button
                     type="button"
                     className="w-full px-3 py-2 pr-9 text-left transition-colors"
-                    onClick={() => handleNoticeClick(notice)}
+                    onClick={() => handleNoticeCopy(notice)}
                     title="Click to copy"
                   >
                     <div className="text-[13px] font-bold uppercase tracking-wide">
@@ -672,6 +879,21 @@ export default function Workspace({
                     ) : null}
                   </div>
                 )}
+                {actions.length > 0 ? (
+                  <div className="flex gap-2 overflow-x-auto px-3 pb-3 pr-9">
+                    {actions.map((action, index) => (
+                      <button
+                        key={`${notice.id}:${action.label}:${index}`}
+                        type="button"
+                        className="shrink-0 rounded border border-current/35 bg-black/20 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition-colors hover:bg-black/35"
+                        onClick={() => handleNoticeCopy(action)}
+                        title={action.label}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className="absolute right-1.5 top-1.5 rounded px-1 text-[12px] font-bold text-current opacity-80 transition-opacity hover:opacity-100"
@@ -691,6 +913,7 @@ export default function Workspace({
           onInspect={handleInspectObject}
           onExpandInspector={handleExpandInspector}
           zoneViews={effectiveZoneViews}
+          zoneActivityByPlayer={zoneActivityByPlayer}
           deckLoadingMode={deckLoadingMode}
           onLoadDecks={onLoadDecks}
           onCancelDeckLoading={onCancelDeckLoading}

@@ -2,7 +2,7 @@
 
 use crate::decision::FallbackStrategy;
 use crate::decisions::{CounterRemovalSpec, DistributeSpec, make_decision_with_fallback};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::{FilterContext, ObjectFilter, PlayerFilter};
@@ -149,7 +149,7 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
         if self.total_available_with_tags(game, ctx.source, ctx.controller, &ctx.tagged_objects)
             < self.count
         {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         }
 
         let valid_targets =
@@ -174,7 +174,7 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
 
         let distributed_total: u32 = allocations.values().copied().sum();
         if distributed_total > self.count {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         }
 
         if distributed_total < self.count {
@@ -203,7 +203,7 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
                 remaining -= add;
             }
             if remaining > 0 {
-                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                return Ok(EffectOutcome::impossible());
             }
         }
 
@@ -220,7 +220,7 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
                     .and_then(|obj| obj.counters.get(&counter_type).copied())
                     .unwrap_or(0);
                 if available_total < amount_for_target {
-                    return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                    return Ok(EffectOutcome::impossible());
                 }
                 match game.remove_counters(
                     object_id,
@@ -248,7 +248,7 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
                     .unwrap_or_default();
                 let available_total: u32 = available_counters.iter().map(|(_, count)| *count).sum();
                 if available_total < amount_for_target {
-                    return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                    return Ok(EffectOutcome::impossible());
                 }
 
                 let selections = make_decision_with_fallback(
@@ -291,15 +291,15 @@ impl EffectExecutor for RemoveAnyCountersAmongEffect {
 
             removed_total += removed_from_target;
             if removed_from_target != amount_for_target {
-                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                return Ok(EffectOutcome::impossible());
             }
         }
 
         if removed_total != self.count {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         }
 
-        outcome.result = EffectResult::Count(removed_total as i32);
+        outcome.set_value(crate::effect::OutcomeValue::Count(removed_total as i32));
         Ok(outcome)
     }
 

@@ -1,6 +1,6 @@
 //! Win the game effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -53,7 +53,7 @@ impl EffectExecutor for WinTheGameEffect {
 
         // Check if player can win the game (Platinum Angel opponent effect)
         if !game.can_win_game(player_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         // Player wins - mark all other players as lost

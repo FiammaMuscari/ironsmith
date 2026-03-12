@@ -1,6 +1,6 @@
 //! DrawCards effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::events::CardsDrawnEvent;
@@ -78,7 +78,7 @@ impl EffectExecutor for DrawCardsEffect {
             // Player can only draw their first card of the turn
             if current_draws >= 1 {
                 // Already drew this turn, can't draw any more
-                return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                return Ok(EffectOutcome::prevented());
             }
             // First draw - can only draw 1, not more
             count.min(1)
@@ -88,7 +88,7 @@ impl EffectExecutor for DrawCardsEffect {
 
         // Process through replacement effects with decision maker
         match process_draw(game, player_id, count, is_first, &mut *ctx.decision_maker) {
-            EventOutcome::Prevented => Ok(EffectOutcome::from_result(EffectResult::Prevented)),
+            EventOutcome::Prevented => Ok(EffectOutcome::prevented()),
             EventOutcome::Proceed(final_count) => {
                 let drawn = game.draw_cards_with_dm(
                     player_id,
@@ -118,11 +118,11 @@ impl EffectExecutor for DrawCardsEffect {
             }
             EventOutcome::Replaced => {
                 // Replacement effects already executed by process_draw
-                Ok(EffectOutcome::from_result(EffectResult::Replaced))
+                Ok(EffectOutcome::replaced())
             }
             EventOutcome::NotApplicable => {
                 // Player can't draw (no library, etc.)
-                Ok(EffectOutcome::from_result(EffectResult::Prevented))
+                Ok(EffectOutcome::prevented())
             }
         }
     }
@@ -163,7 +163,7 @@ mod tests {
         let effect = DrawCardsEffect::you(2);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().hand.len(), 2);
         assert_eq!(game.player(alice).unwrap().library.len(), 3);
     }
@@ -212,7 +212,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Can't draw from empty library
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().hand.len(), 0);
     }
 
@@ -230,7 +230,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Only draw what's available
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().hand.len(), 2);
         assert_eq!(game.player(alice).unwrap().library.len(), 0);
     }
@@ -250,7 +250,7 @@ mod tests {
         let effect = DrawCardsEffect::new(2, PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(bob).unwrap().hand.len(), 2);
         assert_eq!(game.player(alice).unwrap().hand.len(), 0);
     }
@@ -268,7 +268,7 @@ mod tests {
         let effect = DrawCardsEffect::new(Value::X, PlayerFilter::You);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert_eq!(game.player(alice).unwrap().hand.len(), 3);
     }
 

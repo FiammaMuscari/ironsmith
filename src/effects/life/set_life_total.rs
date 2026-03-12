@@ -92,8 +92,8 @@ impl EffectExecutor for SetLifeTotalEffect {
 
         let lost = (current - amount) as u32;
         if !game.can_change_life_total(player_id) {
-            return Ok(EffectOutcome::from_result(
-                crate::effect::EffectResult::Prevented,
+            return Ok(EffectOutcome::from_status(
+                crate::effect::OutcomeStatus::Prevented,
             ));
         }
         if let Some(player) = game.player_mut(player_id) {

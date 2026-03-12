@@ -1,6 +1,6 @@
 //! Lose the game effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -57,7 +57,7 @@ impl EffectExecutor for LoseTheGameEffect {
 
         // Check if player can lose the game (Platinum Angel effect)
         if !game.can_lose_game(player_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         if let Some(player) = game.player_mut(player_id) {

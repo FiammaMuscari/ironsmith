@@ -1,6 +1,6 @@
 //! Destroy effect implementation.
 
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
@@ -77,14 +77,14 @@ impl DestroyEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
         object_id: crate::ids::ObjectId,
-    ) -> Result<Option<EffectResult>, ExecutionError> {
+    ) -> Result<Option<OutcomeStatus>, ExecutionError> {
         let result = process_destroy(game, object_id, Some(ctx.source), &mut *ctx.decision_maker);
 
         match result {
             EventOutcome::Proceed(_) => Ok(None), // Successfully destroyed
-            EventOutcome::Prevented => Ok(Some(EffectResult::Protected)),
-            EventOutcome::Replaced => Ok(Some(EffectResult::Replaced)),
-            EventOutcome::NotApplicable => Ok(Some(EffectResult::TargetInvalid)),
+            EventOutcome::Prevented => Ok(Some(crate::effect::OutcomeStatus::Protected)),
+            EventOutcome::Replaced => Ok(Some(crate::effect::OutcomeStatus::Replaced)),
+            EventOutcome::NotApplicable => Ok(Some(crate::effect::OutcomeStatus::TargetInvalid)),
         }
     }
 }
@@ -115,7 +115,7 @@ impl EffectExecutor for DestroyEffect {
             },
         ) {
             Ok(result) => result,
-            Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
 
         Ok(apply_result.outcome)

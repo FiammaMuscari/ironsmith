@@ -1075,6 +1075,33 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         ));
     }
 
+    for (phrase, zone) in [
+        (
+            ["this", "card", "is", "in", "your", "hand"].as_slice(),
+            Zone::Hand,
+        ),
+        (
+            ["this", "card", "is", "in", "your", "graveyard"].as_slice(),
+            Zone::Graveyard,
+        ),
+        (
+            ["this", "card", "is", "in", "your", "library"].as_slice(),
+            Zone::Library,
+        ),
+        (
+            ["this", "card", "is", "in", "exile"].as_slice(),
+            Zone::Exile,
+        ),
+        (
+            ["this", "card", "is", "in", "the", "command", "zone"].as_slice(),
+            Zone::Command,
+        ),
+    ] {
+        if filtered.as_slice() == phrase {
+            return Ok(PredicateAst::SourceIsInZone(zone));
+        }
+    }
+
     if let Some(predicate) = parse_graveyard_threshold_predicate(&filtered)? {
         return Ok(predicate);
     }
@@ -1246,6 +1273,22 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
                 });
             }
         }
+    }
+
+    if filtered.len() == 7
+        && matches!(
+            &filtered[..4],
+            ["this", "creature", "power", "is"]
+                | ["this", "creatures", "power", "is"]
+                | ["this", "permanent", "power", "is"]
+                | ["this", "permanents", "power", "is"]
+        )
+        && filtered[5] == "or"
+        && filtered[6] == "more"
+        && let Some(count_word) = filtered.get(4).copied()
+        && let Some(count) = parse_named_number(count_word)
+    {
+        return Ok(PredicateAst::SourcePowerAtLeast(count));
     }
 
     // "there are N basic land types among lands you control"

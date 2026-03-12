@@ -115,7 +115,7 @@ impl EffectExecutor for RemoveUpToAnyCountersEffect {
             }
         }
 
-        outcome.result = crate::effect::EffectResult::Count(total_removed as i32);
+        outcome.set_value(crate::effect::OutcomeValue::Count(total_removed as i32));
         Ok(outcome)
     }
 
@@ -132,7 +132,6 @@ impl EffectExecutor for RemoveUpToAnyCountersEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -183,7 +182,7 @@ mod tests {
         let effect = RemoveUpToAnyCountersEffect::new(4, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(4));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(4));
         let obj = game.object(creature_id).unwrap();
         // Default removes from first types in order
         let total_remaining: u32 = obj.counters.values().sum();
@@ -204,7 +203,7 @@ mod tests {
         let effect = RemoveUpToAnyCountersEffect::new(10, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(5)); // Limited by available
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5)); // Limited by available
         let obj = game.object(creature_id).unwrap();
         let total_remaining: u32 = obj.counters.values().sum();
         assert_eq!(total_remaining, 0);
@@ -227,7 +226,7 @@ mod tests {
         let effect = RemoveUpToAnyCountersEffect::new(5, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Sacrifice effect implementation.
 
-use crate::effect::{EffectOutcome, Value};
+use crate::effect::{EffectOutcome, ExecutionFact, Value};
 use crate::effects::helpers::{
     normalize_object_selection, resolve_player_filter, resolve_single_object_from_spec,
     resolve_value,
@@ -139,7 +139,9 @@ impl EffectExecutor for SacrificeEffect {
                 make_decision(game, ctx.decision_maker, player_id, Some(ctx.source), spec);
             normalize_object_selection(chosen, &matching, required)
         };
+        let chosen_to_sacrifice = to_sacrifice.clone();
         let mut sacrificed_count = 0;
+        let mut sacrificed_objects = Vec::new();
         let mut sacrifice_events = Vec::new();
 
         for id in to_sacrifice {
@@ -164,17 +166,23 @@ impl EffectExecutor for SacrificeEffect {
                 }
                 EventOutcome::Proceed(result) => {
                     sacrificed_count += 1;
-                    if result.final_zone == Zone::Graveyard {
-                        sacrifice_events.push(TriggerEvent::new_with_provenance(
-                            SacrificeEvent::new(id, Some(ctx.source))
-                                .with_snapshot(pre_snapshot, sacrificing_player),
-                            ctx.provenance,
-                        ));
-                    }
+                    let _ = result;
+                    sacrificed_objects.push(id);
+                    sacrifice_events.push(TriggerEvent::new_with_provenance(
+                        SacrificeEvent::new(id, Some(ctx.source))
+                            .with_snapshot(pre_snapshot, sacrificing_player),
+                        ctx.provenance,
+                    ));
                 }
                 EventOutcome::Replaced => {
                     // Replacement effects already executed by process_zone_change
                     sacrificed_count += 1;
+                    sacrificed_objects.push(id);
+                    sacrifice_events.push(TriggerEvent::new_with_provenance(
+                        SacrificeEvent::new(id, Some(ctx.source))
+                            .with_snapshot(pre_snapshot, sacrificing_player),
+                        ctx.provenance,
+                    ));
                 }
                 EventOutcome::NotApplicable => {
                     // Object no longer exists or isn't applicable
@@ -183,7 +191,14 @@ impl EffectExecutor for SacrificeEffect {
             }
         }
 
-        Ok(EffectOutcome::count(sacrificed_count).with_events(sacrifice_events))
+        let mut outcome = EffectOutcome::count(sacrificed_count)
+            .with_events(sacrifice_events)
+            .with_execution_fact(ExecutionFact::ChosenObjects(chosen_to_sacrifice));
+        if !sacrificed_objects.is_empty() {
+            outcome =
+                outcome.with_execution_fact(ExecutionFact::AffectedObjects(sacrificed_objects));
+        }
+        Ok(outcome)
     }
 
     fn cost_description(&self) -> Option<String> {
@@ -305,18 +320,22 @@ impl SacrificeTargetEffect {
         match result {
             EventOutcome::Prevented => Ok((false, None)),
             EventOutcome::Proceed(result) => {
-                let event = if result.final_zone == Zone::Graveyard {
-                    Some(TriggerEvent::new_with_provenance(
-                        SacrificeEvent::new(object_id, Some(ctx.source))
-                            .with_snapshot(pre_snapshot, sacrificing_player),
-                        ctx.provenance,
-                    ))
-                } else {
-                    None
-                };
+                let _ = result;
+                let event = Some(TriggerEvent::new_with_provenance(
+                    SacrificeEvent::new(object_id, Some(ctx.source))
+                        .with_snapshot(pre_snapshot, sacrificing_player),
+                    ctx.provenance,
+                ));
                 Ok((true, event))
             }
-            EventOutcome::Replaced => Ok((true, None)),
+            EventOutcome::Replaced => Ok((
+                true,
+                Some(TriggerEvent::new_with_provenance(
+                    SacrificeEvent::new(object_id, Some(ctx.source))
+                        .with_snapshot(pre_snapshot, sacrificing_player),
+                    ctx.provenance,
+                )),
+            )),
             EventOutcome::NotApplicable => Ok((false, None)),
         }
     }
@@ -343,6 +362,10 @@ impl EffectExecutor for SacrificeTargetEffect {
         let mut outcome = EffectOutcome::count(if sacrificed { 1 } else { 0 });
         if let Some(event) = event {
             outcome = outcome.with_event(event);
+        }
+        outcome = outcome.with_execution_fact(ExecutionFact::ChosenObjects(vec![object_id]));
+        if sacrificed {
+            outcome = outcome.with_execution_fact(ExecutionFact::AffectedObjects(vec![object_id]));
         }
         Ok(outcome)
     }
@@ -383,6 +406,7 @@ impl CostExecutableEffect for SacrificeTargetEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::effect::ExecutionFact;
     use crate::ids::{CardId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -425,8 +449,18 @@ mod tests {
         let effect = SacrificeTargetEffect::new(ChooseSpec::Tagged("sac_target".into()));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, crate::effect::EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert!(!game.battlefield.contains(&target_id));
         assert_eq!(game.players[0].graveyard.len(), 1);
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::ChosenObjects(vec![target_id]))
+        );
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::AffectedObjects(vec![target_id]))
+        );
     }
 }

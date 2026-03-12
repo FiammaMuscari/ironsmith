@@ -1,6 +1,6 @@
 //! Connive effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::DrawCardsEffect;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{normalize_object_selection, resolve_objects_from_spec};
@@ -36,17 +36,17 @@ impl EffectExecutor for ConniveEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
         if target_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let mut outcomes = Vec::new();
         for target_id in target_ids {
             let Some(target_obj) = game.object(target_id) else {
-                outcomes.push(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                outcomes.push(EffectOutcome::target_invalid());
                 continue;
             };
             if !target_obj.has_card_type(CardType::Creature) {
-                outcomes.push(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                outcomes.push(EffectOutcome::target_invalid());
                 continue;
             }
 
@@ -171,7 +171,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
         let effect = ConniveEffect::new(ChooseSpec::SpecificObject(creature));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert!(result.result.is_success());
+        assert!(result.status.is_success());
         assert_eq!(
             game.object(creature)
                 .and_then(|obj| obj
@@ -194,7 +194,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
         let effect = ConniveEffect::new(ChooseSpec::SpecificObject(creature));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert!(result.result.is_success());
+        assert!(result.status.is_success());
         assert_eq!(
             game.object(creature)
                 .and_then(|obj| obj

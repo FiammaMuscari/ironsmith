@@ -3,7 +3,7 @@
 use super::battlefield_entry::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -72,7 +72,7 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
         let controller_id = resolve_player_filter(game, &self.controller, ctx)?;
         let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
         if object_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let mut moved_ids = Vec::new();
@@ -95,11 +95,11 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
         }
 
         if !moved_ids.is_empty() {
-            Ok(EffectOutcome::from_result(EffectResult::Objects(moved_ids)))
+            Ok(EffectOutcome::with_objects(moved_ids))
         } else if prevented {
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            Ok(EffectOutcome::impossible())
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+            Ok(EffectOutcome::target_invalid())
         }
     }
 
@@ -116,7 +116,7 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::{ChoiceCount, Effect, EffectResult};
+    use crate::effect::{ChoiceCount, Effect};
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -190,7 +190,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Creature should be on battlefield and untapped
@@ -218,7 +218,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Creature should be on battlefield and tapped
@@ -245,7 +245,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             assert!(game.battlefield.contains(&new_id));
@@ -273,7 +273,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Alice controls it even though Bob owns it
@@ -298,7 +298,7 @@ mod tests {
         let effect = PutOntoBattlefieldEffect::you_control(ChooseSpec::Iterated, true);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             assert!(game.battlefield.contains(&new_id));

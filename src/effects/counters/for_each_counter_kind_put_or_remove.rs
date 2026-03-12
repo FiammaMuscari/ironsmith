@@ -85,6 +85,6 @@ impl EffectExecutor for ForEachCounterKindPutOrRemoveEffect {
             }
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 }

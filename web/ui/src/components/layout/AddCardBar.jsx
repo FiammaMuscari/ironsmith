@@ -298,7 +298,7 @@ export default function AddCardBar({
       >
         <option value="battlefield">Battlefield</option>
         <option value="hand">Hand</option>
-        <option value="graveyard">Graveyard</option>
+        <option value="graveyard">GY</option>
         <option value="exile">Exile</option>
       </select>
 

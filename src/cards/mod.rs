@@ -52,6 +52,9 @@ pub struct CardDefinition {
     /// Alternative casting methods (flashback, escape, etc.)
     pub alternative_casts: Vec<AlternativeCastingMethod>,
 
+    /// True if this split card has fuse and may be cast as a fused spell from hand.
+    pub has_fuse: bool,
+
     /// Optional costs (kicker, buyback, etc.)
     pub optional_costs: Vec<OptionalCost>,
 
@@ -74,6 +77,7 @@ impl CardDefinition {
             spell_effect: None,
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             max_saga_chapter: None,
             additional_cost: TotalCost::free(),
@@ -88,6 +92,7 @@ impl CardDefinition {
             spell_effect: None,
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             max_saga_chapter: None,
             additional_cost: TotalCost::free(),
@@ -102,6 +107,7 @@ impl CardDefinition {
             spell_effect: Some(effects),
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             max_saga_chapter: None,
             additional_cost: TotalCost::free(),
@@ -116,6 +122,7 @@ impl CardDefinition {
             spell_effect: Some(effects),
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             max_saga_chapter: None,
             additional_cost: TotalCost::free(),
@@ -316,7 +323,8 @@ impl CardRegistry {
     ///
     /// Used to distinguish "card not in database" from "card exists but failed to compile".
     pub fn try_compile_card(name: &str) -> Result<CardDefinition, String> {
-        generated_registry::try_compile_card_by_name(name)
+        let definition = generated_registry::try_compile_card_by_name(name)?;
+        reject_unsupported_generated_definition(definition)
     }
 
     /// Create a card registry with only the requested hand-written cards plus generated parser cards.
@@ -564,6 +572,33 @@ fn compile_generated_parser_card_allow_unsupported(
     }
 }
 
+pub(crate) fn unsupported_generated_definition_error(
+    definition: &CardDefinition,
+) -> Option<String> {
+    if !generated_definition_has_unimplemented_content(definition) {
+        return None;
+    }
+
+    Some(
+        generated_definition_unsupported_mechanics_message(definition).unwrap_or_else(|| {
+            format!(
+                "Card compiled but contains unsupported mechanics: {}",
+                definition.name()
+            )
+        }),
+    )
+}
+
+fn reject_unsupported_generated_definition(
+    definition: CardDefinition,
+) -> Result<CardDefinition, String> {
+    if let Some(error) = unsupported_generated_definition_error(&definition) {
+        return Err(error);
+    }
+
+    Ok(definition)
+}
+
 fn normalize_card_constructor_key(name: &str) -> String {
     let mut normalized = String::with_capacity(name.len());
     let mut previous_was_separator = false;
@@ -766,7 +801,7 @@ pub fn generated_definition_has_unimplemented_content(definition: &CardDefinitio
     // Some parsed definitions still carry raw "unimplemented_*" internals
     // (for example, fallback custom triggers).
     let raw_debug = format!("{definition:#?}").to_ascii_lowercase();
-    raw_debug.contains("unimplemented")
+    raw_debug.contains("unimplemented") || raw_debug.contains("unsupported")
 }
 
 /// Returns true when a generated parser definition can be safely included in the registry.
@@ -891,6 +926,24 @@ mod tests {
     fn generated_registry_includes_transform_and_adventure_front_faces() {
         assert!(CardRegistry::generated_parser_card_parse_source("Jace, Vryn's Prodigy").is_some());
         assert!(CardRegistry::generated_parser_card_parse_source("Brazen Borrower").is_some());
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn generated_registry_includes_split_cards_with_combined_aliases() {
+        let mut registry = CardRegistry::new();
+        registry.ensure_cards_loaded(["Breaking // Entering"]);
+
+        let front = registry
+            .get("Breaking")
+            .expect("split front face should load from generated registry");
+        assert_eq!(front.card.linked_face_layout, crate::card::LinkedFaceLayout::Split);
+        assert!(front.has_fuse, "fuse metadata should be preserved on split card");
+
+        assert!(
+            registry.get("Breaking // Entering").is_some(),
+            "combined split-card name should resolve via generated registry alias"
+        );
     }
 
     #[cfg(feature = "generated-registry")]
@@ -1317,6 +1370,31 @@ mod tests {
     }
 
     #[test]
+    fn generated_definition_support_flags_any_unsupported_marker_in_debug_output() {
+        let card = CardBuilder::new(CardId::new(), "Unsupported Marker Probe")
+            .oracle_text("Unsupported marker probe")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let definition = CardDefinition::new(card);
+
+        assert!(
+            generated_definition_has_unimplemented_content(&definition),
+            "expected unsupported markers in the definition debug output to be rejected"
+        );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn try_compile_card_rejects_generated_unsupported_definitions() {
+        let error = CardRegistry::try_compile_card("Sicarian Infiltrator")
+            .expect_err("unsupported generated fallback should be rejected");
+        assert!(
+            error.to_ascii_lowercase().contains("unsupported"),
+            "expected unsupported compile error, got {error}"
+        );
+    }
+
+    #[test]
     fn generated_definition_support_rejects_placeholder_static_abilities() {
         let card = CardBuilder::new(CardId::new(), "Custom Probe")
             .card_types(vec![CardType::Creature])
@@ -1340,12 +1418,12 @@ mod tests {
     }
 
     #[test]
-    fn generated_definition_support_rejects_parsed_cipher_marker() {
+    fn generated_definition_support_accepts_parsed_cipher() {
         let definition = CardDefinitionBuilder::new(CardId::new(), "Cipher Probe")
-            .parse_text("Cipher")
+            .parse_text("Draw a card.\nCipher")
             .expect("cipher parse should succeed");
 
-        assert!(!generated_definition_is_supported(&definition));
+        assert!(generated_definition_is_supported(&definition));
     }
 
     #[test]
@@ -1382,6 +1460,79 @@ mod tests {
                 "Mana cost: {1}{B}\nType: Creature — Zombie\nPower/Toughness: 2/1\nUnearth {2}{B}",
             )
             .expect("unearth parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_outlast() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Outlast Probe")
+            .parse_text(
+                "Mana cost: {W}\nType: Creature — Human Soldier\nPower/Toughness: 1/1\nOutlast {W}",
+            )
+            .expect("outlast parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_vanishing() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Vanishing Probe")
+            .parse_text(
+                "Mana cost: {2}{U}\nType: Creature — Illusion\nPower/Toughness: 2/2\nVanishing 3",
+            )
+            .expect("vanishing parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_devour() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Devour Probe")
+            .parse_text("Mana cost: {4}{R}\nType: Creature — Beast\nPower/Toughness: 2/2\nDevour 2")
+            .expect("devour parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_buyback() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Buyback Probe")
+            .parse_text("Mana cost: {1}{U}\nType: Instant\nBuyback {3}\nDraw a card.")
+            .expect("buyback parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_bloodthirst() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Bloodthirst Probe")
+            .parse_text(
+                "Mana cost: {6}{G}\nType: Creature — Wurm\nPower/Toughness: 6/6\nBloodthirst 3",
+            )
+            .expect("bloodthirst parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_ward_pay_life() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Ward Pay Life Probe")
+            .parse_text(
+                "Mana cost: {2}{B}\nType: Creature — Horror\nPower/Toughness: 2/2\nWard—Pay 3 life.",
+            )
+            .expect("ward pay-life parse should succeed");
+
+        assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_bolster() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Bolster Probe")
+            .parse_text(
+                "Mana cost: {3}{W}\nType: Creature — Human Soldier\nPower/Toughness: 2/2\nWhen this creature enters, bolster 2.",
+            )
+            .expect("bolster parse should succeed");
 
         assert!(generated_definition_is_supported(&definition));
     }

@@ -5,18 +5,40 @@ use crate::card::{CardBuilder, PowerToughness};
 use crate::cards::builders::CardDefinitionBuilder;
 use crate::cards::definitions::emrakul_the_promised_end;
 use crate::combat_state::AttackTarget;
-use crate::decision::{AutoPassDecisionMaker, DecisionMaker};
+use crate::decision::{AutoPassDecisionMaker, DecisionMaker, SelectFirstDecisionMaker};
 use crate::effect::{Effect, EventValueSpec, Until, Value};
 use crate::events::EventKind;
 use crate::events::spells::SpellCastEvent;
 use crate::game_state::Phase;
 use crate::ids::CardId;
+use crate::object::ObjectKind;
 use crate::static_abilities::StaticAbility;
 use crate::triggers::Trigger;
 use crate::types::CardType;
 
 fn setup_game() -> GameState {
     crate::tests::test_helpers::setup_two_player_game()
+}
+
+struct DeclineOptionalTriggerTargetsDecisionMaker {
+    seen_min_targets: Option<usize>,
+    seen_max_targets: Option<Option<usize>>,
+}
+
+impl DecisionMaker for DeclineOptionalTriggerTargetsDecisionMaker {
+    fn decide_targets(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::TargetsContext,
+    ) -> Vec<Target> {
+        let requirement = ctx
+            .requirements
+            .first()
+            .expect("expected a single target requirement");
+        self.seen_min_targets = Some(requirement.min_targets);
+        self.seen_max_targets = Some(requirement.max_targets);
+        Vec::new()
+    }
 }
 
 #[test]
@@ -453,6 +475,8 @@ fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_trigger
 
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+    let bob = PlayerId::from_index(1);
     let upkeep_event = TriggerEvent::new_with_provenance(
         BeginningOfUpkeepEvent::new(alice),
         crate::provenance::ProvNodeId::default(),
@@ -691,6 +715,9 @@ fn test_pending_zone_change_still_drives_non_delayed_triggered_abilities() {
 
     let stangg_id = create_creature(&mut game, "Stangg", alice, 3, 4);
     let twin_id = create_creature(&mut game, "Stangg Twin", alice, 3, 4);
+    if let Some(twin) = game.object_mut(twin_id) {
+        twin.kind = ObjectKind::Token;
+    }
 
     if let Some(stangg) = game.object_mut(stangg_id) {
         let filter = ObjectFilter::default().token().named("Stangg Twin");
@@ -719,6 +746,219 @@ fn test_pending_zone_change_still_drives_non_delayed_triggered_abilities() {
     assert!(
         !game.battlefield.contains(&stangg_id),
         "Stangg should be sacrificed when Stangg Twin leaves the battlefield"
+    );
+}
+
+#[test]
+fn test_optional_trigger_target_stacks_without_legal_targets() {
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+
+    let gate_def = CardDefinitionBuilder::new(CardId::from_raw(91_000), "Optional Target Gate")
+        .card_types(vec![CardType::Land])
+        .parse_text("When this land enters, up to one target creature phases out.")
+        .expect("optional ETB target should parse");
+    let gate_id = game.create_object_from_definition(&gate_def, alice, Zone::Hand);
+
+    let moved = game.move_object(gate_id, Zone::Battlefield);
+    assert!(
+        moved.is_some(),
+        "expected the land to enter the battlefield"
+    );
+
+    drain_pending_trigger_events(&mut game, &mut trigger_queue);
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("optional ETB trigger should be put on the stack");
+
+    assert_eq!(
+        game.stack.len(),
+        1,
+        "optional target trigger should still go on the stack with no legal targets"
+    );
+    assert!(
+        game.stack
+            .last()
+            .expect("trigger should be on the stack")
+            .targets
+            .is_empty(),
+        "optional target trigger should not invent a target"
+    );
+}
+
+#[test]
+fn test_optional_trigger_target_can_be_skipped_even_with_legal_targets() {
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    create_creature(&mut game, "Legal Target", bob, 2, 2);
+
+    let gate_def = CardDefinitionBuilder::new(CardId::from_raw(91_001), "Optional Target Gate")
+        .card_types(vec![CardType::Land])
+        .parse_text("When this land enters, up to one target creature phases out.")
+        .expect("optional ETB target should parse");
+    let gate_id = game.create_object_from_definition(&gate_def, alice, Zone::Hand);
+
+    let moved = game.move_object(gate_id, Zone::Battlefield);
+    assert!(
+        moved.is_some(),
+        "expected the land to enter the battlefield"
+    );
+
+    drain_pending_trigger_events(&mut game, &mut trigger_queue);
+
+    let mut dm = DeclineOptionalTriggerTargetsDecisionMaker {
+        seen_min_targets: None,
+        seen_max_targets: None,
+    };
+    put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+        .expect("optional ETB trigger should be put on the stack");
+
+    assert_eq!(
+        dm.seen_min_targets,
+        Some(0),
+        "optional trigger targeting should advertise zero required targets"
+    );
+    assert_eq!(
+        dm.seen_max_targets,
+        Some(Some(1)),
+        "optional trigger targeting should preserve the one-target upper bound"
+    );
+    assert_eq!(game.stack.len(), 1, "expected the trigger on the stack");
+    assert!(
+        game.stack
+            .last()
+            .expect("trigger should be on the stack")
+            .targets
+            .is_empty(),
+        "declining an optional trigger target should leave the trigger untargeted"
+    );
+}
+
+fn bridge_from_below_definition() -> crate::cards::CardDefinition {
+    CardDefinitionBuilder::new(CardId::from_raw(472), "Bridge from Below")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "Whenever a nontoken creature is put into your graveyard from the battlefield, if this card is in your graveyard, create a 2/2 black Zombie creature token.\nWhen a creature is put into an opponent's graveyard from the battlefield, if this card is in your graveyard, exile this card.",
+        )
+        .expect("Bridge from Below should parse")
+}
+
+#[test]
+fn test_bridge_from_below_triggers_from_graveyard_on_your_creature_dying() {
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+
+    let bridge_id =
+        game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
+    let victim_id = create_creature(&mut game, "Butcher Ghoul Test", alice, 1, 1);
+
+    let moved = game.move_object(victim_id, Zone::Graveyard);
+    assert!(moved.is_some(), "expected creature to move to graveyard");
+
+    drain_pending_trigger_events(&mut game, &mut trigger_queue);
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "Bridge from Below should trigger from the graveyard: {:?}",
+        trigger_queue.entries
+    );
+    assert_eq!(
+        trigger_queue.entries[0].source, bridge_id,
+        "Bridge from Below should be the trigger source"
+    );
+
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("Bridge trigger should be put on stack");
+    resolve_stack_entry(&mut game).expect("Bridge trigger should resolve");
+
+    let zombie_count = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .filter(|obj| obj.controller == alice && obj.name == "Zombie")
+        .count();
+    assert_eq!(zombie_count, 1, "Bridge should create one Zombie token");
+}
+
+#[test]
+fn test_bridge_from_below_exiles_itself_when_opponents_creature_dies() {
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let _bridge_id =
+        game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
+    let victim_id = create_creature(&mut game, "Opponent Creature Test", bob, 2, 2);
+
+    let moved = game.move_object(victim_id, Zone::Graveyard);
+    assert!(
+        moved.is_some(),
+        "expected opponent creature to move to graveyard"
+    );
+
+    drain_pending_trigger_events(&mut game, &mut trigger_queue);
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "Bridge exile trigger should fire from the graveyard"
+    );
+
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("Bridge exile trigger should be put on stack");
+    resolve_stack_entry(&mut game).expect("Bridge exile trigger should resolve");
+
+    let exiled_bridge = game
+        .exile
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .any(|obj| obj.controller == alice && obj.name == "Bridge from Below");
+    assert!(exiled_bridge, "Bridge should exile itself");
+}
+
+#[test]
+fn test_bridge_from_below_token_trigger_fizzles_if_bridge_leaves_graveyard() {
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+
+    let bridge_id =
+        game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
+    let victim_id = create_creature(&mut game, "Butcher Ghoul Test", alice, 1, 1);
+
+    let moved = game.move_object(victim_id, Zone::Graveyard);
+    assert!(moved.is_some(), "expected creature to move to graveyard");
+
+    drain_pending_trigger_events(&mut game, &mut trigger_queue);
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "Bridge token trigger should fire before Bridge leaves the graveyard"
+    );
+
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("Bridge trigger should be put on stack");
+    let moved_bridge = game.move_object(bridge_id, Zone::Exile);
+    assert!(
+        moved_bridge.is_some(),
+        "expected Bridge to leave the graveyard before the trigger resolves"
+    );
+
+    resolve_stack_entry(&mut game).expect("Bridge trigger should resolve cleanly");
+
+    let zombie_count = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .filter(|obj| obj.controller == alice && obj.name == "Zombie")
+        .count();
+    assert_eq!(
+        zombie_count, 0,
+        "Bridge should not create a Zombie after it leaves the graveyard"
     );
 }
 
@@ -3089,7 +3329,7 @@ fn test_geist_token_has_correct_modifications() {
 #[test]
 fn test_stormbreath_dragon_monstrosity_adds_counters() {
     use crate::cards::definitions::stormbreath_dragon;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::Effect;
     use crate::executor::{ExecutionContext, execute_effect};
     use crate::object::CounterType;
 
@@ -3117,8 +3357,8 @@ fn test_stormbreath_dragon_monstrosity_adds_counters() {
 
     // Verify result indicates monstrosity was applied
     assert!(matches!(
-        result.result,
-        EffectResult::MonstrosityApplied { creature, n } if creature == dragon_id && n == 3
+        result.value,
+        crate::effect::OutcomeValue::MonstrosityApplied { creature, n } if creature == dragon_id && n == 3
     ));
 
     // Verify dragon is now monstrous with 3 +1/+1 counters
@@ -3137,7 +3377,7 @@ fn test_stormbreath_dragon_monstrosity_adds_counters() {
 #[test]
 fn test_stormbreath_dragon_monstrosity_only_works_once() {
     use crate::cards::definitions::stormbreath_dragon;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::Effect;
     use crate::executor::{ExecutionContext, execute_effect};
     use crate::object::CounterType;
 
@@ -3169,8 +3409,8 @@ fn test_stormbreath_dragon_monstrosity_only_works_once() {
 
     // Should return Count(0) - nothing happened
     assert_eq!(
-        result.result,
-        EffectResult::Count(0),
+        result.value,
+        crate::effect::OutcomeValue::Count(0),
         "Second monstrosity should do nothing"
     );
 
@@ -3524,7 +3764,6 @@ fn test_legend_rule_decision() {
 #[test]
 fn test_may_effect_with_callback() {
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
 
     // A decision maker that always accepts May effects
@@ -3576,7 +3815,7 @@ fn test_may_effect_with_callback() {
 
     // Effect should have been executed (not declined)
     assert!(
-        !matches!(result.result, EffectResult::Declined),
+        !matches!(result.status, crate::effect::OutcomeStatus::Declined),
         "Effect should not be declined when decision maker accepts"
     );
     assert_eq!(
@@ -3594,7 +3833,7 @@ fn test_may_effect_with_callback() {
 
     // Effect should have been declined
     assert!(
-        matches!(result2.result, EffectResult::Declined),
+        matches!(result2.status, crate::effect::OutcomeStatus::Declined),
         "Effect should be declined when decision maker declines"
     );
     assert_eq!(
@@ -3610,7 +3849,7 @@ fn test_may_effect_with_callback() {
     let result3 = execute_effect(&mut game, &effect, &mut ctx3).unwrap();
 
     assert!(
-        matches!(result3.result, EffectResult::Declined),
+        matches!(result3.status, crate::effect::OutcomeStatus::Declined),
         "Effect should be auto-declined with AutoPassDecisionMaker"
     );
 }
@@ -4331,6 +4570,7 @@ fn test_yawgmoth_proliferate_activation_prompts_discard_choice() {
 
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
 
     game.turn.phase = Phase::FirstMain;
     game.turn.step = None;
@@ -5166,6 +5406,95 @@ fn test_flashback_exiles_after_resolution() {
 }
 
 #[test]
+fn test_dash_grants_haste_and_returns_to_hand_at_next_end_step() {
+    use crate::cards::CardDefinitionBuilder;
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::triggers::TriggerQueue;
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Red, 2);
+
+    let dash_def = CardDefinitionBuilder::new(CardId::new(), "Dash Runtime Probe")
+        .mana_cost(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(2)],
+            vec![ManaSymbol::Red],
+        ]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 1))
+        .dash(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(1)],
+            vec![ManaSymbol::Red],
+        ]))
+        .build();
+    let dash_id = game.create_object_from_definition(&dash_def, alice, Zone::Hand);
+
+    let mut state = PriorityLoopState::new(2);
+    let mut trigger_queue = TriggerQueue::new();
+    let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: dash_id,
+        from_zone: Zone::Hand,
+        casting_method: CastingMethod::Alternative(0),
+    });
+    apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response)
+        .expect("dash cast should succeed");
+    resolve_stack_entry(&mut game).expect("dash spell should resolve");
+
+    let dashed_id = *game
+        .battlefield
+        .iter()
+        .find(|&&id| {
+            game.object(id)
+                .is_some_and(|obj| obj.name == "Dash Runtime Probe")
+        })
+        .expect("dashed creature should be on battlefield");
+    let dashed_obj = game
+        .object(dashed_id)
+        .expect("dashed creature should exist");
+    assert!(
+        crate::rules::combat::can_attack(dashed_obj, &game),
+        "dashed creature should be able to attack immediately"
+    );
+    assert_eq!(
+        game.delayed_triggers.len(),
+        1,
+        "dash should schedule a next end-step return trigger"
+    );
+
+    let end_step_event = TriggerEvent::new_with_provenance(
+        crate::events::phase::BeginningOfEndStepEvent::new(game.turn.active_player),
+        crate::provenance::ProvNodeId::default(),
+    );
+    for trigger in crate::triggers::check_delayed_triggers(&mut game, &end_step_event) {
+        trigger_queue.add(trigger);
+    }
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("put dash delayed trigger on stack");
+    while !game.stack_is_empty() {
+        resolve_stack_entry(&mut game).expect("resolve dash delayed trigger");
+    }
+
+    assert!(
+        game.player(alice)
+            .expect("alice exists")
+            .hand
+            .iter()
+            .any(|&id| game
+                .object(id)
+                .is_some_and(|obj| obj.name == "Dash Runtime Probe")),
+        "dashed creature should return to hand at the next end step"
+    );
+}
+
+#[test]
 fn test_bestow_cast_enters_as_aura_and_reverts_when_unattached() {
     use crate::cards::CardDefinitionBuilder;
     use crate::decision::compute_legal_actions;
@@ -5300,6 +5629,496 @@ fn test_bestow_cast_enters_as_aura_and_reverts_when_unattached() {
     assert!(
         reverted.attached_to.is_none(),
         "reverted bestow permanent should no longer be attached"
+    );
+}
+
+#[test]
+fn test_disturb_cast_uses_back_face_characteristics_on_stack() {
+    use crate::cards::basic_forest;
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::types::Subtype;
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+
+    let back_face = crate::cards::builtin_registry()
+        .get("Squirrel Nest")
+        .expect("Squirrel Nest should exist in builtin registry");
+    let mut disturb_def = CardDefinitionBuilder::new(CardId::new(), "Disturb Runtime Front")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(2)]]))
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Spirit])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .disturb(ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+        .build();
+    disturb_def.card.other_face = Some(back_face.card.id);
+
+    let host_id = game.create_object_from_definition(&basic_forest(), alice, Zone::Battlefield);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Green, 1);
+
+    let disturb_id = game.create_object_from_definition(&disturb_def, alice, Zone::Graveyard);
+
+    let actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            LegalAction::CastSpell {
+                spell_id,
+                from_zone: Zone::Graveyard,
+                casting_method: CastingMethod::Alternative(_),
+            } if *spell_id == disturb_id
+        )),
+        "disturb cast should be available from graveyard when the back-face Aura has a legal target; alt_casts={:?} other_face={:?} actions={actions:?}",
+        disturb_def.alternative_casts,
+        disturb_def.card.other_face
+    );
+
+    let mut state = PriorityLoopState::new(game.players_in_game());
+    let mut trigger_queue = TriggerQueue::new();
+    let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: disturb_id,
+        from_zone: Zone::Graveyard,
+        casting_method: CastingMethod::Alternative(0),
+    });
+    let progress =
+        apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response)
+            .expect("disturb cast should start successfully");
+    assert!(
+        matches!(
+            progress,
+            GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::Targets(_))
+        ),
+        "disturb cast should require choosing an Aura target from the back face"
+    );
+
+    let stack_id = state
+        .pending_cast
+        .as_ref()
+        .map(|pending| pending.spell_id)
+        .expect("disturb cast should still be pending on stack");
+
+    let stack_obj = game
+        .object(stack_id)
+        .expect("disturbed spell should be on stack");
+    assert_eq!(stack_obj.name, "Squirrel Nest");
+    assert!(
+        stack_obj.subtypes.contains(&crate::types::Subtype::Aura),
+        "disturbed spell should use back-face Aura subtype on stack"
+    );
+    assert!(
+        !stack_obj.card_types.contains(&CardType::Creature),
+        "disturbed spell should not remain a creature spell on stack"
+    );
+
+    let requirements = super::targeting::extract_target_requirements(
+        &game,
+        stack_obj.spell_effect.as_deref().unwrap_or(&[]),
+        alice,
+        Some(stack_id),
+    );
+    assert_eq!(
+        requirements.len(),
+        1,
+        "disturbed Aura should require one target"
+    );
+    assert!(
+        requirements[0]
+            .legal_targets
+            .iter()
+            .any(|target| *target == Target::Object(host_id)),
+        "disturbed Aura should target the host land from its back face"
+    );
+}
+
+#[test]
+fn test_overload_cast_swaps_in_rewritten_effects_and_hits_all_matches() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+
+    let spell_def = CardDefinitionBuilder::new(CardId::new(), "Overload Runtime Probe")
+        .mana_cost(crate::mana::ManaCost::from_pips(vec![
+            vec![crate::mana::ManaSymbol::Generic(1)],
+            vec![crate::mana::ManaSymbol::Blue],
+        ]))
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Return target nonland permanent you don't control to its owner's hand.\nOverload {0} (You may cast this spell for its overload cost. If you do, change \"target\" in its text to \"each.\")",
+        )
+        .expect("overload runtime probe should parse");
+
+    let spell_id = game.create_object_from_definition(&spell_def, alice, Zone::Hand);
+    let _bounced_one = create_creature(&mut game, "Opposing One", bob, 2, 2);
+    let _bounced_two = create_creature(&mut game, "Opposing Two", bob, 3, 3);
+    let survivor = create_creature(&mut game, "Friendly Survivor", alice, 1, 1);
+
+    let actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            LegalAction::CastSpell {
+                spell_id: found,
+                from_zone: Zone::Hand,
+                casting_method: CastingMethod::Alternative(0),
+            } if *found == spell_id
+        )),
+        "overload cast should be legal from hand"
+    );
+
+    let stack_id = super::priority_mana::propose_spell_cast(
+        &mut game,
+        spell_id,
+        Zone::Hand,
+        alice,
+        &CastingMethod::Alternative(0),
+    )
+    .expect("overload cast should move to stack");
+    let stack_obj = game
+        .object(stack_id)
+        .expect("overloaded spell should exist");
+    let requirements = super::targeting::extract_target_requirements(
+        &game,
+        stack_obj.spell_effect.as_deref().unwrap_or(&[]),
+        alice,
+        Some(stack_id),
+    );
+    assert!(
+        requirements.is_empty(),
+        "overloaded spell should not require target selection after rewrite"
+    );
+
+    game.stack
+        .push(StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::Alternative(0)));
+    resolve_stack_entry(&mut game).expect("overloaded spell should resolve");
+
+    assert!(
+        game.player(bob)
+            .expect("bob exists")
+            .hand
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|obj| obj.name == "Opposing One"),
+        "first opposing permanent should return to hand"
+    );
+    assert!(
+        game.player(bob)
+            .expect("bob exists")
+            .hand
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|obj| obj.name == "Opposing Two"),
+        "second opposing permanent should return to hand"
+    );
+    assert!(
+        game.object(survivor)
+            .is_some_and(|obj| obj.zone == Zone::Battlefield),
+        "friendly permanent should not be affected by overloaded spell"
+    );
+}
+
+#[test]
+fn test_split_card_cast_prompt_offers_front_back_and_fuse_methods() {
+    use crate::mana::ManaSymbol;
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Colorless, 4);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Blue, 1);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Black, 2);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Red, 1);
+
+    let breaking = crate::cards::builtin_registry()
+        .get("Breaking")
+        .expect("Breaking should be available in generated registry");
+    let grizzly = crate::cards::builtin_registry()
+        .get("Grizzly Bears")
+        .expect("Grizzly Bears should exist in builtin registry");
+    game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
+    let split_id = game.create_object_from_definition(breaking, alice, Zone::Hand);
+
+    let mut state = PriorityLoopState::new(game.players_in_game());
+    let mut trigger_queue = TriggerQueue::new();
+    let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: split_id,
+        from_zone: Zone::Hand,
+        casting_method: CastingMethod::Normal,
+    });
+    let progress =
+        apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response)
+            .expect("split cast should start successfully");
+
+    let ctx = match progress {
+        GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::SelectOptions(
+            ctx,
+        )) => ctx,
+        other => panic!(
+            "expected casting-method selection prompt for split card, got {:?}",
+            other
+        ),
+    };
+
+    let descriptions: Vec<String> = ctx.options.iter().map(|opt| opt.description.clone()).collect();
+    assert_eq!(descriptions.len(), 3, "split card should offer three cast methods");
+    assert!(
+        descriptions.iter().any(|desc| desc.contains("Breaking: {U}{B}")),
+        "front half should be available, got {descriptions:?}"
+    );
+    assert!(
+        descriptions
+            .iter()
+            .any(|desc| desc.contains("Entering: {4}{B}{R}")),
+        "back half should be available, got {descriptions:?}"
+    );
+    assert!(
+        descriptions.iter().any(|desc| desc.contains("Fuse: {4}{U}{B}{B}{R}"))
+            || descriptions
+                .iter()
+                .any(|desc| desc.contains("Fuse: {U}{B}{4}{B}{R}")),
+        "fuse option should be available, got {descriptions:?}"
+    );
+}
+
+#[test]
+fn test_split_other_half_cast_uses_back_face_characteristics_on_stack() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let breaking = crate::cards::builtin_registry()
+        .get("Breaking")
+        .expect("Breaking should be available in generated registry");
+    let grizzly = crate::cards::builtin_registry()
+        .get("Grizzly Bears")
+        .expect("Grizzly Bears should exist in builtin registry");
+    let reanimate_target = game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
+
+    let split_id = game.create_object_from_definition(breaking, alice, Zone::Hand);
+    let stack_id = super::priority_mana::propose_spell_cast(
+        &mut game,
+        split_id,
+        Zone::Hand,
+        alice,
+        &CastingMethod::SplitOtherHalf,
+    )
+    .expect("back-half split cast should move to stack");
+
+    let stack_obj = game.object(stack_id).expect("stack split spell should exist");
+    assert_eq!(stack_obj.name, "Entering");
+    assert!(stack_obj.card_types.contains(&CardType::Sorcery));
+
+    let mut dm = SelectFirstDecisionMaker;
+    game.stack
+        .push(StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::SplitOtherHalf));
+    resolve_stack_entry_with(&mut game, &mut dm).expect("back-half split spell should resolve");
+    assert_eq!(
+        game.object(reanimate_target)
+            .expect("reanimated creature should still exist")
+            .zone,
+        Zone::Battlefield,
+        "back-half split spell should resolve using Entering's effect"
+    );
+    assert_eq!(
+        game.object(reanimate_target)
+            .expect("reanimated creature should still exist")
+            .controller,
+        alice,
+        "Entering should return the creature under the caster's control"
+    );
+}
+
+#[test]
+fn test_fused_split_cast_combines_effects_and_resolves_in_order() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let breaking = crate::cards::builtin_registry()
+        .get("Breaking")
+        .expect("Breaking should be available in generated registry");
+    let grizzly = crate::cards::builtin_registry()
+        .get("Grizzly Bears")
+        .expect("Grizzly Bears should exist in builtin registry");
+    let reanimate_target = game.create_object_from_definition(grizzly, bob, Zone::Graveyard);
+
+    for idx in 0..8 {
+        let card = CardDefinitionBuilder::new(CardId::new(), format!("Bob Library Card {idx}"))
+            .card_types(vec![CardType::Creature])
+            .build();
+        game.create_object_from_definition(&card, bob, Zone::Library);
+    }
+
+    let split_id = game.create_object_from_definition(breaking, alice, Zone::Hand);
+    let stack_id = super::priority_mana::propose_spell_cast(
+        &mut game,
+        split_id,
+        Zone::Hand,
+        alice,
+        &CastingMethod::Fuse,
+    )
+    .expect("fused split cast should move to stack");
+
+    let stack_obj = game.object(stack_id).expect("fused split spell should exist");
+    assert_eq!(stack_obj.name, "Breaking // Entering");
+    assert_eq!(
+        stack_obj.mana_cost.as_ref().map(|cost| cost.to_oracle()).as_deref(),
+        Some("{U}{B}{4}{B}{R}"),
+        "fused split spell should use the combined mana cost on stack"
+    );
+
+    let mut dm = SelectFirstDecisionMaker;
+    game.stack.push(
+        StackEntry::new(stack_id, alice)
+            .with_targets(vec![Target::Player(bob)])
+            .with_casting_method(CastingMethod::Fuse),
+    );
+    let library_before = game.player(bob).expect("bob exists").library.len();
+    resolve_stack_entry_with(&mut game, &mut dm).expect("fused split spell should resolve");
+    assert_eq!(
+        game.player(bob).expect("bob exists").library.len(),
+        library_before.saturating_sub(8),
+        "front-half fused effect should mill eight cards"
+    );
+    assert_eq!(
+        game.object(reanimate_target)
+            .expect("reanimated creature should still exist")
+            .zone,
+        Zone::Battlefield,
+        "back-half fused effect should resolve after Breaking"
+    );
+    assert_eq!(
+        game.object(reanimate_target)
+            .expect("reanimated creature should still exist")
+            .controller,
+        alice,
+        "Entering half of fused spell should return the creature under the caster's control"
+    );
+}
+
+#[test]
+fn test_cipher_resolution_encodes_and_combat_damage_casts_a_copy() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let spell_def = CardDefinitionBuilder::new(CardId::new(), "Cipher Runtime Probe")
+        .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+            crate::mana::ManaSymbol::Blue,
+        ]]))
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("You gain 3 life.\nCipher")
+        .expect("cipher runtime probe should parse");
+
+    let encoded_creature = create_creature(&mut game, "Encoded Creature", alice, 2, 2);
+    let stack_id = game.create_object_from_definition(&spell_def, alice, Zone::Stack);
+    game.stack.push(StackEntry::new(stack_id, alice));
+
+    let mut dm = SelectFirstDecisionMaker;
+    resolve_stack_entry_with(&mut game, &mut dm).expect("cipher spell should resolve");
+
+    assert_eq!(
+        game.player(alice).expect("alice exists").life,
+        23,
+        "original cipher spell should resolve before encoding"
+    );
+
+    let encoded_card = game
+        .get_imprinted_cards(encoded_creature)
+        .first()
+        .copied()
+        .expect("cipher spell should be encoded on the chosen creature");
+    assert_eq!(
+        game.object(encoded_card).map(|obj| obj.zone),
+        Some(Zone::Exile),
+        "encoded card should remain in exile"
+    );
+    assert!(
+        game.object(encoded_creature)
+            .expect("encoded creature exists")
+            .abilities
+            .iter()
+            .any(|ability| ability
+                .text
+                .as_deref()
+                .is_some_and(|text| text.contains("encoded card"))),
+        "encoded creature should gain the cipher combat-damage trigger"
+    );
+
+    let damage_event = TriggerEvent::new_with_provenance(
+        crate::events::DamageEvent::new(
+            encoded_creature,
+            crate::game_event::DamageTarget::Player(bob),
+            2,
+            true,
+        ),
+        crate::provenance::ProvNodeId::default(),
+    );
+    let mut trigger_queue = TriggerQueue::new();
+    for trigger in check_triggers(&game, &damage_event) {
+        trigger_queue.add(trigger);
+    }
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "cipher should trigger on combat damage"
+    );
+
+    put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+        .expect("cipher trigger should go on stack");
+    resolve_stack_entry_with(&mut game, &mut dm).expect("cipher trigger should resolve");
+
+    let copied_spell_id = game
+        .stack
+        .last()
+        .map(|entry| entry.object_id)
+        .expect("cipher trigger should cast a copy onto the stack");
+    assert_eq!(
+        game.object(copied_spell_id).map(|obj| obj.kind),
+        Some(ObjectKind::Token),
+        "cipher should create a stack copy rather than moving the encoded card"
+    );
+
+    resolve_stack_entry_with(&mut game, &mut dm).expect("cipher copy should resolve");
+    assert_eq!(
+        game.player(alice).expect("alice exists").life,
+        26,
+        "casting the cipher copy should resolve the copied spell"
+    );
+    assert_eq!(
+        game.object(encoded_card).map(|obj| obj.zone),
+        Some(Zone::Exile),
+        "casting a cipher copy should leave the encoded card exiled"
     );
 }
 
@@ -8276,7 +9095,7 @@ fn test_search_library_finds_matching_card() {
 fn test_search_library_no_matching_cards() {
     use crate::cards::definitions::the_birth_of_meletis;
     use crate::decision::DecisionMaker;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::Effect;
     use crate::executor::ExecutionContext;
 
     // Decision maker for search (shouldn't be called if no matches)
@@ -8328,7 +9147,7 @@ fn test_search_library_no_matching_cards() {
 
     // Result should indicate nothing was found
     if let Ok(outcome) = result {
-        if let EffectResult::Count(n) = outcome.result {
+        if let crate::effect::OutcomeValue::Count(n) = outcome.value {
             assert_eq!(n, 0, "Should find 0 cards when no Plains in library");
         }
     }
@@ -8345,7 +9164,7 @@ fn test_search_library_no_matching_cards() {
 fn test_search_library_fail_to_find() {
     use crate::cards::definitions::{basic_plains, the_birth_of_meletis};
     use crate::decision::DecisionMaker;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::Effect;
     use crate::executor::ExecutionContext;
 
     // Decision maker that always chooses to "fail to find" even with matching cards
@@ -8398,7 +9217,7 @@ fn test_search_library_fail_to_find() {
 
     // Result should indicate nothing was found (player chose to fail)
     if let Ok(outcome) = result {
-        if let EffectResult::Count(n) = outcome.result {
+        if let crate::effect::OutcomeValue::Count(n) = outcome.value {
             assert_eq!(
                 n, 0,
                 "Should report 0 cards found when player fails to find"
@@ -8617,7 +9436,7 @@ fn test_silverglade_elemental_may_search_puts_forest_onto_battlefield() {
         execute_effect(&mut game, &triggered.effects[0], &mut ctx).expect("effect resolves");
 
     assert!(
-        !matches!(outcome.result, crate::effect::EffectResult::Count(0)),
+        !matches!(outcome.value, crate::effect::OutcomeValue::Count(0)),
         "search should select and move a Forest"
     );
     assert_eq!(
@@ -8815,12 +9634,22 @@ fn cultivator_colossus_etb_only_asks_may_once_per_land_put() {
     }
 
     assert_eq!(
-        dm.object_calls, 2,
-        "two lands in hand should lead to exactly two land-selection prompts"
+        dm.object_calls, 1,
+        "the second land should be auto-selected once only one legal choice remains"
     );
     assert_eq!(
         dm.boolean_calls, 3,
         "two accepted iterations should require two yes decisions and one final no"
+    );
+    let battlefield_forest_count = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id))
+        .filter(|obj| obj.controller == alice && obj.name == "Forest")
+        .count();
+    assert_eq!(
+        battlefield_forest_count, 2,
+        "Cultivator Colossus should still put both lands onto the battlefield"
     );
 }
 

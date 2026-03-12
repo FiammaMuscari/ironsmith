@@ -118,7 +118,6 @@ mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, PlayerId};
     use crate::types::CardType;
 
@@ -171,7 +170,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute soulbond pairing");
 
-        assert_eq!(outcome.result, EffectResult::Count(1));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.soulbond_partner(source), Some(partner));
         assert_eq!(game.soulbond_partner(partner), Some(source));
     }
@@ -189,7 +188,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute soulbond pairing");
 
-        assert_eq!(outcome.result, EffectResult::Count(0));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.soulbond_partner(source), None);
     }
 }

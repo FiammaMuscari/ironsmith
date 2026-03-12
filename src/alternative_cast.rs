@@ -26,6 +26,29 @@ fn compose_total_cost(
 /// Methods for casting a spell other than from hand for normal cost.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlternativeCastingMethod {
+    /// Dash - cast from hand for an alternative cost; it gains haste and
+    /// returns to its owner's hand at the beginning of the next end step.
+    Dash { cost: ManaCost },
+
+    /// Plot - pay the plot cost from hand to exile the card as a special action,
+    /// then cast it from exile on a later turn without paying its mana cost.
+    Plot { cost: ManaCost },
+
+    /// Suspend - pay the suspend cost from hand to exile the card with time
+    /// counters as a special action.
+    Suspend { cost: ManaCost, time: u32 },
+
+    /// Disturb - cast a double-faced card from graveyard transformed for an
+    /// alternative cost.
+    Disturb { cost: ManaCost },
+
+    /// Overload - cast a spell from hand for an alternative cost using a
+    /// separately compiled "replace target with each" effect tree.
+    Overload {
+        cost: ManaCost,
+        effects: Vec<crate::effect::Effect>,
+    },
+
     /// Flashback - cast from graveyard for alternative cost, exile after
     Flashback {
         /// Full payment for this casting method.
@@ -47,6 +70,9 @@ pub enum AlternativeCastingMethod {
 
     /// Miracle - if first card drawn this turn, may cast for miracle cost
     Miracle { cost: ManaCost },
+
+    /// Foretell - after being foretold from hand, cast from exile for its foretell cost.
+    Foretell { cost: ManaCost },
 
     /// Composed alternative cost - cast from hand, with optional mana plus
     /// additional non-mana cost effects composed through the effect system.
@@ -113,9 +139,15 @@ impl AlternativeCastingMethod {
     /// Returns the zone this method allows casting from.
     pub fn cast_from_zone(&self) -> Zone {
         match self {
-            Self::Flashback { .. } | Self::JumpStart | Self::Escape { .. } => Zone::Graveyard,
-            Self::Madness { .. } => Zone::Exile,
+            Self::Dash { .. } => Zone::Hand,
+            Self::Plot { .. } | Self::Suspend { .. } => Zone::Exile,
+            Self::Flashback { .. }
+            | Self::JumpStart
+            | Self::Escape { .. }
+            | Self::Disturb { .. } => Zone::Graveyard,
+            Self::Madness { .. } | Self::Foretell { .. } => Zone::Exile,
             Self::Miracle { .. }
+            | Self::Overload { .. }
             | Self::Composed { .. }
             | Self::MindbreakTrap { .. }
             | Self::Bestow { .. } => Zone::Hand,
@@ -134,11 +166,17 @@ impl AlternativeCastingMethod {
     /// Returns None for methods that use the card's normal mana cost (Jump-start, granted Escape).
     pub fn mana_cost(&self) -> Option<&ManaCost> {
         match self {
+            Self::Dash { cost } => Some(cost),
+            Self::Plot { cost } => Some(cost),
+            Self::Suspend { cost, .. } => Some(cost),
+            Self::Disturb { cost } => Some(cost),
+            Self::Overload { cost, .. } => Some(cost),
             Self::Flashback { total_cost } => total_cost.mana_cost(),
             Self::JumpStart => None, // Uses normal mana cost
             Self::Escape { cost, .. } => cost.as_ref(), // None means use normal mana cost
             Self::Madness { cost } => Some(cost),
             Self::Miracle { cost } => Some(cost),
+            Self::Foretell { cost } => Some(cost),
             Self::MindbreakTrap { cost, .. } => Some(cost),
             Self::Composed { total_cost, .. } => total_cost.mana_cost(),
             Self::Bestow { total_cost } => total_cost.mana_cost(),
@@ -212,11 +250,17 @@ impl AlternativeCastingMethod {
     /// Returns the name of this casting method for display.
     pub fn name(&self) -> &'static str {
         match self {
+            Self::Dash { .. } => "Dash",
+            Self::Plot { .. } => "Plot",
+            Self::Suspend { .. } => "Suspend",
+            Self::Disturb { .. } => "Disturb",
+            Self::Overload { .. } => "Overload",
             Self::Flashback { .. } => "Flashback",
             Self::JumpStart => "Jump-start",
             Self::Escape { .. } => "Escape",
             Self::Madness { .. } => "Madness",
             Self::Miracle { .. } => "Miracle",
+            Self::Foretell { .. } => "Foretell",
             Self::Composed { name, .. } => name,
             Self::MindbreakTrap { name, .. } => name,
             Self::Bestow { .. } => "Bestow",
@@ -283,11 +327,21 @@ impl AlternativeCastingMethod {
                 discard_from_hand: 1,
                 ..Default::default()
             },
+            Self::Dash { .. }
+            | Self::Plot { .. }
+            | Self::Suspend { .. }
+            | Self::Disturb { .. }
+            | Self::Overload { .. } => {
+                AlternativeCastRequirements::default()
+            }
             Self::Escape { exile_count, .. } => AlternativeCastRequirements {
                 exile_from_graveyard: *exile_count,
                 ..Default::default()
             },
-            Self::Flashback { .. } | Self::Miracle { .. } | Self::Madness { .. } => {
+            Self::Flashback { .. }
+            | Self::Miracle { .. }
+            | Self::Madness { .. }
+            | Self::Foretell { .. } => {
                 AlternativeCastRequirements::default()
             }
             Self::Composed { .. } => AlternativeCastRequirements::default(),
@@ -304,6 +358,38 @@ impl AlternativeCastingMethod {
     /// Returns true if this is the Miracle alternative casting method.
     pub fn is_miracle(&self) -> bool {
         matches!(self, Self::Miracle { .. })
+    }
+
+    /// Returns the plot cost if this is a Plot method.
+    pub fn plot_cost(&self) -> Option<&ManaCost> {
+        match self {
+            Self::Plot { cost } => Some(cost),
+            _ => None,
+        }
+    }
+
+    /// Returns the suspend cost and time count if this is a Suspend method.
+    pub fn suspend_spec(&self) -> Option<(u32, &ManaCost)> {
+        match self {
+            Self::Suspend { cost, time } => Some((*time, cost)),
+            _ => None,
+        }
+    }
+
+    /// Returns the disturb cost if this is a Disturb method.
+    pub fn disturb_cost(&self) -> Option<&ManaCost> {
+        match self {
+            Self::Disturb { cost } => Some(cost),
+            _ => None,
+        }
+    }
+
+    /// Returns the compiled overload effects if this is an Overload method.
+    pub fn overload_effects(&self) -> Option<&[crate::effect::Effect]> {
+        match self {
+            Self::Overload { effects, .. } => Some(effects.as_slice()),
+            _ => None,
+        }
     }
 
     /// Returns the miracle cost if this is a Miracle method.
@@ -339,6 +425,10 @@ pub enum CastingMethod {
     /// Normal casting from hand with normal mana cost.
     #[default]
     Normal,
+    /// Cast the linked back half of a split card from hand.
+    SplitOtherHalf,
+    /// Cast both halves of a split card fused from hand.
+    Fuse,
     /// Alternative casting using the method at the given index in the card's alternative_casts.
     Alternative(usize),
     /// Escape granted by another permanent (e.g., Underworld Breach).
@@ -481,5 +571,59 @@ mod tests {
         assert!(alternative.mana_cost().is_none()); // No mana cost for FoW alternative
         assert_eq!(alternative.non_mana_costs().len(), 2);
         assert_eq!(alternative.name(), "Force of Will");
+    }
+
+    #[test]
+    fn test_dash_properties() {
+        let dash = AlternativeCastingMethod::Dash {
+            cost: ManaCost::from_pips(vec![vec![ManaSymbol::Generic(2)], vec![ManaSymbol::Red]]),
+        };
+
+        assert_eq!(dash.cast_from_zone(), Zone::Hand);
+        assert!(!dash.exiles_after_resolution());
+        assert!(dash.mana_cost().is_some());
+        assert_eq!(dash.name(), "Dash");
+    }
+
+    #[test]
+    fn test_plot_properties() {
+        let plot = AlternativeCastingMethod::Plot {
+            cost: ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)], vec![ManaSymbol::Red]]),
+        };
+
+        assert_eq!(plot.cast_from_zone(), Zone::Exile);
+        assert!(!plot.exiles_after_resolution());
+        assert_eq!(plot.plot_cost().map(ManaCost::to_oracle).as_deref(), Some("{1}{R}"));
+        assert_eq!(plot.name(), "Plot");
+    }
+
+    #[test]
+    fn test_suspend_properties() {
+        let suspend = AlternativeCastingMethod::Suspend {
+            cost: ManaCost::from_pips(vec![vec![ManaSymbol::Green]]),
+            time: 2,
+        };
+
+        assert_eq!(suspend.cast_from_zone(), Zone::Exile);
+        assert!(!suspend.exiles_after_resolution());
+        assert_eq!(
+            suspend
+                .suspend_spec()
+                .map(|(time, cost)| (time, cost.to_oracle())),
+            Some((2, "{G}".to_string()))
+        );
+        assert_eq!(suspend.name(), "Suspend");
+    }
+
+    #[test]
+    fn test_foretell_properties() {
+        let foretell = AlternativeCastingMethod::Foretell {
+            cost: ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)], vec![ManaSymbol::Blue]]),
+        };
+
+        assert_eq!(foretell.cast_from_zone(), Zone::Exile);
+        assert!(!foretell.exiles_after_resolution());
+        assert!(foretell.mana_cost().is_some());
+        assert_eq!(foretell.name(), "Foretell");
     }
 }

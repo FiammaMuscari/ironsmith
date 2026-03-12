@@ -26,7 +26,6 @@ mod tests {
     use crate::card::CardBuilder;
     use crate::card::PowerToughness;
     use crate::color::Color;
-    use crate::effect::EffectResult;
     use crate::events::zones::ZoneChangeEvent;
     use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
@@ -677,11 +676,11 @@ mod tests {
 
         // First effect should return Count(1) for 1 life lost
         let result1 = effects[0].0.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result1.result, EffectResult::Count(1));
+        assert_eq!(result1.value, crate::effect::OutcomeValue::Count(1));
 
         // Second effect should return Count(1) for 1 life gained
         let result2 = effects[1].0.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result2.result, EffectResult::Count(1));
+        assert_eq!(result2.value, crate::effect::OutcomeValue::Count(1));
     }
 
     // ========================================

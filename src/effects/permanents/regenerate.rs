@@ -1,6 +1,6 @@
 //! Regenerate effect implementation.
 
-use crate::effect::{Effect, EffectOutcome, EffectResult, Until};
+use crate::effect::{Effect, EffectOutcome, Until};
 use crate::effects::{ApplyReplacementEffect, EffectExecutor};
 use crate::events::permanents::matchers::RegenerationShieldMatcher;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
@@ -115,7 +115,7 @@ impl EffectExecutor for RegenerateEffect {
         }
 
         if outcomes.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
         Ok(EffectOutcome::aggregate(outcomes))
     }

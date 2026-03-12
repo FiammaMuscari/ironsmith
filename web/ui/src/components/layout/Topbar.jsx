@@ -3,10 +3,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import PhaseTrack from "@/components/board/PhaseTrack";
-import { Github } from "lucide-react";
+import TopbarMenuSheet from "./TopbarMenuSheet";
 
 const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
-const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
 const selectPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none cursor-pointer uppercase tracking-wide";
 
 export default function Topbar({
@@ -23,89 +22,20 @@ export default function Topbar({
   deckLoadingMode,
 }) {
   const {
-    state,
-    wasmRegistryCount,
-    wasmRegistryTotal,
     autoPassEnabled,
     setAutoPassEnabled,
     holdRule,
     setHoldRule,
-    inspectorDebug,
-    setInspectorDebug,
     multiplayer,
   } = useGame();
 
-  const players = state?.players || [];
-  const perspective = state?.perspective;
-  const me = players.find((p) => p.id === perspective) || players[0];
-  const lobbyBusy = multiplayer.mode !== "idle";
   const matchLocked = multiplayer.matchStarted;
-  const compiledLabel =
-    Number.isFinite(wasmRegistryCount) && wasmRegistryCount >= 0 && wasmRegistryTotal > 0
-      ? wasmRegistryTotal > 0
-        ? `${wasmRegistryCount.toLocaleString()}/${wasmRegistryTotal.toLocaleString()}`
-        : wasmRegistryCount.toLocaleString()
-      : "-";
 
   return (
-    <header className="panel-gradient flex items-center gap-1 rounded px-2 py-0.5 flex-nowrap overflow-x-auto overflow-y-hidden">
+    <header className="panel-gradient flex items-center gap-2 rounded px-2.5 py-1 overflow-x-auto overflow-y-hidden">
       <h1 className="m-0 text-[20px] uppercase tracking-wider whitespace-nowrap font-bold">
         Ironsmith
       </h1>
-
-      <input
-        className={`${inputPill} min-w-[60px] w-auto`}
-        value={playerNames}
-        disabled={lobbyBusy}
-        onChange={(e) => setPlayerNames(e.target.value)}
-      />
-      <input
-        className={`${inputPill} w-16 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
-        type="number"
-        value={startingLife}
-        min={1}
-        disabled={lobbyBusy}
-        onChange={(e) => setStartingLife(Number(e.target.value) || 20)}
-      />
-
-      <Badge
-        variant="secondary"
-        className={`${pill} ${lobbyBusy ? "pointer-events-none opacity-45" : ""}`}
-        onClick={lobbyBusy ? undefined : onReset}
-      >
-        Reset
-      </Badge>
-      <Badge
-        variant="secondary"
-        className={`${pill} ${lobbyBusy ? "pointer-events-none opacity-45" : ""}`}
-        onClick={lobbyBusy ? undefined : onEnterDeckLoading}
-      >
-        {deckLoadingMode ? "Cancel Load" : "Load Decks"}
-      </Badge>
-      <Badge variant="secondary" className={pill} onClick={onOpenLobby}>
-        {lobbyBusy
-          ? `Lobby ${multiplayer.players.length}/${multiplayer.desiredPlayers || 0}`
-          : "Create Lobby"}
-      </Badge>
-
-      <Separator orientation="vertical" className="h-4.5 mx-0.5" />
-
-      <span className="text-[13px] uppercase text-muted-foreground whitespace-nowrap">
-        Playing as
-      </span>
-      <select
-        className={selectPill}
-        value={perspective ?? ""}
-        disabled={matchLocked}
-        onChange={(e) => onChangePerspective(Number(e.target.value))}
-      >
-        {players.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <Badge variant="secondary" className={pill} onClick={onRefresh}>Refresh</Badge>
 
       <Separator orientation="vertical" className="h-4.5 mx-0.5" />
 
@@ -132,36 +62,26 @@ export default function Topbar({
         />
         Auto-pass
       </label>
-      <label className="flex items-center gap-1 text-muted-foreground text-[13px] whitespace-nowrap cursor-pointer uppercase">
-        <Checkbox
-          checked={inspectorDebug}
-          onCheckedChange={(v) => setInspectorDebug(!!v)}
-          className="h-3.5 w-3.5"
-        />
-        Debug
-      </label>
-      <div className="mx-1 w-[min(28vw,420px)] min-w-[220px]">
+
+      <div className="mx-1 min-w-[200px] flex-1">
         <PhaseTrack />
       </div>
 
-      <div className="flex-1" />
-
-      <Badge variant="secondary" className="text-[13px] uppercase">
-        Cards {compiledLabel}
-      </Badge>
-      <Badge variant="secondary" className="text-[13px] uppercase">
-        View {me?.name || "-"}
-      </Badge>
-      <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
-      <a
-        href="https://github.com/Chiplis/ironsmith"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Open Ironsmith GitHub repository"
-        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-muted-foreground transition-all hover:brightness-125 hover:text-foreground"
-      >
-        <Github className="size-3.5" />
-      </a>
+      <div className="flex items-center gap-1 shrink-0">
+        <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
+        <TopbarMenuSheet
+          playerNames={playerNames}
+          setPlayerNames={setPlayerNames}
+          startingLife={startingLife}
+          setStartingLife={setStartingLife}
+          onReset={onReset}
+          onChangePerspective={onChangePerspective}
+          onRefresh={onRefresh}
+          onEnterDeckLoading={onEnterDeckLoading}
+          onOpenLobby={onOpenLobby}
+          deckLoadingMode={deckLoadingMode}
+        />
+      </div>
     </header>
   );
 }

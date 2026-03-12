@@ -23,10 +23,10 @@ function zoneLabelFromAction(zone) {
     case "library": return "Library";
     case "hand": return "Hand";
     case "battlefield": return "Battlefield";
-    case "graveyard": return "Graveyard";
+    case "graveyard": return "GY";
     case "exile": return "Exile";
     case "stack": return "Stack";
-    case "command": return "Command Zone";
+    case "command": return "CZ";
     default:
       return String(zone)
         .split(/[_\s]+/)

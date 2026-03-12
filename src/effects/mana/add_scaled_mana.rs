@@ -4,7 +4,7 @@
 //! Example: "Add {B} for each creature card in your graveyard."
 
 use super::choice_helpers::credit_mana_symbols_from_context;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -49,7 +49,7 @@ impl EffectExecutor for AddScaledManaEffect {
         }
         credit_mana_symbols_from_context(game, player_id, added.iter().copied(), ctx);
 
-        Ok(EffectOutcome::from_result(EffectResult::ManaAdded(added)))
+        Ok(EffectOutcome::mana_added(added))
     }
 
     fn producible_mana_symbols(
@@ -103,8 +103,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).expect("execute");
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![
                 ManaSymbol::Black,
                 ManaSymbol::Black,
                 ManaSymbol::Black
@@ -136,8 +136,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).expect("execute");
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Black, ManaSymbol::Black])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Black, ManaSymbol::Black])
         );
         assert_eq!(game.player(alice).expect("alice").mana_pool.black, 2);
     }
@@ -184,8 +184,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).expect("execute");
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![
                 ManaSymbol::Green,
                 ManaSymbol::Green,
                 ManaSymbol::Green

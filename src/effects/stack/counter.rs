@@ -1,7 +1,7 @@
 //! Counter spell effect implementation.
 
 use crate::ability::AbilityKind;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -64,7 +64,7 @@ impl EffectExecutor for CounterEffect {
             });
             if cant_be_countered {
                 // Spell can't be countered - effect does nothing
-                return Ok(EffectOutcome::from_result(EffectResult::Protected));
+                return Ok(EffectOutcome::protected());
             }
         }
 
@@ -78,7 +78,7 @@ impl EffectExecutor for CounterEffect {
             Ok(EffectOutcome::resolved())
         } else {
             // Target is no longer on the stack
-            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+            Ok(EffectOutcome::target_invalid())
         }
     }
 

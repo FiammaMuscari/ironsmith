@@ -1,7 +1,7 @@
 //! Unearth effect implementation.
 
 use crate::continuous::{EffectSourceType, EffectTarget, Modification};
-use crate::effect::{Effect, EffectOutcome, EffectResult, Until};
+use crate::effect::{Effect, EffectOutcome, Until};
 use crate::effects::zones::MoveToZoneEffect;
 use crate::effects::{
     ApplyContinuousEffect, ApplyReplacementEffect, EffectExecutor, ScheduleDelayedTriggerEffect,
@@ -37,10 +37,10 @@ impl EffectExecutor for UnearthEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let source_id = ctx.source;
         let Some(source_obj) = game.object(source_id) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
         if source_obj.zone != Zone::Graveyard {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let move_to_battlefield = Effect::new(
@@ -48,19 +48,32 @@ impl EffectExecutor for UnearthEffect {
                 .under_owner_control(),
         );
         let move_outcome = execute_effect(game, &move_to_battlefield, ctx)?;
-        let EffectOutcome { result, events } = move_outcome;
-
-        let new_id = match result {
-            EffectResult::Objects(ids) => {
-                let Some(&id) = ids.first() else {
-                    return Ok(
-                        EffectOutcome::from_result(EffectResult::TargetInvalid).with_events(events)
-                    );
-                };
-                id
-            }
-            other => return Ok(EffectOutcome::from_result(other).with_events(events)),
+        let new_id = if let Some(id) = move_outcome.first_output_object() {
+            id
+        } else {
+            let EffectOutcome {
+                status,
+                value,
+                events,
+                execution_facts,
+            } = move_outcome;
+            let status = if matches!(value, crate::effect::OutcomeValue::Objects(_)) {
+                crate::effect::OutcomeStatus::TargetInvalid
+            } else {
+                status
+            };
+            return Ok(EffectOutcome::with_details(
+                status,
+                if status == crate::effect::OutcomeStatus::TargetInvalid {
+                    crate::effect::OutcomeValue::None
+                } else {
+                    value
+                },
+                events,
+                execution_facts,
+            ));
         };
+        let events = move_outcome.events;
 
         // Grant haste until end of turn to the returned permanent.
         let haste_effect = ApplyContinuousEffect::new(
@@ -97,7 +110,7 @@ impl EffectExecutor for UnearthEffect {
         );
         let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![new_id])).with_events(events))
+        Ok(EffectOutcome::with_objects(vec![new_id]).with_events(events))
     }
 }
 
@@ -144,7 +157,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("unearth should resolve");
 
-        let EffectResult::Objects(ids) = result.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = result.value else {
             panic!("expected returned battlefield object");
         };
         let returned_id = ids[0];
@@ -175,8 +188,8 @@ mod tests {
         let result = UnearthEffect::new()
             .execute(&mut game, &mut ctx)
             .expect("unearth should resolve");
-        let returned_id = match result.result {
-            EffectResult::Objects(ids) => ids[0],
+        let returned_id = match result.value {
+            crate::effect::OutcomeValue::Objects(ids) => ids[0],
             other => panic!("expected returned battlefield object, got {other:?}"),
         };
 

@@ -32,26 +32,29 @@ impl EffectExecutor for RepeatProcessEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let sequence = SequenceEffect::new(self.effects.clone());
         let mut all_events = Vec::new();
-        let result = loop {
+        let mut all_execution_facts = Vec::new();
+        let (status, value) = loop {
             let outcome = sequence.execute(game, ctx)?;
             all_events.extend(outcome.events.clone());
+            all_execution_facts.extend(outcome.execution_facts.clone());
 
-            if outcome.result.is_failure() {
-                break outcome.result;
+            if outcome.status.is_failure() {
+                break (outcome.status, outcome.value);
             }
 
             let should_continue = ctx
-                .effect_results
-                .get(&self.condition)
-                .is_some_and(|result| self.predicate.evaluate(result));
+                .get_outcome(self.condition)
+                .is_some_and(|outcome| self.predicate.evaluate_outcome(outcome));
             if !should_continue {
-                break outcome.result;
+                break (outcome.status, outcome.value);
             }
         };
 
-        Ok(EffectOutcome {
-            result,
-            events: all_events,
-        })
+        Ok(EffectOutcome::with_details(
+            status,
+            value,
+            all_events,
+            all_execution_facts,
+        ))
     }
 }

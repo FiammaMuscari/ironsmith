@@ -236,6 +236,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_reduced_maximum_hand_size_line),
         single_static_ability_ast_rule!(parse_library_of_leng_discard_replacement_line),
         single_static_ability_ast_rule!(parse_draw_replace_exile_top_face_down_line),
+        single_static_ability_ast_rule!(parse_exile_to_countered_exile_instead_of_graveyard_line),
         single_static_ability_ast_rule!(parse_toph_first_metalbender_line),
         single_static_ability_ast_rule!(parse_discard_or_redirect_replacement_line),
         single_static_ability_ast_rule!(parse_pay_life_or_enter_tapped_line),
@@ -4935,6 +4936,60 @@ pub(crate) fn parse_draw_replace_exile_top_face_down_line(
     }
 
     Ok(None)
+}
+
+pub(crate) fn parse_exile_to_countered_exile_instead_of_graveyard_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.len() < 12 || !words.starts_with(&["if"]) {
+        return Ok(None);
+    }
+
+    let has_would_put = words
+        .windows(4)
+        .any(|window| window == ["would", "be", "put", "into"]);
+    let has_from_anywhere = words
+        .windows(2)
+        .any(|window| window == ["from", "anywhere"]);
+    let has_instead_exile = words
+        .windows(2)
+        .any(|window| window == ["instead", "exile"])
+        || words.contains(&"exile");
+    if !has_would_put || !has_from_anywhere || !has_instead_exile {
+        return Ok(None);
+    }
+
+    let Some(into_idx) = words.iter().position(|word| *word == "into") else {
+        return Ok(None);
+    };
+    let Some(from_idx) = words.iter().position(|word| *word == "from") else {
+        return Ok(None);
+    };
+    if from_idx <= into_idx + 1 {
+        return Ok(None);
+    }
+
+    let player = match &words[into_idx + 1..from_idx] {
+        ["your", "graveyard"] => PlayerFilter::You,
+        ["an", "opponents", "graveyard"] | ["opponents", "graveyard"] => PlayerFilter::Opponent,
+        ["a", "players", "graveyard"] | ["players", "graveyard"] => PlayerFilter::Any,
+        _ => return Ok(None),
+    };
+
+    let Some(counter_idx) = words.iter().position(|word| *word == "counter") else {
+        return Ok(None);
+    };
+    if counter_idx == 0 || words.get(counter_idx + 1).copied() != Some("on") {
+        return Ok(None);
+    }
+    let Some(counter_type) = parse_counter_type_word(words[counter_idx - 1]) else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        StaticAbility::exile_to_countered_exile_instead_of_graveyard(player, counter_type),
+    ))
 }
 
 pub(crate) fn parse_toph_first_metalbender_line(

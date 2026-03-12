@@ -8,7 +8,7 @@
 
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::events::PermanentTappedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -129,10 +129,7 @@ impl EffectExecutor for CrewCostEffect {
             }
         }
 
-        Ok(EffectOutcome {
-            result: EffectResult::Resolved,
-            events,
-        })
+        Ok(EffectOutcome::resolved().with_events(events))
     }
 
     fn cost_description(&self) -> Option<String> {

@@ -2011,6 +2011,8 @@ struct RegistryPreloadStatus {
 struct DeckLoadResult {
     loaded: u32,
     failed: Vec<String>,
+    failed_below_threshold: Vec<String>,
+    failed_to_parse: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2423,12 +2425,7 @@ impl WasmGame {
         }
 
         self.registry.ensure_cards_loaded([query]);
-        let definition = self.find_card_definition(query).cloned().ok_or_else(|| {
-            match crate::cards::CardRegistry::try_compile_card(query) {
-                Ok(_) => JsValue::from_str(&format!("unknown card name: {query}")),
-                Err(err) => JsValue::from_str(&err),
-            }
-        })?;
+        let definition = self.load_compilable_card_definition(query)?;
 
         let object_id = self.game.create_object_from_definition(
             &definition,
@@ -2474,12 +2471,7 @@ impl WasmGame {
         };
 
         self.registry.ensure_cards_loaded([query]);
-        let definition = self.find_card_definition(query).cloned().ok_or_else(|| {
-            match crate::cards::CardRegistry::try_compile_card(query) {
-                Ok(_) => JsValue::from_str(&format!("unknown card name: {query}")),
-                Err(err) => JsValue::from_str(&err),
-            }
-        })?;
+        let definition = self.load_compilable_card_definition(query)?;
 
         if self.semantic_threshold > 0.0
             && let Some(score) = Self::semantic_score_for_name(definition.name())
@@ -2602,7 +2594,8 @@ impl WasmGame {
     /// Load explicit decks by card name. JS format: `string[][]`.
     ///
     /// Deck list index maps to player index.
-    /// Returns a JSON object: `{ loaded: number, failed: string[] }`.
+    /// Returns a JSON object with total and categorized failures:
+    /// `{ loaded, failed, failedBelowThreshold, failedToParse }`.
     /// Unknown cards are skipped rather than aborting the entire load.
     #[wasm_bindgen(js_name = loadDecks)]
     pub fn load_decks(&mut self, decks_js: JsValue) -> Result<JsValue, JsValue> {
@@ -2621,6 +2614,8 @@ impl WasmGame {
 
         let mut loaded: u32 = 0;
         let mut failed: Vec<String> = Vec::new();
+        let mut failed_below_threshold: Vec<String> = Vec::new();
+        let mut failed_to_parse: Vec<String> = Vec::new();
 
         let player_ids: Vec<PlayerId> = self.game.players.iter().map(|p| p.id).collect();
         for (&player_id, deck) in player_ids.iter().zip(decks.iter()) {
@@ -2634,6 +2629,7 @@ impl WasmGame {
                         && score < self.semantic_threshold
                     {
                         failed.push(name.clone());
+                        failed_below_threshold.push(name.clone());
                         continue;
                     }
                     self.game.create_object_from_definition(
@@ -2644,6 +2640,7 @@ impl WasmGame {
                     loaded += 1;
                 } else {
                     failed.push(name.clone());
+                    failed_to_parse.push(name.clone());
                 }
             }
 
@@ -2652,8 +2649,13 @@ impl WasmGame {
 
         self.finish_match_setup(7)?;
 
-        serde_wasm_bindgen::to_value(&DeckLoadResult { loaded, failed })
-            .map_err(|e| JsValue::from_str(&format!("failed to serialize deck load result: {e}")))
+        serde_wasm_bindgen::to_value(&DeckLoadResult {
+            loaded,
+            failed,
+            failed_below_threshold,
+            failed_to_parse,
+        })
+        .map_err(|e| JsValue::from_str(&format!("failed to serialize deck load result: {e}")))
     }
 
     #[wasm_bindgen(js_name = cardLoadDiagnostics)]
@@ -3861,6 +3863,23 @@ impl WasmGame {
             compiled_abilities,
             semantic_score,
             threshold_percent,
+        }
+    }
+
+    fn load_compilable_card_definition(
+        &mut self,
+        query: &str,
+    ) -> Result<crate::cards::CardDefinition, JsValue> {
+        if let Some(definition) = self.find_card_definition(query).cloned() {
+            if let Some(error) = crate::cards::unsupported_generated_definition_error(&definition) {
+                return Err(JsValue::from_str(&error));
+            }
+            return Ok(definition);
+        }
+
+        match crate::cards::CardRegistry::try_compile_card(query) {
+            Ok(_) => Err(JsValue::from_str(&format!("unknown card name: {query}"))),
+            Err(err) => Err(JsValue::from_str(&err)),
         }
     }
 
@@ -5442,6 +5461,12 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
                         qualifiers.push(format!("from {}", zone_display_name(*from_zone)));
                     }
                 }
+                crate::alternative_cast::CastingMethod::SplitOtherHalf => {
+                    qualifiers.push("other half".to_string());
+                }
+                crate::alternative_cast::CastingMethod::Fuse => {
+                    qualifiers.push("fuse".to_string());
+                }
                 crate::alternative_cast::CastingMethod::Alternative(index) => {
                     let method_name = game
                         .object(*spell_id)
@@ -6182,6 +6207,90 @@ mod tests {
         assert!(
             !diagnostics.compiled_abilities.is_empty(),
             "expected compiled abilities in diagnostics"
+        );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn card_load_diagnostics_report_parse_error_for_unsupported_generated_cards() {
+        let mut wasm = WasmGame::new();
+        let diagnostics = wasm.build_card_load_diagnostics("Sicarian Infiltrator", None);
+
+        assert_eq!(diagnostics.query, "Sicarian Infiltrator");
+        assert!(
+            diagnostics
+                .parse_error
+                .as_deref()
+                .is_some_and(|error| error.to_ascii_lowercase().contains("unsupported")),
+            "expected unsupported parse error in diagnostics, got {:?}",
+            diagnostics.parse_error
+        );
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn load_decks_reports_threshold_and_parse_failures_separately() {
+        #[derive(Debug, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct DeckLoadResultView {
+            loaded: u32,
+            failed: Vec<String>,
+            failed_below_threshold: Vec<String>,
+            failed_to_parse: Vec<String>,
+        }
+
+        let mut wasm = WasmGame::new();
+        let (below_threshold_name, below_threshold_score) =
+            CardRegistry::generated_parser_card_names()
+                .into_iter()
+                .find_map(|name| {
+                    let score = WasmGame::semantic_score_for_name(name.as_str())?;
+                    if score >= 1.0 || CardRegistry::try_compile_card(name.as_str()).is_err() {
+                        return None;
+                    }
+                    Some((name, score))
+                })
+                .expect("expected a compilable generated card below 100% fidelity");
+        let threshold_percent = ((below_threshold_score * 100.0) + 0.5).clamp(1.0, 100.0);
+        wasm.set_semantic_threshold(threshold_percent);
+
+        let threshold = threshold_percent / 100.0;
+        let loaded_name = CardRegistry::generated_parser_card_names()
+            .into_iter()
+            .find(|name| {
+                WasmGame::semantic_score_for_name(name.as_str())
+                    .is_some_and(|score| score >= threshold)
+                    && CardRegistry::try_compile_card(name.as_str()).is_ok()
+            })
+            .expect("expected a compilable generated card that meets the chosen threshold");
+
+        let decks_js = serde_wasm_bindgen::to_value(&vec![
+            vec![
+                loaded_name.clone(),
+                below_threshold_name.clone(),
+                "Sicarian Infiltrator".to_string(),
+            ],
+            Vec::<String>::new(),
+        ])
+        .expect("should encode test deck lists");
+        let result = wasm
+            .load_decks(decks_js)
+            .expect("deck load should return categorized failures");
+        let result: DeckLoadResultView =
+            serde_wasm_bindgen::from_value(result).expect("should decode deck load result");
+
+        assert_eq!(result.loaded, 1);
+        assert_eq!(
+            result.failed,
+            vec![
+                below_threshold_name.clone(),
+                "Sicarian Infiltrator".to_string(),
+            ]
+        );
+        assert_eq!(result.failed_below_threshold, vec![below_threshold_name]);
+        assert_eq!(
+            result.failed_to_parse,
+            vec!["Sicarian Infiltrator".to_string()]
         );
     }
 

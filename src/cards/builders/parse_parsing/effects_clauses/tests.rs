@@ -2958,6 +2958,13 @@ fn parse_predicate_this_creature_isnt_saddled() {
 }
 
 #[test]
+fn parse_predicate_this_creatures_power_is_one_or_more() {
+    let tokens = tokenize_line("this creature's power is 1 or more", 0);
+    let predicate = parse_predicate(&tokens).expect("parse source-power threshold predicate");
+    assert!(matches!(predicate, PredicateAst::SourcePowerAtLeast(1)));
+}
+
+#[test]
 fn parse_predicate_this_creature_isnt_saddled_with_extra_tail_still_fails_loudly() {
     let tokens = tokenize_line("this creature isn't saddled this turn", 0);
     let err = parse_predicate(&tokens).expect_err("unsupported saddled predicate tail should fail");

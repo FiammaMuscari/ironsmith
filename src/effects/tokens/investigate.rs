@@ -1,7 +1,7 @@
 //! Investigate effect implementation.
 
 use crate::cards::tokens::clue_token_definition;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::helpers::resolve_value;
 use crate::effects::{CreateTokenEffect, EffectExecutor};
 use crate::events::{KeywordActionEvent, KeywordActionKind};
@@ -35,7 +35,7 @@ impl EffectExecutor for InvestigateEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
         if count == 0 {
-            return Ok(EffectOutcome::from_result(EffectResult::Resolved));
+            return Ok(EffectOutcome::resolved());
         }
 
         let mut outcomes = Vec::with_capacity(count);
@@ -54,6 +54,46 @@ impl EffectExecutor for InvestigateEffect {
             ));
         }
 
-        Ok(EffectOutcome::aggregate(outcomes).with_events(action_events))
+        let created_clues = outcomes
+            .iter()
+            .map(|outcome| outcome.output_objects().len() as i32)
+            .sum();
+        let mut outcome = EffectOutcome::aggregate(outcomes).with_events(action_events);
+        outcome.set_value(crate::effect::OutcomeValue::Count(created_clues));
+        Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn investigate_twice_sums_created_clues_in_summary() {
+        let mut game = setup_game();
+        let alice = crate::ids::PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let result = InvestigateEffect::new(2)
+            .execute(&mut game, &mut ctx)
+            .expect("investigate resolves");
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
+        assert_eq!(game.battlefield.len(), 2);
+        let investigate_events = result
+            .events
+            .iter()
+            .filter(|event| {
+                event
+                    .downcast::<KeywordActionEvent>()
+                    .is_some_and(|action| action.action == KeywordActionKind::Investigate)
+            })
+            .count();
+        assert_eq!(investigate_events, 2);
     }
 }

@@ -59,6 +59,54 @@ function horizontalStackKindLabel(entry) {
   return `${abilityKind} ability`;
 }
 
+function mergeTimelineLeavingEntries(liveEntries = [], leavingEntries = []) {
+  if (!Array.isArray(leavingEntries) || leavingEntries.length === 0) {
+    return liveEntries.map((entry) => ({
+      ...entry,
+      __timeline_key: `live-${entry.id}`,
+      __leaving: false,
+    }));
+  }
+
+  const mergedEntries = [];
+  const sortedLeavingEntries = [...leavingEntries].sort((left, right) => (
+    (left.previousIndex ?? Number.MAX_SAFE_INTEGER)
+    - (right.previousIndex ?? Number.MAX_SAFE_INTEGER)
+  ));
+  let liveIndex = 0;
+
+  for (const leavingItem of sortedLeavingEntries) {
+    const targetIndex = Math.max(0, Number(leavingItem.previousIndex ?? mergedEntries.length));
+    while (mergedEntries.length < targetIndex && liveIndex < liveEntries.length) {
+      const liveEntry = liveEntries[liveIndex];
+      mergedEntries.push({
+        ...liveEntry,
+        __timeline_key: `live-${liveEntry.id}`,
+        __leaving: false,
+      });
+      liveIndex += 1;
+    }
+
+    mergedEntries.push({
+      ...leavingItem.entry,
+      __timeline_key: leavingItem.key,
+      __leaving: true,
+    });
+  }
+
+  while (liveIndex < liveEntries.length) {
+    const liveEntry = liveEntries[liveIndex];
+    mergedEntries.push({
+      ...liveEntry,
+      __timeline_key: `live-${liveEntry.id}`,
+      __leaving: false,
+    });
+    liveIndex += 1;
+  }
+
+  return mergedEntries;
+}
+
 function HorizontalStackEntry({
   entry,
   positionLabel,
@@ -236,21 +284,16 @@ export default function InspectorStackTimeline({
     }
     return stackObjects.slice(pendingTriggerEntries.length);
   }, [pendingTriggerEntries.length, stackObjects, triggerOrderingActive]);
+  const visibleTimelineEntries = useMemo(
+    () => mergeTimelineLeavingEntries(visibleLiveStackObjects, leavingEntries),
+    [leavingEntries, visibleLiveStackObjects]
+  );
   const timelineEntries = useMemo(
     () => [
       ...pendingTriggerEntries,
-      ...visibleLiveStackObjects.map((entry) => ({
-        ...entry,
-        __timeline_key: `live-${entry.id}`,
-        __leaving: false,
-      })),
-      ...leavingEntries.map((item) => ({
-        ...item.entry,
-        __timeline_key: item.key,
-        __leaving: true,
-      })),
+      ...visibleTimelineEntries,
     ],
-    [leavingEntries, pendingTriggerEntries, visibleLiveStackObjects]
+    [pendingTriggerEntries, visibleTimelineEntries]
   );
   const itemCount = (
     pendingTriggerEntries.length + visibleLiveStackObjects.length
@@ -263,18 +306,21 @@ export default function InspectorStackTimeline({
   useEffect(() => {
     const previousStack = previousStackRef.current || [];
     const nextIds = new Set(stackObjects.map((entry) => String(entry.id)));
+    const previousIndexById = new Map(previousStack.map((entry, index) => [String(entry.id), index]));
     const removed = previousStack.filter((entry) => !nextIds.has(String(entry.id)));
 
     if (removed.length > 0) {
       const additions = removed.map((entry) => ({
-        key: `leaving-${entry.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        key: `live-${entry.id}`,
         entry,
+        previousIndex: previousIndexById.get(String(entry.id)) ?? previousStack.length,
       }));
       queueMicrotask(() => {
         setLeavingEntries((prev) => {
           const existing = new Set(prev.map((item) => String(item.entry.id)));
           const deduped = additions.filter((item) => !existing.has(String(item.entry.id)));
-          return deduped.length > 0 ? [...deduped, ...prev] : prev;
+          if (deduped.length === 0) return prev;
+          return [...prev, ...deduped];
         });
       });
 
@@ -303,8 +349,8 @@ export default function InspectorStackTimeline({
     delay: stagger(34),
     duration: 320,
     bounce: 0.12,
-    enterFrom: isHorizontal ? { opacity: 0, x: 20, scale: 0.97 } : { opacity: 0, y: 16, scale: 0.97 },
-    leaveTo: isHorizontal ? { opacity: 0, x: 18, scale: 0.96 } : { opacity: 0, y: -14, scale: 0.96 },
+    enterFrom: isHorizontal ? { opacity: 0, y: 8, scale: 0.97 } : { opacity: 0, y: 16, scale: 0.97 },
+    leaveTo: isHorizontal ? { opacity: 0, y: -8, scale: 0.96 } : { opacity: 0, y: -14, scale: 0.96 },
   });
 
   useLayoutEffect(() => {
@@ -351,7 +397,7 @@ export default function InspectorStackTimeline({
   if (isHorizontal) {
     return (
       <section
-        className="relative flex items-stretch overflow-visible rounded-[14px] bg-[linear-gradient(180deg,rgba(6,14,24,0.86),rgba(5,10,18,0.98))] backdrop-blur-[2.2px] shadow-[0_14px_30px_rgba(0,0,0,0.38)]"
+        className="relative flex items-stretch overflow-hidden rounded-[14px] bg-[linear-gradient(180deg,rgba(6,14,24,0.86),rgba(5,10,18,0.98))] backdrop-blur-[2.2px] shadow-[0_14px_30px_rgba(0,0,0,0.38)]"
         style={{ minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT + 2}px` }}
         data-inspector-stack-timeline
       >

@@ -1,6 +1,6 @@
 //! Return from graveyard to hand effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::event_processor::EventOutcome;
@@ -81,10 +81,10 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
         if self.random {
             let base = self.target.base();
             let ChooseSpec::Object(filter) = base else {
-                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                return Ok(EffectOutcome::impossible());
             };
             if filter.zone != Some(Zone::Graveyard) {
-                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                return Ok(EffectOutcome::impossible());
             }
 
             let count = self.target.count();
@@ -94,9 +94,7 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
                 count.max.unwrap_or(count.min)
             };
             if requested == 0 {
-                return Ok(EffectOutcome::from_result(
-                    EffectResult::Objects(Vec::new()),
-                ));
+                return Ok(EffectOutcome::with_objects(Vec::new()));
             }
 
             let filter_ctx = ctx.filter_context(game);
@@ -117,13 +115,13 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
                 }
             }
 
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(returned)));
+            return Ok(EffectOutcome::with_objects(returned));
         }
 
         // Non-random: return all resolved object targets that are still in a graveyard.
         let resolved_targets = match resolve_objects_from_spec(game, &self.target, ctx) {
             Ok(targets) => targets,
-            Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
         for target_id in resolved_targets {
             if let Some(new_id) = Self::return_object(game, ctx, target_id) {
@@ -132,9 +130,9 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
         }
 
         if returned.is_empty() {
-            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+            Ok(EffectOutcome::target_invalid())
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::Objects(returned)))
+            Ok(EffectOutcome::with_objects(returned))
         }
     }
 
@@ -213,7 +211,7 @@ mod tests {
             ReturnFromGraveyardToHandEffect::new(ChooseSpec::Tagged("return_target".into()), false);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        let EffectResult::Objects(ids) = result.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = result.value else {
             panic!("Expected Objects result");
         };
         assert_eq!(ids.len(), 1);
@@ -241,7 +239,7 @@ mod tests {
             ReturnFromGraveyardToHandEffect::new(ChooseSpec::SpecificObject(creature_id), false);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        let EffectResult::Objects(ids) = result.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = result.value else {
             panic!("Expected Objects result");
         };
         assert_eq!(ids.len(), 1);

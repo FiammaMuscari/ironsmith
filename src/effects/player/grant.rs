@@ -23,7 +23,7 @@
 //! ```
 
 use crate::alternative_cast::AlternativeCastingMethod;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -131,18 +131,18 @@ impl EffectExecutor for GrantEffect {
 
                 // Verify it's an instant or sorcery
                 if !obj.has_card_type(CardType::Instant) && !obj.has_card_type(CardType::Sorcery) {
-                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    return Ok(EffectOutcome::target_invalid());
                 }
 
                 // Must be in graveyard for flashback to make sense
                 if zone != Zone::Graveyard {
-                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    return Ok(EffectOutcome::target_invalid());
                 }
 
                 // Get the mana cost
                 let flashback_cost = match &obj.mana_cost {
                     Some(cost) => cost.clone(),
-                    None => return Ok(EffectOutcome::from_result(EffectResult::Impossible)),
+                    None => return Ok(EffectOutcome::impossible()),
                 };
 
                 game.grant_registry.grant_alternative_cast_to_card(
@@ -228,7 +228,7 @@ mod tests {
         ));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Check that flashback was granted
         let grants =
@@ -264,7 +264,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Check that flash was granted
         let grants = game
@@ -299,6 +299,6 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should fail because creature is not instant/sorcery
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 }

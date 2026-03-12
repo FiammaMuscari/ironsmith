@@ -1,7 +1,7 @@
 //! Look at top cards effect implementation.
 
 use crate::decisions::context::ViewCardsContext;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -69,9 +69,7 @@ impl EffectExecutor for LookAtTopCardsEffect {
         );
         ctx.decision_maker
             .view_cards(game, ctx.controller, &top_cards, &view_ctx);
-        Ok(EffectOutcome::from_result(EffectResult::Count(
-            snapshots.len() as i32,
-        )))
+        Ok(EffectOutcome::count(snapshots.len() as i32))
     }
 }
 
@@ -80,7 +78,6 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, PlayerId};
     use crate::zone::Zone;
 
@@ -144,7 +141,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute look-at-top");
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(
             ctx.tagged_objects
                 .get(&TagKey::from("looked"))
@@ -166,7 +163,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute look-at-top");
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert_eq!(
             ctx.tagged_objects
                 .get(&TagKey::from("looked_x"))

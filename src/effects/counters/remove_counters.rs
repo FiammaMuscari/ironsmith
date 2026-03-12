@@ -1,6 +1,6 @@
 //! Remove counters effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -72,7 +72,7 @@ impl EffectExecutor for RemoveCountersEffect {
 
         // Verify the object exists
         if game.object(target_id).is_none() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         // Use centralized method which emits events and returns actual count removed
@@ -203,7 +203,7 @@ mod tests {
         let effect = RemoveCountersEffect::plus_one_counters(2, ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         let obj = game.object(creature_id).unwrap();
         assert_eq!(obj.counters.get(&CounterType::PlusOnePlusOne), Some(&3)); // 5 - 2
     }
@@ -228,7 +228,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Only 2 counters were available to remove
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         // When all counters are removed, the entry is removed from the HashMap
         assert_eq!(
             game.counter_count(creature_id, CounterType::PlusOnePlusOne),
@@ -256,7 +256,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // No counters to remove
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
         let effect = RemoveCountersEffect::plus_one_counters(1, ChooseSpec::Source);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(
             game.counter_count(creature_id, CounterType::PlusOnePlusOne),
             1

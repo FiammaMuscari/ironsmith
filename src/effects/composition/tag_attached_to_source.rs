@@ -1,6 +1,6 @@
 //! Tag the object attached to the source (equipment/aura) for later reference.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -41,7 +41,7 @@ impl EffectExecutor for TagAttachedToSourceEffect {
 
         if let Some(obj) = game.object(attached_id) {
             ctx.tag_object(self.tag.clone(), ObjectSnapshot::from_object(obj, game));
-            return Ok(EffectOutcome::from_result(EffectResult::Count(1)));
+            return Ok(EffectOutcome::count(1));
         }
 
         Ok(EffectOutcome::count(0))

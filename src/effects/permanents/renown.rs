@@ -1,6 +1,6 @@
 //! Renown keyword effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::events::other::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -32,7 +32,7 @@ impl EffectExecutor for RenownEffect {
 
         game.set_renowned(ctx.source);
 
-        let mut outcome = EffectOutcome::new(EffectResult::Count(1), Vec::new());
+        let mut outcome = EffectOutcome::count(1);
         if self.amount > 0
             && let Some(counter_event) = game.add_counters_with_source(
                 ctx.source,
@@ -61,7 +61,6 @@ impl EffectExecutor for RenownEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::ids::{CardId, PlayerId};
     use crate::types::CardType;
@@ -93,7 +92,7 @@ mod tests {
         let first = RenownEffect::new(2)
             .execute(&mut game, &mut ctx)
             .expect("execute first renown");
-        assert_eq!(first.result, EffectResult::Count(1));
+        assert_eq!(first.value, crate::effect::OutcomeValue::Count(1));
         assert!(game.is_renowned(source));
         assert_eq!(
             game.object(source)
@@ -108,7 +107,7 @@ mod tests {
         let second = RenownEffect::new(2)
             .execute(&mut game, &mut ctx)
             .expect("execute second renown");
-        assert_eq!(second.result, EffectResult::Count(0));
+        assert_eq!(second.value, crate::effect::OutcomeValue::Count(0));
         assert_eq!(
             game.object(source)
                 .expect("source exists")

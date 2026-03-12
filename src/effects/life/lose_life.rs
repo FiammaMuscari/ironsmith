@@ -1,6 +1,6 @@
 //! Lose life effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::helpers::{resolve_player_from_spec, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::events::LifeLossEvent;
@@ -95,7 +95,7 @@ impl EffectExecutor for LoseLifeEffect {
 
         // Check if player's life total can change (Platinum Emperion, etc.)
         if !game.can_change_life_total(player_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         if let Some(p) = game.player_mut(player_id) {

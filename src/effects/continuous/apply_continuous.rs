@@ -1,7 +1,7 @@
 //! Apply continuous effect implementation.
 
 use crate::continuous::{ContinuousEffect, EffectSourceType, EffectTarget, Modification};
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult, Until, Value};
+use crate::effect::{ChoiceCount, EffectOutcome, Until, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     resolve_objects_from_spec, resolve_player_filter, resolve_value, validate_target,
@@ -317,7 +317,7 @@ impl EffectExecutor for ApplyContinuousEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let (target, spec_locked_targets, target_invalid) = self.resolve_target(game, ctx)?;
         if target_invalid {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
         let mut source_type = self.source_type.clone();
 
@@ -360,7 +360,7 @@ impl EffectExecutor for ApplyContinuousEffect {
                     return Err(ExecutionError::ObjectNotFound(id));
                 };
                 if !obj.has_card_type(CardType::Creature) {
-                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    return Ok(EffectOutcome::target_invalid());
                 }
             }
         }

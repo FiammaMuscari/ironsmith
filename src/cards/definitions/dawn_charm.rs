@@ -35,7 +35,6 @@ mod tests {
     use crate::ability::AbilityKind;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::color::{Color, ColorSet};
-    use crate::effect::EffectResult;
     use crate::effect::{Effect, Until};
     use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::game_state::StackEntry;
@@ -152,7 +151,7 @@ mod tests {
         let effect = Effect::prevent_all_combat_damage(Until::EndOfTurn);
         let result = effect.0.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Verify a prevention shield was added
         assert_eq!(game.prevention_effects.shields().len(), 1);
@@ -236,7 +235,7 @@ mod tests {
             crate::effects::RegenerateEffect::new(ChooseSpec::creature(), Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Creature should have 1 regeneration shield (one-shot replacement effect)
         assert_eq!(
@@ -274,7 +273,7 @@ mod tests {
         )));
         let result = effect.0.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.stack.is_empty());
         // Spell should be in Bob's graveyard
         assert_eq!(game.player(bob).unwrap().graveyard.len(), 1);
@@ -364,7 +363,7 @@ mod tests {
         let result = effect.0.execute(&mut game, &mut ctx).unwrap();
 
         // Spell can't be countered
-        assert_eq!(result.result, EffectResult::Protected);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Protected);
         assert_eq!(game.stack.len(), 1);
     }
 
@@ -392,7 +391,7 @@ mod tests {
         let result = effect.0.execute(&mut game, &mut ctx).unwrap();
 
         // Should work - one of the targets is Alice
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.stack.is_empty());
     }
 

@@ -1,6 +1,6 @@
 //! Exchange life totals effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::event_processor::process_life_gain_with_event;
@@ -71,7 +71,7 @@ impl EffectExecutor for ExchangeLifeTotalsEffect {
 
         // Check if life totals can change
         if !game.can_change_life_total(player1_id) || !game.can_change_life_total(player2_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         let mut outcome = EffectOutcome::resolved();

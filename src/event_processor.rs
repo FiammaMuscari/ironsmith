@@ -1745,7 +1745,7 @@ pub fn process_zone_change(
     object: crate::ids::ObjectId,
     from: Zone,
     to: Zone,
-    dm: &mut (impl DecisionMaker + ?Sized),
+    dm: &mut dyn DecisionMaker,
 ) -> ZoneChangeOutcome {
     use crate::events::{ZoneChangeEvent, downcast_event};
 
@@ -1770,7 +1770,7 @@ pub fn process_zone_change(
         .object(object)
         .map(|o| crate::snapshot::ObjectSnapshot::from_object(o, game));
 
-    let event = Event::zone_change(object, from, requested_to, snapshot);
+    let event = Event::zone_change(object, from, requested_to, snapshot.clone());
     let result = process_with_dm(game, event.clone(), dm); // dm is already &mut Option
 
     match result {
@@ -1782,7 +1782,19 @@ pub fn process_zone_change(
                 EventOutcome::Proceed(requested_to)
             }
         }
-        TraitEventResult::Replaced { .. } => EventOutcome::Replaced,
+        TraitEventResult::Replaced { effects, effect_id } => {
+            game.replacement_effects.mark_effect_used(effect_id);
+            let controller = game
+                .object(object)
+                .map(|obj| obj.controller)
+                .or_else(|| snapshot.as_ref().map(|snap| snap.controller))
+                .unwrap_or(PlayerId::from_index(0));
+            let mut ctx = crate::executor::ExecutionContext::new(object, controller, dm);
+            for effect in effects {
+                let _ = crate::executor::execute_effect(game, &effect, &mut ctx);
+            }
+            EventOutcome::Replaced
+        }
         TraitEventResult::NeedsChoice { .. } => {
             debug_assert!(
                 false,

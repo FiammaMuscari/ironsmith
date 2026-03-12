@@ -76,14 +76,14 @@ pub use combat::{
     SetBasePowerToughnessEffect,
 };
 pub use composition::{
-    AdaptEffect, BeholdEffect, BolsterEffect, ChooseModeEffect, ChooseObjectsEffect,
-    ConditionalEffect, CounterAbilityEffect, EmitKeywordActionEffect, ExploreEffect,
-    ForEachControllerOfTaggedEffect, ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
-    ForPlayersEffect, IfEffect, ManifestDreadEffect, MayEffect, OpenAttractionEffect,
-    ReflexiveTriggerEffect, RepeatProcessEffect, SequenceEffect, SupportEffect, TagAllEffect,
-    TagAttachedToSourceEffect, TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect,
-    TaggedEffect, TargetOnlyEffect, UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption,
-    WithIdEffect,
+    AdaptEffect, BackupEffect, BeholdEffect, BolsterEffect, CastEncodedCardCopyEffect,
+    ChooseModeEffect, ChooseObjectsEffect, CipherEffect, ConditionalEffect, CounterAbilityEffect,
+    DevourEffect, EmitKeywordActionEffect, ExploreEffect, ForEachControllerOfTaggedEffect,
+    ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect, ForPlayersEffect, IfEffect,
+    ManifestDreadEffect, MayEffect, OpenAttractionEffect, ReflexiveTriggerEffect,
+    RepeatProcessEffect, SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
+    TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect,
+    UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
 };
 pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};

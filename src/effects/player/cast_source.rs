@@ -4,7 +4,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
@@ -49,14 +49,14 @@ impl EffectExecutor for CastSourceEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let source_id = ctx.source;
         let Some(source_obj) = game.object(source_id) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         if source_obj.is_land() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
         if self.require_exile && source_obj.zone != Zone::Exile {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let from_zone = source_obj.zone;
@@ -71,11 +71,11 @@ impl EffectExecutor for CastSourceEffect {
             && let Some(cost) = mana_cost.as_ref()
             && !game.try_pay_mana_cost(ctx.controller, None, cost, 0)
         {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         }
 
         let Some(new_id) = game.move_object(source_id, Zone::Stack) else {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         };
 
         if let Some(obj) = game.object_mut(new_id) {
@@ -111,7 +111,7 @@ impl EffectExecutor for CastSourceEffect {
 
         game.push_to_stack(stack_entry);
         Ok(with_spell_cast_event(
-            EffectOutcome::from_result(EffectResult::Objects(vec![new_id])),
+            EffectOutcome::with_objects(vec![new_id]),
             game,
             new_id,
             ctx.controller,

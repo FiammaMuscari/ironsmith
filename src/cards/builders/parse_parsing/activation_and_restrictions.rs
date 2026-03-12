@@ -5507,7 +5507,8 @@ pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordActi
         "indestructible" => Some(KeywordAction::Indestructible),
         "shroud" => Some(KeywordAction::Shroud),
         "assist" => Some(KeywordAction::Assist),
-        "cipher" => Some(KeywordAction::Marker("cipher")),
+        "backup" => Some(KeywordAction::Marker("backup")),
+        "cipher" => Some(KeywordAction::Cipher),
         "devoid" => Some(KeywordAction::Devoid),
         "dethrone" => Some(KeywordAction::Dethrone),
         "enlist" => Some(KeywordAction::Enlist),
@@ -5653,6 +5654,16 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             return Some(KeywordAction::Bloodthirst(amount));
         }
         return Some(KeywordAction::Marker("bloodthirst"));
+    }
+
+    // Backup appears as "Backup N" and is often followed by reminder text.
+    if words.first().copied() == Some("backup") {
+        if words.len() >= 2
+            && let Ok(amount) = words[1].parse::<u32>()
+        {
+            return Some(KeywordAction::Backup(amount));
+        }
+        return Some(KeywordAction::Marker("backup"));
     }
 
     // Rampage appears as "Rampage N" and is often followed by reminder text.
@@ -5836,9 +5847,73 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Marker("ninjutsu"));
     }
 
+    if words.first().copied() == Some("dash") {
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Dash(cost));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("dash"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("dash"));
+    }
+
+    if words.first().copied() == Some("plot") {
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Plot(cost));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("plot"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("plot"));
+    }
+
+    if words.first().copied() == Some("suspend") {
+        if let Some(time_word) = words.get(1)
+            && let Ok(time) = time_word.parse::<u32>()
+            && let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[2..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Suspend { time, cost });
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("suspend"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("suspend"));
+    }
+
+    if words.first().copied() == Some("disturb") {
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Disturb(cost));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("disturb"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("disturb"));
+    }
+
     if words.first().copied() == Some("foretell") {
-        if let Some((display, _consumed)) = leading_mana_symbols_to_oracle(&words[1..]) {
-            return Some(KeywordAction::MarkerText(format!("Foretell {display}")));
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Foretell(cost));
         }
         if words.len() == 1 {
             return Some(KeywordAction::Marker("foretell"));
@@ -5847,6 +5922,21 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             return Some(KeywordAction::MarkerText(display));
         }
         return Some(KeywordAction::Marker("foretell"));
+    }
+
+    if words.first().copied() == Some("spectacle") {
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Spectacle(cost));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("spectacle"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("spectacle"));
     }
 
     if words.first().copied() == Some("companion") {
@@ -5901,8 +5991,10 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     }
 
     if words.first().copied() == Some("overload") {
-        if let Some((display, _consumed)) = leading_mana_symbols_to_oracle(&words[1..]) {
-            return Some(KeywordAction::MarkerText(format!("Overload {display}")));
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+        {
+            return Some(KeywordAction::Overload(cost));
         }
         if words.len() == 1 {
             return Some(KeywordAction::Marker("overload"));
@@ -6012,6 +6104,9 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             && let Ok(amount) = words[1].parse::<u32>()
         {
             return Some(KeywordAction::Vanishing(amount));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Vanishing(0));
         }
         return Some(KeywordAction::Marker("vanishing"));
     }
@@ -6212,6 +6307,10 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         ["afterlife", amount] => {
             let value = amount.parse::<u32>().ok()?;
             KeywordAction::Afterlife(value)
+        }
+        ["backup", amount] => {
+            let value = amount.parse::<u32>().ok()?;
+            KeywordAction::Backup(value)
         }
         ["fabricate", amount] => {
             let value = amount.parse::<u32>().ok()?;
@@ -6973,6 +7072,122 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                 "unsupported filter in put-into-graveyard-from-battlefield trigger clause (clause: '{}')",
                 words.join(" ")
             )));
+        }
+    }
+
+    for tail in [
+        [
+            "is",
+            "put",
+            "into",
+            "your",
+            "graveyard",
+            "from",
+            "the",
+            "battlefield",
+        ]
+        .as_slice(),
+        [
+            "are",
+            "put",
+            "into",
+            "your",
+            "graveyard",
+            "from",
+            "the",
+            "battlefield",
+        ]
+        .as_slice(),
+    ] {
+        if words.ends_with(tail) {
+            let subject_word_len = words.len().saturating_sub(tail.len());
+            let subject_tokens = token_index_for_word_index(tokens, subject_word_len)
+                .map(|idx| &tokens[..idx])
+                .unwrap_or_default();
+            let subject_words = self::words(subject_tokens);
+            if is_source_reference_words(&subject_words) {
+                return Ok(TriggerSpec::PutIntoGraveyardFromZone {
+                    filter: ObjectFilter::source(),
+                    from: Zone::Battlefield,
+                });
+            }
+            let mut filter = parse_object_filter(subject_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported card filter in put-into-your-graveyard-from-battlefield trigger clause (clause: '{}')",
+                    words.join(" ")
+                ))
+            })?;
+            filter.zone = None;
+            filter.controller = None;
+            if filter.owner.is_none() {
+                filter.owner = Some(PlayerFilter::You);
+            }
+            if subject_words
+                .iter()
+                .any(|word| matches!(*word, "card" | "cards"))
+            {
+                filter.nontoken = true;
+            }
+            return Ok(TriggerSpec::PutIntoGraveyardFromZone {
+                filter,
+                from: Zone::Battlefield,
+            });
+        }
+    }
+
+    for tail in [
+        [
+            "is",
+            "put",
+            "into",
+            "an",
+            "opponents",
+            "graveyard",
+            "from",
+            "the",
+            "battlefield",
+        ]
+        .as_slice(),
+        [
+            "are",
+            "put",
+            "into",
+            "an",
+            "opponents",
+            "graveyard",
+            "from",
+            "the",
+            "battlefield",
+        ]
+        .as_slice(),
+    ] {
+        if words.ends_with(tail) {
+            let subject_word_len = words.len().saturating_sub(tail.len());
+            let subject_tokens = token_index_for_word_index(tokens, subject_word_len)
+                .map(|idx| &tokens[..idx])
+                .unwrap_or_default();
+            let subject_words = self::words(subject_tokens);
+            if is_source_reference_words(&subject_words) {
+                let mut filter = ObjectFilter::source();
+                filter.owner = Some(PlayerFilter::Opponent);
+                return Ok(TriggerSpec::PutIntoGraveyardFromZone {
+                    filter,
+                    from: Zone::Battlefield,
+                });
+            }
+            let mut filter = parse_object_filter(subject_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported filter in put-into-opponents-graveyard-from-battlefield trigger clause (clause: '{}')",
+                    words.join(" ")
+                ))
+            })?;
+            filter.zone = None;
+            filter.controller = None;
+            filter.owner = Some(PlayerFilter::Opponent);
+            return Ok(TriggerSpec::PutIntoGraveyardFromZone {
+                filter,
+                from: Zone::Battlefield,
+            });
         }
     }
 

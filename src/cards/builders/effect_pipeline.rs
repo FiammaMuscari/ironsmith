@@ -956,6 +956,15 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
         KeywordAction::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
         KeywordAction::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
+        KeywordAction::Backup(amount) => format!("Backup {amount}"),
+        KeywordAction::Cipher => "Cipher".to_string(),
+        KeywordAction::Dash(cost) => format!("Dash {}", cost.to_oracle()),
+        KeywordAction::Plot(cost) => format!("Plot {}", cost.to_oracle()),
+        KeywordAction::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
+        KeywordAction::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
+        KeywordAction::Overload(cost) => format!("Overload {}", cost.to_oracle()),
+        KeywordAction::Spectacle(cost) => format!("Spectacle {}", cost.to_oracle()),
+        KeywordAction::Foretell(cost) => format!("Foretell {}", cost.to_oracle()),
         KeywordAction::Echo { text, .. } => text.clone(),
         KeywordAction::CumulativeUpkeep { text, .. } => text.clone(),
         KeywordAction::Extort => "Extort".to_string(),
@@ -1081,6 +1090,18 @@ fn infer_triggered_ability_functional_zones(
     };
 
     let normalized = normalized_line.to_ascii_lowercase();
+    for (needle, zone) in [
+        ("if this card is in your hand", Zone::Hand),
+        ("if this card is in your graveyard", Zone::Graveyard),
+        ("if this card is in your library", Zone::Library),
+        ("if this card is in exile", Zone::Exile),
+        ("if this card is in the command zone", Zone::Command),
+    ] {
+        if normalized.contains(needle) {
+            zones = vec![zone];
+            break;
+        }
+    }
     if normalized.contains("return this card from your graveyard") {
         zones = vec![Zone::Graveyard];
     }

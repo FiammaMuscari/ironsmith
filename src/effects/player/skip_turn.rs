@@ -65,7 +65,6 @@ impl EffectExecutor for SkipTurnEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -84,7 +83,7 @@ mod tests {
         let effect = SkipTurnEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.skip_next_turn.contains(&alice));
     }
 
@@ -99,7 +98,7 @@ mod tests {
         let effect = SkipTurnEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.skip_next_turn.contains(&alice));
         assert!(game.skip_next_turn.contains(&bob));
     }

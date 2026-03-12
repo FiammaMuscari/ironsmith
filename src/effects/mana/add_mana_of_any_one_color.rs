@@ -99,7 +99,6 @@ impl EffectExecutor for AddManaOfAnyOneColorEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -117,7 +116,7 @@ mod tests {
         let effect = AddManaOfAnyOneColorEffect::you(3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 3);
     }
 
@@ -131,7 +130,7 @@ mod tests {
         let effect = AddManaOfAnyOneColorEffect::you(0);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -144,7 +143,7 @@ mod tests {
         let effect = AddManaOfAnyOneColorEffect::you(1);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 1);
     }
 
@@ -158,7 +157,7 @@ mod tests {
         let effect = AddManaOfAnyOneColorEffect::you(Value::X);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(5));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5));
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 5);
     }
 
@@ -173,7 +172,7 @@ mod tests {
         let effect = AddManaOfAnyOneColorEffect::new(2, PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 0);
         assert_eq!(game.player(bob).unwrap().mana_pool.green, 2);
     }

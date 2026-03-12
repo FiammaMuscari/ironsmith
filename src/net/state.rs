@@ -118,6 +118,8 @@ impl CanonicalEncode for PublicObjectDigest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CastingMethodSpec {
     Normal,
+    SplitOtherHalf,
+    Fuse,
     Alternative(u32),
     GrantedEscape {
         source: GameObjectId,
@@ -137,27 +139,33 @@ impl CanonicalEncode for CastingMethodSpec {
             CastingMethodSpec::Normal => {
                 0u8.encode(out);
             }
-            CastingMethodSpec::Alternative(index) => {
+            CastingMethodSpec::SplitOtherHalf => {
                 1u8.encode(out);
+            }
+            CastingMethodSpec::Fuse => {
+                2u8.encode(out);
+            }
+            CastingMethodSpec::Alternative(index) => {
+                3u8.encode(out);
                 index.encode(out);
             }
             CastingMethodSpec::GrantedEscape {
                 source,
                 exile_count,
             } => {
-                2u8.encode(out);
+                4u8.encode(out);
                 source.encode(out);
                 exile_count.encode(out);
             }
             CastingMethodSpec::GrantedFlashback => {
-                3u8.encode(out);
+                5u8.encode(out);
             }
             CastingMethodSpec::PlayFrom {
                 source,
                 zone,
                 use_alternative,
             } => {
-                4u8.encode(out);
+                6u8.encode(out);
                 source.encode(out);
                 zone.encode(out);
                 use_alternative.encode(out);
@@ -936,6 +944,8 @@ fn sorted_counter_list(
 fn casting_method_spec(method: &CastingMethod) -> CastingMethodSpec {
     match method {
         CastingMethod::Normal => CastingMethodSpec::Normal,
+        CastingMethod::SplitOtherHalf => CastingMethodSpec::SplitOtherHalf,
+        CastingMethod::Fuse => CastingMethodSpec::Fuse,
         CastingMethod::Alternative(index) => CastingMethodSpec::Alternative(*index as u32),
         CastingMethod::GrantedEscape {
             source,

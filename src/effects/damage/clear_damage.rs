@@ -76,7 +76,6 @@ impl EffectExecutor for ClearDamageEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -121,7 +120,7 @@ mod tests {
         let effect = ClearDamageEffect::source();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.damage_on(creature_id), 0);
     }
 
@@ -140,7 +139,7 @@ mod tests {
         let effect = ClearDamageEffect::specific(creature_id);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.damage_on(creature_id), 0);
     }
 
@@ -158,7 +157,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should succeed even with no damage
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.damage_on(creature_id), 0);
     }
 
@@ -178,7 +177,7 @@ mod tests {
         let effect = ClearDamageEffect::new(ChooseSpec::Tagged("clear_target".into()));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.damage_on(creature_id), 0);
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::decision::FallbackStrategy;
 use crate::decisions::make_boolean_decision;
-use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
+use crate::effect::{Effect, EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::events::LifeLossEvent;
@@ -26,7 +26,7 @@ use crate::triggers::TriggerEvent;
 ///
 /// # Result
 ///
-/// - If player pays: `EffectResult::Declined` (effects prevented)
+/// - If player pays: `crate::effect::OutcomeStatus::Declined` (effects prevented)
 /// - If player doesn't pay: the result of executing inner effects
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnlessPaysEffect {
@@ -211,7 +211,7 @@ impl EffectExecutor for UnlessPaysEffect {
                 // Pay the mana/life cost; if paid successfully, prevent effects.
                 let cost = ManaCost::from_symbols(mana_symbols.clone());
                 if game.try_pay_mana_cost(paying_player, None, &cost, 0) {
-                    let mut outcome = EffectOutcome::from_result(EffectResult::Declined);
+                    let mut outcome = EffectOutcome::declined();
                     if life_to_pay > 0 {
                         if let Some(player) = game.player_mut(paying_player) {
                             player.lose_life(life_to_pay);

@@ -59,7 +59,7 @@ impl EffectExecutor for WithIdEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let outcome = execute_effect(game, &self.effect, ctx)?;
-        ctx.store_result(self.id, outcome.result.clone());
+        ctx.store_outcome(self.id, outcome.clone());
         Ok(outcome)
     }
 
@@ -93,7 +93,6 @@ impl CostExecutableEffect for WithIdEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -111,11 +110,26 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Result should be returned
-        assert_eq!(result.result, EffectResult::Count(5));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5));
 
         // Result should be stored
-        let stored = ctx.get_result(EffectId(0)).unwrap();
-        assert_eq!(*stored, EffectResult::Count(5));
+        let stored = ctx.get_outcome(EffectId(0)).unwrap();
+        assert_eq!(stored.value, crate::effect::OutcomeValue::Count(5));
+    }
+
+    #[test]
+    fn test_with_id_stores_full_outcome() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let outcome = WithIdEffect::new(EffectId(0), Effect::gain_life(5))
+            .execute(&mut game, &mut ctx)
+            .expect("with id should execute");
+
+        let stored = ctx.get_outcome(EffectId(0)).expect("stored outcome");
+        assert_eq!(stored, &outcome);
     }
 
     #[test]
@@ -135,12 +149,12 @@ mod tests {
 
         // Both should be stored
         assert_eq!(
-            *ctx.get_result(EffectId(0)).unwrap(),
-            EffectResult::Count(3)
+            ctx.get_outcome(EffectId(0)).unwrap().value,
+            crate::effect::OutcomeValue::Count(3)
         );
         assert_eq!(
-            *ctx.get_result(EffectId(1)).unwrap(),
-            EffectResult::Count(7)
+            ctx.get_outcome(EffectId(1)).unwrap().value,
+            crate::effect::OutcomeValue::Count(7)
         );
     }
 
@@ -161,8 +175,8 @@ mod tests {
 
         // Should have second result
         assert_eq!(
-            *ctx.get_result(EffectId(0)).unwrap(),
-            EffectResult::Count(7)
+            ctx.get_outcome(EffectId(0)).unwrap().value,
+            crate::effect::OutcomeValue::Count(7)
         );
     }
 

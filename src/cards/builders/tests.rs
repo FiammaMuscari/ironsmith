@@ -488,6 +488,56 @@ fn test_builder_vanishing_creates_counter_upkeep_and_sacrifice_triggers() {
 }
 
 #[test]
+fn test_builder_devour_creates_etb_triggered_effect_without_marker_fallback() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Devour Test")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(1, 1))
+        .devour(2)
+        .build();
+
+    assert_eq!(def.abilities.len(), 1);
+    let ability = &def.abilities[0];
+    assert_eq!(ability.text.as_deref(), Some("Devour 2"));
+    match &ability.kind {
+        AbilityKind::Triggered(triggered) => {
+            assert!(triggered.trigger.display().contains("enters"));
+            let debug = format!("{:?}", triggered.effects);
+            assert!(
+                debug.contains("DevourEffect"),
+                "expected explicit devour runtime effect, got {debug}"
+            );
+            assert!(
+                !debug.contains("KeywordMarker"),
+                "devour should not lower to a keyword marker, got {debug}"
+            );
+        }
+        _ => panic!("expected triggered devour ability"),
+    }
+}
+
+#[test]
+fn test_builder_bloodthirst_creates_real_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bloodthirst Test")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .bloodthirst(3)
+        .build();
+
+    assert_eq!(def.abilities.len(), 1);
+    let ability = &def.abilities[0];
+    assert_eq!(ability.text.as_deref(), Some("Bloodthirst 3"));
+    let debug = format!("{ability:?}");
+    assert!(
+        debug.contains("Bloodthirst"),
+        "expected bloodthirst static ability, got {debug}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker"),
+        "bloodthirst should not lower to a keyword marker, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_soulshift_keyword_line_compiles_keyword_text() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Soulshift Parse Test")
         .card_types(vec![CardType::Creature])
@@ -516,6 +566,115 @@ fn test_parse_outlast_keyword_line_compiles_keyword_text() {
     assert!(
         rendered.contains("Outlast {W}"),
         "expected outlast keyword render, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_devour_keyword_line_compiles_without_unsupported_marker() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Devour Parse Test")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Devour 2 (As this creature enters, you may sacrifice any number of creatures. This creature enters with twice that many +1/+1 counters on it.)",
+        )
+        .expect("devour keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    let debug = format!("{def:#?}");
+    assert!(
+        rendered.contains("devour 2"),
+        "expected devour keyword render, got {rendered}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker")
+            && !debug.contains("RuleTextPlaceholder")
+            && !debug.contains("UnsupportedParserLine"),
+        "devour parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_bloodthirst_keyword_line_compiles_without_unsupported_marker() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bloodthirst Parse Test")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Bloodthirst 3 (If an opponent was dealt damage this turn, this creature enters with three +1/+1 counters on it.)",
+        )
+        .expect("bloodthirst keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    let debug = format!("{def:#?}");
+    assert!(
+        rendered.contains("bloodthirst 3"),
+        "expected bloodthirst keyword render, got {rendered}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker")
+            && !debug.contains("RuleTextPlaceholder")
+            && !debug.contains("UnsupportedParserLine"),
+        "bloodthirst parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_backup_keyword_line_compiles_to_explicit_etb_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Backup Parse Test")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Backup 1\nFlying")
+        .expect("backup keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    let debug = format!("{def:#?}");
+    assert!(
+        rendered.contains("backup 1"),
+        "expected backup keyword render, got {rendered}"
+    );
+    assert!(
+        debug.contains("BackupEffect"),
+        "expected backup to lower to an explicit effect, got {debug}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker"),
+        "backup parse should not leave a placeholder marker, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_repeated_backup_keyword_line_compiles_each_instance() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Repeated Backup Parse Test")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Backup 1, backup 1, backup 1 (When this creature enters, put a +1/+1 counter on target creature. If that's another creature, it gains the following abilities until end of turn. Each backup ability triggers separately.)\nFlying",
+        )
+        .expect("repeated backup keyword line should parse");
+
+    let debug = format!("{def:#?}");
+    let backup_effect_count = debug.matches("BackupEffect").count();
+    assert_eq!(
+        backup_effect_count, 3,
+        "expected three backup triggers, got {debug}"
+    );
+    assert!(
+        !debug.contains("KeywordFallbackText"),
+        "repeated backup should not remain a fallback marker, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_plain_vanishing_keyword_line_compiles_without_marker() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Vanishing Parse Test")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Vanishing")
+        .expect("plain vanishing keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    let debug = format!("{def:#?}");
+    assert!(
+        rendered.contains("Vanishing"),
+        "expected vanishing keyword render, got {rendered}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker"),
+        "plain vanishing should not remain a marker, got {debug}"
     );
 }
 
@@ -2446,6 +2605,18 @@ fn test_parse_marker_keyword_with_cost_keeps_cost_in_render() {
         rendered.contains("Dash {2}{B}"),
         "expected dash cost in render output, got {rendered}"
     );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Dash { cost } => {
+            assert_eq!(cost.to_oracle(), "{2}{B}");
+        }
+        other => panic!("expected dash alternative cast, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "dash parse should avoid unsupported placeholders, got {debug}"
+    );
 }
 
 #[test]
@@ -2619,12 +2790,17 @@ fn test_parse_vanishing_keyword_line() {
         .parse_text(
             "Vanishing 3 (This creature enters with three time counters on it. At the beginning of your upkeep, remove a time counter from it. When the last is removed, sacrifice it.)",
         )
-        .expect("vanishing line should parse as marker keyword");
+        .expect("vanishing line should parse as explicit mechanic");
 
     let rendered = oracle_like_lines(&def).join(" ");
+    let debug = format!("{def:#?}");
     assert!(
         rendered.contains("Vanishing 3"),
-        "expected vanishing marker in render output, got {rendered}"
+        "expected vanishing render output, got {rendered}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker"),
+        "expected vanishing to avoid keyword markers, got {debug}"
     );
 }
 
@@ -3014,6 +3190,185 @@ fn test_parse_suspend_keyword_line_with_reminder_text_keeps_suspend_clause() {
     assert!(
         !rendered.contains("unsupported parser line fallback"),
         "suspend keyword line should not rely on unsupported fallback marker: {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Suspend { cost, time } => {
+            assert_eq!(*time, 3);
+            assert_eq!(cost.to_oracle(), "{0}");
+        }
+        other => panic!("expected suspend metadata, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "suspend parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_plot_keyword_line_compiles_to_alternative_cast() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Plot Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Plot {2}{R} (You may pay {2}{R} and exile this card from your hand. Cast it as a sorcery on a later turn without paying its mana cost. Plot only as a sorcery.)",
+        )
+        .expect("plot keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Plot {2}{R}"),
+        "expected plot cost in render output, got {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Plot { cost } => {
+            assert_eq!(cost.to_oracle(), "{2}{R}");
+        }
+        other => panic!("expected plot alternative cast, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "plot parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_foretell_keyword_line_compiles_to_alternative_cast() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Foretell Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Foretell {1}{U} (During your turn, you may pay {2} and exile this card from your hand face down. Cast it on a later turn for its foretell cost.)",
+        )
+        .expect("foretell keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Foretell {1}{U}"),
+        "expected foretell cost in render output, got {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Foretell { cost } => {
+            assert_eq!(cost.to_oracle(), "{1}{U}");
+        }
+        other => panic!("expected foretell alternative cast, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "foretell parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_spectacle_keyword_line_compiles_to_alternative_cast() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Spectacle Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Spectacle {R} (You may cast this spell for its spectacle cost rather than its mana cost if an opponent lost life this turn.)",
+        )
+        .expect("spectacle keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Spectacle") || rendered.contains("opponent lost life this turn"),
+        "expected spectacle render output, got {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        debug.contains("spectacle") && !debug.contains("unsupported"),
+        "spectacle parse should lower to a real alternative cost, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_disturb_keyword_line_compiles_to_alternative_cast() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Disturb Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Disturb {1}{W} (You may cast this card from your graveyard transformed for its disturb cost.)",
+        )
+        .expect("disturb keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Disturb {1}{W}"),
+        "expected disturb render output, got {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Disturb { cost } => {
+            assert_eq!(cost.to_oracle(), "{1}{W}");
+        }
+        other => panic!("expected disturb alternative cast, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "disturb parse should avoid unsupported placeholders, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_cipher_keyword_line_compiles_to_real_spell_effect() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cipher Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Draw a card.\nCipher")
+        .expect("cipher keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Cipher"),
+        "expected cipher render output, got {rendered}"
+    );
+    let debug = format!("{def:#?}");
+    assert!(
+        debug.contains("CipherEffect"),
+        "expected cipher to compile to a first-class effect, got {debug}"
+    );
+    assert!(
+        !debug.contains("KeywordMarker"),
+        "cipher should not remain a keyword marker, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_overload_keyword_line_compiles_to_alternative_cast_and_rewritten_effects() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Overload Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Target creature you control gets +1/+0 until end of turn.\nOverload {1}{R} (You may cast this spell for its overload cost. If you do, change \"target\" in its text to \"each.\")",
+        )
+        .expect("overload keyword line should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Overload {1}{R}"),
+        "expected overload render output, got {rendered}"
+    );
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Overload { cost, effects } => {
+            assert_eq!(cost.to_oracle(), "{1}{R}");
+            assert!(
+                !effects.is_empty(),
+                "expected overload to compile a rewritten effect tree"
+            );
+            let debug = format!("{effects:?}");
+            assert!(
+                !debug.contains("Target("),
+                "expected overloaded effects to be non-targeted, got {debug}"
+            );
+        }
+        other => panic!("expected overload alternative cast, got {other:?}"),
+    }
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("unsupported"),
+        "overload parse should avoid unsupported placeholders, got {debug}"
     );
 }
 
@@ -5791,6 +6146,59 @@ fn test_commander_recursion_trigger_uses_graveyard_zone_and_commander_filter() {
     assert!(
         compact.contains("is_commander:true") && compact.contains("owner:Some(You"),
         "expected your-commander ownership filter on both branches, got {trigger_debug}"
+    );
+}
+
+#[test]
+fn test_parse_bridge_from_below_compiles_graveyard_triggers() {
+    use crate::zone::Zone;
+
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bridge from Below")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "Whenever a nontoken creature is put into your graveyard from the battlefield, if this card is in your graveyard, create a 2/2 black Zombie creature token.\nWhen a creature is put into an opponent's graveyard from the battlefield, if this card is in your graveyard, exile this card.",
+        )
+        .expect("Bridge from Below should parse without unsupported fallback");
+
+    assert_eq!(def.abilities.len(), 2, "expected two triggered abilities");
+    assert!(
+        def.abilities.iter().all(|ability| {
+            matches!(&ability.kind, AbilityKind::Triggered(_))
+                && ability.functional_zones == vec![Zone::Graveyard]
+        }),
+        "expected both Bridge triggers to function from graveyard, got {:?}",
+        def.abilities
+    );
+
+    let triggers = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) => Some(triggered),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(triggers.len(), 2, "expected two triggered abilities");
+    assert_eq!(
+        triggers[0].intervening_if,
+        Some(crate::ConditionExpr::SourceIsInZone(Zone::Graveyard)),
+        "expected Bridge token trigger to recheck that the source is still in the graveyard"
+    );
+    let first_trigger_debug = format!("{:?}", triggers[0].trigger);
+    assert!(
+        first_trigger_debug.contains("from: Specific(Battlefield)")
+            && first_trigger_debug.contains("owner: Some(You)")
+            && first_trigger_debug.contains("nontoken: true"),
+        "expected first Bridge trigger to watch your creature dying from the battlefield, got {first_trigger_debug}"
+    );
+
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("create a 2/2 black zombie creature token")
+            && rendered.contains("exile this")
+            && rendered.contains("an opponent")
+            && rendered.contains("dies"),
+        "expected both Bridge abilities in compiled text, got {rendered}"
     );
 }
 
@@ -11723,6 +12131,36 @@ fn parse_destroy_source_and_target_blocking_sentence() {
 }
 
 #[test]
+fn parse_lesser_werewolf_activated_ability() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(54), "Lesser Werewolf")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{B}: If this creature's power is 1 or more, it gets -1/-0 until end of turn and put a -0/-1 counter on target creature blocking or blocked by this creature. Activate only during the declare blockers step.",
+        )
+        .expect("parse Lesser Werewolf activated ability");
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("this creature's power is 1 or more")
+            || joined.contains("this creatures power is 1 or more"),
+        "expected source-power condition in compiled text, got {joined}"
+    );
+    assert!(
+        joined.contains("gets -1/-0 until end of turn"),
+        "expected self-shrink effect in compiled text, got {joined}"
+    );
+    assert!(
+        joined.contains("target creature") && joined.contains("blocking"),
+        "expected combat target clause in compiled text, got {joined}"
+    );
+    let debug = format!("{:#?}", def);
+    assert!(
+        !debug.contains("UnsupportedParserLine"),
+        "did not expect unsupported parser line after parse, got {debug}"
+    );
+}
+
+#[test]
 fn parse_destroy_target_artifact_creature_enchantment_and_land_sentence() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Decimate Variant")
         .card_types(vec![CardType::Sorcery])
@@ -15811,7 +16249,6 @@ const STRICT_PARSE_REGRESSION_SUCCESS_CARDS: &[&str] = &[
 ];
 
 const STRICT_PARSE_REGRESSION_EXPECTED_FAILURE_CARDS: &[&str] = &[
-    "Bridge from Below",
     "Clown Car",
     "Gemstone Caverns",
     "Gravecrawler",
@@ -15840,7 +16277,7 @@ macro_rules! strict_parse_card_expected_fail_test {
 }
 
 strict_parse_card_test!(strict_parse_blast_zone, "Blast Zone");
-strict_parse_card_expected_fail_test!(strict_parse_bridge_from_below, "Bridge from Below");
+strict_parse_card_test!(strict_parse_bridge_from_below, "Bridge from Below");
 strict_parse_card_test!(strict_parse_cabal_ritual, "Cabal Ritual");
 strict_parse_card_test!(strict_parse_cavern_of_souls, "Cavern of Souls");
 strict_parse_card_expected_fail_test!(strict_parse_clown_car, "Clown Car");
@@ -15996,6 +16433,26 @@ fn parse_dauthi_voidwalker_void_counter_target_phrase() {
             "{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.",
         )
         .expect("tagged counter-state exiled-card choice should parse");
+}
+
+#[test]
+fn parse_dauthi_voidwalker_full_text_without_parser_fallback() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Dauthi Voidwalker Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Shadow\nIf a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.\n{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.",
+        )
+        .expect("Dauthi Voidwalker text should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("UnsupportedParserLine"),
+        "expected full Dauthi text to avoid unsupported parser fallbacks, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("ExileToCounteredExileInsteadOfGraveyard"),
+        "expected Dauthi replacement ability to lower to a real static ability, got {abilities_debug}"
+    );
 }
 
 #[test]

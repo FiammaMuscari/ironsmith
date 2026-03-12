@@ -7,7 +7,7 @@ use crate::decisions::context::{
     SelectObjectsContext, SelectOptionsContext, SelectableObject, SelectableOption,
     TargetRequirementContext, TargetsContext,
 };
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     resolve_objects_from_spec, resolve_player_filter, resolve_players_from_spec,
@@ -522,7 +522,7 @@ impl EffectExecutor for RetargetStackObjectEffect {
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(changed)).with_events(events))
+        Ok(EffectOutcome::count(changed).with_events(events))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

@@ -30,7 +30,7 @@ mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::color::Color;
-    use crate::effect::{Effect, EffectResult};
+    use crate::effect::{Effect};
     use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, PlayerId};
@@ -395,7 +395,7 @@ mod tests {
         }
 
         // Should sacrifice nothing
-        assert_eq!(result.unwrap().result, EffectResult::Count(0));
+        assert_eq!(result.unwrap().value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -412,13 +412,9 @@ mod tests {
 
         // Execute the effect
         let mut ctx = ExecutionContext::new_default(source, alice);
-        let mut result = None;
         for effect in cataclysm_effects() {
-            result = Some(effect.0.execute(&mut game, &mut ctx).unwrap());
+            effect.0.execute(&mut game, &mut ctx).unwrap();
         }
-
-        // Nothing should be sacrificed
-        assert_eq!(result.unwrap().result, EffectResult::Count(0));
 
         // All four should still be on battlefield
         assert!(

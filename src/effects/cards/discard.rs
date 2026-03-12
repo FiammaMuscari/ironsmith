@@ -1,8 +1,9 @@
 //! Discard effect implementation.
 
-use crate::effect::{EffectOutcome, Value};
+use crate::effect::{EffectOutcome, ExecutionFact, Value};
 use crate::effects::helpers::{normalize_object_selection, resolve_player_filter, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
+use crate::events::cards::DiscardEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
@@ -134,7 +135,9 @@ impl EffectExecutor for DiscardEffect {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
         let mut discarded = 0;
+        let mut discarded_cards = Vec::new();
         let mut discarded_snapshots = Vec::new();
+        let mut discard_events = Vec::new();
 
         let mut hand_cards: Vec<_> = game
             .player(player_id)
@@ -187,6 +190,7 @@ impl EffectExecutor for DiscardEffect {
         // Discard each card using the event system. The cause is inherited from
         // the execution context so discard-as-cost stays cost-caused.
         let cause = ctx.cause.clone();
+        let chosen_cards = cards_to_discard.clone();
         for card_id in cards_to_discard {
             let result = execute_discard(
                 game,
@@ -199,7 +203,14 @@ impl EffectExecutor for DiscardEffect {
             );
             if !result.prevented {
                 discarded += 1;
-                if let Some(obj) = game.object(card_id) {
+                discarded_cards.push(card_id);
+                discard_events.push(crate::triggers::TriggerEvent::new_with_provenance(
+                    DiscardEvent::with_cause(card_id, player_id, cause.clone())
+                        .with_destination(result.final_zone),
+                    ctx.provenance,
+                ));
+                let snapshot_id = result.new_id.unwrap_or(card_id);
+                if let Some(obj) = game.object(snapshot_id) {
                     discarded_snapshots.push(ObjectSnapshot::from_object(obj, game));
                 }
             }
@@ -211,7 +222,14 @@ impl EffectExecutor for DiscardEffect {
             ctx.tag_objects(tag.clone(), discarded_snapshots);
         }
 
-        Ok(EffectOutcome::count(discarded))
+        let mut outcome = EffectOutcome::count(discarded)
+            .with_events(discard_events)
+            .with_execution_fact(ExecutionFact::ChosenObjects(chosen_cards));
+        if !discarded_cards.is_empty() {
+            outcome = outcome.with_execution_fact(ExecutionFact::AffectedObjects(discarded_cards));
+        }
+
+        Ok(outcome)
     }
 
     fn cost_description(&self) -> Option<String> {
@@ -296,7 +314,8 @@ impl CostExecutableEffect for DiscardEffect {
 mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
-    use crate::effect::EffectResult;
+    use crate::effect::{ExecutionFact};
+    use crate::events::cards::DiscardEvent;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -338,7 +357,7 @@ mod tests {
         let effect = DiscardEffect::you(2);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().hand.len(), 1);
     }
 
@@ -355,7 +374,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Only discarded 1 card (all that was in hand)
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert!(game.player(alice).unwrap().hand.is_empty());
     }
 
@@ -369,7 +388,7 @@ mod tests {
         let effect = DiscardEffect::you(1);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -387,7 +406,7 @@ mod tests {
         let effect = DiscardEffect::new(Value::X, PlayerFilter::You, false);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().hand.len(), 2);
     }
 
@@ -492,7 +511,44 @@ mod tests {
         );
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert!(!game.player(alice).unwrap().hand.contains(&source));
+    }
+
+    #[test]
+    fn test_discard_emits_events_and_object_facts() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let first = add_card_to_hand(&mut game, "Card 1", alice);
+        let second = add_card_to_hand(&mut game, "Card 2", alice);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.targets = vec![
+            crate::executor::ResolvedTarget::Object(first),
+            crate::executor::ResolvedTarget::Object(second),
+        ];
+
+        let effect = DiscardEffect::you(2);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::ChosenObjects(vec![first, second]))
+        );
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::AffectedObjects(vec![first, second]))
+        );
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(
+            result.events[0]
+                .downcast::<DiscardEvent>()
+                .expect("discard event")
+                .player,
+            alice
+        );
     }
 }

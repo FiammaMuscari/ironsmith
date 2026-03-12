@@ -1,6 +1,6 @@
 //! Move counters effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -77,7 +77,7 @@ impl EffectExecutor for MoveCountersEffect {
 
         // Get from and to targets from resolved targets
         let Some((from_id, to_id)) = ctx.resolve_two_object_targets() else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         // Get current counter count on source
@@ -199,7 +199,7 @@ mod tests {
         let effect = MoveCountersEffect::plus_one_counters(3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
 
         let from_obj = game.object(from_id).unwrap();
         assert_eq!(
@@ -234,7 +234,7 @@ mod tests {
         let effect = MoveCountersEffect::plus_one_counters(5);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2)); // Limited by available
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2)); // Limited by available
 
         // When all counters are removed, the entry is removed from the HashMap
         assert_eq!(game.counter_count(from_id, CounterType::PlusOnePlusOne), 0);
@@ -257,7 +257,7 @@ mod tests {
         let effect = MoveCountersEffect::plus_one_counters(3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
         let effect = MoveCountersEffect::plus_one_counters(3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]

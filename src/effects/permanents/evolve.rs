@@ -1,6 +1,6 @@
 //! Evolve keyword effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::events::EnterBattlefieldEvent;
 use crate::events::other::{KeywordActionEvent, KeywordActionKind};
@@ -79,7 +79,7 @@ impl EffectExecutor for EvolveEffect {
             return Ok(EffectOutcome::count(0));
         }
 
-        let mut outcome = EffectOutcome::new(EffectResult::Count(1), Vec::new());
+        let mut outcome = EffectOutcome::count(1);
         if let Some(counter_event) = game.add_counters_with_source(
             source_id,
             CounterType::PlusOnePlusOne,
@@ -101,7 +101,6 @@ impl EffectExecutor for EvolveEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::ids::{CardId, PlayerId};
     use crate::triggers::TriggerEvent;
@@ -145,7 +144,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute evolve");
 
-        assert_eq!(outcome.result, EffectResult::Count(1));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
         let source_obj = game.object(source).expect("source exists");
         assert_eq!(
             source_obj
@@ -176,7 +175,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("execute evolve");
 
-        assert_eq!(outcome.result, EffectResult::Count(0));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(0));
         let source_obj = game.object(source).expect("source exists");
         assert_eq!(
             source_obj

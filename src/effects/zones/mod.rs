@@ -50,7 +50,7 @@ pub(crate) fn apply_zone_change(
     object_id: ObjectId,
     from: Zone,
     to: Zone,
-    decision_maker: &mut (impl DecisionMaker + ?Sized),
+    decision_maker: &mut dyn DecisionMaker,
 ) -> EventOutcome<AppliedZoneChange> {
     match process_zone_change(game, object_id, from, to, decision_maker) {
         EventOutcome::Proceed(final_zone) => {

@@ -1,7 +1,7 @@
 //! Add mana effect implementation.
 
 use super::choice_helpers::credit_mana_symbols_from_context;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -52,9 +52,7 @@ impl EffectExecutor for AddManaEffect {
 
         credit_mana_symbols_from_context(game, player_id, self.mana.iter().copied(), ctx);
 
-        Ok(EffectOutcome::from_result(EffectResult::ManaAdded(
-            self.mana.clone(),
-        )))
+        Ok(EffectOutcome::mana_added(self.mana.clone()))
     }
 
     fn producible_mana_symbols(
@@ -87,8 +85,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Green])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Green])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 1);
     }
@@ -104,8 +102,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Green, ManaSymbol::Green])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Green, ManaSymbol::Green])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 2);
     }
@@ -121,8 +119,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Red, ManaSymbol::Blue, ManaSymbol::Green])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::Red, ManaSymbol::Blue, ManaSymbol::Green])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.red, 1);
         assert_eq!(game.player(alice).unwrap().mana_pool.blue, 1);
@@ -141,8 +139,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(
-            result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::White])
+            result.value,
+            crate::effect::OutcomeValue::ManaAdded(vec![ManaSymbol::White])
         );
         assert_eq!(game.player(alice).unwrap().mana_pool.white, 0);
         assert_eq!(game.player(bob).unwrap().mana_pool.white, 1);
@@ -158,7 +156,7 @@ mod tests {
         let effect = AddManaEffect::you(vec![]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::ManaAdded(vec![]));
+        assert_eq!(result.value, crate::effect::OutcomeValue::ManaAdded(vec![]));
     }
 
     #[test]

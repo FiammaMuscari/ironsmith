@@ -1,6 +1,6 @@
 //! Shared runtime helpers for tagged effect execution.
 
-use crate::effect::{Effect, EffectOutcome, EffectResult};
+use crate::effect::{Effect, EffectOutcome};
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::executor::{ExecutionContext, ResolvedTarget};
 use crate::game_state::GameState;
@@ -63,10 +63,9 @@ pub(crate) fn apply_tagged_runtime_state(
     state: TaggedRuntimeState,
 ) {
     // Primary post-map path: if the effect returned object IDs, tag those.
-    if let EffectResult::Objects(ids) = &outcome.result
-        && !ids.is_empty()
-    {
-        let snapshots = ids
+    let output_ids = outcome.output_objects();
+    if !output_ids.is_empty() {
+        let snapshots = output_ids
             .iter()
             .filter_map(|id| {
                 game.object(*id)
@@ -125,7 +124,6 @@ fn capture_stable_id_fallback(
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -172,7 +170,7 @@ mod tests {
         let source = game.new_object_id();
         let mut ctx = ExecutionContext::new_default(source, alice);
 
-        let outcome = EffectOutcome::from_result(EffectResult::Objects(vec![creature]));
+        let outcome = EffectOutcome::with_objects(vec![creature]);
         apply_tagged_runtime_state(
             &game,
             &mut ctx,

@@ -3,7 +3,7 @@
 use super::battlefield_entry::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -84,7 +84,7 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
             .ok_or(ExecutionError::ObjectNotFound(target_id))?;
 
         if obj.zone != Zone::Graveyard {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let outcome = move_to_battlefield_with_options(
@@ -96,13 +96,13 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
 
         match outcome {
             BattlefieldEntryOutcome::Moved(new_id) => {
-                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                Ok(EffectOutcome::with_objects(vec![
                     new_id,
-                ])))
+                ]))
             }
             BattlefieldEntryOutcome::Prevented => {
                 // ETB was prevented entirely
-                Ok(EffectOutcome::from_result(EffectResult::Impossible))
+                Ok(EffectOutcome::impossible())
             }
         }
     }
@@ -176,7 +176,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should return Objects with new ID
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Creature should be on battlefield and untapped
@@ -203,7 +203,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should return Objects with new ID
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Creature should be on battlefield and tapped
@@ -229,7 +229,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should fail - target not in graveyard
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should succeed
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let new_id = ids[0];
             // Creature enters under owner's (Bob's) control by default
@@ -288,7 +288,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        let EffectResult::Objects(ids) = result.result else {
+        let crate::effect::OutcomeValue::Objects(ids) = result.value else {
             panic!("Expected Objects result");
         };
         assert_eq!(ids.len(), 1);

@@ -97,7 +97,6 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::combat_state::{AttackTarget, AttackerInfo, is_attacking};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, PlayerId};
     use crate::types::CardType;
@@ -136,7 +135,7 @@ mod tests {
         let outcome = effect
             .execute(&mut game, &mut ctx)
             .expect("effect should resolve");
-        assert_eq!(outcome.result, EffectResult::Count(1));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
         assert!(
             !is_attacking(game.combat.as_ref().expect("combat"), attacker),
             "attacker should be removed from combat"
@@ -161,6 +160,6 @@ mod tests {
         let outcome = effect
             .execute(&mut game, &mut ctx)
             .expect("effect should resolve");
-        assert_eq!(outcome.result, EffectResult::Resolved);
+        assert_eq!(outcome.status, crate::effect::OutcomeStatus::Succeeded);
     }
 }

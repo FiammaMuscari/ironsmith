@@ -80,6 +80,199 @@ fn total_cost_to_payment_effects(total_cost: &TotalCost) -> Vec<Effect> {
         .collect()
 }
 
+fn replace_whole_word_case_insensitive(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    let from_chars = from.chars().count();
+
+    while i < text.len() {
+        let rest = &text[i..];
+        let prefix: String = rest.chars().take(from_chars).collect();
+        if !prefix.is_empty()
+            && prefix.eq_ignore_ascii_case(from)
+            && (i == 0
+                || !text[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric()))
+            && (i + prefix.len() == text.len()
+                || !text[i + prefix.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric()))
+        {
+            let replacement = if prefix
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+            {
+                let mut chars = to.chars();
+                if let Some(first) = chars.next() {
+                    format!("{}{}", first.to_ascii_uppercase(), chars.as_str())
+                } else {
+                    to.to_string()
+                }
+            } else {
+                to.to_string()
+            };
+            out.push_str(&replacement);
+            i += prefix.len();
+            continue;
+        }
+
+        let mut chars = rest.chars();
+        let ch = chars
+            .next()
+            .expect("rest is non-empty while walking replacement text");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn overload_rewritten_text(text: &str) -> Option<String> {
+    let mut rewritten_lines = Vec::new();
+    let mut saw_overload = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.to_ascii_lowercase().starts_with("overload ") {
+            saw_overload = true;
+            continue;
+        }
+        rewritten_lines.push(replace_whole_word_case_insensitive(line, "target", "each"));
+    }
+
+    saw_overload.then(|| rewritten_lines.join("\n"))
+}
+
+fn finalize_overload_definitions(
+    mut definition: CardDefinition,
+    original_builder: &CardDefinitionBuilder,
+    original_text: &str,
+) -> Result<CardDefinition, CardTextError> {
+    let Some(rewritten_text) = overload_rewritten_text(original_text) else {
+        return Ok(definition);
+    };
+
+    if !definition
+        .alternative_casts
+        .iter()
+        .any(|method| matches!(method, AlternativeCastingMethod::Overload { .. }))
+    {
+        return Ok(definition);
+    }
+
+    let overload_builder = original_builder.clone();
+    let (overloaded_definition, _) =
+        effect_pipeline::parse_text_with_annotations(overload_builder, rewritten_text, false)?;
+    let overloaded_effects = overloaded_definition.spell_effect.unwrap_or_default();
+
+    for method in &mut definition.alternative_casts {
+        if let AlternativeCastingMethod::Overload { effects, .. } = method {
+            *effects = overloaded_effects.clone();
+        }
+    }
+
+    Ok(definition)
+}
+
+fn parse_backup_placeholder_amount(ability: &Ability) -> Option<u32> {
+    let AbilityKind::Static(_) = &ability.kind else {
+        return None;
+    };
+
+    let text = ability.text.as_deref()?.trim();
+    let mut parts = text.split_whitespace();
+    if !parts
+        .next()
+        .is_some_and(|part| part.eq_ignore_ascii_case("backup"))
+    {
+        return None;
+    }
+    parts.next()?.trim_end_matches(',').parse::<u32>().ok()
+}
+
+fn backup_granted_abilities_from_slice(abilities: &[Ability]) -> Vec<Ability> {
+    abilities
+        .iter()
+        .filter(|ability| parse_backup_placeholder_amount(ability).is_none())
+        .cloned()
+        .collect()
+}
+
+fn is_cipher_placeholder(ability: &Ability) -> bool {
+    let AbilityKind::Static(_) = &ability.kind else {
+        return false;
+    };
+
+    ability
+        .text
+        .as_deref()
+        .is_some_and(|text| text.trim().eq_ignore_ascii_case("Cipher"))
+}
+
+fn finalize_backup_abilities(mut definition: CardDefinition) -> CardDefinition {
+    if !definition
+        .abilities
+        .iter()
+        .any(|ability| parse_backup_placeholder_amount(ability).is_some())
+    {
+        return definition;
+    }
+
+    let original_abilities = definition.abilities.clone();
+    definition.abilities = original_abilities
+        .iter()
+        .enumerate()
+        .map(|(idx, ability)| {
+            let Some(amount) = parse_backup_placeholder_amount(ability) else {
+                return ability.clone();
+            };
+
+            let granted_abilities =
+                backup_granted_abilities_from_slice(&original_abilities[idx + 1..]);
+            Ability::triggered(
+                Trigger::this_enters_battlefield(),
+                vec![Effect::backup(amount, granted_abilities)],
+            )
+            .with_text(
+                ability
+                    .text
+                    .as_deref()
+                    .unwrap_or_else(|| original_abilities[idx].text.as_deref().unwrap_or("Backup")),
+            )
+        })
+        .collect();
+    definition
+}
+
+fn finalize_cipher_effects(mut definition: CardDefinition) -> CardDefinition {
+    if !definition.abilities.iter().any(is_cipher_placeholder) {
+        return definition;
+    }
+
+    definition
+        .abilities
+        .retain(|ability| !is_cipher_placeholder(ability));
+    definition
+        .spell_effect
+        .get_or_insert_with(Vec::new)
+        .push(Effect::cipher());
+    definition
+}
+
+fn finalize_definition(
+    definition: CardDefinition,
+    original_builder: &CardDefinitionBuilder,
+    original_text: &str,
+) -> Result<CardDefinition, CardTextError> {
+    let definition = finalize_overload_definitions(definition, original_builder, original_text)?;
+    let definition = finalize_backup_abilities(definition);
+    Ok(finalize_cipher_effects(definition))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum KeywordAction {
     Flying,
@@ -133,6 +326,18 @@ pub(crate) enum KeywordAction {
     Outlast(ManaCost),
     Unearth(ManaCost),
     Ninjutsu(ManaCost),
+    Backup(u32),
+    Cipher,
+    Dash(ManaCost),
+    Plot(ManaCost),
+    Suspend {
+        time: u32,
+        cost: ManaCost,
+    },
+    Disturb(ManaCost),
+    Overload(ManaCost),
+    Spectacle(ManaCost),
+    Foretell(ManaCost),
     Echo {
         total_cost: TotalCost,
         text: String,
@@ -369,6 +574,15 @@ impl KeywordAction {
             Self::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
             Self::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
             Self::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
+            Self::Backup(amount) => format!("Backup {amount}"),
+            Self::Cipher => "Cipher".to_string(),
+            Self::Dash(cost) => format!("Dash {}", cost.to_oracle()),
+            Self::Plot(cost) => format!("Plot {}", cost.to_oracle()),
+            Self::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
+            Self::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
+            Self::Overload(cost) => format!("Overload {}", cost.to_oracle()),
+            Self::Spectacle(cost) => format!("Spectacle {}", cost.to_oracle()),
+            Self::Foretell(cost) => format!("Foretell {}", cost.to_oracle()),
             Self::Echo { text, .. } => text.clone(),
             Self::CumulativeUpkeep { text, .. } => text.clone(),
             Self::Casualty(amount) => format!("Casualty {amount}"),
@@ -692,6 +906,10 @@ pub(crate) enum TriggerSpec {
     Dies(ObjectFilter),
     HauntedCreatureDies,
     PutIntoGraveyard(ObjectFilter),
+    PutIntoGraveyardFromZone {
+        filter: ObjectFilter,
+        from: Zone,
+    },
     CardsLeaveYourGraveyard {
         filter: ObjectFilter,
         one_or_more: bool,
@@ -932,6 +1150,8 @@ pub(crate) enum PredicateAst {
         counter_type: CounterType,
         count: u32,
     },
+    SourcePowerAtLeast(u32),
+    SourceIsInZone(Zone),
     YourTurn,
     CreatureDiedThisTurn,
     PermanentLeftBattlefieldUnderYourControlThisTurn,
@@ -2195,6 +2415,15 @@ impl CardDefinitionBuilder {
             KeywordAction::Outlast(cost) => self.outlast(cost),
             KeywordAction::Unearth(cost) => self.unearth(cost),
             KeywordAction::Ninjutsu(cost) => self.ninjutsu(cost),
+            KeywordAction::Backup(amount) => self.backup(amount),
+            KeywordAction::Cipher => self.cipher(),
+            KeywordAction::Dash(cost) => self.dash(cost),
+            KeywordAction::Plot(cost) => self.plot(cost),
+            KeywordAction::Suspend { time, cost } => self.suspend(time, cost),
+            KeywordAction::Disturb(cost) => self.disturb(cost),
+            KeywordAction::Overload(cost) => self.overload(cost),
+            KeywordAction::Spectacle(cost) => self.spectacle(cost),
+            KeywordAction::Foretell(cost) => self.foretell(cost),
             KeywordAction::Echo { total_cost, text } => self.echo(total_cost, text),
             KeywordAction::CumulativeUpkeep {
                 mana_symbols_per_counter,
@@ -2362,7 +2591,12 @@ impl CardDefinitionBuilder {
         self,
         text: impl Into<String>,
     ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        effect_pipeline::parse_text_with_annotations(self, text.into(), false)
+        let text = text.into();
+        let original_builder = self.clone();
+        let (definition, annotations) =
+            effect_pipeline::parse_text_with_annotations(self, text.clone(), false)?;
+        let definition = finalize_definition(definition, &original_builder, &text)?;
+        Ok((definition, annotations))
     }
 
     /// Build a CardDefinition from oracle text, returning parse annotations while
@@ -2371,7 +2605,12 @@ impl CardDefinitionBuilder {
         self,
         text: impl Into<String>,
     ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        effect_pipeline::parse_text_with_annotations(self, text.into(), true)
+        let text = text.into();
+        let original_builder = self.clone();
+        let (definition, annotations) =
+            effect_pipeline::parse_text_with_annotations(self, text.clone(), true)?;
+        let definition = finalize_definition(definition, &original_builder, &text)?;
+        Ok((definition, annotations))
     }
 
     /// Build a CardDefinition from oracle text, prepending metadata lines
@@ -3270,13 +3509,13 @@ impl CardDefinitionBuilder {
     /// This creature enters with N times that many +1/+1 counters on it."
     pub fn devour(self, multiplier: u32) -> Self {
         let text = format!("Devour {multiplier}");
-
-        // Devour is an ETB replacement effect. We approximate it as a triggered
-        // ability that lets you sacrifice creatures and then puts counters.
-        // The "any number" sacrifice + counter multiplication is complex;
-        // we model it as a marker with correct text for now, since the sacrifice-
-        // any-number + dynamic counter count needs dedicated effect support.
-        self.with_ability(Ability::static_ability(StaticAbility::keyword_marker(text)))
+        self.with_ability(
+            Ability::triggered(
+                Trigger::this_enters_battlefield(),
+                vec![Effect::devour(multiplier)],
+            )
+            .with_text(&text),
+        )
     }
 
     /// Add ravenous.
@@ -3655,32 +3894,60 @@ impl CardDefinitionBuilder {
     /// At the beginning of your upkeep, remove a time counter from it.
     /// When the last is removed, sacrifice it."
     pub fn vanishing(self, amount: u32) -> Self {
-        let text = format!("Vanishing {amount}");
-        self.with_ability(
-            Ability::static_ability(StaticAbility::enters_with_counters(
-                CounterType::Time,
-                amount,
+        let text = if amount == 0 {
+            "Vanishing".to_string()
+        } else {
+            format!("Vanishing {amount}")
+        };
+        let mut builder = self;
+        if amount > 0 {
+            builder = builder.with_ability(
+                Ability::static_ability(StaticAbility::enters_with_counters(
+                    CounterType::Time,
+                    amount,
+                ))
+                .with_text(&text),
+            );
+        }
+        builder
+            .with_ability(Ability::triggered(
+                Trigger::beginning_of_upkeep(PlayerFilter::You),
+                vec![Effect::remove_counters(
+                    CounterType::Time,
+                    1,
+                    ChooseSpec::Source,
+                )],
             ))
-            .with_text(&text),
+            .with_ability(Ability {
+                kind: AbilityKind::Triggered(TriggeredAbility {
+                    trigger: Trigger::counter_removed_from(ObjectFilter::source()),
+                    effects: vec![Effect::sacrifice_source()],
+                    choices: vec![],
+                    intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Time)),
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: None,
+            })
+    }
+
+    /// Add backup N as a placeholder printed ability. This is finalized into
+    /// the real ETB trigger after the full card definition has been built, so
+    /// it can grant the abilities printed below it.
+    pub fn backup(self, amount: u32) -> Self {
+        let text = format!("Backup {amount}");
+        self.with_ability(
+            Ability::static_ability(StaticAbility::keyword_marker(text.clone())).with_text(&text),
         )
-        .with_ability(Ability::triggered(
-            Trigger::beginning_of_upkeep(PlayerFilter::You),
-            vec![Effect::remove_counters(
-                CounterType::Time,
-                1,
-                ChooseSpec::Source,
-            )],
-        ))
-        .with_ability(Ability {
-            kind: AbilityKind::Triggered(TriggeredAbility {
-                trigger: Trigger::counter_removed_from(ObjectFilter::source()),
-                effects: vec![Effect::sacrifice_source()],
-                choices: vec![],
-                intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Time)),
-            }),
-            functional_zones: vec![Zone::Battlefield],
-            text: None,
-        })
+    }
+
+    /// Add cipher as a placeholder printed ability.
+    ///
+    /// This is finalized into a resolution add-on after the full definition has
+    /// been built, so generated definitions do not rely on a marker static ability.
+    pub fn cipher(self) -> Self {
+        self.with_ability(
+            Ability::static_ability(StaticAbility::keyword_marker("Cipher")).with_text("Cipher"),
+        )
     }
 
     /// Add modular N.
@@ -4281,6 +4548,70 @@ impl CardDefinitionBuilder {
         self
     }
 
+    /// Add dash with the given cost.
+    pub fn dash(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Dash { cost });
+        self
+    }
+
+    /// Add plot with the given cost.
+    pub fn plot(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Plot { cost });
+        self
+    }
+
+    /// Add suspend with the given time count and cost.
+    pub fn suspend(self, time: u32, cost: ManaCost) -> Self {
+        self.alternative_cast(AlternativeCastingMethod::Suspend { cost, time })
+            .with_ability(Ability {
+                kind: AbilityKind::Triggered(TriggeredAbility {
+                    trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
+                    effects: vec![Effect::remove_counters(
+                        CounterType::Time,
+                        1,
+                        ChooseSpec::Source,
+                    )],
+                    choices: vec![],
+                    intervening_if: None,
+                }),
+                functional_zones: vec![Zone::Exile],
+                text: None,
+            })
+            .with_ability(Ability {
+                kind: AbilityKind::Triggered(TriggeredAbility {
+                    trigger: Trigger::counter_removed_from(ObjectFilter::source()),
+                    effects: vec![Effect::may_single(Effect::new(
+                        crate::effects::CastSourceEffect::new()
+                            .without_paying_mana_cost()
+                            .require_exile(),
+                    ))],
+                    choices: vec![],
+                    intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Time)),
+                }),
+                functional_zones: vec![Zone::Exile],
+                text: None,
+            })
+    }
+
+    /// Add disturb with the given cost.
+    pub fn disturb(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Disturb { cost });
+        self
+    }
+
+    /// Add overload with the given cost.
+    pub fn overload(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Overload {
+                cost,
+                effects: Vec::new(),
+            });
+        self
+    }
+
     /// Add miracle with the given cost.
     ///
     /// Miracle is both an alternative casting method and a triggered ability:
@@ -4305,6 +4636,28 @@ impl CardDefinitionBuilder {
             functional_zones: vec![crate::zone::Zone::Hand], // Only triggers from hand
             text: Some("Miracle".to_string()),
         })
+    }
+
+    /// Add foretell with the given cost.
+    pub fn foretell(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Foretell { cost });
+        self
+    }
+
+    /// Add spectacle with the given cost.
+    pub fn spectacle(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::alternative_cost_with_condition(
+                "Spectacle",
+                Some(cost),
+                Vec::new(),
+                crate::static_abilities::ThisSpellCostCondition::ConditionExpr {
+                    condition: crate::ConditionExpr::OpponentLostLifeThisTurn,
+                    display: "an opponent lost life this turn".to_string(),
+                },
+            ));
+        self
     }
 
     /// Add a custom alternative casting method.
@@ -4512,16 +4865,18 @@ impl CardDefinitionBuilder {
 
     /// Build the card definition.
     pub fn build(self) -> CardDefinition {
-        CardDefinition {
+        let definition = finalize_backup_abilities(CardDefinition {
             card: self.card_builder.build(),
             abilities: self.abilities,
             spell_effect: self.spell_effect,
             aura_attach_filter: self.aura_attach_filter,
             alternative_casts: self.alternative_casts,
+            has_fuse: false,
             optional_costs: self.optional_costs,
             max_saga_chapter: self.max_saga_chapter,
             additional_cost: self.additional_cost,
-        }
+        });
+        finalize_cipher_effects(definition)
     }
 }
 
@@ -5107,6 +5462,26 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 .iter()
                 .any(|e| e.downcast_ref::<ExileInsteadOfGraveyardEffect>().is_some()),
             "should include exile-instead replacement effect"
+        );
+    }
+
+    #[test]
+    fn parse_dauthi_voidwalker_full_text_without_parser_fallback() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Dauthi Voidwalker Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "Shadow\nIf a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.\n{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.",
+            )
+            .expect("Dauthi Voidwalker text should parse");
+
+        let abilities_debug = format!("{:#?}", def.abilities);
+        assert!(
+            !abilities_debug.contains("UnsupportedParserLine"),
+            "expected full Dauthi text to avoid unsupported parser fallbacks, got {abilities_debug}"
+        );
+        assert!(
+            abilities_debug.contains("ExileToCounteredExileInsteadOfGraveyard"),
+            "expected Dauthi replacement ability to lower to a real static ability, got {abilities_debug}"
         );
     }
 

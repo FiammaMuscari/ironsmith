@@ -1,6 +1,6 @@
 //! Move all counters effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -53,7 +53,7 @@ impl EffectExecutor for MoveAllCountersEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Get from and to targets from resolved targets
         let Some((from_id, to_id)) = ctx.resolve_two_object_targets() else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         // Get all counters from source
@@ -100,7 +100,7 @@ impl EffectExecutor for MoveAllCountersEffect {
             }
         }
 
-        outcome.result = crate::effect::EffectResult::Count(total_moved as i32);
+        outcome.set_value(crate::effect::OutcomeValue::Count(total_moved as i32));
         Ok(outcome)
     }
 
@@ -177,7 +177,7 @@ mod tests {
         let effect = MoveAllCountersEffect::between_creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(5)); // 3 + 2
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5)); // 3 + 2
 
         let from_obj = game.object(from_id).unwrap();
         assert!(from_obj.counters.is_empty());
@@ -206,7 +206,7 @@ mod tests {
         let effect = MoveAllCountersEffect::between_creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
         let effect = MoveAllCountersEffect::between_creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(5)); // 3 + 2 moved
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5)); // 3 + 2 moved
 
         let to_obj = game.object(to_id).unwrap();
         assert_eq!(to_obj.counters.get(&CounterType::PlusOnePlusOne), Some(&4)); // 1 + 3
@@ -255,7 +255,7 @@ mod tests {
         let effect = MoveAllCountersEffect::between_creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]

@@ -60,7 +60,6 @@ impl EffectExecutor for ExtraTurnEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -79,7 +78,7 @@ mod tests {
         let effect = ExtraTurnEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.extra_turns.len(), 1);
         assert_eq!(game.extra_turns[0], alice);
     }
@@ -95,7 +94,7 @@ mod tests {
         let effect = ExtraTurnEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.extra_turns.len(), 1);
         assert_eq!(game.extra_turns[0], bob);
     }

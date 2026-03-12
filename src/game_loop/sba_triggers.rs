@@ -573,6 +573,8 @@ pub(super) fn create_triggered_stack_entry_with_targets(
     // Select targets for each target spec
     let mut chosen_targets = Vec::new();
     for target_spec in &trigger.ability.choices {
+        let count = target_spec.count();
+
         // Compute legal targets for this spec
         let legal_targets = compute_legal_targets_with_tagged_objects(
             game,
@@ -582,8 +584,8 @@ pub(super) fn create_triggered_stack_entry_with_targets(
             tagged_objects_ref,
         );
 
-        if legal_targets.is_empty() {
-            // No legal targets - trigger can't go on stack
+        if legal_targets.len() < count.min {
+            // Mandatory targets are missing, so the trigger can't go on the stack.
             return None;
         }
 
@@ -595,24 +597,41 @@ pub(super) fn create_triggered_stack_entry_with_targets(
             vec![crate::decisions::context::TargetRequirementContext {
                 description: format!("target for {}", trigger.source_name),
                 legal_targets: legal_targets.clone(),
-                min_targets: 1,
-                max_targets: Some(1),
+                min_targets: count.min,
+                max_targets: count.max,
             }],
         );
 
         // Get the choice from the decision maker
-        let targets = decision_maker.decide_targets(game, &ctx);
-
-        if let Some(first_target) = targets.first() {
-            chosen_targets.push(*first_target);
-        } else {
-            // No target chosen - use the first legal target as default
-            if let Some(first_legal) = legal_targets.first() {
-                chosen_targets.push(*first_legal);
-            } else {
-                return None;
+        let mut selected_targets = Vec::new();
+        for target in decision_maker.decide_targets(game, &ctx) {
+            if !legal_targets.contains(&target) || selected_targets.contains(&target) {
+                continue;
+            }
+            selected_targets.push(target);
+            if let Some(max_targets) = count.max
+                && selected_targets.len() >= max_targets
+            {
+                break;
             }
         }
+
+        if selected_targets.len() < count.min {
+            for legal_target in &legal_targets {
+                if selected_targets.len() >= count.min {
+                    break;
+                }
+                if !selected_targets.contains(legal_target) {
+                    selected_targets.push(*legal_target);
+                }
+            }
+        }
+
+        if selected_targets.len() < count.min {
+            return None;
+        }
+
+        chosen_targets.extend(selected_targets);
     }
 
     // Add the chosen targets to the stack entry

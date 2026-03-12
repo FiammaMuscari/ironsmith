@@ -41,7 +41,6 @@ impl EffectExecutor for SkipCombatPhasesEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -58,7 +57,7 @@ mod tests {
         let effect = SkipCombatPhasesEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.skip_next_combat_phases.contains(&alice));
     }
 
@@ -73,7 +72,7 @@ mod tests {
         let effect = SkipCombatPhasesEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.skip_next_combat_phases.contains(&alice));
         assert!(game.skip_next_combat_phases.contains(&bob));
     }

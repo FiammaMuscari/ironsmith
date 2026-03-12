@@ -52,7 +52,6 @@ impl EffectExecutor for ExtraTurnAfterNextTurnEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::events::phase::BeginningOfEndStepEvent;
     use crate::game_loop::{put_triggers_on_stack, resolve_stack_entry};
     use crate::ids::PlayerId;
@@ -72,7 +71,7 @@ mod tests {
 
         let effect = ExtraTurnAfterNextTurnEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(
             game.extra_turns.is_empty(),
             "the extra turn should not be queued immediately"

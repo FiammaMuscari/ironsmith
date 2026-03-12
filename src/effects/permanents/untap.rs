@@ -153,7 +153,6 @@ impl CostExecutableEffect for UntapEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -209,7 +208,7 @@ mod tests {
         let effect = UntapEffect::target(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.is_tapped(creature_id));
     }
 
@@ -229,7 +228,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Still resolves even if already untapped
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.is_tapped(creature_id));
     }
 
@@ -247,7 +246,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // For single target, returns Resolved (target existed in ctx.targets)
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -321,7 +320,7 @@ mod tests {
         let effect = UntapEffect::all(ObjectFilter::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert!(!game.is_tapped(creature1));
         assert!(!game.is_tapped(creature2));
         assert!(!game.is_tapped(creature3));
@@ -342,7 +341,7 @@ mod tests {
         let effect = UntapEffect::all(ObjectFilter::creature().you_control());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert!(!game.is_tapped(alice_creature));
         assert!(game.is_tapped(bob_creature));
     }
@@ -362,7 +361,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Only 1 was actually untapped (the tapped one)
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert!(!game.is_tapped(creature1));
         assert!(!game.is_tapped(creature2));
     }
@@ -379,7 +378,7 @@ mod tests {
         let effect = UntapEffect::all(ObjectFilter::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]

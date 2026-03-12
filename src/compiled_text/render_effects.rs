@@ -6727,6 +6727,12 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
     {
         return "Manifest dread".to_string();
     }
+    if effect.downcast_ref::<crate::effects::CipherEffect>().is_some() {
+        return "Cipher".to_string();
+    }
+    if let Some(backup) = effect.downcast_ref::<crate::effects::BackupEffect>() {
+        return format!("Backup {}", backup.amount);
+    }
     if let Some(bolster) = effect.downcast_ref::<crate::effects::BolsterEffect>() {
         return format!("Bolster {}", bolster.amount);
     }
@@ -7592,6 +7598,9 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         .is_some()
     {
         return "Evolve".to_string();
+    }
+    if let Some(devour) = effect.downcast_ref::<crate::effects::DevourEffect>() {
+        return format!("Devour {}", devour.multiplier);
     }
     if let Some(exchange_life) = effect.downcast_ref::<crate::effects::ExchangeLifeTotalsEffect>() {
         return format!(

@@ -5,7 +5,7 @@
 //! - "Destroy all creatures. Their controllers each create a token for each creature
 //!    they controlled that was destroyed this way."
 
-use crate::effect::{Effect, EffectOutcome, EffectResult};
+use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -99,7 +99,7 @@ impl EffectExecutor for ForEachTaggedEffect {
             }
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 }
 
@@ -174,11 +174,11 @@ impl EffectExecutor for ForEachControllerOfTaggedEffect {
 
         for (controller, count) in controller_counts {
             ctx.with_temp_iterated_player(Some(controller), |ctx| {
-                // Store the count in effect_results so Value::TaggedCount can retrieve it
-                // We use a special EffectId for this purpose
-                ctx.effect_results.insert(
+                // Store the count as a temporary outcome so Value::TaggedCount can retrieve it.
+                // We use a special EffectId for this purpose.
+                ctx.store_outcome(
                     crate::effect::EffectId::TAGGED_COUNT,
-                    EffectResult::Count(count as i32),
+                    EffectOutcome::count(count as i32),
                 );
 
                 // Execute all inner effects for this controller
@@ -188,10 +188,10 @@ impl EffectExecutor for ForEachControllerOfTaggedEffect {
                 Ok::<(), ExecutionError>(())
             })?;
         }
-        ctx.effect_results
+        ctx.effect_outcomes
             .remove(&crate::effect::EffectId::TAGGED_COUNT);
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 }
 
@@ -263,7 +263,7 @@ impl EffectExecutor for ForEachTaggedPlayerEffect {
             })?;
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 }
 
@@ -319,7 +319,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should have executed twice (2 creatures)
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         // Alice gained 2 life total
         assert_eq!(game.player(alice).unwrap().life, 22);
     }
@@ -335,7 +335,7 @@ mod tests {
         let effect = ForEachTaggedEffect::new("nonexistent", vec![Effect::gain_life(5)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().life, 20);
     }
 
@@ -416,7 +416,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should have executed twice (2 controllers)
-        assert_eq!(result.result, EffectResult::Count(6));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(6));
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod tests {
             ForEachControllerOfTaggedEffect::new("nonexistent", vec![Effect::gain_life(5)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -490,7 +490,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should have executed twice (2 players)
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         // Alice gained 2 life total
         assert_eq!(game.player(alice).unwrap().life, 22);
     }
@@ -506,7 +506,7 @@ mod tests {
         let effect = ForEachTaggedPlayerEffect::new("nonexistent", vec![Effect::gain_life(5)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
         assert_eq!(game.player(alice).unwrap().life, 20);
     }
 

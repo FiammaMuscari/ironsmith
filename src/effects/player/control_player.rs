@@ -101,7 +101,6 @@ impl EffectExecutor for ControlPlayerEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -119,7 +118,7 @@ mod tests {
         let effect = ControlPlayerEffect::until_end_of_turn(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.controlling_player_for(bob), alice);
 
         game.cleanup_player_control_end_of_turn();
@@ -137,7 +136,7 @@ mod tests {
         let effect = ControlPlayerEffect::during_next_turn(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.controlling_player_for(bob), bob);
 
         game.next_turn();

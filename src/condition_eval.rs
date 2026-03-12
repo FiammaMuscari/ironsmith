@@ -158,6 +158,16 @@ fn evaluate_condition_shared_core(
                 .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
                 .unwrap_or(false),
         ),
+        Condition::SourcePowerAtLeast(min_power) => Some(
+            game.calculated_power(ctx.source)
+                .or_else(|| game.object(ctx.source).and_then(|obj| obj.power()))
+                .is_some_and(|power| power >= *min_power as i32),
+        ),
+        Condition::SourceIsInZone(zone) => Some(
+            game.object(ctx.source)
+                .map(|obj| obj.zone == *zone)
+                .unwrap_or(false),
+        ),
         Condition::PlayerGraveyardHasCardsAtLeast { player, count } => Some(
             game.player(*player)
                 .is_some_and(|p| p.graveyard.len() >= *count),
@@ -231,6 +241,8 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::SourceIsFaceDown => {}
         Condition::SourceHasNoCounter(..) => {}
         Condition::SourceHasCounterAtLeast { .. } => {}
+        Condition::SourcePowerAtLeast(..) => {}
+        Condition::SourceIsInZone(..) => {}
         Condition::ManaSpentToCastThisSpellAtLeast { .. } => {}
         Condition::ColorsOfManaSpentToCastThisSpellOrMore(..) => {}
         Condition::YouControlCommander => {}
@@ -874,6 +886,10 @@ pub fn evaluate_condition_external(
         Condition::SourceIsTapped => game.is_tapped(ctx.source),
         Condition::SourceIsSaddled => game.is_saddled(ctx.source),
         Condition::SourceIsFaceDown => game.is_face_down(ctx.source),
+        Condition::SourcePowerAtLeast(min_power) => game
+            .calculated_power(ctx.source)
+            .or_else(|| game.object(ctx.source).and_then(|obj| obj.power()))
+            .is_some_and(|power| power >= *min_power as i32),
         Condition::SourceIsUntapped => !game.is_tapped(ctx.source),
         Condition::SourceIsAttacking => game
             .combat
@@ -919,6 +935,7 @@ pub fn evaluate_condition_external(
         | Condition::SpellsWereCastLastTurnOrMore(_)
         | Condition::SourceHasNoCounter(_)
         | Condition::SourceHasCounterAtLeast { .. }
+        | Condition::SourceIsInZone(_)
         | Condition::ManaSpentToCastThisSpellAtLeast { .. }
         | Condition::ColorsOfManaSpentToCastThisSpellOrMore(_)
         | Condition::PlayerGraveyardHasCardsAtLeast { .. }
@@ -1484,7 +1501,8 @@ fn evaluate_condition_simple(
         | Condition::TargetManaValueLteColorsSpentToCastThisSpell
         | Condition::SourceIsTapped
         | Condition::SourceIsSaddled
-        | Condition::SourceIsFaceDown => false,
+        | Condition::SourceIsFaceDown
+        | Condition::SourcePowerAtLeast(_) => false,
         Condition::Custom(_)
         | Condition::Unmodeled(_)
         | Condition::LifeTotalOrLess(_)
@@ -1502,6 +1520,7 @@ fn evaluate_condition_simple(
         | Condition::SpellsWereCastLastTurnOrMore(_)
         | Condition::SourceHasNoCounter(_)
         | Condition::SourceHasCounterAtLeast { .. }
+        | Condition::SourceIsInZone(_)
         | Condition::ManaSpentToCastThisSpellAtLeast { .. }
         | Condition::ColorsOfManaSpentToCastThisSpellOrMore(_)
         | Condition::PlayerGraveyardHasCardsAtLeast { .. }
@@ -2073,6 +2092,10 @@ fn evaluate_condition(
         Condition::SourceIsTapped => Ok(game.is_tapped(ctx.source)),
         Condition::SourceIsSaddled => Ok(game.is_saddled(ctx.source)),
         Condition::SourceIsFaceDown => Ok(game.is_face_down(ctx.source)),
+        Condition::SourcePowerAtLeast(min_power) => Ok(game
+            .calculated_power(ctx.source)
+            .or_else(|| game.object(ctx.source).and_then(|obj| obj.power()))
+            .is_some_and(|power| power >= *min_power as i32)),
         Condition::TargetIsAttacking => {
             // Check if the target is among declared attackers
             // Note: Combat attackers are tracked in game_loop, not game_state directly.
@@ -2314,6 +2337,7 @@ fn evaluate_condition(
         | Condition::SpellsWereCastLastTurnOrMore(_)
         | Condition::SourceHasNoCounter(_)
         | Condition::SourceHasCounterAtLeast { .. }
+        | Condition::SourceIsInZone(_)
         | Condition::ManaSpentToCastThisSpellAtLeast { .. }
         | Condition::ColorsOfManaSpentToCastThisSpellOrMore(_)
         | Condition::PlayerGraveyardHasCardsAtLeast { .. }

@@ -387,82 +387,7 @@ fn snapshot_matches_filter(
     filter: &ObjectFilter,
     ctx: &TriggerContext,
 ) -> bool {
-    if !filter.card_types.is_empty()
-        && !filter
-            .card_types
-            .iter()
-            .any(|t| snapshot.card_types.contains(t))
-    {
-        return false;
-    }
-
-    if !filter.subtypes.is_empty()
-        && !filter
-            .subtypes
-            .iter()
-            .any(|t| snapshot.subtypes.contains(t))
-    {
-        return false;
-    }
-
-    if let Some(ref required_colors) = filter.colors
-        && snapshot.colors.intersection(*required_colors).is_empty()
-    {
-        return false;
-    }
-
-    if let Some(ref controller_filter) = filter.controller {
-        use crate::target::PlayerFilter;
-        let matches = match controller_filter {
-            PlayerFilter::You => ctx.filter_ctx.you == Some(snapshot.controller),
-            PlayerFilter::Opponent => ctx.filter_ctx.opponents.contains(&snapshot.controller),
-            PlayerFilter::Any => true,
-            PlayerFilter::Specific(id) => *id == snapshot.controller,
-            _ => true,
-        };
-        if !matches {
-            return false;
-        }
-    }
-
-    if let Some(ref comparison) = filter.power {
-        let Some(power) = snapshot.power else {
-            return false;
-        };
-        if !comparison.satisfies(power) {
-            return false;
-        }
-    }
-
-    if let Some(ref comparison) = filter.toughness {
-        let Some(toughness) = snapshot.toughness else {
-            return false;
-        };
-        if !comparison.satisfies(toughness) {
-            return false;
-        }
-    }
-
-    if let Some(ref required_name) = filter.name
-        && snapshot.name != *required_name
-    {
-        return false;
-    }
-
-    if filter.other {
-        // Zone changes create a new ObjectId (rule 400.7), so "another" checks
-        // must exclude both direct ID matches and same stable object instances.
-        if snapshot.object_id == ctx.source_id {
-            return false;
-        }
-        if let Some(source) = ctx.game.object(ctx.source_id)
-            && source.stable_id == snapshot.stable_id
-        {
-            return false;
-        }
-    }
-
-    true
+    filter.matches_snapshot(snapshot, &ctx.filter_ctx, ctx.game)
 }
 
 impl TriggerMatcher for ZoneChangeTrigger {
@@ -489,9 +414,15 @@ impl TriggerMatcher for ZoneChangeTrigger {
             return false;
         }
 
-        // Check player relation using snapshot if available, otherwise use game state
+        let use_snapshot = self.uses_snapshot() && zc.snapshot.is_some();
+
+        // Check player relation using LKI snapshots only for leave/die-style triggers.
         if self.player != PlayerRelation::Any {
-            let player_matches = if let Some(ref snapshot) = zc.snapshot {
+            let player_matches = if use_snapshot {
+                let snapshot = zc
+                    .snapshot
+                    .as_ref()
+                    .expect("use_snapshot implies a zone-change snapshot");
                 match &self.player {
                     PlayerRelation::You => snapshot.controller == ctx.controller,
                     PlayerRelation::Opponent => snapshot.controller != ctx.controller,
@@ -515,8 +446,13 @@ impl TriggerMatcher for ZoneChangeTrigger {
             }
         }
 
-        // Check object filter using snapshot for LKI
-        if let Some(ref snapshot) = zc.snapshot {
+        // Check object filter using snapshot only when the trigger cares about the
+        // pre-change object state. ETB-style triggers need the live object.
+        if use_snapshot {
+            let snapshot = zc
+                .snapshot
+                .as_ref()
+                .expect("use_snapshot implies a zone-change snapshot");
             if !snapshot_matches_filter(snapshot, &self.object_filter, ctx) {
                 return false;
             }
@@ -539,7 +475,8 @@ impl TriggerMatcher for ZoneChangeTrigger {
             let affected = zc
                 .snapshot
                 .as_ref()
-                .map(|s| s.controller)
+                .filter(|_| use_snapshot)
+                .map(|snapshot| snapshot.controller)
                 .or_else(|| {
                     zc.objects
                         .first()

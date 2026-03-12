@@ -116,7 +116,7 @@ mod tests {
         );
         let outcome = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(outcome.result, crate::effect::EffectResult::Count(1));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().hand.len(), 2);
     }
 }

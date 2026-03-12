@@ -1,6 +1,6 @@
 //! Move an object to second from top of its owner's library.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::event_processor::EventOutcome;
@@ -31,7 +31,7 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
         if object_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let mut moved_ids = Vec::new();
@@ -53,7 +53,7 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
 
             match result {
                 EventOutcome::Prevented => {
-                    return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                    return Ok(EffectOutcome::prevented());
                 }
                 EventOutcome::Proceed(result) => {
                     if let Some(new_id) = result.new_object_id {
@@ -79,12 +79,12 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
         }
 
         if !moved_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(moved_ids)));
+            return Ok(EffectOutcome::with_objects(moved_ids));
         }
         if any_replaced {
-            return Ok(EffectOutcome::from_result(EffectResult::Replaced));
+            return Ok(EffectOutcome::replaced());
         }
-        Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+        Ok(EffectOutcome::target_invalid())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

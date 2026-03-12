@@ -3,6 +3,14 @@ use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype, Supertype};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LinkedFaceLayout {
+    #[default]
+    None,
+    TransformLike,
+    Split,
+}
+
 /// Represents power or toughness values that may be variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PtValue {
@@ -77,6 +85,8 @@ pub struct Card {
     pub defense: Option<u32>,
     /// Reference to other face for DFCs/MDFCs
     pub other_face: Option<CardId>,
+    /// Layout semantics for linked-face cards.
+    pub linked_face_layout: LinkedFaceLayout,
     /// True if this is a token (not a real card)
     pub is_token: bool,
 }
@@ -251,6 +261,7 @@ pub struct CardBuilder {
     loyalty: Option<u32>,
     defense: Option<u32>,
     other_face: Option<CardId>,
+    linked_face_layout: LinkedFaceLayout,
     is_token: bool,
 }
 
@@ -349,6 +360,11 @@ impl CardBuilder {
         self
     }
 
+    pub fn linked_face_layout(mut self, layout: LinkedFaceLayout) -> Self {
+        self.linked_face_layout = layout;
+        self
+    }
+
     /// Mark this as a token (not a real card).
     pub fn token(mut self) -> Self {
         self.is_token = true;
@@ -369,6 +385,7 @@ impl CardBuilder {
             loyalty: self.loyalty,
             defense: self.defense,
             other_face: self.other_face,
+            linked_face_layout: self.linked_face_layout,
             is_token: self.is_token,
         }
     }

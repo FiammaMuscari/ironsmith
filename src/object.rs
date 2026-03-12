@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::ability::Ability;
 use crate::alternative_cast::AlternativeCastingMethod;
-use crate::card::{Card, PtValue};
+use crate::card::{Card, LinkedFaceLayout, PtValue};
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, OptionalCostsPaid, TotalCost};
 use crate::ids::{CardId, ObjectId, PlayerId, StableId};
@@ -288,6 +288,8 @@ pub struct Object {
     ///
     /// This is copied from `Card::other_face` when the object is created.
     pub other_face: Option<CardId>,
+    /// Layout semantics for linked-face cards.
+    pub linked_face_layout: LinkedFaceLayout,
     pub base_power: Option<PtValue>,
     pub base_toughness: Option<PtValue>,
     pub base_loyalty: Option<u32>,
@@ -309,6 +311,8 @@ pub struct Object {
     pub bestow_cast_state: Option<BestowCastState>,
     /// Alternative casting methods (flashback, escape, etc.)
     pub alternative_casts: Vec<AlternativeCastingMethod>,
+    /// True if this split card can be cast fused from hand.
+    pub has_fuse: bool,
     /// Optional costs (kicker, buyback, etc.)
     pub optional_costs: Vec<OptionalCost>,
     /// Which optional costs were paid when this spell was cast (for ETB triggers)
@@ -344,6 +348,14 @@ pub struct Object {
 }
 
 impl Object {
+    fn extend_unique<T: PartialEq + Clone>(base: &mut Vec<T>, extra: &[T]) {
+        for item in extra {
+            if !base.contains(item) {
+                base.push(item.clone());
+            }
+        }
+    }
+
     /// Returns non-mana additional cost components for this object.
     pub fn additional_non_mana_costs(&self) -> Vec<crate::costs::Cost> {
         self.additional_cost.non_mana_costs().cloned().collect()
@@ -372,6 +384,7 @@ impl Object {
             subtypes: card.subtypes.clone(),
             oracle_text: card.oracle_text.clone(),
             other_face: card.other_face,
+            linked_face_layout: card.linked_face_layout,
             base_power,
             base_toughness,
             base_loyalty: card.loyalty,
@@ -384,6 +397,7 @@ impl Object {
             aura_attach_filter: None,
             bestow_cast_state: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
@@ -407,6 +421,7 @@ impl Object {
         obj.aura_attach_filter = def.aura_attach_filter.clone();
         obj.bestow_cast_state = None;
         obj.alternative_casts = def.alternative_casts.clone();
+        obj.has_fuse = def.has_fuse;
         obj.optional_costs = def.optional_costs.clone();
         obj.max_saga_chapter = def.max_saga_chapter;
         obj.additional_cost = def.additional_cost.clone();
@@ -432,6 +447,7 @@ impl Object {
         self.subtypes = def.card.subtypes.clone();
         self.oracle_text = def.card.oracle_text.clone();
         self.other_face = def.card.other_face;
+        self.linked_face_layout = def.card.linked_face_layout;
         self.base_power = base_power;
         self.base_toughness = base_toughness;
         self.base_loyalty = def.card.loyalty;
@@ -442,9 +458,54 @@ impl Object {
         self.aura_attach_filter = def.aura_attach_filter.clone();
         self.bestow_cast_state = None;
         self.alternative_casts = def.alternative_casts.clone();
+        self.has_fuse = def.has_fuse;
         self.optional_costs = def.optional_costs.clone();
         self.max_saga_chapter = def.max_saga_chapter;
         self.additional_cost = def.additional_cost.clone();
+    }
+
+    /// Apply the temporary stack characteristics of a fused split spell.
+    pub fn apply_fused_split_spell_overlay(&mut self, other: &crate::cards::CardDefinition) {
+        let mut mana_pips = Vec::new();
+        if let Some(cost) = &self.mana_cost {
+            mana_pips.extend(cost.pips().iter().cloned());
+        }
+        if let Some(cost) = &other.card.mana_cost {
+            mana_pips.extend(cost.pips().iter().cloned());
+        }
+
+        self.name = format!("{} // {}", self.name, other.card.name);
+        self.mana_cost = if mana_pips.is_empty() {
+            None
+        } else {
+            Some(ManaCost::from_pips(mana_pips))
+        };
+        self.color_override = match (self.color_override, other.card.color_indicator) {
+            (Some(left), Some(right)) => Some(left.union(right)),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        };
+        Self::extend_unique(&mut self.supertypes, &other.card.supertypes);
+        Self::extend_unique(&mut self.card_types, &other.card.card_types);
+        Self::extend_unique(&mut self.subtypes, &other.card.subtypes);
+        if self.oracle_text.is_empty() {
+            self.oracle_text = other.card.oracle_text.clone();
+        } else if !other.card.oracle_text.is_empty() {
+            self.oracle_text = format!("{}\n//\n{}", self.oracle_text, other.card.oracle_text);
+        }
+        self.base_power = None;
+        self.base_toughness = None;
+        self.base_loyalty = None;
+        self.base_defense = None;
+        self.abilities.extend(other.abilities.iter().cloned());
+
+        let mut effects = self.spell_effect.clone().unwrap_or_default();
+        effects.extend(other.spell_effect.clone().unwrap_or_default());
+        self.spell_effect = Some(effects);
+        self.aura_attach_filter = None;
+        self.bestow_cast_state = None;
+        self.linked_face_layout = LinkedFaceLayout::Split;
     }
 
     /// Reconstructs a CardDefinition from this object's fields.
@@ -470,12 +531,14 @@ impl Object {
                 loyalty: self.base_loyalty,
                 defense: self.base_defense,
                 other_face: self.other_face,
+                linked_face_layout: self.linked_face_layout,
                 is_token: matches!(self.kind, ObjectKind::Token),
             },
             abilities: self.abilities.clone(),
             spell_effect: self.spell_effect.clone(),
             aura_attach_filter: self.aura_attach_filter.clone(),
             alternative_casts: self.alternative_casts.clone(),
+            has_fuse: self.has_fuse,
             optional_costs: self.optional_costs.clone(),
             max_saga_chapter: self.max_saga_chapter,
             additional_cost: self.additional_cost.clone(),
@@ -510,6 +573,7 @@ impl Object {
             subtypes,
             oracle_text: String::new(),
             other_face: None,
+            linked_face_layout: LinkedFaceLayout::None,
             base_power: power.map(PtValue::Fixed),
             base_toughness: toughness.map(PtValue::Fixed),
             base_loyalty: None,
@@ -522,6 +586,7 @@ impl Object {
             aura_attach_filter: None,
             bestow_cast_state: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
@@ -553,6 +618,7 @@ impl Object {
             subtypes: source.subtypes.clone(),
             oracle_text: source.oracle_text.clone(),
             other_face: source.other_face,
+            linked_face_layout: source.linked_face_layout,
             base_power: source.base_power,
             base_toughness: source.base_toughness,
             base_loyalty: source.base_loyalty,
@@ -568,6 +634,7 @@ impl Object {
             bestow_cast_state: source.bestow_cast_state.clone(),
             // Alternative casts are copiable (though tokens rarely use them)
             alternative_casts: source.alternative_casts.clone(),
+            has_fuse: source.has_fuse,
             // Optional costs are copiable
             optional_costs: source.optional_costs.clone(),
             // Optional costs paid is non-copiable (tokens weren't cast)
@@ -615,6 +682,7 @@ impl Object {
             subtypes: Vec::new(),
             oracle_text: String::new(),
             other_face: None,
+            linked_face_layout: LinkedFaceLayout::None,
             base_power: None,
             base_toughness: None,
             base_loyalty: None,
@@ -627,6 +695,7 @@ impl Object {
             aura_attach_filter: None,
             bestow_cast_state: None,
             alternative_casts: Vec::new(),
+            has_fuse: false,
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
@@ -650,12 +719,14 @@ impl Object {
         self.subtypes = source.subtypes.clone();
         self.oracle_text = source.oracle_text.clone();
         self.other_face = source.other_face;
+        self.linked_face_layout = source.linked_face_layout;
         self.base_power = source.base_power;
         self.base_toughness = source.base_toughness;
         self.base_loyalty = source.base_loyalty;
         self.base_defense = source.base_defense;
         self.abilities = source.abilities.clone();
         self.aura_attach_filter = source.aura_attach_filter.clone();
+        self.has_fuse = source.has_fuse;
     }
 
     /// Apply the temporary "cast with bestow" Aura overlay.
@@ -687,12 +758,24 @@ impl Object {
         self.subtypes = subtypes;
 
         self.aura_attach_filter = Some(crate::target::ObjectFilter::creature());
-        if self.spell_effect.is_none() {
-            let target_spec = crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-                crate::target::ObjectFilter::creature(),
-            ));
-            self.spell_effect = Some(vec![crate::effect::Effect::attach_to(target_spec)]);
+        self.ensure_aura_cast_spell_effect();
+    }
+
+    /// Synthesize the cast-time attach effect for Aura spells that only carry an
+    /// enchant restriction on the definition.
+    pub fn ensure_aura_cast_spell_effect(&mut self) {
+        if self.spell_effect.is_some() || !self.subtypes.contains(&Subtype::Aura) {
+            return;
         }
+
+        let Some(filter) = self.aura_attach_filter.clone() else {
+            return;
+        };
+
+        let target_spec = crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
+            filter,
+        ));
+        self.spell_effect = Some(vec![crate::effect::Effect::attach_to(target_spec)]);
     }
 
     /// Returns true if this object is currently in the temporary bestow Aura form.
@@ -1092,6 +1175,7 @@ impl Object {
             subtypes: def.card.subtypes.clone(),
             oracle_text: def.card.oracle_text.clone(),
             other_face: def.card.other_face,
+            linked_face_layout: def.card.linked_face_layout,
             base_power: def.card.power_toughness.map(|pt| pt.power),
             base_toughness: def.card.power_toughness.map(|pt| pt.toughness),
             base_loyalty: def.card.loyalty,
@@ -1104,6 +1188,7 @@ impl Object {
             aura_attach_filter: def.aura_attach_filter.clone(),
             bestow_cast_state: None,
             alternative_casts: def.alternative_casts.clone(),
+            has_fuse: def.has_fuse,
             optional_costs: def.optional_costs.clone(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),

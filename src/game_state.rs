@@ -1292,6 +1292,9 @@ pub struct GameState {
     /// Number of spells cast this turn per player.
     /// Reset at the start of each turn.
     pub spells_cast_this_turn: HashMap<PlayerId, u32>,
+    /// Players who have taken the foretell special action this turn.
+    /// Reset at the start of each turn.
+    pub foretell_actions_this_turn: HashSet<PlayerId>,
     /// Number of crimes committed this turn per player.
     /// Reset at the start of each turn.
     pub crimes_committed_this_turn: HashMap<PlayerId, u32>,
@@ -1461,6 +1464,12 @@ pub struct GameState {
     /// Cards exiled via Madness (can be cast from exile for madness cost).
     pub madness_exiled: HashSet<ObjectId>,
 
+    /// Cards exiled via Foretell (can be cast from exile for their foretell cost).
+    pub foretold_cards: HashSet<ObjectId>,
+
+    /// Cards exiled via Plot, keyed by object id -> (player who plotted it, turn plotted).
+    pub plotted_cards: HashMap<ObjectId, (PlayerId, u32)>,
+
     /// Sagas whose final chapter ability has resolved (ready to be sacrificed).
     pub saga_final_chapter_resolved: HashSet<ObjectId>,
 
@@ -1554,6 +1563,7 @@ impl GameState {
             triggers_fired_this_turn: HashMap::new(),
             turn_counters: TurnCounterTracker::default(),
             spells_cast_this_turn: HashMap::new(),
+            foretell_actions_this_turn: HashSet::new(),
             crimes_committed_this_turn: HashMap::new(),
             artifacts_sacrificed_this_turn: HashMap::new(),
             mana_spent_to_cast_spells_this_turn: HashMap::new(),
@@ -1597,6 +1607,8 @@ impl GameState {
             face_down: HashSet::new(),
             phased_out: HashSet::new(),
             madness_exiled: HashSet::new(),
+            foretold_cards: HashSet::new(),
+            plotted_cards: HashMap::new(),
             saga_final_chapter_resolved: HashSet::new(),
             commanders: HashSet::new(),
             commander_casts_from_command_zone: HashMap::new(),
@@ -3657,6 +3669,7 @@ impl GameState {
         self.turn_counters.clear();
         self.spells_cast_last_turn_total = self.spells_cast_this_turn_total;
         self.spells_cast_this_turn.clear();
+        self.foretell_actions_this_turn.clear();
         self.crimes_committed_this_turn.clear();
         self.artifacts_sacrificed_this_turn.clear();
         self.mana_spent_to_cast_spells_this_turn.clear();
@@ -4419,6 +4432,53 @@ impl GameState {
         self.madness_exiled.remove(&id);
     }
 
+    /// Check if a card is exiled via foretell.
+    pub fn is_foretold(&self, id: ObjectId) -> bool {
+        self.foretold_cards.contains(&id)
+    }
+
+    /// Mark a card as exiled via foretell.
+    pub fn set_foretold(&mut self, id: ObjectId) {
+        self.foretold_cards.insert(id);
+    }
+
+    /// Clear foretell exiled status.
+    pub fn clear_foretold(&mut self, id: ObjectId) {
+        self.foretold_cards.remove(&id);
+    }
+
+    /// Check if a card is exiled via plot by the given player.
+    pub fn is_plotted_by(&self, id: ObjectId, player: PlayerId) -> bool {
+        self.plotted_cards
+            .get(&id)
+            .is_some_and(|(plotter, _)| *plotter == player)
+    }
+
+    /// Return the turn number on which a card was plotted.
+    pub fn plotted_turn(&self, id: ObjectId) -> Option<u32> {
+        self.plotted_cards.get(&id).map(|(_, turn)| *turn)
+    }
+
+    /// Mark a card as plotted by a player on the current turn.
+    pub fn set_plotted(&mut self, id: ObjectId, player: PlayerId) {
+        self.plotted_cards.insert(id, (player, self.turn.turn_number));
+    }
+
+    /// Clear plot state for a card.
+    pub fn clear_plotted(&mut self, id: ObjectId) {
+        self.plotted_cards.remove(&id);
+    }
+
+    /// Track that a player has taken the foretell special action this turn.
+    pub fn record_foretell_action(&mut self, player: PlayerId) {
+        self.foretell_actions_this_turn.insert(player);
+    }
+
+    /// Check whether the player has already taken the foretell special action this turn.
+    pub fn has_foretold_this_turn(&self, player: PlayerId) -> bool {
+        self.foretell_actions_this_turn.contains(&player)
+    }
+
     /// Check if a saga's final chapter has resolved.
     pub fn is_saga_final_chapter_resolved(&self, id: ObjectId) -> bool {
         self.saga_final_chapter_resolved.contains(&id)
@@ -4528,6 +4588,8 @@ impl GameState {
     /// Clear exile state for an object (when leaving exile).
     pub fn clear_exile_state(&mut self, id: ObjectId) {
         self.madness_exiled.remove(&id);
+        self.foretold_cards.remove(&id);
+        self.plotted_cards.remove(&id);
         self.remove_exiled_with_source_link(id);
     }
 

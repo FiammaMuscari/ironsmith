@@ -188,7 +188,6 @@ mod tests {
     use crate::Zone;
     use crate::card::CardBuilder;
     use crate::decision::SelectFirstDecisionMaker;
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::snapshot::ObjectSnapshot;
@@ -215,7 +214,7 @@ mod tests {
         let outcome = effect
             .execute(&mut game, &mut ctx)
             .expect("effect should resolve");
-        assert_eq!(outcome.result, EffectResult::Count(1));
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
         assert!(
             game.grant_registry
                 .card_can_play_from_zone(&game, exiled_id, Zone::Exile, alice),

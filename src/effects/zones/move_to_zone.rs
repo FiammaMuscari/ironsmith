@@ -1,6 +1,6 @@
 //! Move to zone effect implementation.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::event_processor::{EventOutcome, process_zone_change};
@@ -108,7 +108,7 @@ impl EffectExecutor for MoveToZoneEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
         if object_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let mut moved_ids = Vec::new();
@@ -132,7 +132,7 @@ impl EffectExecutor for MoveToZoneEffect {
 
             match result {
                 EventOutcome::Prevented => {
-                    return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                    return Ok(EffectOutcome::prevented());
                 }
                 EventOutcome::Proceed(final_zone) => {
                     if final_zone == Zone::Battlefield {
@@ -192,15 +192,15 @@ impl EffectExecutor for MoveToZoneEffect {
         }
 
         if !moved_ids.is_empty() {
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(moved_ids)));
+            return Ok(EffectOutcome::with_objects(moved_ids));
         }
         if any_prevented {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
         if any_replaced {
-            return Ok(EffectOutcome::from_result(EffectResult::Replaced));
+            return Ok(EffectOutcome::replaced());
         }
-        Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+        Ok(EffectOutcome::target_invalid())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

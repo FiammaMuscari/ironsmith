@@ -6,7 +6,7 @@
 //! - Target finding and validation
 
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome, EffectResult, EventValueSpec, Value};
+use crate::effect::{EffectOutcome, EventValueSpec, OutcomeStatus, Value};
 use crate::events::DamageEvent;
 use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
 use crate::events::life::LifeGainEvent;
@@ -675,17 +675,17 @@ pub fn resolve_value(
         Value::MagicGamesLostToOpponentsSinceLastWin => Ok(0),
 
         Value::EffectValue(effect_id) => {
-            let result = ctx
-                .get_result(*effect_id)
+            let outcome = ctx
+                .get_outcome(*effect_id)
                 .ok_or(ExecutionError::EffectNotFound(*effect_id))?;
-            Ok(result.count_or_zero())
+            Ok(outcome.count_or_zero())
         }
 
         Value::EffectValueOffset(effect_id, offset) => {
-            let result = ctx
-                .get_result(*effect_id)
+            let outcome = ctx
+                .get_outcome(*effect_id)
                 .ok_or(ExecutionError::EffectNotFound(*effect_id))?;
-            Ok(result.count_or_zero() + *offset)
+            Ok(outcome.count_or_zero() + *offset)
         }
 
         Value::EventValue(EventValueSpec::Amount)
@@ -849,8 +849,8 @@ pub fn resolve_value(
         Value::TaggedCount => {
             // Get the count of tagged objects for the current controller
             // (set by ForEachControllerOfTaggedEffect during iteration)
-            if let Some(result) = ctx.get_result(crate::effect::EffectId::TAGGED_COUNT) {
-                Ok(result.count_or_zero())
+            if let Some(outcome) = ctx.get_outcome(crate::effect::EffectId::TAGGED_COUNT) {
+                Ok(outcome.count_or_zero())
             } else {
                 return Err(ExecutionError::UnresolvableValue(
                     "TaggedCount used outside ForEachControllerOfTagged loop".to_string(),
@@ -1332,7 +1332,7 @@ pub fn apply_to_selected_objects(
             if selected_count > 0 {
                 EffectOutcome::resolved()
             } else {
-                EffectOutcome::from_result(EffectResult::TargetInvalid)
+                EffectOutcome::target_invalid()
             }
         }
     };
@@ -1358,18 +1358,18 @@ pub fn apply_single_target_object_from_context(
         &mut GameState,
         &mut ExecutionContext,
         ObjectId,
-    ) -> Result<Option<EffectResult>, ExecutionError>,
+    ) -> Result<Option<OutcomeStatus>, ExecutionError>,
 ) -> Result<EffectOutcome, ExecutionError> {
     for target in ctx.targets.clone() {
         if let ResolvedTarget::Object(object_id) = target {
-            if let Some(result) = apply(game, ctx, object_id)? {
-                return Ok(EffectOutcome::from_result(result));
+            if let Some(status) = apply(game, ctx, object_id)? {
+                return Ok(EffectOutcome::from_status(status));
             }
             return Ok(EffectOutcome::resolved());
         }
     }
 
-    Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+    Ok(EffectOutcome::target_invalid())
 }
 
 /// Resolve a ChooseSpec to a list of ObjectIds.
@@ -2087,7 +2087,7 @@ mod tests {
 
         assert_eq!(result.selected_count, 2);
         assert_eq!(result.applied_count, 1);
-        assert_eq!(result.outcome.result, EffectResult::Count(1));
+        assert_eq!(result.outcome.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(seen, vec![target_1, target_2]);
     }
 
@@ -2112,7 +2112,7 @@ mod tests {
 
         assert_eq!(result.selected_count, 1);
         assert_eq!(result.applied_count, 0);
-        assert_eq!(result.outcome.result, EffectResult::Resolved);
+        assert_eq!(result.outcome.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -2134,7 +2134,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome.result, EffectResult::Resolved);
+        assert_eq!(outcome.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -2149,11 +2149,11 @@ mod tests {
         let outcome = apply_single_target_object_from_context(
             &mut game,
             &mut ctx,
-            |_game, _ctx, _object_id| Ok(Some(EffectResult::Prevented)),
+            |_game, _ctx, _object_id| Ok(Some(crate::effect::OutcomeStatus::Prevented)),
         )
         .unwrap();
 
-        assert_eq!(outcome.result, EffectResult::Prevented);
+        assert_eq!(outcome.status, crate::effect::OutcomeStatus::Prevented);
     }
 
     #[test]
@@ -2171,6 +2171,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome.result, EffectResult::TargetInvalid);
+        assert_eq!(outcome.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 }

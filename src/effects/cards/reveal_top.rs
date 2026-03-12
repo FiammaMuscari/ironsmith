@@ -1,7 +1,7 @@
 //! Reveal top card effect implementation.
 
 use crate::decisions::context::ViewCardsContext;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -68,7 +68,7 @@ impl EffectExecutor for RevealTopEffect {
                 .view_cards(game, viewer, &[card_id], &view_ctx);
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(1)))
+        Ok(EffectOutcome::count(1))
     }
 }
 

@@ -40,15 +40,58 @@ pub(super) fn collect_available_casting_methods(
             .as_ref()
             .map(format_mana_cost_simple)
             .unwrap_or_else(|| "0".to_string());
+        let name = if spell.linked_face_layout == crate::card::LinkedFaceLayout::Split {
+            spell.name.clone()
+        } else {
+            "Normal".to_string()
+        };
         methods.push(CastingMethodOption {
             method: CastingMethod::Normal,
-            name: "Normal".to_string(),
+            name,
             cost_description: cost_desc,
         });
     }
 
     // Check alternative casting methods from hand
     if from_zone == Zone::Hand {
+        if spell.linked_face_layout == crate::card::LinkedFaceLayout::Split {
+            if can_cast_spell(game, player, spell, &CastingMethod::SplitOtherHalf)
+                && let Some(other_def) = spell
+                    .other_face
+                    .and_then(|id| crate::cards::builtin_registry().get_by_id(id))
+            {
+                let cost_desc = other_def
+                    .card
+                    .mana_cost
+                    .as_ref()
+                    .map(format_mana_cost_simple)
+                    .unwrap_or_else(|| "0".to_string());
+                methods.push(CastingMethodOption {
+                    method: CastingMethod::SplitOtherHalf,
+                    name: other_def.card.name.clone(),
+                    cost_description: cost_desc,
+                });
+            }
+
+            if spell.has_fuse && can_cast_spell(game, player, spell, &CastingMethod::Fuse) {
+                let cost_desc = crate::decision::spell_mana_cost_for_cast(
+                    game,
+                    player,
+                    spell,
+                    &CastingMethod::Fuse,
+                    from_zone,
+                )
+                .as_ref()
+                .map(format_mana_cost_simple)
+                .unwrap_or_else(|| "0".to_string());
+                methods.push(CastingMethodOption {
+                    method: CastingMethod::Fuse,
+                    name: "Fuse".to_string(),
+                    cost_description: cost_desc,
+                });
+            }
+        }
+
         for (idx, alt_cast) in spell.alternative_casts.iter().enumerate() {
             if alt_cast.cast_from_zone() == Zone::Hand
                 && can_cast_with_alternative_from_hand(game, player, spell, spell_id, alt_cast)
@@ -387,6 +430,26 @@ pub(super) fn format_alternative_method(
     use crate::alternative_cast::AlternativeCastingMethod;
 
     match method {
+        AlternativeCastingMethod::Dash { cost } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Dash".to_string(), cost_desc)
+        }
+        AlternativeCastingMethod::Plot { cost } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Plot".to_string(), format!("{} to plot, free later", cost_desc))
+        }
+        AlternativeCastingMethod::Suspend { cost, time } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Suspend".to_string(), format!("{cost_desc} with {time} time counters"))
+        }
+        AlternativeCastingMethod::Disturb { cost } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Disturb".to_string(), format!("{cost_desc} from graveyard"))
+        }
+        AlternativeCastingMethod::Overload { cost, .. } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Overload".to_string(), format!("{cost_desc} with each-mode text"))
+        }
         AlternativeCastingMethod::Flashback { .. } => {
             let cost_desc = method
                 .mana_cost()
@@ -480,6 +543,10 @@ pub(super) fn format_alternative_method(
         AlternativeCastingMethod::Miracle { cost } => {
             let cost_desc = format_mana_cost_simple(cost);
             ("Miracle".to_string(), cost_desc)
+        }
+        AlternativeCastingMethod::Foretell { cost } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            ("Foretell".to_string(), cost_desc)
         }
     }
 }
@@ -1891,6 +1958,7 @@ pub(super) fn collect_spell_cost_steps(
     if let Some(obj) = game.object(spell_id) {
         let alternative_additional_cost = match casting_method {
             CastingMethod::Normal => crate::cost::TotalCost::free(),
+            CastingMethod::SplitOtherHalf | CastingMethod::Fuse => crate::cost::TotalCost::free(),
             CastingMethod::Alternative(idx) => obj
                 .alternative_casts
                 .get(*idx)

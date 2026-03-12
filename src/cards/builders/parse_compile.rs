@@ -162,6 +162,12 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         }
         TriggerSpec::Dies(filter) => Trigger::dies(filter),
         TriggerSpec::PutIntoGraveyard(filter) => Trigger::put_into_graveyard(filter),
+        TriggerSpec::PutIntoGraveyardFromZone { filter, from } => Trigger::new(
+            crate::triggers::zone_changes::ZoneChangeTrigger::new()
+                .from(from)
+                .to(crate::zone::Zone::Graveyard)
+                .filter(filter),
+        ),
         TriggerSpec::CardsLeaveYourGraveyard {
             filter,
             one_or_more,
@@ -787,6 +793,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             counter_type: *counter_type,
             count: *count,
         },
+        PredicateAst::SourcePowerAtLeast(count) => Condition::SourcePowerAtLeast(*count),
+        PredicateAst::SourceIsInZone(zone) => Condition::SourceIsInZone(*zone),
         PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
         PredicateAst::SourceWasCast => Condition::SourceWasCast,
         PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
@@ -4572,6 +4580,23 @@ fn try_compile_timing_and_control_effect(
                         );
                         (vec![effect], choices)
                     }
+                }
+                TriggerSpec::PutIntoGraveyardFromZone { filter, from } => {
+                    let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+                    let effect = Effect::new(
+                        crate::effects::ScheduleDelayedTriggerEffect::new(
+                            compile_trigger_spec(TriggerSpec::PutIntoGraveyardFromZone {
+                                filter: resolved_filter,
+                                from: *from,
+                            }),
+                            delayed_effects,
+                            false,
+                            Vec::new(),
+                            PlayerFilter::You,
+                        )
+                        .until_end_of_turn(),
+                    );
+                    (vec![effect], choices)
                 }
                 _ => {
                     let effect = Effect::new(

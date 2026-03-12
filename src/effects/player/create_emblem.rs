@@ -1,7 +1,7 @@
 //! Create emblem effect implementation.
 
 use crate::ability::Ability;
-use crate::effect::{EffectOutcome, EffectResult, EmblemDescription};
+use crate::effect::{EffectOutcome, EmblemDescription};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -62,7 +62,7 @@ impl EffectExecutor for CreateEmblemEffect {
         // add_object handles adding to command_zone for Zone::Command
         game.add_object(emblem_obj);
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![id])))
+        Ok(EffectOutcome::with_objects(vec![id]))
     }
 }
 
@@ -89,7 +89,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should return Objects with the emblem ID
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let emblem_id = ids[0];
 
@@ -125,7 +125,7 @@ mod tests {
         let effect = CreateEmblemEffect::new(emblem);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let emblem_id = ids[0];
             let obj = game.object(emblem_id).unwrap();
 
@@ -151,7 +151,7 @@ mod tests {
         let effect = CreateEmblemEffect::new(emblem);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let emblem_id = ids[0];
             let obj = game.object(emblem_id).unwrap();
             // Controller should be Bob

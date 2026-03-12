@@ -119,7 +119,6 @@ impl CostExecutableEffect for DiscardHandEffect {
 mod tests {
     use super::*;
     use crate::card::{Card, CardBuilder};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -162,7 +161,7 @@ mod tests {
         let effect = DiscardHandEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         assert_eq!(game.player(alice).unwrap().hand.len(), 0);
     }
 
@@ -178,7 +177,7 @@ mod tests {
         let effect = DiscardHandEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -197,7 +196,7 @@ mod tests {
         let effect = DiscardHandEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().hand.len(), 1); // Alice's hand unchanged
         assert_eq!(game.player(bob).unwrap().hand.len(), 0);
     }

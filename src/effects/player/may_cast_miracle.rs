@@ -7,7 +7,7 @@
 //! that was drawn. This is more robust than storing card_id/owner because
 //! it automatically handles zone changes.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::events::other::CardsDrawnEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -58,7 +58,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
         // Get the first card drawn (miracle only works on the first card)
         let Some(card_id) = drawn.first_card() else {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         };
         let owner = drawn.player;
 
@@ -67,7 +67,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
         if obj.zone != Zone::Hand {
             // Card is no longer in hand (may have been discarded or played)
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         // Get the miracle cost
@@ -78,7 +78,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
         let Some(miracle_cost) = miracle_cost else {
             // Card doesn't have miracle (shouldn't happen)
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         };
 
         // Find the miracle alternative cast index
@@ -88,7 +88,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             .position(|alt| alt.is_miracle());
 
         let Some(miracle_index) = miracle_index else {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         };
 
         let card_name = obj.name.clone();
@@ -158,7 +158,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
             game.push_to_stack(stack_entry);
             Ok(with_spell_cast_event(
-                EffectOutcome::from_result(EffectResult::Objects(vec![new_id])),
+                EffectOutcome::with_objects(vec![new_id]),
                 game,
                 new_id,
                 owner,
@@ -166,7 +166,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
                 ctx.provenance,
             ))
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            Ok(EffectOutcome::impossible())
         }
     }
 }

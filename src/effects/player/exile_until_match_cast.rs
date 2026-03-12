@@ -3,7 +3,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -164,7 +164,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
 
         if let Some((_, casted_id, from_zone)) = casted_card {
             Ok(with_spell_cast_event(
-                EffectOutcome::from_result(EffectResult::Objects(vec![casted_id])),
+                EffectOutcome::with_objects(vec![casted_id]),
                 game,
                 casted_id,
                 caster_id,

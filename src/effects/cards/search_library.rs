@@ -2,7 +2,7 @@
 
 use crate::decision::FallbackStrategy;
 use crate::decisions::{SearchSpec, make_decision_with_fallback};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::effects::zones::{
@@ -94,7 +94,7 @@ impl EffectExecutor for SearchLibraryEffect {
 
         // Check if player can search libraries (Leonin Arbiter, Aven Mindcensor effects)
         if !game.can_search_library(player_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         // Track that this player searched their library (for trap conditions like Archive Trap)
@@ -150,9 +150,9 @@ impl EffectExecutor for SearchLibraryEffect {
                     if let Some(p) = game.player_mut(player_id) {
                         p.library.push(card_id);
                     }
-                    return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    return Ok(EffectOutcome::with_objects(vec![
                         card_id,
-                    ])));
+                    ]));
                 }
 
                 // For other destinations, move then shuffle
@@ -173,9 +173,9 @@ impl EffectExecutor for SearchLibraryEffect {
                 if let Some(new_id) = new_id {
                     // Shuffle the library after searching
                     game.shuffle_player_library(player_id);
-                    return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    return Ok(EffectOutcome::with_objects(vec![
                         new_id,
-                    ])));
+                    ]));
                 }
             }
         }

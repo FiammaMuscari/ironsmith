@@ -4,7 +4,7 @@ use crate::card::PtValue;
 use crate::color::ColorSet;
 use crate::combat_state::{AttackTarget, AttackerInfo};
 use crate::decisions::context::{SelectOptionsContext, SelectableOption};
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -506,7 +506,7 @@ impl EffectExecutor for CreateTokenCopyEffect {
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))
+        Ok(EffectOutcome::with_objects(created_ids).with_events(events))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -575,7 +575,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::one(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let token = game.object(ids[0]).unwrap();
             assert_eq!(token.name, "Grizzly Bears");
@@ -600,7 +600,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::with_haste(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let token = game.object(ids[0]).unwrap();
             // Token should have haste ability
             let has_haste = token.abilities.iter().any(|a| {
@@ -629,7 +629,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::tapped(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert!(game.is_tapped(ids[0]), "Token should enter tapped");
         } else {
             panic!("Expected Objects result");
@@ -649,7 +649,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::new(ChooseSpec::creature(), 3, PlayerFilter::You);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 3);
             for id in ids {
                 let token = game.object(id).unwrap();
@@ -694,7 +694,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::kiki_jiki_style(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let token_id = ids[0];
             let token = game.object(token_id).unwrap();
 
@@ -743,7 +743,7 @@ mod tests {
         let effect = CreateTokenCopyEffect::one(ChooseSpec::creature()).attacking(true);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let token_id = ids[0];
             // Token should be added to combat attackers
             let combat = game.combat.as_ref().expect("Combat should still be active");
@@ -811,7 +811,7 @@ mod tests {
             .attacking_player_or_planeswalker_controlled_by(PlayerFilter::IteratedPlayer);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let token_id = ids[0];
             let combat = game.combat.as_ref().expect("Combat should still be active");
             let token_attacker = combat
@@ -893,7 +893,7 @@ mod tests {
         let mut ctx = ExecutionContext::new(source, alice, &mut dm).with_defending_player(bob);
         let outcome = execute_effect(&mut game, &composed_myriad, &mut ctx).unwrap();
         assert!(
-            outcome.result.something_happened(),
+            outcome.something_happened(),
             "expected composed myriad effect to create at least one token"
         );
 

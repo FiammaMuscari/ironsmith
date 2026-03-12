@@ -1,7 +1,7 @@
 //! Create token effect implementation.
 
 use crate::cards::CardDefinition;
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -219,7 +219,7 @@ impl EffectExecutor for CreateTokenEffect {
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))
+        Ok(EffectOutcome::with_objects(created_ids).with_events(events))
     }
 }
 
@@ -296,7 +296,7 @@ mod tests {
         let effect = CreateTokenEffect::one(soldier_token());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 1);
             let token = game.object(ids[0]).unwrap();
             assert_eq!(token.name, "Soldier");
@@ -319,7 +319,7 @@ mod tests {
         let effect = CreateTokenEffect::you(goblin_token(), 3);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert_eq!(ids.len(), 3);
             for id in ids {
                 let token = game.object(id).unwrap();
@@ -341,7 +341,7 @@ mod tests {
         let effect = CreateTokenEffect::you(zombie_token(), 0);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             assert!(ids.is_empty());
         } else {
             panic!("Expected Objects result");
@@ -374,7 +374,7 @@ mod tests {
         let effect = CreateTokenEffect::new(spirit_token(), 1, PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(ids) = result.result {
+        if let crate::effect::OutcomeValue::Objects(ids) = result.value {
             let token = game.object(ids[0]).unwrap();
             assert_eq!(token.controller, bob);
         } else {
@@ -403,8 +403,8 @@ mod tests {
         let effect = CreateTokenEffect::one(soldier_token());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        let created_id = match result.result {
-            EffectResult::Objects(ids) => *ids.first().expect("expected created token"),
+        let created_id = match result.value {
+            crate::effect::OutcomeValue::Objects(ids) => *ids.first().expect("expected created token"),
             other => panic!("expected created token object ids, got {other:?}"),
         };
 

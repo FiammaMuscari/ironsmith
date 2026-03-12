@@ -1,6 +1,6 @@
 //! Put counters effect implementation.
 
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult, Value};
+use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact, Value};
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::event_processor::process_put_counters_with_event;
@@ -129,6 +129,7 @@ impl EffectExecutor for PutCountersEffect {
         };
 
         let mut outcomes = Vec::with_capacity(target_ids.len());
+        let mut affected_objects = Vec::new();
         for target_id in target_ids {
             let assigned_count = distributed_counts
                 .as_ref()
@@ -141,7 +142,7 @@ impl EffectExecutor for PutCountersEffect {
             let final_count =
                 process_put_counters_with_event(game, target_id, self.counter_type, assigned_count);
             if final_count == 0 {
-                outcomes.push(EffectOutcome::from_result(EffectResult::Prevented));
+                outcomes.push(EffectOutcome::prevented());
                 continue;
             }
 
@@ -154,13 +155,18 @@ impl EffectExecutor for PutCountersEffect {
                 Some(ctx.controller),
             ) {
                 Some(event) => {
+                    affected_objects.push(target_id);
                     outcomes.push(EffectOutcome::count(final_count as i32).with_event(event))
                 }
-                None => outcomes.push(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+                None => outcomes.push(EffectOutcome::target_invalid()),
             }
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        let mut outcome = EffectOutcome::aggregate(outcomes);
+        if !affected_objects.is_empty() {
+            outcome = outcome.with_execution_fact(ExecutionFact::AffectedObjects(affected_objects));
+        }
+        Ok(outcome)
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -190,6 +196,65 @@ impl EffectExecutor for PutCountersEffect {
             });
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::effect::ExecutionFact;
+    use crate::ids::{CardId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::object::Object;
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn create_creature_on_battlefield(
+        game: &mut GameState,
+        name: &str,
+        controller: PlayerId,
+    ) -> ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Green],
+            ]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let object = Object::from_card(id, &card, controller, Zone::Battlefield);
+        game.add_object(object);
+        id
+    }
+
+    #[test]
+    fn test_put_counters_emits_affected_objects_fact() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let target = create_creature_on_battlefield(&mut game, "Bear", alice);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.targets = vec![crate::executor::ResolvedTarget::Object(target)];
+
+        let effect = PutCountersEffect::plus_one_counters(2, ChooseSpec::target_creature());
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect should resolve");
+
+        assert!(
+            result
+                .execution_facts()
+                .contains(&ExecutionFact::AffectedObjects(vec![target]))
+        );
+        assert_eq!(game.counter_count(target, CounterType::PlusOnePlusOne), 2);
+        assert_eq!(result.events.len(), 1);
     }
 }
 

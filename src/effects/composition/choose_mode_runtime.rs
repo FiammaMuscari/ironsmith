@@ -2,7 +2,7 @@
 
 use crate::ability::AbilityKind;
 use crate::decisions::{ModesSpec, make_decision, specs::ModeOption};
-use crate::effect::{EffectMode, EffectOutcome};
+use crate::effect::{EffectMode, EffectOutcome, ExecutionFact};
 use crate::effects::helpers::resolve_value;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -185,5 +185,38 @@ pub(crate) fn run_choose_mode(
         }
     }
 
-    Ok(EffectOutcome::aggregate(outcomes))
+    Ok(EffectOutcome::aggregate(outcomes)
+        .with_execution_fact(ExecutionFact::ChosenOptions(valid_chosen_indices)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effect::{Effect, EffectMode};
+    use crate::effects::ChooseModeEffect;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn choose_mode_records_selected_modes_in_execution_facts() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice).with_chosen_modes(Some(vec![1]));
+
+        let effect = ChooseModeEffect::choose_one(vec![
+            EffectMode::new("Gain 1 life", vec![Effect::gain_life(1)]),
+            EffectMode::new("Gain 2 life", vec![Effect::gain_life(2)]),
+        ]);
+
+        let result = run_choose_mode(&effect, &mut game, &mut ctx).expect("choose mode resolves");
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
+        assert!(result
+            .execution_facts()
+            .contains(&ExecutionFact::ChosenOptions(vec![1])));
+        assert_eq!(game.player(alice).expect("alice").life, 22);
+    }
 }

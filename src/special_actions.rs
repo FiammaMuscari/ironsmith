@@ -50,6 +50,68 @@ fn turn_face_up_spec(object: &crate::object::Object) -> Option<TurnFaceUpSpec> {
     chosen
 }
 
+fn foretell_cost(object: &crate::object::Object) -> Option<crate::mana::ManaCost> {
+    object.alternative_casts.iter().find_map(|method| match method {
+        crate::alternative_cast::AlternativeCastingMethod::Foretell { cost } => Some(cost.clone()),
+        _ => None,
+    })
+}
+
+fn plot_cost(object: &crate::object::Object) -> Option<crate::mana::ManaCost> {
+    object
+        .alternative_casts
+        .iter()
+        .find_map(|method| method.plot_cost().cloned())
+}
+
+fn suspend_spec(object: &crate::object::Object) -> Option<(u32, crate::mana::ManaCost)> {
+    object
+        .alternative_casts
+        .iter()
+        .find_map(|method| method.suspend_spec().map(|(time, cost)| (time, cost.clone())))
+}
+
+fn spell_has_suspend_timing(game: &GameState, player: PlayerId, object: &crate::object::Object) -> bool {
+    let is_sorcery_speed = object.has_card_type(CardType::Sorcery)
+        || object.has_card_type(CardType::Creature)
+        || object.has_card_type(CardType::Artifact)
+        || object.has_card_type(CardType::Enchantment)
+        || object.has_card_type(CardType::Planeswalker);
+    let has_flash = object.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            crate::ability::AbilityKind::Static(static_ability) if static_ability.has_flash()
+        )
+    });
+
+    if !is_sorcery_speed || has_flash {
+        return game.turn.priority_player == Some(player);
+    }
+
+    game.turn.active_player == player
+        && game.turn.priority_player == Some(player)
+        && crate::turn::is_sorcery_timing(game)
+}
+
+fn has_sorcery_speed_special_action_timing(game: &GameState, player: PlayerId) -> Result<(), ActionError> {
+    if game.turn.active_player != player {
+        return Err(ActionError::NotActivePlayer);
+    }
+    if game.turn.priority_player != Some(player) {
+        return Err(ActionError::NotYourPriority);
+    }
+    if !matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain) {
+        return Err(ActionError::WrongPhase {
+            required: Phase::FirstMain,
+            actual: game.turn.phase,
+        });
+    }
+    if !game.stack_is_empty() {
+        return Err(ActionError::StackNotEmpty);
+    }
+    Ok(())
+}
+
 /// A special action that can be performed without using the stack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecialAction {
@@ -64,6 +126,9 @@ pub enum SpecialAction {
 
     /// Foretell a card from hand (exile face-down, can cast later for foretell cost).
     Foretell { card_id: ObjectId },
+
+    /// Plot a card from hand (exile it face up as a sorcery, cast on a later turn).
+    Plot { card_id: ObjectId },
 
     /// Activate a mana ability (doesn't use the stack).
     ActivateManaAbility {
@@ -181,6 +246,7 @@ pub fn can_perform(
         SpecialAction::TurnFaceUp { permanent_id } => can_turn_face_up(game, player, *permanent_id),
         SpecialAction::Suspend { card_id } => can_suspend(game, player, *card_id),
         SpecialAction::Foretell { card_id } => can_foretell(game, player, *card_id),
+        SpecialAction::Plot { card_id } => can_plot(game, player, *card_id),
         SpecialAction::ActivateManaAbility {
             permanent_id,
             ability_index,
@@ -203,6 +269,7 @@ pub fn can_perform_check(
         SpecialAction::TurnFaceUp { permanent_id } => can_turn_face_up(game, player, *permanent_id),
         SpecialAction::Suspend { card_id } => can_suspend(game, player, *card_id),
         SpecialAction::Foretell { card_id } => can_foretell(game, player, *card_id),
+        SpecialAction::Plot { card_id } => can_plot(game, player, *card_id),
         SpecialAction::ActivateManaAbility {
             permanent_id,
             ability_index,
@@ -229,6 +296,7 @@ pub fn perform(
         }
         SpecialAction::Suspend { card_id } => perform_suspend(game, player, card_id),
         SpecialAction::Foretell { card_id } => perform_foretell(game, player, card_id),
+        SpecialAction::Plot { card_id } => perform_plot(game, player, card_id),
         SpecialAction::ActivateManaAbility {
             permanent_id,
             ability_index,
@@ -428,6 +496,8 @@ fn perform_turn_face_up(
 // === Suspend ===
 
 fn can_suspend(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<(), ActionError> {
+    use crate::costs::{CostCheckContext, can_pay_with_check_context};
+
     // Must have priority
     if game.turn.priority_player != Some(player) {
         return Err(ActionError::NotYourPriority);
@@ -447,29 +517,59 @@ fn can_suspend(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<
         return Err(ActionError::InvalidTarget);
     }
 
-    // Note: In full implementation, would check if card has suspend ability
-    // and if player can pay the suspend cost
+    let Some((_time, cost)) = suspend_spec(object) else {
+        return Err(ActionError::NoSuchAbility);
+    };
+
+    if !spell_has_suspend_timing(game, player, object) {
+        return Err(ActionError::InvalidTiming);
+    }
+
+    let total_cost = crate::cost::TotalCost::mana(cost);
+    let check_ctx = CostCheckContext::new(card_id, player);
+    for component in total_cost.costs() {
+        can_pay_with_check_context(&*component.0, game, &check_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
 
     Ok(())
 }
 
 fn perform_suspend(
     game: &mut GameState,
-    _player: PlayerId,
+    player: PlayerId,
     card_id: ObjectId,
 ) -> Result<(), ActionError> {
+    let (_time, cost) = {
+        let object = game.object(card_id).ok_or(ActionError::ObjectNotFound)?;
+        suspend_spec(object).ok_or(ActionError::NoSuchAbility)?
+    };
+
+    let action_provenance =
+        game.provenance_graph
+            .alloc_root(crate::provenance::ProvenanceNodeKind::EffectExecution {
+                source: card_id,
+                controller: player,
+            });
+    let total_cost = crate::cost::TotalCost::mana(cost);
+    let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+    let mut cost_ctx =
+        CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
+    for component in total_cost.costs() {
+        pay_cost_component_with_choice(game, component, &mut cost_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
+
+    let (time, _cost) = {
+        let object = game.object(card_id).ok_or(ActionError::ObjectNotFound)?;
+        suspend_spec(object).ok_or(ActionError::NoSuchAbility)?
+    };
+
     // Move to exile
     let new_id = game
         .move_object(card_id, Zone::Exile)
         .ok_or(ActionError::ObjectNotFound)?;
-
-    // In a full implementation, this would:
-    // 1. Pay the suspend cost
-    // 2. Add time counters equal to the suspend number
-    // 3. Mark the card as suspended (for tracking "remove a time counter at upkeep")
-
-    // For now, just mark it as exiled
-    let _ = new_id;
+    let _ = game.add_counters(new_id, crate::object::CounterType::Time, time);
 
     Ok(())
 }
@@ -477,6 +577,8 @@ fn perform_suspend(
 // === Foretell ===
 
 fn can_foretell(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<(), ActionError> {
+    use crate::costs::{CostCheckContext, can_pay_with_check_context};
+
     // Must be during your turn
     if game.turn.active_player != player {
         return Err(ActionError::NotActivePlayer);
@@ -501,19 +603,48 @@ fn can_foretell(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result
         return Err(ActionError::InvalidTarget);
     }
 
-    // Note: In full implementation, would check:
-    // 1. Card has foretell ability
-    // 2. Player can pay {2} for the foretell cost
-    // 3. Haven't already foretold this turn (once per turn restriction)
+    if foretell_cost(object).is_none() {
+        return Err(ActionError::NoSuchAbility);
+    }
+
+    if game.has_foretold_this_turn(player) {
+        return Err(ActionError::InvalidTiming);
+    }
+
+    let foretell_action_cost = crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![
+        vec![crate::mana::ManaSymbol::Generic(2)],
+    ]));
+    let check_ctx = CostCheckContext::new(card_id, player);
+    for cost in foretell_action_cost.costs() {
+        can_pay_with_check_context(&*cost.0, game, &check_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
 
     Ok(())
 }
 
 fn perform_foretell(
     game: &mut GameState,
-    _player: PlayerId,
+    player: PlayerId,
     card_id: ObjectId,
 ) -> Result<(), ActionError> {
+    let action_provenance =
+        game.provenance_graph
+            .alloc_root(crate::provenance::ProvenanceNodeKind::EffectExecution {
+                source: card_id,
+                controller: player,
+            });
+    let foretell_action_cost = crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![
+        vec![crate::mana::ManaSymbol::Generic(2)],
+    ]));
+    let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+    let mut cost_ctx =
+        CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
+    for cost in foretell_action_cost.costs() {
+        pay_cost_component_with_choice(game, cost, &mut cost_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
+
     // Move to exile face-down
     let new_id = game
         .move_object(card_id, Zone::Exile)
@@ -521,11 +652,73 @@ fn perform_foretell(
 
     // Mark as face-down (foretold)
     game.set_face_down(new_id);
+    game.set_foretold(new_id);
+    game.record_foretell_action(player);
 
-    // In a full implementation, this would:
-    // 1. Pay {2} (the foretell cost)
-    // 2. Track that this card was foretold (for later casting at foretell cost)
+    Ok(())
+}
 
+// === Plot ===
+
+fn can_plot(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<(), ActionError> {
+    use crate::costs::{CostCheckContext, can_pay_with_check_context};
+
+    has_sorcery_speed_special_action_timing(game, player)?;
+
+    let object = game.object(card_id).ok_or(ActionError::ObjectNotFound)?;
+    if object.zone != Zone::Hand {
+        return Err(ActionError::WrongZone {
+            expected: Zone::Hand,
+            actual: object.zone,
+        });
+    }
+    if object.owner != player {
+        return Err(ActionError::InvalidTarget);
+    }
+
+    let Some(cost) = plot_cost(object) else {
+        return Err(ActionError::NoSuchAbility);
+    };
+
+    let total_cost = crate::cost::TotalCost::mana(cost);
+    let check_ctx = CostCheckContext::new(card_id, player);
+    for component in total_cost.costs() {
+        can_pay_with_check_context(&*component.0, game, &check_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
+
+    Ok(())
+}
+
+fn perform_plot(
+    game: &mut GameState,
+    player: PlayerId,
+    card_id: ObjectId,
+) -> Result<(), ActionError> {
+    let cost = {
+        let object = game.object(card_id).ok_or(ActionError::ObjectNotFound)?;
+        plot_cost(object).ok_or(ActionError::NoSuchAbility)?
+    };
+
+    let action_provenance =
+        game.provenance_graph
+            .alloc_root(crate::provenance::ProvenanceNodeKind::EffectExecution {
+                source: card_id,
+                controller: player,
+            });
+    let total_cost = crate::cost::TotalCost::mana(cost);
+    let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+    let mut cost_ctx =
+        CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
+    for component in total_cost.costs() {
+        pay_cost_component_with_choice(game, component, &mut cost_ctx)
+            .map_err(cost_error_to_action_error)?;
+    }
+
+    let new_id = game
+        .move_object(card_id, Zone::Exile)
+        .ok_or(ActionError::ObjectNotFound)?;
+    game.set_plotted(new_id, player);
     Ok(())
 }
 

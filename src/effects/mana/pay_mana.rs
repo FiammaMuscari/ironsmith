@@ -2,7 +2,7 @@
 
 use crate::decision::DecisionMaker;
 use crate::decisions::context::{SelectOptionsContext, SelectableOption};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -117,7 +117,7 @@ impl EffectExecutor for PayManaEffect {
         if self.try_pay_interactively(game, ctx, player_id) {
             Ok(EffectOutcome::count(1))
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            Ok(EffectOutcome::impossible())
         }
     }
 
@@ -294,7 +294,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("pay mana effect should execute");
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(dm.mana_payment_prompts, 2);
         assert!(game.is_tapped(mountain_id));
         assert_eq!(
@@ -321,6 +321,6 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("pay mana effect should execute");
 
-        assert_eq!(result.result, EffectResult::Impossible);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Impossible);
     }
 }

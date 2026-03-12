@@ -106,7 +106,7 @@ impl EffectExecutor for ProliferateEffect {
             proliferated_count += 1;
         }
 
-        outcome.result = crate::effect::EffectResult::Count(proliferated_count);
+        outcome.set_value(crate::effect::OutcomeValue::Count(proliferated_count));
         Ok(outcome.with_event(TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(
                 KeywordActionKind::Proliferate,
@@ -123,7 +123,6 @@ impl EffectExecutor for ProliferateEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -177,7 +176,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1)); // 1 permanent proliferated
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1)); // 1 permanent proliferated
         let obj = game.object(creature_id).unwrap();
         assert_eq!(obj.counters.get(&CounterType::PlusOnePlusOne), Some(&4)); // 3 + 1
     }
@@ -200,7 +199,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1)); // 1 permanent proliferated
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1)); // 1 permanent proliferated
         let obj = game.object(id).unwrap();
         assert_eq!(obj.counters.get(&CounterType::PlusOnePlusOne), Some(&3)); // 2 + 1
         assert_eq!(obj.counters.get(&CounterType::MinusOneMinusOne), Some(&2)); // 1 + 1
@@ -220,7 +219,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1)); // 1 player counter proliferated
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1)); // 1 player counter proliferated
         assert_eq!(game.players[0].poison_counters, 6); // 5 + 1
     }
 
@@ -238,7 +237,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.players[0].energy_counters, 4); // 3 + 1
     }
 
@@ -253,7 +252,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]
@@ -283,7 +282,7 @@ mod tests {
         let effect = ProliferateEffect::new();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2)); // 2 permanents proliferated
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2)); // 2 permanents proliferated
 
         let obj1 = game.object(creature1).unwrap();
         assert_eq!(obj1.counters.get(&CounterType::PlusOnePlusOne), Some(&3)); // 2 + 1

@@ -1,6 +1,6 @@
 //! Return from graveyard or exile to battlefield effect implementation.
 
-use crate::effect::{Effect, EffectOutcome, EffectResult};
+use crate::effect::{Effect, EffectOutcome};
 use crate::effects::{EffectExecutor, PutOntoBattlefieldEffect};
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::game_state::GameState;
@@ -74,7 +74,7 @@ impl EffectExecutor for ReturnFromGraveyardOrExileToBattlefieldEffect {
         let owner = snapshot.owner;
 
         let Some(target_id) = Self::find_by_stable_id(game, owner, stable_id) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         let outcome = ctx.with_temp_targets(vec![ResolvedTarget::Object(target_id)], |ctx| {
@@ -92,12 +92,24 @@ impl EffectExecutor for ReturnFromGraveyardOrExileToBattlefieldEffect {
             execute_effect(game, &Effect::new(put_effect), ctx)
         })?;
 
-        let EffectOutcome { result, events } = outcome;
+        let EffectOutcome {
+            status,
+            value,
+            events,
+            execution_facts,
+        } = outcome;
 
-        match result {
+        match status {
             // Preserve prior behavior: ETB prevented is treated as TargetInvalid.
-            EffectResult::Impossible => Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
-            other => Ok(EffectOutcome::from_result(other).with_events(events)),
+            crate::effect::OutcomeStatus::Impossible => Ok(EffectOutcome::target_invalid()
+                .with_events(events)
+                .with_execution_facts(execution_facts)),
+            other => Ok(EffectOutcome::with_details(
+                other,
+                value,
+                events,
+                execution_facts,
+            )),
         }
     }
 }

@@ -3,7 +3,7 @@
 use crate::decision::FallbackStrategy;
 use crate::decisions::context::ViewCardsContext;
 use crate::decisions::{ChooseObjectsSpec, make_decision_with_fallback};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::helpers::normalize_object_selection;
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -126,9 +126,7 @@ impl EffectExecutor for RevealFromHandEffect {
                 .view_cards(game, viewer, &cards_to_reveal, &view_ctx);
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(
-            cards_to_reveal.len() as i32,
-        )))
+        Ok(EffectOutcome::count(cards_to_reveal.len() as i32))
     }
 
     fn cost_description(&self) -> Option<String> {

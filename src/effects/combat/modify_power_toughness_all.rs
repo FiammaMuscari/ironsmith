@@ -131,7 +131,6 @@ impl EffectExecutor for ModifyPowerToughnessAllEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -182,7 +181,7 @@ mod tests {
         let effect = ModifyPowerToughnessAllEffect::all_creatures(1, 1, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 
@@ -200,7 +199,7 @@ mod tests {
         let effect = ModifyPowerToughnessAllEffect::your_creatures(2, 2, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         // The continuous effect will only apply to creatures matching the filter
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
@@ -217,7 +216,7 @@ mod tests {
         let effect = ModifyPowerToughnessAllEffect::all_creatures(-1, -1, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -237,7 +236,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -251,7 +250,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should succeed even with no creatures (creates the effect, but it won't apply to anything)
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -277,7 +276,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
         let effect = ModifyPowerToughnessAllEffect::all_creatures(1, 1, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Verify the effect has locked targets
         let effects = game.continuous_effects.effects_sorted();

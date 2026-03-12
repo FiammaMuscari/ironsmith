@@ -179,6 +179,7 @@ pub enum StaticAbilityId {
     MaximumHandSizeSevenMinusYourGraveyardCardTypes,
     LibraryOfLengDiscardReplacement,
     DrawReplacementExileTopFaceDown,
+    ExileToCounteredExileInsteadOfGraveyard,
     CreaturesEnteringDontCauseAbilitiesToTrigger,
     StartingLifeBonus,
     BuybackCostReduction,
@@ -381,6 +382,7 @@ impl StaticAbilityId {
             | MaximumHandSizeSevenMinusYourGraveyardCardTypes
             | LibraryOfLengDiscardReplacement
             | DrawReplacementExileTopFaceDown
+            | ExileToCounteredExileInsteadOfGraveyard
             | CreaturesEnteringDontCauseAbilitiesToTrigger
             | StartingLifeBonus
             | BuybackCostReduction

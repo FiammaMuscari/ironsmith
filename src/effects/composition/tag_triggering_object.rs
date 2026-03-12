@@ -1,6 +1,6 @@
 //! Tag the triggering object's snapshot for later reference.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -44,7 +44,7 @@ impl EffectExecutor for TagTriggeringObjectEffect {
                 self.tag.clone(),
                 vec![ObjectSnapshot::from_object(obj, game)],
             );
-            return Ok(EffectOutcome::from_result(EffectResult::Count(1)));
+            return Ok(EffectOutcome::count(1));
         }
 
         if let Some(snapshot) = event.snapshot() {
@@ -56,7 +56,7 @@ impl EffectExecutor for TagTriggeringObjectEffect {
                 tagged.object_id = current_id;
             }
             ctx.set_tagged_objects(self.tag.clone(), vec![tagged]);
-            return Ok(EffectOutcome::from_result(EffectResult::Count(1)));
+            return Ok(EffectOutcome::count(1));
         }
 
         Ok(EffectOutcome::count(0))
@@ -67,7 +67,6 @@ impl EffectExecutor for TagTriggeringObjectEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::ids::{CardId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -126,7 +125,7 @@ mod tests {
         let result = effect
             .execute(&mut game, &mut ctx)
             .expect("effect should resolve");
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
 
         let tagged = ctx
             .get_tagged("triggering")

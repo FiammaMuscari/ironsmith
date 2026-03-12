@@ -5,7 +5,7 @@
 //! If you do, add {C}."
 
 use crate::ability::ActivatedAbility;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, GrantedManaAbility};
@@ -33,6 +33,6 @@ impl EffectExecutor for GrantManaAbilityUntilEotEffect {
             ability: self.ability.clone(),
             expires_end_of_turn,
         });
-        Ok(EffectOutcome::from_result(EffectResult::Resolved))
+        Ok(EffectOutcome::resolved())
     }
 }

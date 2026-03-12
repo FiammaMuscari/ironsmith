@@ -91,7 +91,6 @@ impl EffectExecutor for GainControlEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -134,7 +133,7 @@ mod tests {
         let effect = GainControlEffect::until_end_of_turn(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 
@@ -153,7 +152,7 @@ mod tests {
         let effect = GainControlEffect::permanent(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -171,7 +170,7 @@ mod tests {
         let effect = GainControlEffect::while_source_remains(ChooseSpec::creature());
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]

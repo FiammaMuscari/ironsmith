@@ -125,7 +125,7 @@ mod tests {
         let result = EffectExecutor::execute(&effect, &mut game, &mut ctx).unwrap();
 
         // Should produce 1 mana (defaults to green without decision maker)
-        assert_eq!(result.result, crate::effect::EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().mana_pool.green, 1);
     }
 

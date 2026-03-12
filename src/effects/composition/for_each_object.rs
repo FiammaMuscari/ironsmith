@@ -118,7 +118,7 @@ impl EffectExecutor for ForEachObject {
             }
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 }
 
@@ -126,7 +126,6 @@ impl EffectExecutor for ForEachObject {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::CounterType;
@@ -182,7 +181,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Empty aggregate returns Resolved (no effects executed)
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.player(alice).unwrap().life, initial_life);
     }
 
@@ -204,7 +203,7 @@ mod tests {
         let effect = ForEachObject::new(ObjectFilter::creature(), vec![Effect::gain_life(1)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(3));
         // Gained 1 life for each creature (3 total)
         assert_eq!(game.player(alice).unwrap().life, initial_life + 3);
     }
@@ -232,7 +231,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().life, initial_life + 2);
     }
 
@@ -264,7 +263,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         let c1_obj = game.object(c1).expect("c1 should exist");
         let c2_obj = game.object(c2).expect("c2 should exist");
         assert_eq!(c1_obj.counters.get(&CounterType::PlusOnePlusOne), Some(&1));
@@ -307,7 +306,7 @@ mod tests {
         let effect = ForEachObject::new(filter, vec![Effect::gain_life(1)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
         assert_eq!(game.player(alice).unwrap().life, initial_life + 1);
     }
 }

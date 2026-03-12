@@ -1,6 +1,6 @@
 //! Attach arbitrary objects to a target permanent.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -32,13 +32,13 @@ impl EffectExecutor for AttachObjectsEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
         let Some(target_id) = target_ids.first().copied() else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
         if game
             .object(target_id)
             .is_none_or(|target| target.zone != Zone::Battlefield)
         {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let object_ids = resolve_objects_from_spec(game, &self.objects, ctx)?;

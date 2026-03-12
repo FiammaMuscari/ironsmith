@@ -3,7 +3,7 @@
 //! This module implements the `DealDamage` effect, which deals damage to a target
 //! creature, planeswalker, or player.
 
-use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
 use crate::event_processor::process_damage_assignments_with_event_with_source_snapshot;
@@ -82,7 +82,7 @@ fn apply_processed_damage_outcome(
     );
 
     if processed.replacement_prevented {
-        return EffectOutcome::from_result(EffectResult::Prevented);
+        return EffectOutcome::prevented();
     }
 
     let keywords = crate::rules::damage::source_damage_keywords(game, source, source_snapshot);
@@ -150,7 +150,7 @@ fn apply_processed_damage_outcome(
     if outcomes.is_empty() {
         EffectOutcome::count(0)
     } else {
-        EffectOutcome::aggregate(outcomes)
+        EffectOutcome::aggregate_summing_counts(outcomes)
     }
 }
 
@@ -176,7 +176,7 @@ impl EffectExecutor for DealDamageEffect {
                     ctx.provenance,
                 ));
             }
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         if let ChooseSpec::Iterated = &self.target {
@@ -185,7 +185,7 @@ impl EffectExecutor for DealDamageEffect {
                     let can_be_damaged = obj.has_card_type(CardType::Creature)
                         || obj.has_card_type(CardType::Planeswalker);
                     if !can_be_damaged {
-                        return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                        return Ok(EffectOutcome::target_invalid());
                     }
                     return Ok(apply_processed_damage_outcome(
                         game,
@@ -197,9 +197,9 @@ impl EffectExecutor for DealDamageEffect {
                         ctx.provenance,
                     ));
                 }
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             }
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         if let ChooseSpec::AttackedPlayerOrPlaneswalker = &self.target {
@@ -218,7 +218,7 @@ impl EffectExecutor for DealDamageEffect {
                 .or_else(|| ctx.defending_player.map(AttackEventTarget::Player));
 
             let Some(attacked_target) = attacked_target else {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
 
             match attacked_target {
@@ -238,7 +238,7 @@ impl EffectExecutor for DealDamageEffect {
                         .object(object_id)
                         .is_some_and(|obj| obj.has_card_type(CardType::Planeswalker))
                     {
-                        return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                        return Ok(EffectOutcome::target_invalid());
                     }
                     return Ok(apply_processed_damage_outcome(
                         game,
@@ -302,7 +302,7 @@ impl EffectExecutor for DealDamageEffect {
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+        Ok(EffectOutcome::target_invalid())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

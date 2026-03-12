@@ -1,6 +1,6 @@
 //! Tag the triggering damage target object snapshot for later reference.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::events::DamageEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -50,6 +50,6 @@ impl EffectExecutor for TagTriggeringDamageTargetEffect {
             self.tag.clone(),
             ObjectSnapshot::from_object(target_obj, game),
         );
-        Ok(EffectOutcome::from_result(EffectResult::Count(1)))
+        Ok(EffectOutcome::count(1))
     }
 }

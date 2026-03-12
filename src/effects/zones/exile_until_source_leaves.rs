@@ -173,7 +173,7 @@ mod tests {
         let effect = ExileUntilEffect::source_leaves(ChooseSpec::SpecificObject(creature_id));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, crate::effect::EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
         assert!(game.exile.is_empty());
         assert_eq!(game.get_exiled_with_source_links(source).len(), 0);
         assert_eq!(game.players[0].hand.len(), 1);

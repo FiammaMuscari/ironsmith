@@ -218,7 +218,7 @@ mod tests {
         let outcome = effect
             .execute(&mut game, &mut ctx)
             .expect("schedule should resolve");
-        assert_eq!(outcome.result, crate::effect::EffectResult::Resolved);
+        assert_eq!(outcome.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.delayed_triggers.len(), 1);
 
         let delayed = &game.delayed_triggers[0];

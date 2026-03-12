@@ -15,7 +15,7 @@
 
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::events::PermanentTappedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -144,10 +144,7 @@ impl EffectExecutor for SaddleCostEffect {
             }
         }
 
-        Ok(EffectOutcome {
-            result: EffectResult::Resolved,
-            events,
-        })
+        Ok(EffectOutcome::resolved().with_events(events))
     }
 
     fn cost_description(&self) -> Option<String> {
@@ -200,6 +197,6 @@ impl EffectExecutor for BecomeSaddledUntilEotEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         game.set_saddled_until_end_of_turn(ctx.source);
-        Ok(EffectOutcome::from_result(EffectResult::Resolved))
+        Ok(EffectOutcome::resolved())
     }
 }

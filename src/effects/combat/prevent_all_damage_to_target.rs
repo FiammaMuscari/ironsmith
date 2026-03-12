@@ -3,7 +3,7 @@
 use super::prevention_helpers::{
     PreventionTargetResolveMode, register_prevention_shield, resolve_prevention_target_from_spec,
 };
-use crate::effect::{EffectOutcome, EffectResult, Until};
+use crate::effect::{EffectOutcome, Until};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -45,7 +45,7 @@ impl EffectExecutor for PreventAllDamageToTargetEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         if !game.can_prevent_damage() {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         let protected = resolve_prevention_target_from_spec(

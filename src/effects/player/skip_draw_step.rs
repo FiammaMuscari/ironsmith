@@ -41,7 +41,6 @@ impl EffectExecutor for SkipDrawStepEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -58,7 +57,7 @@ mod tests {
         let effect = SkipDrawStepEffect::you();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.skip_next_draw_step.contains(&alice));
     }
 
@@ -73,7 +72,7 @@ mod tests {
         let effect = SkipDrawStepEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.skip_next_draw_step.contains(&alice));
         assert!(game.skip_next_draw_step.contains(&bob));
     }

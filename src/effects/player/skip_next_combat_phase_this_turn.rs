@@ -48,7 +48,6 @@ impl EffectExecutor for SkipNextCombatPhaseThisTurnEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -67,7 +66,7 @@ mod tests {
         let effect = SkipNextCombatPhaseThisTurnEffect::new(PlayerFilter::Specific(alice));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(game.skip_next_combat_phases.contains(&alice));
     }
 
@@ -84,7 +83,7 @@ mod tests {
         let effect = SkipNextCombatPhaseThisTurnEffect::new(PlayerFilter::Specific(bob));
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert!(!game.skip_next_combat_phases.contains(&bob));
     }
 }

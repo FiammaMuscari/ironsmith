@@ -1045,6 +1045,11 @@ pub struct ObjectFilter {
     /// If true, must be an attacking creature that is unblocked.
     pub unblocked: bool,
 
+    /// If true, the object must currently be in combat with the source object.
+    ///
+    /// This models clauses like "creature blocking or blocked by this creature".
+    pub in_combat_with_source: bool,
+
     /// If true, must have entered since your last turn ended.
     /// This is currently approximated via summoning-sick state.
     pub entered_since_your_last_turn_ended: bool,
@@ -2143,6 +2148,8 @@ impl ObjectFilter {
                 };
                 let cast_from_zone = match &entry.casting_method {
                     crate::alternative_cast::CastingMethod::Normal => Zone::Hand,
+                    crate::alternative_cast::CastingMethod::SplitOtherHalf
+                    | crate::alternative_cast::CastingMethod::Fuse => Zone::Hand,
                     crate::alternative_cast::CastingMethod::Alternative(index) => object
                         .alternative_casts
                         .get(*index)
@@ -2449,6 +2456,21 @@ impl ObjectFilter {
                 .is_some_and(|combat| crate::combat_state::is_unblocked(combat, object.id))
         {
             return false;
+        }
+        if self.in_combat_with_source {
+            let Some(source_id) = ctx.source else {
+                return false;
+            };
+            let Some(combat) = &game.combat else {
+                return false;
+            };
+            let source_attacks_object =
+                crate::combat_state::get_blockers(combat, source_id).contains(&object.id);
+            let source_blocks_object = crate::combat_state::get_blocked_attacker(combat, source_id)
+                .is_some_and(|attacker| attacker == object.id);
+            if !source_attacks_object && !source_blocks_object {
+                return false;
+            }
         }
 
         // Power check
@@ -2802,9 +2824,15 @@ impl ObjectFilter {
         // "Other" check (not the source)
         if self.other
             && let Some(source_id) = ctx.source
-            && snapshot.object_id == source_id
         {
-            return false;
+            if snapshot.object_id == source_id {
+                return false;
+            }
+            if let Some(source) = game.object(source_id)
+                && snapshot.stable_id == source.stable_id
+            {
+                return false;
+            }
         }
 
         if self.tapped && !snapshot.tapped {
@@ -2820,6 +2848,21 @@ impl ObjectFilter {
                 return false;
             };
             if !player_filter.matches_player(defending_player, ctx) {
+                return false;
+            }
+        }
+        if self.in_combat_with_source {
+            let Some(source_id) = ctx.source else {
+                return false;
+            };
+            let Some(combat) = &game.combat else {
+                return false;
+            };
+            let source_attacks_object =
+                crate::combat_state::get_blockers(combat, source_id).contains(&snapshot.object_id);
+            let source_blocks_object = crate::combat_state::get_blocked_attacker(combat, source_id)
+                .is_some_and(|attacker| attacker == snapshot.object_id);
+            if !source_attacks_object && !source_blocks_object {
                 return false;
             }
         }
@@ -3294,6 +3337,9 @@ impl ObjectFilter {
             post_noun_qualifiers.push(format!(
                 "attacking {player_text} or a planeswalker controlled by {player_text}"
             ));
+        }
+        if self.in_combat_with_source {
+            post_noun_qualifiers.push("blocking or blocked by this creature".to_string());
         }
         if self.nonattacking && self.nonblocking {
             parts.push("nonattacking/nonblocking".to_string());

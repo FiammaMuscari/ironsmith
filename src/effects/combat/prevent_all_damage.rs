@@ -1,7 +1,7 @@
 //! Prevent all damage effect implementation.
 
 use super::prevention_helpers::register_prevention_shield;
-use crate::effect::{EffectOutcome, EffectResult, Until};
+use crate::effect::{EffectOutcome, Until};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -97,7 +97,7 @@ impl EffectExecutor for PreventAllDamageEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Check if damage can be prevented globally
         if !game.can_prevent_damage() {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+            return Ok(EffectOutcome::prevented());
         }
 
         register_prevention_shield(
@@ -132,7 +132,7 @@ mod tests {
         let effect = PreventAllDamageEffect::all(Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.prevention_effects.shields().len(), 1);
 
         // Shield should have unlimited prevention
@@ -150,7 +150,7 @@ mod tests {
         let effect = PreventAllDamageEffect::your_creatures(Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.prevention_effects.shields().len(), 1);
     }
 
@@ -164,7 +164,7 @@ mod tests {
         let effect = PreventAllDamageEffect::matching(ObjectFilter::creature(), Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]

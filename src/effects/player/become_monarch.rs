@@ -37,7 +37,6 @@ impl EffectExecutor for BecomeMonarchEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     #[test]
@@ -51,7 +50,7 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("resolve become-monarch effect");
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.monarch, Some(alice));
     }
 

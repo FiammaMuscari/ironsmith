@@ -2890,21 +2890,75 @@ pub(super) fn propose_spell_cast(
         GameLoopError::InvalidState("Failed to move spell to stack during proposal".to_string())
     })?;
 
-    let cast_as_bestow = game.object(new_id).is_some_and(|obj| match casting_method {
-        CastingMethod::Alternative(idx) => obj
-            .alternative_casts
-            .get(*idx)
-            .is_some_and(crate::alternative_cast::AlternativeCastingMethod::is_bestow),
+    let selected_method = game.object(new_id).and_then(|obj| match casting_method {
+        CastingMethod::Alternative(idx) => obj.alternative_casts.get(*idx).cloned(),
         CastingMethod::PlayFrom {
             use_alternative: Some(idx),
             zone,
             ..
-        } => crate::decision::resolve_play_from_alternative_method(game, caster, obj, *zone, *idx)
-            .is_some_and(|method| method.is_bestow()),
-        _ => false,
+        } => crate::decision::resolve_play_from_alternative_method(game, caster, obj, *zone, *idx),
+        _ => None,
     });
-    if cast_as_bestow && let Some(obj) = game.object_mut(new_id) {
-        obj.apply_bestow_cast_overlay();
+
+    if let Some(obj) = game.object_mut(new_id) {
+        if let Some(method) = selected_method {
+            if method.is_bestow() {
+                obj.apply_bestow_cast_overlay();
+            }
+
+            if let crate::alternative_cast::AlternativeCastingMethod::Disturb { .. } = method {
+                let other_face = obj.other_face.ok_or_else(|| {
+                    GameLoopError::InvalidState("Disturb spell is missing other face metadata".to_string())
+                })?;
+                let other_def = crate::cards::builtin_registry()
+                    .get_by_id(other_face)
+                    .ok_or_else(|| {
+                        GameLoopError::InvalidState(format!(
+                            "Disturb back face {:?} not found in builtin registry",
+                            other_face
+                        ))
+                    })?;
+                obj.apply_definition_face(other_def);
+            }
+
+            if let crate::alternative_cast::AlternativeCastingMethod::Overload { effects, .. } = method {
+                obj.spell_effect = Some(effects.clone());
+            }
+        }
+
+        match casting_method {
+            CastingMethod::SplitOtherHalf => {
+                let other_face = obj.other_face.ok_or_else(|| {
+                    GameLoopError::InvalidState("Split spell is missing other face metadata".to_string())
+                })?;
+                let other_def = crate::cards::builtin_registry()
+                    .get_by_id(other_face)
+                    .ok_or_else(|| {
+                        GameLoopError::InvalidState(format!(
+                            "Split back face {:?} not found in builtin registry",
+                            other_face
+                        ))
+                    })?;
+                obj.apply_definition_face(other_def);
+            }
+            CastingMethod::Fuse => {
+                let other_face = obj.other_face.ok_or_else(|| {
+                    GameLoopError::InvalidState("Fused split spell is missing other face metadata".to_string())
+                })?;
+                let other_def = crate::cards::builtin_registry()
+                    .get_by_id(other_face)
+                    .ok_or_else(|| {
+                        GameLoopError::InvalidState(format!(
+                            "Fused split back face {:?} not found in builtin registry",
+                            other_face
+                        ))
+                    })?;
+                obj.apply_fused_split_spell_overlay(other_def);
+            }
+            _ => {}
+        }
+
+        obj.ensure_aura_cast_spell_effect();
     }
 
     Ok(new_id)
@@ -2973,6 +3027,9 @@ pub(super) fn finalize_spell_cast(
             );
             match &casting_method {
                 CastingMethod::Normal => (base_mana_cost, crate::cost::TotalCost::free(), None),
+                CastingMethod::SplitOtherHalf | CastingMethod::Fuse => {
+                    (base_mana_cost, crate::cost::TotalCost::free(), None)
+                }
                 CastingMethod::Alternative(idx) => {
                     if let Some(method) = obj.alternative_casts.get(*idx) {
                         if let Some(total_cost) = method.total_cost() {

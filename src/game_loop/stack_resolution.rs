@@ -1,4 +1,5 @@
 use super::*;
+use crate::triggers::Trigger;
 
 // ============================================================================
 // Stack Resolution
@@ -289,6 +290,68 @@ pub(super) fn resolve_stack_entry_full(
                     game.continuous_effects.record_attachment(result.new_id);
                 }
 
+                let cast_with_dash = match &entry.casting_method {
+                    CastingMethod::Alternative(idx) => matches!(
+                        obj.alternative_casts.get(*idx),
+                        Some(crate::alternative_cast::AlternativeCastingMethod::Dash { .. })
+                    ),
+                    CastingMethod::PlayFrom {
+                        use_alternative: Some(idx),
+                        zone,
+                        ..
+                    } => matches!(
+                        crate::decision::resolve_play_from_alternative_method(
+                            game,
+                            entry.controller,
+                            obj,
+                            *zone,
+                            *idx,
+                        ),
+                        Some(crate::alternative_cast::AlternativeCastingMethod::Dash { .. })
+                    ),
+                    _ => false,
+                };
+                if cast_with_dash {
+                    let dash_haste = crate::effects::ApplyContinuousEffect::new(
+                        crate::continuous::EffectTarget::Specific(result.new_id),
+                        crate::continuous::Modification::AddAbility(
+                            crate::static_abilities::StaticAbility::haste(),
+                        ),
+                        crate::effect::Until::EndOfTurn,
+                    )
+                    .with_source_type(crate::continuous::EffectSourceType::Resolution {
+                        locked_targets: vec![result.new_id],
+                    });
+                    let _ = crate::executor::execute_effect(
+                        game,
+                        &crate::effect::Effect::new(dash_haste),
+                        &mut crate::executor::ExecutionContext::new_default(
+                            result.new_id,
+                            entry.controller,
+                        ),
+                    );
+
+                    let return_to_hand = crate::effects::ScheduleDelayedTriggerEffect::new(
+                        Trigger::beginning_of_end_step(crate::target::PlayerFilter::Any),
+                        vec![crate::effect::Effect::new(
+                            crate::effects::ReturnToHandEffect::with_spec(
+                                crate::target::ChooseSpec::SpecificObject(result.new_id),
+                            ),
+                        )],
+                        true,
+                        vec![result.new_id],
+                        crate::target::PlayerFilter::Specific(entry.controller),
+                    );
+                    let _ = crate::executor::execute_effect(
+                        game,
+                        &crate::effect::Effect::new(return_to_hand),
+                        &mut crate::executor::ExecutionContext::new_default(
+                            result.new_id,
+                            entry.controller,
+                        ),
+                    );
+                }
+
                 // Check for ETB triggers and add them to the trigger queue
                 if let Some(ref mut tq) = trigger_queue {
                     // Drain pending ZoneChangeEvent emitted by ETB move processing.
@@ -344,6 +407,7 @@ pub(super) fn resolve_stack_entry_full(
             // Check if cast with flashback/escape/jump-start/granted escape (exiles after resolution)
             let should_exile = match &entry.casting_method {
                 CastingMethod::Normal => false,
+                CastingMethod::SplitOtherHalf | CastingMethod::Fuse => false,
                 CastingMethod::Alternative(idx) => obj
                     .alternative_casts
                     .get(*idx)

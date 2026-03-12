@@ -30,8 +30,8 @@ use crate::zone::Zone;
 ///
 /// # Result
 ///
-/// Returns `EffectResult::Objects(chosen_ids)` with the chosen object IDs.
-/// If no valid objects exist, returns `EffectResult::Count(0)`.
+/// Returns `crate::effect::OutcomeValue::Objects(chosen_ids)` with the chosen object IDs.
+/// If no valid objects exist, returns `crate::effect::OutcomeValue::Count(0)`.
 ///
 /// # Example
 ///
@@ -476,7 +476,6 @@ impl CostExecutableEffect for ChooseObjectsEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -514,7 +513,7 @@ mod tests {
             ChooseObjectsEffect::new(ObjectFilter::creature(), 1, PlayerFilter::You, "selected");
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
         assert!(ctx.get_tagged("selected").is_none());
     }
 
@@ -533,7 +532,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should have chosen one creature (SelectFirstDecisionMaker picks first)
-        if let EffectResult::Objects(chosen) = result.result {
+        if let crate::effect::OutcomeValue::Objects(chosen) = result.value {
             assert_eq!(chosen.len(), 1);
             assert_eq!(chosen[0], creature1);
         } else {
@@ -568,7 +567,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        if let EffectResult::Objects(chosen) = result.result {
+        if let crate::effect::OutcomeValue::Objects(chosen) = result.value {
             assert_eq!(chosen.len(), 1);
             assert_eq!(chosen[0], bob_creature);
         } else {
@@ -589,7 +588,7 @@ mod tests {
             ChooseObjectsEffect::new(ObjectFilter::creature(), 0, PlayerFilter::You, "selected");
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(0));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(0));
     }
 
     #[test]

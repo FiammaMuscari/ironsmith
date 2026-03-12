@@ -75,11 +75,11 @@ impl EffectExecutor for IfEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let result = ctx
-            .get_result(self.condition)
+        let outcome = ctx
+            .get_outcome(self.condition)
             .ok_or(ExecutionError::EffectNotFound(self.condition))?;
 
-        let branch = if self.predicate.evaluate(result) {
+        let branch = if self.predicate.evaluate_outcome(outcome) {
             &self.then
         } else {
             &self.else_
@@ -108,7 +108,6 @@ impl EffectExecutor for IfEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -123,7 +122,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
 
         // Simulate a prior effect that "happened"
-        ctx.store_result(EffectId(0), EffectResult::Count(1));
+        ctx.store_outcome(EffectId(0), EffectOutcome::count(1));
 
         let initial_life = game.player(alice).unwrap().life;
 
@@ -135,7 +134,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Then branch should execute
-        assert_eq!(result.result, EffectResult::Count(5));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5));
         assert_eq!(game.player(alice).unwrap().life, initial_life + 5);
     }
 
@@ -147,7 +146,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
 
         // Simulate a prior effect that didn't happen
-        ctx.store_result(EffectId(0), EffectResult::Count(0));
+        ctx.store_outcome(EffectId(0), EffectOutcome::count(0));
 
         let initial_life = game.player(alice).unwrap().life;
 
@@ -159,7 +158,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Then branch should NOT execute (no else branch, so Resolved)
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.player(alice).unwrap().life, initial_life);
     }
 
@@ -171,7 +170,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
 
         // Simulate a prior effect that didn't happen
-        ctx.store_result(EffectId(0), EffectResult::Count(0));
+        ctx.store_outcome(EffectId(0), EffectOutcome::count(0));
 
         let initial_life = game.player(alice).unwrap().life;
 
@@ -184,8 +183,40 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Else branch should execute
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         assert_eq!(game.player(alice).unwrap().life, initial_life + 2);
+    }
+
+    #[test]
+    fn test_if_uses_full_outcome_not_only_summary_result() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        ctx.store_outcome(
+            EffectId(0),
+            EffectOutcome::with_details(
+                crate::effect::OutcomeStatus::Succeeded,
+                crate::effect::OutcomeValue::Count(0),
+                vec![crate::events::RawEvent::new_with_provenance(
+                    crate::events::TapEvent { permanent: source },
+                    crate::provenance::ProvNodeId::default(),
+                )],
+                Vec::new(),
+            ),
+        );
+
+        let initial_life = game.player(alice).unwrap().life;
+        let effect = IfEffect::if_then(
+            EffectId(0),
+            EffectPredicate::Happened,
+            vec![Effect::gain_life(5)],
+        );
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(5));
+        assert_eq!(game.player(alice).unwrap().life, initial_life + 5);
     }
 
     #[test]

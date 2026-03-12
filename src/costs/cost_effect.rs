@@ -89,13 +89,15 @@ impl CostPayer for CostEffect {
 
         let outcome = execute_effect(game, &self.effect, &mut exec_ctx)
             .map_err(|e| CostPaymentError::Other(format!("{e:?}")))?;
-        for event in outcome.events {
+        for event in outcome.events.iter().cloned() {
             game.queue_trigger_event(ctx.provenance, event);
         }
 
+        let removed_marker_total =
+            outcome.total_marker_changes(|event| event.is_removed());
+
         if ctx.x_value.is_none()
-            && let crate::effect::EffectResult::Count(count) = outcome.result
-            && count > 0
+            && removed_marker_total > 0
             && (self
                 .effect
                 .downcast_ref::<crate::effects::RemoveCountersEffect>()
@@ -109,7 +111,7 @@ impl CostPayer for CostEffect {
                     .downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
                     .is_some())
         {
-            ctx.x_value = Some(count as u32);
+            ctx.x_value = Some(removed_marker_total);
         }
 
         // Copy any new tags back to CostContext for subsequent costs
@@ -365,5 +367,49 @@ impl CostPayer for CostEffect {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::costs::{CostContext, CostPayer, CostPaymentResult};
+    use crate::decision::SelectFirstDecisionMaker;
+    use crate::effects::RemoveCountersEffect;
+    use crate::ids::{CardId, PlayerId};
+    use crate::object::CounterType;
+    use crate::types::CardType;
+    use crate::{card::CardBuilder, game_state::GameState, zone::Zone};
+
+    fn create_test_game() -> GameState {
+        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    #[test]
+    fn remove_counters_cost_sets_x_from_marker_removal_events() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+
+        let card = CardBuilder::new(CardId::from_raw(1), "Battery")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let source = game.create_object_from_card(&card, alice, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(source) {
+            obj.counters.insert(CounterType::Charge, 3);
+        }
+
+        let cost = CostEffect::new(RemoveCountersEffect::new(
+            CounterType::Charge,
+            2,
+            crate::target::ChooseSpec::Source,
+        ));
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = CostContext::new(source, alice, &mut dm);
+
+        let result = cost.pay(&mut game, &mut ctx).expect("cost should be payable");
+
+        assert_eq!(result, CostPaymentResult::Paid);
+        assert_eq!(ctx.x_value, Some(2));
+        assert_eq!(game.counter_count(source, CounterType::Charge), 1);
     }
 }

@@ -113,10 +113,10 @@ impl EffectExecutor for ReflexiveTriggerEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let result = ctx
-            .get_result(self.condition)
+        let outcome = ctx
+            .get_outcome(self.condition)
             .ok_or(ExecutionError::EffectNotFound(self.condition))?;
-        if !self.predicate.evaluate(result) {
+        if !self.predicate.evaluate_outcome(outcome) {
             return Ok(EffectOutcome::resolved());
         }
 

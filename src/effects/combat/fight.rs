@@ -1,6 +1,6 @@
 //! Fight effect implementation.
 
-use crate::effect::{Effect, EffectOutcome, EffectResult};
+use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::game_state::GameState;
@@ -55,7 +55,7 @@ impl EffectExecutor for FightEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Get both targets from resolved targets
         let Some((creature1_id, creature2_id)) = ctx.resolve_two_object_targets() else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         // Use calculated power so continuous effects (pumps/shrinks) are respected.
@@ -84,7 +84,7 @@ impl EffectExecutor for FightEffect {
             outcomes.push(outcome);
         }
 
-        Ok(EffectOutcome::aggregate(outcomes))
+        Ok(EffectOutcome::aggregate_summing_counts(outcomes))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -157,7 +157,7 @@ mod tests {
         let effect = FightEffect::you_vs_opponent();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(4));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(4));
 
         // Bear (2/2) takes 2 damage from Goblin
         assert_eq!(game.damage_on(bear), 2);
@@ -229,7 +229,7 @@ mod tests {
         let effect = FightEffect::you_vs_opponent();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
         let effect = FightEffect::you_vs_opponent();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]

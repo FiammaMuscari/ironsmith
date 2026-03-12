@@ -6,7 +6,7 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
@@ -62,7 +62,7 @@ impl EffectExecutor for CascadeEffect {
                 snapshot.name.clone(),
             )
         } else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         let mut exiled = Vec::new();
@@ -183,7 +183,7 @@ impl EffectExecutor for CascadeEffect {
 
         if let Some((_, casted_id, from_zone)) = casted_card {
             Ok(with_spell_cast_event(
-                EffectOutcome::from_result(EffectResult::Objects(vec![casted_id])),
+                EffectOutcome::with_objects(vec![casted_id]),
                 game,
                 casted_id,
                 ctx.controller,

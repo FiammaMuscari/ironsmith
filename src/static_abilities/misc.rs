@@ -28,6 +28,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaCost;
 use crate::object::CounterType;
 use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect};
+use crate::tag::SOURCE_EXILED_TAG;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::Subtype;
 use crate::zone::Zone;
@@ -2268,6 +2269,68 @@ impl StaticAbilityKind for DrawReplacementExileTopFaceDown {
     }
 }
 
+/// "If a card would be put into an opponent's graveyard from anywhere, instead exile it with a
+/// void counter on it."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExileToCounteredExileInsteadOfGraveyard {
+    pub player: PlayerFilter,
+    pub counter_type: CounterType,
+}
+
+impl ExileToCounteredExileInsteadOfGraveyard {
+    pub fn new(player: PlayerFilter, counter_type: CounterType) -> Self {
+        Self {
+            player,
+            counter_type,
+        }
+    }
+
+    fn graveyard_owner_phrase(&self) -> &'static str {
+        match self.player {
+            PlayerFilter::You => "your",
+            PlayerFilter::Opponent => "an opponent's",
+            _ => "a player's",
+        }
+    }
+}
+
+impl StaticAbilityKind for ExileToCounteredExileInsteadOfGraveyard {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ExileToCounteredExileInsteadOfGraveyard
+    }
+
+    fn display(&self) -> String {
+        let counter = self.counter_type.description().into_owned();
+        format!(
+            "If a card would be put into {} graveyard from anywhere, instead exile it with a {} counter on it.",
+            self.graveyard_owner_phrase(),
+            counter
+        )
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            crate::events::zones::matchers::WouldGoToGraveyardMatcher::new(
+                ObjectFilter::default().owned_by(self.player.clone()),
+            ),
+            ReplacementAction::Instead(vec![
+                Effect::new(crate::effects::ExileEffect::with_spec(ChooseSpec::Source)),
+                Effect::new(crate::effects::PutCountersEffect::new(
+                    self.counter_type,
+                    Value::Fixed(1),
+                    ChooseSpec::All(ObjectFilter::tagged(SOURCE_EXILED_TAG)),
+                )),
+            ]),
+        ))
+    }
+}
+
 // =============================================================================
 // Interactive ETB Replacement Abilities (Unified System)
 // =============================================================================
@@ -2699,6 +2762,40 @@ mod tests {
             !choose_debug.contains("RevealTopEffect"),
             "draw replacement should not reveal the card, got {choose_debug}"
         );
+    }
+
+    #[test]
+    fn test_exile_to_countered_exile_instead_of_graveyard_generates_replacement() {
+        let ability =
+            ExileToCounteredExileInsteadOfGraveyard::new(PlayerFilter::Opponent, CounterType::Void);
+        assert_eq!(
+            ability.id(),
+            StaticAbilityId::ExileToCounteredExileInsteadOfGraveyard
+        );
+
+        let replacement = ability
+            .generate_replacement_effect(ObjectId::from_raw(1), PlayerId::from_index(0))
+            .expect("replacement should be generated");
+        let ReplacementAction::Instead(effects) = &replacement.replacement else {
+            panic!("expected opponent-graveyard replacement to use an Instead action");
+        };
+        assert_eq!(effects.len(), 2, "expected exile+counter effect sequence");
+
+        let exile = effects[0]
+            .downcast_ref::<crate::effects::ExileEffect>()
+            .expect("expected exile effect");
+        assert!(matches!(exile.spec, ChooseSpec::Source));
+
+        let counters = effects[1]
+            .downcast_ref::<crate::effects::PutCountersEffect>()
+            .expect("expected put-counters effect");
+        assert_eq!(counters.counter_type, CounterType::Void);
+        assert!(matches!(
+            counters.target,
+            ChooseSpec::All(ref filter) if filter.tagged_constraints.iter().any(
+                |constraint| constraint.tag.as_str() == SOURCE_EXILED_TAG
+            )
+        ));
     }
 
     #[test]

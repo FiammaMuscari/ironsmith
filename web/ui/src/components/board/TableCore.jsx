@@ -9,6 +9,7 @@ export default function TableCore({
   onInspect,
   onExpandInspector,
   zoneViews,
+  zoneActivityByPlayer = {},
   deckLoadingMode,
   onLoadDecks,
   onCancelDeckLoading,
@@ -46,6 +47,7 @@ export default function TableCore({
         onInspect={onInspect}
         onExpandInspector={onExpandInspector}
         zoneViews={zoneViews}
+        zoneActivityByPlayer={zoneActivityByPlayer}
         legalTargetPlayerIds={legalTargetPlayerIds}
         legalTargetObjectIds={legalTargetObjectIds}
       />
@@ -60,6 +62,7 @@ export default function TableCore({
         onInspect={onInspect}
         onExpandInspector={onExpandInspector}
         zoneViews={zoneViews}
+        zoneActivity={zoneActivityByPlayer[String(me?.id ?? me?.index ?? "")] || {}}
         legalTargetPlayerIds={legalTargetPlayerIds}
         legalTargetObjectIds={legalTargetObjectIds}
       />

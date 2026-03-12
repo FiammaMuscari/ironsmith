@@ -111,18 +111,52 @@ export default function Shell() {
       setDeckLoadingMode(false);
       const loaded = result?.loaded ?? 0;
       const failed = Array.isArray(result?.failed) ? result.failed : [];
+      const failedBelowThreshold = Array.isArray(result?.failedBelowThreshold)
+        ? result.failedBelowThreshold
+        : [];
+      const failedToParse = Array.isArray(result?.failedToParse)
+        ? result.failedToParse
+        : [];
       pushNotice({
         tone: "success",
         title: "Deck load complete",
         body: `Loaded ${loaded} card${loaded === 1 ? "" : "s"}.`,
       });
       if (failed.length > 0) {
+        const copyActions = [
+          {
+            label: `Copy all (${failed.length})`,
+            copyText: failed.join("\n"),
+            copyStatusMessage: `Copied ${failed.length} failed deck card name${failed.length === 1 ? "" : "s"}`,
+          },
+        ];
+        if (failedBelowThreshold.length > 0) {
+          copyActions.push({
+            label: `Copy threshold (${failedBelowThreshold.length})`,
+            copyText: failedBelowThreshold.join("\n"),
+            copyStatusMessage: `Copied ${failedBelowThreshold.length} low-fidelity deck card name${failedBelowThreshold.length === 1 ? "" : "s"}`,
+          });
+        }
+        if (failedToParse.length > 0) {
+          copyActions.push({
+            label: `Copy parse (${failedToParse.length})`,
+            copyText: failedToParse.join("\n"),
+            copyStatusMessage: `Copied ${failedToParse.length} unparsed deck card name${failedToParse.length === 1 ? "" : "s"}`,
+          });
+        }
+        const issueSummary = [
+          failedBelowThreshold.length > 0
+            ? `${failedBelowThreshold.length} below threshold`
+            : null,
+          failedToParse.length > 0 ? `${failedToParse.length} failed to parse` : null,
+        ]
+          .filter(Boolean)
+          .join(". ");
         pushNotice({
           tone: "error",
           title: "Deck load issues",
-          body: `${failed.length} card${failed.length === 1 ? "" : "s"} failed. Click to copy the card names.`,
-          copyText: failed.join("\n"),
-          copyStatusMessage: `Copied ${failed.length} failed deck card name${failed.length === 1 ? "" : "s"}`,
+          body: `${failed.length} card${failed.length === 1 ? "" : "s"} failed. ${issueSummary ? `${issueSummary}. ` : ""}Use the copy actions below.`,
+          actions: copyActions,
         });
       }
       if (failed.length > 0) {
@@ -130,7 +164,17 @@ export default function Shell() {
         const failedStr = unique.length <= 5
           ? unique.join(", ")
           : `${unique.slice(0, 5).join(", ")} (+${unique.length - 5} more)`;
-        await refresh(`Loaded ${loaded} cards. ${failed.length} failed: ${failedStr}`);
+        const issueSummary = [
+          failedBelowThreshold.length > 0
+            ? `${failedBelowThreshold.length} below threshold`
+            : null,
+          failedToParse.length > 0 ? `${failedToParse.length} failed to parse` : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        await refresh(
+          `Loaded ${loaded} cards. ${failed.length} failed${issueSummary ? ` (${issueSummary})` : ""}: ${failedStr}`
+        );
       } else {
         await refresh(`Loaded ${loaded} cards`);
       }

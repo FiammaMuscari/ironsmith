@@ -4,7 +4,7 @@
 //! - "Destroy target creature. It can't be regenerated."
 //! - "Destroy all creatures. They can't be regenerated."
 
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
@@ -55,7 +55,7 @@ impl DestroyNoRegenerationEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
         object_id: crate::ids::ObjectId,
-    ) -> Result<Option<EffectResult>, ExecutionError> {
+    ) -> Result<Option<OutcomeStatus>, ExecutionError> {
         // Regeneration shields are one-shot replacement effects; "can't be regenerated"
         // means they can't replace this destruction.
         //
@@ -69,9 +69,9 @@ impl DestroyNoRegenerationEffect {
         let result = process_destroy(game, object_id, Some(ctx.source), &mut *ctx.decision_maker);
         match result {
             EventOutcome::Proceed(_) => Ok(None),
-            EventOutcome::Prevented => Ok(Some(EffectResult::Protected)),
-            EventOutcome::Replaced => Ok(Some(EffectResult::Replaced)),
-            EventOutcome::NotApplicable => Ok(Some(EffectResult::TargetInvalid)),
+            EventOutcome::Prevented => Ok(Some(crate::effect::OutcomeStatus::Protected)),
+            EventOutcome::Replaced => Ok(Some(crate::effect::OutcomeStatus::Replaced)),
+            EventOutcome::NotApplicable => Ok(Some(crate::effect::OutcomeStatus::TargetInvalid)),
         }
     }
 }
@@ -103,12 +103,12 @@ impl EffectExecutor for DestroyNoRegenerationEffect {
             },
         ) {
             Ok(result) => result,
-            Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(
+        Ok(EffectOutcome::count(
             apply_result.applied_count as i32,
-        )))
+        ))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -171,9 +171,9 @@ mod tests {
 
         let out = effect.execute(&mut game, &mut ctx).expect("execute");
         assert!(
-            out.result.is_success(),
+            out.status.is_success(),
             "expected destroy to succeed, got {:?}",
-            out.result
+            out
         );
         assert!(
             game.object(creature_id).is_none(),

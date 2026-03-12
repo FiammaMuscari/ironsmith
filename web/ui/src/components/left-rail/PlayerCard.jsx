@@ -38,13 +38,13 @@ export default function PlayerCard({ player, isActive, isPerspective }) {
         <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Hand">
           Hand <span className="font-bold text-[#d6e6fb]">{player.hand_size}</span>
         </span>
-        <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Graveyard">
+        <span className="bg-[#0b121b] px-1.5 rounded-sm" title="GY">
           GY <span className="font-bold text-[#d6e6fb]">{player.graveyard_size}</span>
         </span>
         <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Exile">
           Exl <span className="font-bold text-[#d6e6fb]">{exileCards.length}</span>
         </span>
-        <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Command">
+        <span className="bg-[#0b121b] px-1.5 rounded-sm" title="CZ">
           Cmd <span className="font-bold text-[#d6e6fb]">{player.command_size ?? commandCards.length}</span>
         </span>
         <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Battlefield">

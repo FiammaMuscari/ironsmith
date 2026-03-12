@@ -12,10 +12,10 @@ const ZONE_ORDER = ["battlefield", "hand", "graveyard", "library", "exile", "com
 const ZONE_LABELS = {
   battlefield: "Battlefield",
   hand: "Hand",
-  graveyard: "Graveyard",
+  graveyard: "GY",
   library: "Deck",
   exile: "Exile",
-  command: "Command",
+  command: "CZ",
 };
 const SIDE_ZONE_COLUMN_WIDTH = 240;
 
@@ -79,15 +79,27 @@ function zoneCounts(player) {
   return [
     { label: "Battlefield", count: battlefieldCount },
     { label: "Hand", count: player.hand_size ?? 0 },
-    { label: "Graveyard", count: player.graveyard_size ?? 0 },
+    { label: "GY", count: player.graveyard_size ?? 0 },
     { label: "Deck", count: player.library_size ?? 0 },
     { label: "Exile", count: exileCards.length },
-    { label: "Command", count: player.command_size ?? commandCards.length },
+    { label: "CZ", count: player.command_size ?? commandCards.length },
   ];
 }
 
 function shouldReserveSideColumn(zone, visibleZones) {
   return visibleZones.has("battlefield") && (zone === "graveyard" || zone === "exile");
+}
+
+function isBaseVisibleZone(zone, zoneViews, count) {
+  const baseViews = normalizeZoneViews(zoneViews);
+  if (!baseViews.includes(zone)) return false;
+  return zone === "battlefield" || zone === "library" || count > 0;
+}
+
+function formatZoneActivityClass(direction) {
+  return direction === "left"
+    ? "zone-auto-reveal zone-auto-reveal-leave"
+    : "zone-auto-reveal zone-auto-reveal-enter";
 }
 
 function collectCardObjectIds(card) {
@@ -125,6 +137,24 @@ function resolveSinglePriorityCardAction(state, card) {
   return candidateActions[0];
 }
 
+function resolveSingleObjectBoundOption(state, card) {
+  const decision = state?.decision;
+  if (!decision || decision.kind !== "select_options" || decision.player !== state?.perspective) {
+    return null;
+  }
+
+  const objectIds = collectCardObjectIds(card);
+  if (objectIds.length === 0) return null;
+  const objectIdSet = new Set(objectIds.map((id) => String(id)));
+  const candidateOptions = (decision.options || []).filter((option) =>
+    option?.legal !== false
+    && option?.object_id != null
+    && objectIdSet.has(String(option.object_id))
+  );
+
+  return candidateOptions.length === 1 ? candidateOptions[0] : null;
+}
+
 function ZoneCountInline({ player }) {
   const counts = zoneCounts(player);
   return (
@@ -145,6 +175,7 @@ export default function OpponentZone({
   onInspect,
   onExpandInspector,
   zoneViews = ["battlefield"],
+  zoneActivityByPlayer = {},
   legalTargetPlayerIds = new Set(),
   legalTargetObjectIds = new Set(),
 }) {
@@ -169,6 +200,7 @@ export default function OpponentZone({
             onInspect={onInspect}
             onExpandInspector={onExpandInspector}
             zoneViews={zoneViews}
+            zoneActivity={zoneActivityByPlayer[String(player?.id ?? player?.index ?? "")] || {}}
             state={state}
             dispatch={dispatch}
             legalTargetPlayerIds={legalTargetPlayerIds}
@@ -186,6 +218,7 @@ function OpponentSlot({
   onInspect,
   onExpandInspector,
   zoneViews,
+  zoneActivity = {},
   state,
   dispatch,
   legalTargetPlayerIds,
@@ -194,11 +227,17 @@ function OpponentSlot({
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const { combatModeRef, combatMode, dragArrow } = useCombatArrows();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
-  const zoneEntries = buildZoneEntries(player, zoneViews);
+  const transientZoneViews = Object.keys(zoneActivity || {});
+  const zoneEntries = buildZoneEntries(player, [...zoneViews, ...transientZoneViews]);
   const activeZoneEntries = zoneEntries.filter((entry) => entry.active);
   const visibleZones = new Set(
     activeZoneEntries
-      .filter((entry) => entry.zone === "battlefield" || entry.zone === "library" || entry.count > 0)
+      .filter((entry) =>
+        entry.zone === "battlefield"
+        || entry.zone === "library"
+        || entry.count > 0
+        || Boolean(zoneActivity?.[entry.zone])
+      )
       .map((entry) => entry.zone)
   );
   if (visibleZones.size === 0 && activeZoneEntries.length > 0) {
@@ -262,6 +301,15 @@ function OpponentSlot({
       }
     }
 
+    const singleObjectBoundOption = resolveSingleObjectBoundOption(state, card);
+    if (singleObjectBoundOption) {
+      dispatch(
+        { type: "select_options", option_indices: [singleObjectBoundOption.index] },
+        singleObjectBoundOption.description || "Selected option"
+      );
+      return;
+    }
+
     const singlePriorityAction = resolveSinglePriorityCardAction(state, card);
     if (singlePriorityAction) {
       dispatch(
@@ -275,6 +323,18 @@ function OpponentSlot({
   };
 
   const handleCardPointerDown = useCallback((event, card) => {
+    const singleObjectBoundOption = resolveSingleObjectBoundOption(state, card);
+    if (singleObjectBoundOption) {
+      if (!registerPointerDown(event) || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dispatch(
+        { type: "select_options", option_indices: [singleObjectBoundOption.index] },
+        singleObjectBoundOption.description || "Selected option"
+      );
+      return;
+    }
+
     if (!canPickTargetFromBoard || !registerPointerDown(event)) return;
     const candidateObjectIds = collectCardObjectIds(card);
     const matchedTargetId = candidateObjectIds.find((id) => legalTargetObjectIds.has(id));
@@ -286,7 +346,7 @@ function OpponentSlot({
         detail: { target: { kind: "object", object: matchedTargetId } },
       })
     );
-  }, [canPickTargetFromBoard, legalTargetObjectIds, registerPointerDown]);
+  }, [canPickTargetFromBoard, dispatch, legalTargetObjectIds, registerPointerDown, state]);
 
   const dispatchPlayerTargetChoice = useCallback(() => {
     if (!canPickTargetFromBoard || !isPlayerLegalTarget) return;
@@ -373,11 +433,21 @@ function OpponentSlot({
         {zoneEntries.map((entry) => {
           const isVisible = entry.active && visibleZones.has(entry.zone);
           const reserveSideColumn = shouldReserveSideColumn(entry.zone, visibleZones);
+          const activity = zoneActivity?.[entry.zone] || null;
+          const isTransientReveal = Boolean(activity)
+            && !isBaseVisibleZone(entry.zone, zoneViews, entry.count);
+          const displayCards = Array.isArray(activity?.replayCards) && activity.replayCards.length > 0
+            ? activity.replayCards
+            : entry.cards;
+          const displayCount = Number.isFinite(activity?.displayCount) ? activity.displayCount : entry.count;
           const zoneMinWidth = reserveSideColumn ? `${SIDE_ZONE_COLUMN_WIDTH}px` : "0px";
           return (
             <div
               key={entry.zone}
-              className="min-h-0 h-full"
+              className={cn(
+                "min-h-0 h-full",
+                activity && formatZoneActivityClass(activity.direction)
+              )}
               style={{
                 flexGrow: isVisible ? (reserveSideColumn ? 0 : 1) : 0,
                 flexShrink: reserveSideColumn ? 0 : 1,
@@ -388,24 +458,41 @@ function OpponentSlot({
                 transform: isVisible ? "translateY(0)" : "translateY(4px)",
                 pointerEvents: isVisible ? "auto" : "none",
                 overflow: isVisible ? "visible" : "hidden",
-                transition: "flex-grow 220ms ease, max-width 220ms ease, opacity 180ms ease, transform 220ms ease",
+                transition: isTransientReveal
+                  ? "opacity 180ms ease, transform 220ms ease"
+                  : "flex-grow 220ms ease, max-width 220ms ease, opacity 180ms ease, transform 220ms ease",
               }}
             >
               <div
-                className="grid gap-1 min-h-0 h-full"
-                style={{ gridTemplateRows: showZoneHeaders ? "auto minmax(0,1fr)" : "minmax(0,1fr)" }}
+                className={cn(
+                  "grid gap-1 min-h-0 h-full",
+                  isTransientReveal && "zone-reveal-content zone-reveal-content-enter"
+                )}
+                style={{ gridTemplateRows: showZoneHeaders || activity ? "auto minmax(0,1fr)" : "minmax(0,1fr)" }}
               >
-                {showZoneHeaders && (
+                {(showZoneHeaders || activity) && (
                   <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-[#9cb8d8] px-0.5">
                     <span>{entry.label}</span>
-                    <span className="text-[#d6e6fb]">{entry.count}</span>
+                    <span className="text-[#d6e6fb]">{displayCount}</span>
+                    {activity ? (
+                      <span
+                        className={cn(
+                          "zone-activity-badge ml-auto",
+                          activity.direction === "left"
+                            ? "zone-activity-badge-leave"
+                            : "zone-activity-badge-enter"
+                        )}
+                      >
+                        {activity.label}
+                      </span>
+                    ) : null}
                   </div>
                 )}
                 {entry.zone === "library" ? (
-                  <DeckZonePile count={entry.count} />
+                  <DeckZonePile count={displayCount} />
                 ) : (
                   <BattlefieldRow
-                    cards={entry.cards}
+                    cards={displayCards}
                     compact={entry.zone !== "battlefield"}
                     battlefieldSide="top"
                     selectedObjectId={selectedObjectId}

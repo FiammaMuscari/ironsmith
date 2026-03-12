@@ -9,7 +9,7 @@
 use crate::combat_state::{AttackTarget, AttackerInfo, get_attack_target, is_unblocked};
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::zones::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
 };
@@ -162,7 +162,7 @@ impl EffectExecutor for NinjutsuCostEffect {
             .or_default()
             .push(attack_target);
 
-        Ok(EffectOutcome::from_result(EffectResult::Resolved))
+        Ok(EffectOutcome::resolved())
     }
 
     fn cost_description(&self) -> Option<String> {
@@ -250,14 +250,14 @@ impl EffectExecutor for NinjutsuEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let Some(attack_target) = Self::pop_attack_target(game, ctx.source) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         let Some(source_obj) = game.object(ctx.source) else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
         if source_obj.zone != Zone::Hand {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         }
 
         let outcome = move_to_battlefield_with_options(
@@ -278,12 +278,12 @@ impl EffectExecutor for NinjutsuEffect {
                         target: attack_target,
                     });
                 }
-                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                Ok(EffectOutcome::with_objects(vec![
                     new_id,
-                ])))
+                ]))
             }
             BattlefieldEntryOutcome::Prevented => {
-                Ok(EffectOutcome::from_result(EffectResult::Prevented))
+                Ok(EffectOutcome::prevented())
             }
         }
     }
@@ -353,9 +353,9 @@ mod tests {
             .expect("ninjutsu cost should resolve");
 
         assert!(
-            matches!(result.result, EffectResult::Resolved),
+            matches!(result.status, crate::effect::OutcomeStatus::Succeeded),
             "expected resolved cost effect, got {:?}",
-            result.result
+            result
         );
         assert!(
             game.combat
@@ -397,8 +397,8 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("ninjutsu effect should resolve");
 
-        let entered = match result.result {
-            EffectResult::Objects(ids) => ids[0],
+        let entered = match result.value {
+            crate::effect::OutcomeValue::Objects(ids) => ids[0],
             other => panic!("expected moved object result, got {other:?}"),
         };
 

@@ -2,7 +2,7 @@
 
 use crate::decision::FallbackStrategy;
 use crate::decisions::ask_may_choice;
-use crate::effect::{Effect, EffectOutcome, EffectResult};
+use crate::effect::{Effect, EffectOutcome, ExecutionFact};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
@@ -20,7 +20,7 @@ use crate::target::PlayerFilter;
 ///
 /// # Result
 ///
-/// - If player declines: `EffectResult::Declined`
+/// - If player declines: `crate::effect::OutcomeStatus::Declined`
 /// - If player accepts: the result of the last inner effect (or Count(0) if no effects)
 ///
 /// # Example
@@ -90,7 +90,7 @@ impl EffectExecutor for MayEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         if self.should_auto_decline_without_prompt(game, ctx)? {
-            return Ok(EffectOutcome::from_result(EffectResult::Declined));
+            return Ok(EffectOutcome::declined());
         }
 
         // Generate a description from the effects
@@ -124,9 +124,9 @@ impl EffectExecutor for MayEffect {
             for effect in &self.effects {
                 outcomes.push(execute_effect(game, effect, ctx)?);
             }
-            Ok(EffectOutcome::aggregate(outcomes))
+            Ok(EffectOutcome::aggregate(outcomes).with_execution_fact(ExecutionFact::Accepted))
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::Declined))
+            Ok(EffectOutcome::declined())
         }
     }
 
@@ -177,7 +177,7 @@ impl MayEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect::Condition;
+    use crate::effect::{Condition, ExecutionFact};
     use crate::ids::PlayerId;
     use crate::target::{ChooseSpec, PlayerFilter};
 
@@ -199,7 +199,7 @@ mod tests {
         let effect = MayEffect::new(vec![Effect::gain_life(5)]);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Declined);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Declined);
         // Life should not have changed
         assert_eq!(game.player(alice).unwrap().life, initial_life);
     }
@@ -225,7 +225,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // With AutoPassDecisionMaker, should decline
-        assert_eq!(result.result, EffectResult::Declined);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Declined);
     }
 
     #[test]
@@ -281,10 +281,26 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("effect should execute");
 
-        assert_eq!(result.result, EffectResult::Declined);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Declined);
         assert_eq!(
             game.player(alice).expect("alice should exist").life,
             initial_life
         );
+    }
+
+    #[test]
+    fn may_acceptance_emits_execution_fact() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect =
+            MayEffect::new(vec![Effect::gain_life(1)]).with_fallback(FallbackStrategy::Accept);
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect should execute");
+
+        assert!(result.execution_facts().contains(&ExecutionFact::Accepted));
     }
 }

@@ -1927,6 +1927,16 @@ impl StaticAbility {
         Self::new(DrawReplacementExileTopFaceDown)
     }
 
+    pub fn exile_to_countered_exile_instead_of_graveyard(
+        player: crate::target::PlayerFilter,
+        counter_type: crate::object::CounterType,
+    ) -> Self {
+        Self::new(ExileToCounteredExileInsteadOfGraveyard::new(
+            player,
+            counter_type,
+        ))
+    }
+
     pub fn players_cant_gain_life() -> Self {
         Self::new(PlayersCantGainLife)
     }

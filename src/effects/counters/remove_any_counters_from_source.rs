@@ -2,7 +2,7 @@
 
 use crate::decision::FallbackStrategy;
 use crate::decisions::{CounterRemovalSpec, NumberSpec, make_decision_with_fallback};
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -152,10 +152,10 @@ impl EffectExecutor for RemoveAnyCountersFromSourceEffect {
         }
 
         if removed_total != to_remove {
-            return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            return Ok(EffectOutcome::impossible());
         }
 
-        outcome.result = EffectResult::Count(removed_total as i32);
+        outcome.set_value(crate::effect::OutcomeValue::Count(removed_total as i32));
         Ok(outcome)
     }
 

@@ -110,7 +110,6 @@ impl EffectExecutor for PreventDamageEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -148,7 +147,7 @@ mod tests {
         let effect = PreventDamageEffect::to_you(3, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.prevention_effects.shields().len(), 1);
     }
 
@@ -166,7 +165,7 @@ mod tests {
         let effect = PreventDamageEffect::any_target(2, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.prevention_effects.shields().len(), 1);
     }
 
@@ -183,7 +182,7 @@ mod tests {
         let effect = PreventDamageEffect::any_target(5, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         assert_eq!(game.prevention_effects.shields().len(), 1);
     }
 
@@ -198,7 +197,7 @@ mod tests {
             PreventDamageEffect::new(Value::X, ChooseSpec::SourceController, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]
@@ -212,7 +211,7 @@ mod tests {
         let effect = PreventDamageEffect::new(2, ChooseSpec::Source, Until::EndOfTurn);
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]

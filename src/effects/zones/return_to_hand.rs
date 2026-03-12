@@ -1,6 +1,6 @@
 //! Return to hand effect implementation.
 
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome, OutcomeStatus};
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
 };
@@ -86,7 +86,7 @@ impl ReturnToHandEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
         object_id: crate::ids::ObjectId,
-    ) -> Result<Option<EffectResult>, ExecutionError> {
+    ) -> Result<Option<OutcomeStatus>, ExecutionError> {
         if let Some(obj) = game.object(object_id) {
             let from_zone = obj.zone;
 
@@ -100,21 +100,21 @@ impl ReturnToHandEffect {
             );
 
             match result {
-                EventOutcome::Prevented => return Ok(Some(EffectResult::Prevented)),
+                EventOutcome::Prevented => return Ok(Some(crate::effect::OutcomeStatus::Prevented)),
                 EventOutcome::Proceed(_) => {
                     return Ok(None); // Successfully returned
                 }
                 EventOutcome::Replaced => {
                     // Replacement effects already executed
-                    return Ok(Some(EffectResult::Replaced));
+                    return Ok(Some(crate::effect::OutcomeStatus::Replaced));
                 }
                 EventOutcome::NotApplicable => {
-                    return Ok(Some(EffectResult::TargetInvalid));
+                    return Ok(Some(crate::effect::OutcomeStatus::TargetInvalid));
                 }
             }
         }
         // Object doesn't exist - target is invalid
-        Ok(Some(EffectResult::TargetInvalid))
+        Ok(Some(crate::effect::OutcomeStatus::TargetInvalid))
     }
 }
 
@@ -160,7 +160,7 @@ impl EffectExecutor for ReturnToHandEffect {
             },
         ) {
             Ok(result) => result,
-            Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            Err(_) => return Ok(EffectOutcome::target_invalid()),
         };
 
         Ok(apply_result.outcome)

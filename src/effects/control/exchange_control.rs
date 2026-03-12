@@ -1,7 +1,7 @@
 //! Exchange control effect implementation.
 
 use crate::continuous::{EffectTarget, Modification};
-use crate::effect::{Effect, EffectOutcome, EffectResult, Until};
+use crate::effect::{Effect, EffectOutcome, Until};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -76,15 +76,15 @@ impl EffectExecutor for ExchangeControlEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let Some((perm1_id, perm2_id)) = ctx.resolve_two_object_targets() else {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return Ok(EffectOutcome::target_invalid());
         };
 
         if let Some(constraint) = self.shared_type {
             let Some(obj1) = game.object(perm1_id) else {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
             let Some(obj2) = game.object(perm2_id) else {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             };
 
             let relevant = |ty: CardType| -> bool {
@@ -116,7 +116,7 @@ impl EffectExecutor for ExchangeControlEffect {
                 .any(|ty| types1.contains(&ty));
 
             if !shares_type {
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return Ok(EffectOutcome::target_invalid());
             }
         }
 
@@ -144,7 +144,7 @@ impl EffectExecutor for ExchangeControlEffect {
 
             Ok(EffectOutcome::aggregate(outcomes))
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
+            Ok(EffectOutcome::target_invalid())
         }
     }
 
@@ -212,7 +212,7 @@ mod tests {
         let effect = ExchangeControlEffect::creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
         // Two continuous effects should be created
         assert_eq!(game.continuous_effects.effects_sorted().len(), 2);
     }
@@ -232,7 +232,7 @@ mod tests {
         let effect = ExchangeControlEffect::creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -252,7 +252,7 @@ mod tests {
         let effect = ExchangeControlEffect::creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
         let effect = ExchangeControlEffect::creatures();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::TargetInvalid);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::TargetInvalid);
     }
 
     #[test]
@@ -293,7 +293,7 @@ mod tests {
         let effect = ExchangeControlEffect::permanents();
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]

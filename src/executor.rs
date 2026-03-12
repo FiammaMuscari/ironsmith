@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::color::Color;
 use crate::cost::OptionalCostsPaid;
 use crate::decision::DecisionMaker;
-use crate::effect::{Effect, EffectId, EffectOutcome, EffectResult, Value};
+use crate::effect::{Effect, EffectId, EffectOutcome, Value};
 use crate::events::cause::EventCause;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
@@ -96,8 +96,8 @@ pub struct ExecutionContext<'a> {
     pub targets: Vec<ResolvedTarget>,
     /// X value (for spells with X in cost).
     pub x_value: Option<u32>,
-    /// Results of previously executed effects (for WithId/If).
-    pub effect_results: HashMap<EffectId, EffectResult>,
+    /// Outcomes of previously executed effects (for WithId/If).
+    pub effect_outcomes: HashMap<EffectId, EffectOutcome>,
     /// Current player in a ForEachOpponent/ForEachPlayer iteration.
     pub iterated_player: Option<PlayerId>,
     /// Current object in a ForEach iteration.
@@ -161,7 +161,7 @@ impl std::fmt::Debug for ExecutionContext<'_> {
             .field("controller", &self.controller)
             .field("targets", &self.targets)
             .field("x_value", &self.x_value)
-            .field("effect_results", &self.effect_results)
+            .field("effect_outcomes", &self.effect_outcomes)
             .field("iterated_player", &self.iterated_player)
             .field("iterated_object", &self.iterated_object)
             .field("decision_maker", &"<&mut dyn DecisionMaker>")
@@ -202,7 +202,7 @@ impl<'a> ExecutionContext<'a> {
             controller,
             targets: Vec::new(),
             x_value: None,
-            effect_results: HashMap::new(),
+            effect_outcomes: HashMap::new(),
             iterated_player: None,
             iterated_object: None,
             decision_maker,
@@ -241,7 +241,7 @@ impl<'a> ExecutionContext<'a> {
             controller,
             targets: Vec::new(),
             x_value: None,
-            effect_results: HashMap::new(),
+            effect_outcomes: HashMap::new(),
             iterated_player: None,
             iterated_object: None,
             decision_maker: dm,
@@ -270,7 +270,7 @@ impl<'a> ExecutionContext<'a> {
             controller: self.controller,
             targets: self.targets,
             x_value: self.x_value,
-            effect_results: self.effect_results,
+            effect_outcomes: self.effect_outcomes,
             iterated_player: self.iterated_player,
             iterated_object: self.iterated_object,
             decision_maker: dm,
@@ -531,14 +531,14 @@ impl<'a> ExecutionContext<'a> {
         self
     }
 
-    /// Store an effect result.
-    pub fn store_result(&mut self, id: EffectId, result: EffectResult) {
-        self.effect_results.insert(id, result);
+    /// Store a full effect outcome.
+    pub fn store_outcome(&mut self, id: EffectId, outcome: EffectOutcome) {
+        self.effect_outcomes.insert(id, outcome);
     }
 
-    /// Get a stored effect result.
-    pub fn get_result(&self, id: EffectId) -> Option<&EffectResult> {
-        self.effect_results.get(&id)
+    /// Get a stored effect outcome.
+    pub fn get_outcome(&self, id: EffectId) -> Option<&EffectOutcome> {
+        self.effect_outcomes.get(&id)
     }
 
     /// Tag an object for reference by subsequent effects.

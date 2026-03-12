@@ -133,7 +133,6 @@ mod tests {
     use super::*;
     use crate::decision::AutoPassDecisionMaker;
     use crate::decision::DecisionMaker;
-    use crate::effect::EffectResult;
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
@@ -246,7 +245,7 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
 
         let result = vote.execute(&mut game, &mut ctx).unwrap();
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
     }
 
     #[test]

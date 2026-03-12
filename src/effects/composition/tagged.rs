@@ -213,7 +213,6 @@ mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::effect::Effect;
-    use crate::effect::EffectResult;
     use crate::executor::ResolvedTarget;
     use crate::filter::ObjectRef;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -272,7 +271,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Effect should have executed
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
 
         // Tagged object should be stored
         let tagged = ctx.get_tagged("target");
@@ -297,7 +296,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Effect should have resolved
-        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Succeeded);
 
         // Creature should be destroyed (in graveyard)
         assert!(!game.battlefield.contains(&creature_id));
@@ -363,7 +362,7 @@ mod tests {
         );
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(2));
         let tagged = ctx
             .get_tagged_all("returned")
             .expect("returned objects should be tagged");
@@ -409,7 +408,7 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Effect should have executed
-        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
 
         // All three objects should be tagged
         let tagged_all = ctx.get_tagged_all("targets");

@@ -4,7 +4,7 @@
 //! This effect provides a generic way to emit a KeywordActionEvent as part of an
 //! effect/cost pipeline so triggers can observe it.
 
-use crate::effect::{EffectOutcome, EffectResult};
+use crate::effect::{EffectOutcome};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -41,7 +41,7 @@ impl EffectExecutor for EmitKeywordActionEffect {
             KeywordActionEvent::new(self.action, ctx.controller, ctx.source, self.amount),
             ctx.provenance,
         );
-        Ok(EffectOutcome::from_result(EffectResult::Resolved).with_event(event))
+        Ok(EffectOutcome::resolved().with_event(event))
     }
 
     fn cost_description(&self) -> Option<String> {
