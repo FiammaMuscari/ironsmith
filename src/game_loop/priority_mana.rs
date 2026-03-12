@@ -2901,6 +2901,8 @@ pub(super) fn propose_spell_cast(
     });
 
     if let Some(obj) = game.object_mut(new_id) {
+        obj.controller = caster;
+
         if let Some(method) = selected_method {
             if method.is_bestow() {
                 obj.apply_bestow_cast_overlay();

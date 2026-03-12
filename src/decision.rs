@@ -421,8 +421,15 @@ fn append_granted_play_from_actions_for_card(
     for grant in play_from_grants {
         // PlayFrom (e.g., Yawgmoth's Will): can cast from zone as if from hand.
         let from_zone = grant.zone;
+        let granted_alternatives = game
+            .grant_registry
+            .granted_alternative_casts_for_card(game, card_id, from_zone, player);
+        let has_same_source_granted_alternative = granted_alternatives
+            .iter()
+            .any(|granted_alt| granted_alt.source_id == grant.source_id);
 
-        if !card.is_land()
+        if !has_same_source_granted_alternative
+            && !card.is_land()
             && let Some(mana_cost) = &card.mana_cost
             && can_cast_with_cost_with_view(
                 game,
@@ -464,9 +471,6 @@ fn append_granted_play_from_actions_for_card(
             }
         }
 
-        let granted_alternatives = game
-            .grant_registry
-            .granted_alternative_casts_for_card(game, card_id, from_zone, player);
         let base_alt_idx = card.alternative_casts.len();
         for (offset, granted_alt) in granted_alternatives.iter().enumerate() {
             if can_cast_with_alternative_with_view(game, player, card, &granted_alt.method, view) {

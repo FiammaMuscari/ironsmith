@@ -5967,6 +5967,200 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn dauthi_voidwalker_zero_cost_spell_only_offers_free_exile_cast_action() {
+        use crate::ability::AbilityKind;
+        use crate::alternative_cast::CastingMethod;
+        use crate::decision::LegalAction;
+        use crate::decision::compute_legal_actions;
+        use crate::executor::{ExecutionContext, execute_effect};
+        use crate::ids::PlayerId;
+
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.phase = crate::game_state::Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let dauthi = CardDefinitionBuilder::new(CardId::new(), "Dauthi Voidwalker Test")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "Shadow\nIf a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.\n{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.",
+            )
+            .expect("Dauthi text should parse");
+        let dauthi_id = game.create_object_from_definition(&dauthi, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(dauthi_id);
+
+        let ornithopter_id = game.create_object_from_definition(
+            &crate::cards::definitions::ornithopter(),
+            bob,
+            Zone::Exile,
+        );
+        game.object_mut(ornithopter_id)
+            .expect("exiled Ornithopter should exist")
+            .counters
+            .insert(CounterType::Void, 1);
+
+        let activated = game
+            .object(dauthi_id)
+            .expect("Dauthi should exist")
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated.clone()),
+                _ => None,
+            })
+            .expect("Dauthi should have an activated ability");
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(dauthi_id, alice, &mut dm);
+        for effect in &activated.effects {
+            execute_effect(&mut game, effect, &mut ctx)
+                .expect("Dauthi activation effect should resolve");
+        }
+
+        let ornithopter_casts: Vec<_> = compute_legal_actions(&game, alice)
+            .into_iter()
+            .filter(|action| {
+                matches!(
+                    action,
+                    LegalAction::CastSpell {
+                        spell_id,
+                        from_zone: Zone::Exile,
+                        ..
+                    } if *spell_id == ornithopter_id
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            ornithopter_casts.len(),
+            1,
+            "Dauthi should expose exactly one exile-cast action for Ornithopter, got {ornithopter_casts:?}"
+        );
+        assert!(
+            matches!(
+                &ornithopter_casts[0],
+                LegalAction::CastSpell {
+                    casting_method: CastingMethod::PlayFrom {
+                        zone: Zone::Exile,
+                        use_alternative: Some(_),
+                        ..
+                    },
+                    ..
+                }
+            ),
+            "Dauthi should only offer the free cast method for Ornithopter, got {ornithopter_casts:?}"
+        );
+    }
+
+    #[test]
+    fn dauthi_voidwalker_casted_permanent_from_exile_enters_under_casters_control() {
+        use crate::ability::AbilityKind;
+        use crate::decision::LegalAction;
+        use crate::decision::compute_legal_actions;
+        use crate::executor::{ExecutionContext, execute_effect};
+        use crate::ids::PlayerId;
+
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.phase = crate::game_state::Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let dauthi = CardDefinitionBuilder::new(CardId::new(), "Dauthi Voidwalker Test")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "Shadow\nIf a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.\n{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.",
+            )
+            .expect("Dauthi text should parse");
+        let dauthi_id = game.create_object_from_definition(&dauthi, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(dauthi_id);
+
+        let ornithopter_id = game.create_object_from_definition(
+            &crate::cards::definitions::ornithopter(),
+            bob,
+            Zone::Exile,
+        );
+        game.object_mut(ornithopter_id)
+            .expect("exiled Ornithopter should exist")
+            .counters
+            .insert(CounterType::Void, 1);
+
+        let activated = game
+            .object(dauthi_id)
+            .expect("Dauthi should exist")
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated.clone()),
+                _ => None,
+            })
+            .expect("Dauthi should have an activated ability");
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(dauthi_id, alice, &mut dm);
+        for effect in &activated.effects {
+            execute_effect(&mut game, effect, &mut ctx)
+                .expect("Dauthi activation effect should resolve");
+        }
+
+        let cast_action = compute_legal_actions(&game, alice)
+            .into_iter()
+            .find(|action| {
+                matches!(
+                    action,
+                    LegalAction::CastSpell {
+                        spell_id,
+                        from_zone: Zone::Exile,
+                        ..
+                    } if *spell_id == ornithopter_id
+                )
+            })
+            .expect("Dauthi should grant a cast action for Ornithopter");
+
+        let mut state = crate::game_loop::PriorityLoopState::new(game.players_in_game());
+        let mut trigger_queue = crate::triggers::TriggerQueue::new();
+        crate::game_loop::apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &crate::game_loop::PriorityResponse::PriorityAction(cast_action.clone()),
+            &mut dm,
+        )
+        .expect("free exile cast should succeed");
+
+        let stack_entry = game.stack.last().expect("cast Ornithopter should be on the stack");
+        assert_eq!(stack_entry.controller, alice);
+        assert_eq!(
+            game.object(stack_entry.object_id)
+                .expect("stack Ornithopter should exist")
+                .controller,
+            alice,
+            "spell on the stack should be controlled by the caster"
+        );
+
+        crate::game_loop::resolve_stack_entry_with(&mut game, &mut dm)
+            .expect("casted Ornithopter should resolve onto the battlefield");
+
+        let resolved_ornithopter = game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .find(|obj| obj.name == "Ornithopter" && obj.owner == bob)
+            .expect("resolved Ornithopter should be on the battlefield");
+        assert_eq!(
+            resolved_ornithopter.controller, alice,
+            "a permanent cast through Dauthi should enter under the caster's control"
+        );
+    }
+
+    #[test]
     fn parse_cant_gain_life_until_eot_from_text() {
         let text = "Until end of turn, players can't gain life.";
         let def = CardDefinitionBuilder::new(CardId::new(), "No Life")
