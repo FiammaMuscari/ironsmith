@@ -31,17 +31,19 @@ mod tests {
         assert!(card.card.card_types.contains(&CardType::Land));
         assert!(card.card.supertypes.contains(&Supertype::Legendary));
 
-        assert!(matches!(
-            &card.abilities[0].kind,
-            AbilityKind::Static(static_ability)
-                if matches!(
-                    static_ability.pregame_action_kind(),
-                    Some(PregameActionKind::BeginOnBattlefield(spec))
-                        if spec.require_not_starting_player
-                            && spec.exile_cards_from_hand == 1
-                            && spec.counters == vec![(CounterType::Luck, 1)]
-                )
-        ));
+        assert!(card.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind,
+                AbilityKind::Static(static_ability)
+                    if matches!(
+                        static_ability.pregame_action_kind(),
+                        Some(PregameActionKind::BeginOnBattlefield(spec))
+                            if spec.require_not_starting_player
+                                && spec.exile_cards_from_hand == 1
+                                && spec.counters == vec![(CounterType::Luck, 1)]
+                    )
+            )
+        }));
         assert!(
             card.abilities
                 .iter()

@@ -334,9 +334,20 @@ fn test_toph_mycosynth_blood_moon_dependency_chain() {
         chars.subtypes.contains(&Subtype::Mountain),
         "Sol Ring should become a Mountain due to Blood Moon"
     );
-    assert!(
-        chars.abilities.is_empty(),
-        "Sol Ring should lose abilities due to Blood Moon"
+    let mana_outputs: Vec<Vec<ManaSymbol>> = chars
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) if activated.is_mana_ability() => {
+                Some(activated.mana_symbols().to_vec())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        mana_outputs,
+        vec![vec![ManaSymbol::Red]],
+        "Blood Moon should remove Sol Ring's printed abilities and leave only Mountain's intrinsic mana ability"
     );
 }
 

@@ -318,6 +318,7 @@ mod tests {
                 // Bob auto-passes, Snapcaster ETB resolves (grants flashback)
                 // Now Charismatic Conqueror trigger resolves
                 "y", // Bob ACCEPTS tapping Snapcaster (MayChoice = true)
+                "y", // Confirm the prompted tap action
                 // Snapcaster gets tapped, no token created
                 "", // Final priority pass after trigger resolution
             ],

@@ -46,6 +46,7 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
         "burden" => Some(CounterType::Named(intern_counter_name("burden"))),
         "level" => Some(CounterType::Level),
         "lore" => Some(CounterType::Lore),
+        "luck" => Some(CounterType::Luck),
         "oil" => Some(CounterType::Oil),
         _ => None,
     }
