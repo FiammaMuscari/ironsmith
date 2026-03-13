@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { parseNames } from "@/lib/constants";
+import { UI_NOTICE_EVENT } from "@/lib/ui-notices";
 import Topbar from "./Topbar";
 import LobbyOverlay from "./LobbyOverlay";
 import AddCardBar from "./AddCardBar";
@@ -42,6 +43,19 @@ export default function Shell() {
   const dismissNotice = useCallback((noticeId) => {
     setNotices((current) => current.filter((notice) => notice.id !== noticeId));
   }, []);
+
+  useEffect(() => {
+    const handleUiNotice = (event) => {
+      const detail = event?.detail;
+      if (!detail || typeof detail !== "object") return;
+      pushNotice(detail);
+    };
+
+    window.addEventListener(UI_NOTICE_EVENT, handleUiNotice);
+    return () => {
+      window.removeEventListener(UI_NOTICE_EVENT, handleUiNotice);
+    };
+  }, [pushNotice]);
 
   useEffect(() => {
     if (multiplayer.matchStarted) {

@@ -747,6 +747,9 @@ impl GameSnapshot {
                         && view.subject == p.id
                         && (view.public || view.viewer == perspective)
                 });
+                let visible_hand_ids = visible_hand_view.map(|view| {
+                    view.cards.iter().copied().collect::<HashSet<_>>()
+                });
                 let can_view_hand = is_perspective_player || visible_hand_view.is_some();
                 PlayerSnapshot {
                     can_view_hand,
@@ -754,6 +757,12 @@ impl GameSnapshot {
                         p.hand
                             .iter()
                             .rev()
+                            .filter(|id| {
+                                is_perspective_player
+                                    || visible_hand_ids
+                                        .as_ref()
+                                        .is_some_and(|visible_ids| visible_ids.contains(id))
+                            })
                             .filter_map(|id| game.object(*id))
                             .map(|o| {
                                 let mana_cost = o.mana_cost.as_ref().map(|mc| mc.to_oracle());
@@ -965,7 +974,12 @@ impl GameSnapshot {
                     source: view.source.map(|id| id.0),
                     description: view.description.clone(),
                 }),
-            decision: decision.map(|ctx| DecisionView::from_context(game, ctx)),
+            decision: decision.map(|ctx| DecisionView::from_context(
+                game,
+                ctx,
+                perspective,
+                viewed_cards,
+            )),
             game_over: game_over.map(|r| GameOverView::from_result(game, r)),
             cancelable,
             undo_land_stable_id,
@@ -979,6 +993,7 @@ struct ActionView {
     label: String,
     kind: String,
     object_id: Option<u64>,
+    ability_index: Option<usize>,
     from_zone: Option<String>,
     to_zone: Option<String>,
 }
@@ -1109,15 +1124,31 @@ enum DecisionView {
 }
 
 impl DecisionView {
-    fn from_context(game: &GameState, ctx: &DecisionContext) -> Self {
+    fn from_context(
+        game: &GameState,
+        ctx: &DecisionContext,
+        perspective: PlayerId,
+        viewed_cards: Option<&ActiveViewedCards>,
+    ) -> Self {
         let enriched_ctx = crate::decisions::context::enrich_display_hints(game, ctx.clone());
         let ctx = &enriched_ctx;
         let resolve_source_name = |source: Option<ObjectId>| -> Option<String> {
             source
-                .and_then(|id| game.object(id))
-                .map(|o| o.name.clone())
+                .and_then(|id| game.object(id).map(|obj| (id, obj)))
+                .map(|(id, obj)| {
+                    if object_visible_to_perspective(game, perspective, viewed_cards, id) {
+                        obj.name.clone()
+                    } else {
+                        hidden_object_label()
+                    }
+                })
         };
-        let resolve_source_id = |source: Option<ObjectId>| -> Option<u64> { source.map(|id| id.0) };
+        let resolve_source_id = |source: Option<ObjectId>| -> Option<u64> {
+            source.and_then(|id| {
+                object_visible_to_perspective(game, perspective, viewed_cards, id)
+                    .then_some(id.0)
+            })
+        };
         let context_text = || ctx.context_text().map(str::to_string);
         let consequence_text = || ctx.consequence_text().map(str::to_string);
         let reason = decision_reason(ctx);
@@ -1160,7 +1191,9 @@ impl DecisionView {
                     .actions
                     .iter()
                     .enumerate()
-                    .map(|(index, action)| build_action_view(game, index, action))
+                    .map(|(index, action)| {
+                        build_action_view(game, perspective, viewed_cards, index, action)
+                    })
                     .collect(),
             },
             DecisionContext::Number(number) => DecisionView::Number {
@@ -1194,15 +1227,22 @@ impl DecisionView {
                             } else {
                                 (false, None)
                             };
+                            let visible_object_id = opt.object_id.and_then(|id| {
+                                object_visible_to_perspective(game, perspective, viewed_cards, id)
+                                    .then_some(id)
+                            });
                             OptionView {
                                 index: opt.index,
-                                description: opt.description.clone(),
+                                description: if opt.object_id.is_some() && visible_object_id.is_none() {
+                                    hidden_object_label()
+                                } else {
+                                    opt.description.clone()
+                                },
                                 legal: opt.legal,
                                 repeatable,
                                 max_count,
-                                object_id: opt.object_id.map(|id| id.0),
-                                object_controller: opt
-                                    .object_id
+                                object_id: visible_object_id.map(|id| id.0),
+                                object_controller: visible_object_id
                                     .and_then(|id| game.object(id))
                                     .map(|obj| obj.controller.0),
                             }
@@ -1278,12 +1318,34 @@ impl DecisionView {
                     .enumerate()
                     .map(|(index, (object_id, name))| OptionView {
                         index,
-                        description: name.clone(),
+                        description: if object_visible_to_perspective(
+                            game,
+                            perspective,
+                            viewed_cards,
+                            *object_id,
+                        ) {
+                            name.clone()
+                        } else {
+                            hidden_object_label()
+                        },
                         legal: true,
                         repeatable: false,
                         max_count: Some(1),
-                        object_id: Some(object_id.0),
-                        object_controller: game.object(*object_id).map(|obj| obj.controller.0),
+                        object_id: object_visible_to_perspective(
+                            game,
+                            perspective,
+                            viewed_cards,
+                            *object_id,
+                        )
+                        .then_some(object_id.0),
+                        object_controller: object_visible_to_perspective(
+                            game,
+                            perspective,
+                            viewed_cards,
+                            *object_id,
+                        )
+                        .then(|| game.object(*object_id).map(|obj| obj.controller.0))
+                        .flatten(),
                     })
                     .collect(),
                 source_id: resolve_source_id(order.source),
@@ -1304,22 +1366,34 @@ impl DecisionView {
                     .targets
                     .iter()
                     .enumerate()
-                    .map(|(index, target)| OptionView {
-                        index,
-                        description: target.name.clone(),
-                        legal: true,
-                        repeatable: true,
-                        max_count: Some(distribute.total),
-                        object_id: match &target.target {
-                            Target::Object(object_id) => Some(object_id.0),
+                    .map(|(index, target)| {
+                        let visible_object_id = match &target.target {
+                            Target::Object(object_id) => object_visible_to_perspective(
+                                game,
+                                perspective,
+                                viewed_cards,
+                                *object_id,
+                            )
+                            .then_some(*object_id),
                             _ => None,
-                        },
-                        object_controller: match &target.target {
-                            Target::Object(object_id) => {
-                                game.object(*object_id).map(|obj| obj.controller.0)
-                            }
-                            _ => None,
-                        },
+                        };
+                        OptionView {
+                            index,
+                            description: if matches!(target.target, Target::Object(_))
+                                && visible_object_id.is_none()
+                            {
+                                hidden_object_label()
+                            } else {
+                                target.name.clone()
+                            },
+                            legal: true,
+                            repeatable: true,
+                            max_count: Some(distribute.total),
+                            object_id: visible_object_id.map(|object_id| object_id.0),
+                            object_controller: visible_object_id
+                                .and_then(|object_id| game.object(object_id))
+                                .map(|obj| obj.controller.0),
+                        }
                     })
                     .collect(),
                 source_id: resolve_source_id(distribute.source),
@@ -1465,10 +1539,27 @@ impl DecisionView {
                 candidates: objects
                     .candidates
                     .iter()
-                    .map(|obj| ObjectChoiceView {
-                        id: obj.id.0,
-                        name: obj.name.clone(),
-                        legal: obj.legal,
+                    .enumerate()
+                    .map(|(index, obj)| {
+                        let visible = object_visible_to_perspective(
+                            game,
+                            perspective,
+                            viewed_cards,
+                            obj.id,
+                        );
+                        ObjectChoiceView {
+                            id: if visible {
+                                obj.id.0
+                            } else {
+                                redacted_choice_id(index)
+                            },
+                            name: if visible {
+                                obj.name.clone()
+                            } else {
+                                hidden_object_label()
+                            },
+                            legal: obj.legal,
+                        }
                     })
                     .collect(),
                 source_id: resolve_source_id(objects.source),
@@ -1490,7 +1581,16 @@ impl DecisionView {
                         legal_targets: req
                             .legal_targets
                             .iter()
-                            .map(|target| target_choice_view(game, target))
+                            .enumerate()
+                            .map(|(index, target)| {
+                                target_choice_view(
+                                    game,
+                                    perspective,
+                                    viewed_cards,
+                                    index,
+                                    target,
+                                )
+                            })
                             .collect(),
                     })
                     .collect(),
@@ -5160,6 +5260,7 @@ impl WasmGame {
                 self.snapshot()
             }
             progress => {
+                self.active_viewed_cards = None;
                 self.clear_active_resolving_stack_object();
                 self.priority_state.pending_continuation = None;
                 if let Some(root_response) = self.pending_live_action_root.take() {
@@ -6190,42 +6291,65 @@ fn format_type_line(obj: &crate::object::Object) -> String {
     }
 }
 
-fn build_action_view(game: &GameState, index: usize, action: &LegalAction) -> ActionView {
-    let (kind, object_id, from_zone, to_zone) = action_drag_metadata(action);
+fn build_action_view(
+    game: &GameState,
+    perspective: PlayerId,
+    viewed_cards: Option<&ActiveViewedCards>,
+    index: usize,
+    action: &LegalAction,
+) -> ActionView {
+    let (kind, object_id, ability_index, from_zone, to_zone) = action_drag_metadata(action);
+    let source_visible = object_id
+        .map(ObjectId::from_raw)
+        .is_none_or(|id| object_visible_to_perspective(game, perspective, viewed_cards, id));
     ActionView {
         index,
-        label: describe_action(game, action),
+        label: if source_visible {
+            describe_action(game, action)
+        } else {
+            redacted_action_label(action)
+        },
         kind: kind.to_string(),
-        object_id,
-        from_zone,
-        to_zone,
+        object_id: source_visible.then_some(object_id).flatten(),
+        ability_index,
+        from_zone: source_visible.then_some(from_zone).flatten(),
+        to_zone: source_visible.then_some(to_zone).flatten(),
     }
 }
 
 fn action_drag_metadata(
     action: &LegalAction,
-) -> (&'static str, Option<u64>, Option<String>, Option<String>) {
+) -> (
+    &'static str,
+    Option<u64>,
+    Option<usize>,
+    Option<String>,
+    Option<String>,
+) {
     match action {
-        LegalAction::PassPriority => ("pass_priority", None, None, None),
-        LegalAction::KeepOpeningHand => ("pass_priority", None, None, None),
-        LegalAction::TakeMulligan => ("take_mulligan", None, None, None),
+        LegalAction::PassPriority => ("pass_priority", None, None, None, None),
+        LegalAction::KeepOpeningHand => ("pass_priority", None, None, None, None),
+        LegalAction::TakeMulligan => ("take_mulligan", None, None, None, None),
         LegalAction::SerumPowderMulligan { card_id } => (
             "serum_powder_mulligan",
             Some(card_id.0),
+            None,
             Some(zone_name(Zone::Hand)),
             None,
         ),
-        LegalAction::ContinuePregame => ("pass_priority", None, None, None),
-        LegalAction::BeginGame => ("pass_priority", None, None, None),
+        LegalAction::ContinuePregame => ("pass_priority", None, None, None, None),
+        LegalAction::BeginGame => ("pass_priority", None, None, None, None),
         LegalAction::UsePregameAction { card_id, .. } => (
             "use_pregame_action",
             Some(card_id.0),
+            None,
             Some(zone_name(Zone::Hand)),
             Some(zone_name(Zone::Battlefield)),
         ),
         LegalAction::PlayLand { land_id } => (
             "play_land",
             Some(land_id.0),
+            None,
             Some(zone_name(Zone::Hand)),
             Some(zone_name(Zone::Battlefield)),
         ),
@@ -6236,28 +6360,38 @@ fn action_drag_metadata(
         } => (
             "cast_spell",
             Some(spell_id.0),
+            None,
             Some(zone_name(*from_zone)),
             Some(zone_name(Zone::Stack)),
         ),
-        LegalAction::ActivateAbility { source, .. } => (
+        LegalAction::ActivateAbility {
+            source,
+            ability_index,
+        } => (
             "activate_ability",
             Some(source.0),
+            Some(*ability_index),
             Some(zone_name(Zone::Battlefield)),
             Some(zone_name(Zone::Stack)),
         ),
-        LegalAction::ActivateManaAbility { source, .. } => (
+        LegalAction::ActivateManaAbility {
+            source,
+            ability_index,
+        } => (
             "activate_mana_ability",
             Some(source.0),
+            Some(*ability_index),
             Some(zone_name(Zone::Battlefield)),
             None,
         ),
         LegalAction::TurnFaceUp { creature_id } => (
             "turn_face_up",
             Some(creature_id.0),
+            None,
             Some(zone_name(Zone::Battlefield)),
             Some(zone_name(Zone::Battlefield)),
         ),
-        LegalAction::SpecialAction(_) => ("special_action", None, None, None),
+        LegalAction::SpecialAction(_) => ("special_action", None, None, None, None),
     }
 }
 
@@ -6434,6 +6568,43 @@ fn object_name(game: &GameState, id: ObjectId) -> String {
         .unwrap_or_else(|| format!("Object#{}", id.0))
 }
 
+fn hidden_object_label() -> String {
+    "Hidden card".to_string()
+}
+
+fn redacted_choice_id(index: usize) -> u64 {
+    u64::MAX.saturating_sub(index as u64)
+}
+
+fn object_visible_to_perspective(
+    game: &GameState,
+    perspective: PlayerId,
+    viewed_cards: Option<&ActiveViewedCards>,
+    id: ObjectId,
+) -> bool {
+    let Some(obj) = game.object(id) else {
+        return false;
+    };
+
+    if !obj.zone.is_hidden() || obj.owner == perspective {
+        return true;
+    }
+
+    viewed_cards.is_some_and(|view| {
+        (view.public || view.viewer == perspective) && view.cards.contains(&id)
+    })
+}
+
+fn redacted_action_label(action: &LegalAction) -> String {
+    match action {
+        LegalAction::CastSpell { .. } => "Cast hidden spell".to_string(),
+        LegalAction::PlayLand { .. } => "Play hidden land".to_string(),
+        LegalAction::UsePregameAction { .. } => "Use hidden pregame action".to_string(),
+        LegalAction::SerumPowderMulligan { .. } => "Use hidden mulligan action".to_string(),
+        _ => "Hidden action".to_string(),
+    }
+}
+
 fn optional_cost_selection_metadata(
     game: &GameState,
     source: Option<ObjectId>,
@@ -6558,7 +6729,13 @@ fn normalize_action_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn target_choice_view(game: &GameState, target: &Target) -> TargetChoiceView {
+fn target_choice_view(
+    game: &GameState,
+    perspective: PlayerId,
+    viewed_cards: Option<&ActiveViewedCards>,
+    index: usize,
+    target: &Target,
+) -> TargetChoiceView {
     match target {
         Target::Player(pid) => TargetChoiceView::Player {
             player: pid.0,
@@ -6567,10 +6744,17 @@ fn target_choice_view(game: &GameState, target: &Target) -> TargetChoiceView {
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| format!("Player {}", pid.0 + 1)),
         },
-        Target::Object(id) => TargetChoiceView::Object {
-            object: id.0,
-            name: object_name(game, *id),
-        },
+        Target::Object(id) => {
+            let visible = object_visible_to_perspective(game, perspective, viewed_cards, *id);
+            TargetChoiceView::Object {
+                object: if visible { id.0 } else { redacted_choice_id(index) },
+                name: if visible {
+                    object_name(game, *id)
+                } else {
+                    hidden_object_label()
+                },
+            }
+        }
     }
 }
 
@@ -7971,6 +8155,125 @@ mod tests {
             me.hand_cards.len() >= 20,
             "expected all 20 hand cards to be present in snapshot"
         );
+    }
+
+    #[test]
+    fn snapshot_redacts_hidden_opponent_select_object_candidates() {
+        let mut wasm = WasmGame::new();
+        let bob = PlayerId::from_index(1);
+        let card_a = wasm
+            .add_card_to_zone(1, "Primeval Titan".to_string(), "hand".to_string(), true)
+            .expect("adding first hidden card should succeed");
+        let card_b = wasm
+            .add_card_to_zone(1, "Forest".to_string(), "hand".to_string(), true)
+            .expect("adding second hidden card should succeed");
+
+        let decision = DecisionContext::SelectObjects(SelectObjectsContext::new(
+            bob,
+            None,
+            "Choose cards to discard",
+            vec![
+                SelectableObject::new(ObjectId::from_raw(card_a), "Primeval Titan"),
+                SelectableObject::new(ObjectId::from_raw(card_b), "Forest"),
+            ],
+            1,
+            Some(1),
+        ));
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            Some(&decision),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            None,
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+
+        let redacted_candidates = match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include the pending select-objects decision")
+        {
+            super::DecisionView::SelectObjects { candidates, .. } => candidates,
+            other => panic!("expected select_objects view, got {other:?}"),
+        };
+
+        assert_eq!(redacted_candidates.len(), 2);
+        assert!(
+            redacted_candidates.iter().all(|candidate| candidate.name == "Hidden card"),
+            "opponent hand choices should be redacted for other perspectives"
+        );
+        assert!(
+            redacted_candidates.iter().all(|candidate| candidate.id != card_a && candidate.id != card_b),
+            "redacted candidates should not expose the real hidden object ids"
+        );
+    }
+
+    #[test]
+    fn snapshot_redacts_hidden_opponent_priority_hand_actions() {
+        let mut wasm = WasmGame::new();
+        let bob = PlayerId::from_index(1);
+        let spell_id = wasm
+            .add_card_to_zone(1, "Lightning Bolt".to_string(), "hand".to_string(), true)
+            .expect("adding hidden spell should succeed");
+        let priority = DecisionContext::Priority(PriorityContext::new(
+            bob,
+            vec![
+                LegalAction::PassPriority,
+                LegalAction::CastSpell {
+                    spell_id: ObjectId::from_raw(spell_id),
+                    from_zone: Zone::Hand,
+                    casting_method: crate::alternative_cast::CastingMethod::Normal,
+                },
+            ],
+        ));
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            Some(&priority),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            None,
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+
+        let actions = match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include the priority decision")
+        {
+            super::DecisionView::Priority { actions, .. } => actions,
+            other => panic!("expected priority view, got {other:?}"),
+        };
+        let hidden_cast = actions
+            .iter()
+            .find(|action| action.kind == "cast_spell")
+            .expect("snapshot should include the redacted cast action");
+
+        assert_eq!(hidden_cast.label, "Cast hidden spell");
+        assert_eq!(hidden_cast.object_id, None);
+        assert_eq!(hidden_cast.from_zone, None);
+        assert_eq!(hidden_cast.to_zone, None);
     }
 
     #[test]

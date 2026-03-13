@@ -4,7 +4,7 @@ import DeckZonePile from "./DeckZonePile";
 import ManaPool from "@/components/left-rail/ManaPool";
 import { useCombatArrows } from "@/context/useCombatArrows";
 import { useGame } from "@/context/GameContext";
-import { getPlayerAccent } from "@/lib/player-colors";
+import { activePlayerZoneStyle, getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
 import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
@@ -179,6 +179,7 @@ function OpponentSlot({
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const { combatModeRef, combatMode, dragArrow } = useCombatArrows();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
+  const isActivePlayer = Number(state?.active_player) === Number(player?.id);
   const transientZoneViews = Object.keys(zoneActivity || {});
   const zoneEntries = buildZoneEntries(player, [...zoneViews, ...transientZoneViews]);
   const activeZoneEntries = zoneEntries.filter((entry) => entry.active);
@@ -306,10 +307,15 @@ function OpponentSlot({
   return (
     <div
       className={cn(
-        "bg-gradient-to-b from-[#101826] to-[#0a121d] rounded p-1.5 grid gap-1.5 min-h-0 h-full",
+        "bg-gradient-to-b from-[#101826] to-[#0a121d] rounded border border-transparent p-1.5 grid gap-1.5 min-h-0 h-full transition-[border-color,box-shadow] duration-150",
         zoneIsAttackHoverTarget && "attack-target-zone"
       )}
-      style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch", cursor: attackerArrowActive ? "crosshair" : undefined }}
+      style={{
+        gridTemplateRows: "auto minmax(0,1fr)",
+        alignContent: "stretch",
+        cursor: attackerArrowActive ? "crosshair" : undefined,
+        ...(isActivePlayer ? activePlayerZoneStyle(playerAccent) : undefined),
+      }}
       data-opponent-zone={playerIdx}
       onClickCapture={handleClickCapture}
     >

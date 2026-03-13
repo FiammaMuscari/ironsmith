@@ -8,8 +8,9 @@ import {
   parseCommanderList,
   parseDeckList,
 } from "@/lib/decklists";
+import { emitSyncFailureNotice } from "@/lib/ui-notices";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 3;
 const DEFAULT_OPENING_HAND_SIZE = 7;
 const PEER_OPEN_TIMEOUT_MS = 10000;
 const PEER_CONNECT_TIMEOUT_MS = 15000;
@@ -174,6 +175,11 @@ function safeSend(conn, payload) {
   conn.send(payload);
 }
 
+function cloneMultiplayerPayload(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
 function sanitizeCardList(cards) {
   if (!Array.isArray(cards)) return [];
   return cards
@@ -249,6 +255,8 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
   const peerRef = useRef(null);
   const hostConnectionRef = useRef(null);
   const clientConnectionsRef = useRef(new Map());
+  const matchStartPayloadRef = useRef(null);
+  const actionHistoryRef = useRef([]);
   const gameRef = useRef(game);
   const multiplayerRef = useRef(multiplayer);
   const peerOptionsRef = useRef(initialPeerOptions);
@@ -304,6 +312,8 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
   const leaveLobby = useCallback(
     (message = "Left lobby") => {
       teardownPeer();
+      matchStartPayloadRef.current = null;
+      actionHistoryRef.current = [];
       updateMultiplayer(createEmptyState());
       if (message) {
         setStatus(message);
@@ -316,6 +326,33 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
     for (const conn of clientConnectionsRef.current.values()) {
       safeSend(conn, payload);
     }
+  }, []);
+
+  const broadcastMatchPresence = useCallback((peerId, connected) => {
+    broadcastToClients({
+      type: "player_presence",
+      protocolVersion: PROTOCOL_VERSION,
+      peerId,
+      connected: Boolean(connected),
+    });
+  }, [broadcastToClients]);
+
+  const buildHostedResyncPayload = useCallback(() => {
+    const session = multiplayerRef.current;
+    const basePayload = matchStartPayloadRef.current;
+    if (session.role !== "host" || !session.matchStarted || !basePayload) {
+      return null;
+    }
+
+    return {
+      ...cloneMultiplayerPayload(basePayload),
+      protocolVersion: PROTOCOL_VERSION,
+      lobbyId: session.lobbyId || basePayload.lobbyId || "",
+      hostPeerId: session.localPeerId || basePayload.hostPeerId || "",
+      format: normalizeMatchFormat(basePayload.format || session.format),
+      startingLife: Number(basePayload.startingLife || session.startingLife || 20),
+      players: toPublicPlayers(session.players),
+    };
   }, []);
 
   const applyMatchStart = useCallback(
@@ -347,6 +384,8 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
 
       const nextState = await currentGame.uiState();
       setState(nextState);
+      matchStartPayloadRef.current = cloneMultiplayerPayload(payload);
+      actionHistoryRef.current = [];
 
       updateMultiplayer((prev) => ({
         ...prev,
@@ -371,6 +410,65 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       setStatus(`Multiplayer match started as ${localEntry.name}`);
     },
     [setState, setStatus, updateMultiplayer]
+  );
+
+  const requestResync = useCallback((reason = "Resyncing with host...") => {
+    const session = multiplayerRef.current;
+    if (session.role !== "client" || !session.matchStarted) return false;
+    const conn = hostConnectionRef.current;
+    if (!conn || conn.open === false) return false;
+
+    updateMultiplayer((prev) => ({
+      ...prev,
+      submittingAction: false,
+    }));
+    safeSend(conn, {
+      type: "resync_request",
+      protocolVersion: PROTOCOL_VERSION,
+      lastSequence: session.lastAppliedSequence,
+    });
+    setStatus(reason, true);
+    return true;
+  }, [setStatus, updateMultiplayer]);
+
+  const applyStateResync = useCallback(
+    async (message) => {
+      const matchPayload = message?.match;
+      if (!matchPayload || typeof matchPayload !== "object") {
+        throw new Error("Resync payload is missing match state");
+      }
+
+      const actionEntries = Array.isArray(message?.actions)
+        ? [...message.actions].sort((left, right) => Number(left?.seq || 0) - Number(right?.seq || 0))
+        : [];
+
+      await applyMatchStart(matchPayload);
+      for (const entry of actionEntries) {
+        await applySyncedCommand(entry.command, "", {
+          actorIndex: entry.actorIndex,
+          sequence: entry.seq,
+        });
+      }
+
+      const lastSequence = Number(
+        message?.lastSequence ?? actionEntries.at(-1)?.seq ?? 0
+      );
+      actionHistoryRef.current = actionEntries.map((entry) => cloneMultiplayerPayload(entry));
+      updateMultiplayer((prev) => ({
+        ...prev,
+        players: matchPayload.players || prev.players,
+        lastAppliedSequence: lastSequence,
+        submittingAction: false,
+        matchStarted: true,
+        mode: "in_match",
+      }));
+      setStatus(
+        actionEntries.length > 0
+          ? `Resynced with host at action ${lastSequence}`
+          : "Resynced with host",
+      );
+    },
+    [applyMatchStart, applySyncedCommand, setStatus, updateMultiplayer]
   );
 
   const broadcastLobbyState = useCallback(() => {
@@ -462,36 +560,81 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           return;
         case "action_error":
           updateMultiplayer((prev) => ({ ...prev, submittingAction: false }));
+          emitSyncFailureNotice(
+            "Sync failed",
+            message.reason || "Action rejected by multiplayer host"
+          );
           setStatus(message.reason || "Action rejected", true);
           return;
         case "match_start":
           await applyMatchStart(message);
+          return;
+        case "state_resync":
+          await applyStateResync(message);
+          return;
+        case "player_presence":
+          updateMultiplayer((prev) => ({
+            ...prev,
+            players: prev.players.map((player) =>
+              player.peerId === message.peerId
+                ? { ...player, connected: message.connected !== false }
+                : player
+            ),
+          }));
           return;
         case "apply_action": {
           const nextSequence = Number(message.seq || 0);
           const session = multiplayerRef.current;
           if (nextSequence <= session.lastAppliedSequence) return;
           if (nextSequence !== session.lastAppliedSequence + 1) {
-            setStatus("Multiplayer action order mismatch", true);
+            emitSyncFailureNotice(
+              "Sync failed",
+              `Action order mismatch. Expected ${session.lastAppliedSequence + 1}, received ${nextSequence}.`
+            );
+            if (!requestResync("Multiplayer action order mismatch. Resyncing with host...")) {
+              setStatus("Multiplayer action order mismatch", true);
+            }
             return;
           }
 
-          await applySyncedCommand(message.command, message.label || "", {
-            actorIndex: message.actorIndex,
-            sequence: nextSequence,
-          });
-          updateMultiplayer((prev) => ({
-            ...prev,
-            lastAppliedSequence: nextSequence,
-            submittingAction: false,
-          }));
+          try {
+            await applySyncedCommand(message.command, message.label || "", {
+              actorIndex: message.actorIndex,
+              sequence: nextSequence,
+            });
+            updateMultiplayer((prev) => ({
+              ...prev,
+              lastAppliedSequence: nextSequence,
+              submittingAction: false,
+            }));
+          } catch (err) {
+            updateMultiplayer((prev) => ({
+              ...prev,
+              submittingAction: false,
+            }));
+            emitSyncFailureNotice(
+              "Sync failed",
+              err instanceof Error ? err.message : String(err)
+            );
+            if (!requestResync("Failed to apply synced action. Resyncing with host...")) {
+              throw err;
+            }
+          }
           return;
         }
         default:
           return;
       }
     },
-    [applyMatchStart, applySyncedCommand, leaveLobby, setStatus, updateMultiplayer]
+    [
+      applyMatchStart,
+      applyStateResync,
+      applySyncedCommand,
+      leaveLobby,
+      requestResync,
+      setStatus,
+      updateMultiplayer,
+    ]
   );
 
   const handleClientDisconnect = useCallback(
@@ -519,11 +662,13 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       if (departed) {
         setStatus(`${departed.name} disconnected`);
       }
-      if (!multiplayerRef.current.matchStarted) {
+      if (multiplayerRef.current.matchStarted) {
+        broadcastMatchPresence(peerId, false);
+      } else {
         broadcastLobbyState();
       }
     },
-    [broadcastLobbyState, setStatus, updateMultiplayer]
+    [broadcastLobbyState, broadcastMatchPresence, setStatus, updateMultiplayer]
   );
 
   const sequenceHostedAction = useCallback(
@@ -553,6 +698,15 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         actorIndex,
         sequence: nextSequence,
       });
+      actionHistoryRef.current = [
+        ...actionHistoryRef.current,
+        {
+          seq: nextSequence,
+          actorIndex: Number(actorIndex),
+          command: cloneMultiplayerPayload(command),
+          label: String(label || ""),
+        },
+      ];
       updateMultiplayer((prev) => ({
         ...prev,
         lastAppliedSequence: nextSequence,
@@ -631,6 +785,56 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           broadcastLobbyState();
           return;
         }
+        case "resync_request": {
+          const session = multiplayerRef.current;
+          if (!session.matchStarted) {
+            safeSend(conn, {
+              type: "action_error",
+              protocolVersion: PROTOCOL_VERSION,
+              reason: "Match has not started",
+            });
+            return;
+          }
+
+          const existingPlayer = session.players.find((player) => player.peerId === conn.peer);
+          if (!existingPlayer) {
+            safeSend(conn, {
+              type: "reject",
+              protocolVersion: PROTOCOL_VERSION,
+              reason: "This peer is not part of the active match",
+            });
+            conn.close();
+            return;
+          }
+
+          clientConnectionsRef.current.set(conn.peer, conn);
+          const nextSession = updateMultiplayer((prev) => ({
+            ...prev,
+            players: prev.players.map((player) =>
+              player.peerId === conn.peer ? { ...player, connected: true } : player
+            ),
+          }));
+          const matchPayload = buildHostedResyncPayload();
+          if (!matchPayload) {
+            safeSend(conn, {
+              type: "action_error",
+              protocolVersion: PROTOCOL_VERSION,
+              reason: "Host cannot rebuild the current match state",
+            });
+            return;
+          }
+
+          safeSend(conn, {
+            type: "state_resync",
+            protocolVersion: PROTOCOL_VERSION,
+            match: matchPayload,
+            actions: actionHistoryRef.current.map((entry) => cloneMultiplayerPayload(entry)),
+            lastSequence: nextSession.lastAppliedSequence,
+          });
+          broadcastMatchPresence(conn.peer, true);
+          setStatus(`${existingPlayer.name} reconnected`);
+          return;
+        }
         case "deck_update": {
           const session = multiplayerRef.current;
           if (session.matchStarted) return;
@@ -653,18 +857,50 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           return;
         }
         case "player_action":
+        {
+          const session = multiplayerRef.current;
+          const actor = session.players.find((player) => player.peerId === conn.peer);
+          if (!actor) {
+            safeSend(conn, {
+              type: "action_error",
+              protocolVersion: PROTOCOL_VERSION,
+              reason: "This peer is not assigned to an active seat",
+            });
+            return;
+          }
+
+          const claimedActorIndex =
+            message.actorIndex === null || message.actorIndex === undefined
+              ? null
+              : Number(message.actorIndex);
+          if (
+            claimedActorIndex !== null
+            && Number.isFinite(claimedActorIndex)
+            && claimedActorIndex !== Number(actor.index)
+          ) {
+            safeSend(conn, {
+              type: "action_error",
+              protocolVersion: PROTOCOL_VERSION,
+              reason: "Seat mismatch for multiplayer action",
+            });
+            return;
+          }
+
           await sequenceHostedAction({
-            actorIndex: Number(message.actorIndex),
+            actorIndex: Number(actor.index),
             command: message.command,
             label: message.label || "",
             senderPeerId: conn.peer,
           });
           return;
+        }
         default:
           return;
       }
     },
     [
+      buildHostedResyncPayload,
+      broadcastMatchPresence,
       broadcastLobbyState,
       sequenceHostedAction,
       setStatus,
@@ -897,13 +1133,14 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       setStatus(`Connecting to the PeerJS signaling server (${peerServerLabelRef.current})...`);
 
       const scheduleHostReconnect = (reason) => {
-        if (peerRef.current !== peer || peer.destroyed || multiplayerRef.current.matchStarted) {
+        if (peerRef.current !== peer || peer.destroyed) {
           return;
         }
+        const inMatch = multiplayerRef.current.matchStarted;
 
         updateMultiplayer((prev) => ({
           ...prev,
-          mode: "joining",
+          mode: inMatch ? "in_match" : "joining",
           submittingAction: false,
         }));
 
@@ -916,15 +1153,15 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         hostReconnectAttempts += 1;
         const delay = Math.min(8000, 1000 * hostReconnectAttempts);
         setStatus(
-          `${reason} Retrying lobby host in ${Math.ceil(delay / 1000)}s...`,
+          `${reason} Retrying ${inMatch ? "match host" : "lobby host"} in ${Math.ceil(delay / 1000)}s...`,
           true
         );
         hostReconnectTimer = window.setTimeout(() => {
           hostReconnectTimer = null;
-          if (peerRef.current !== peer || peer.destroyed || multiplayerRef.current.matchStarted) {
+          if (peerRef.current !== peer || peer.destroyed) {
             return;
           }
-          setStatus("Reconnecting to lobby host...");
+          setStatus(inMatch ? "Reconnecting to match host..." : "Reconnecting to lobby host...");
           connectToHost();
         }, delay);
       };
@@ -969,6 +1206,16 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           clearJoinTimeouts();
           clearHostReconnect();
           const session = multiplayerRef.current;
+          if (session.matchStarted) {
+            safeSend(conn, {
+              type: "resync_request",
+              protocolVersion: PROTOCOL_VERSION,
+              lastSequence: session.lastAppliedSequence,
+            });
+            setStatus(`Reconnected to match host ${targetLobby}`);
+            return;
+          }
+
           const currentDeck = parseDeckSubmission(
             session.format,
             session.localDeckText,
@@ -998,15 +1245,24 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
             return;
           }
           if (state === "disconnected") {
-            setStatus("Peer connection interrupted while joining.", true);
+            setStatus(
+              multiplayerRef.current.matchStarted
+                ? "Peer connection interrupted. Attempting to reconnect to the host..."
+                : "Peer connection interrupted while joining.",
+              true
+            );
           }
         });
-        conn.on("data", (message) => {
-          if (hostConnectionRef.current !== conn) return;
-          void handleHostMessage(message).catch((err) => {
-            setStatus(`Lobby message failed: ${err}`, true);
-          });
+      conn.on("data", (message) => {
+        if (hostConnectionRef.current !== conn) return;
+        void handleHostMessage(message).catch((err) => {
+          emitSyncFailureNotice(
+            "Sync failed",
+            err instanceof Error ? err.message : String(err)
+          );
+          setStatus(`Lobby message failed: ${err}`, true);
         });
+      });
         conn.on("close", () => {
           if (hostConnectionRef.current !== conn) return;
           clearJoinTimeouts();

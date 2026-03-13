@@ -1004,6 +1004,18 @@ pub(crate) fn can_activate_ability_with_restrictions(
     if activated.has_tap_cost() && !game.can_activate_tap_abilities_of(source) {
         return false;
     }
+    if activated.has_tap_cost() && game.is_tapped(source) {
+        return false;
+    }
+    if activated
+        .mana_cost
+        .costs()
+        .iter()
+        .any(|cost| cost.requires_untap())
+        && !game.is_tapped(source)
+    {
+        return false;
+    }
     if !activated.is_mana_ability() && !game.can_activate_non_mana_abilities_of(source) {
         return false;
     }
@@ -9944,6 +9956,45 @@ mod tests {
                 )
             ),
             "after a tap-only activation resolves its cost, priority should continue normally"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_actions_excludes_tapped_non_mana_tap_ability() {
+        use crate::cost::TotalCost;
+        use crate::costs::Cost;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let source_id = game.create_object_from_card(
+            &CardBuilder::new(CardId::from_raw(781), "Tapped Ability Probe")
+                .card_types(vec![CardType::Artifact])
+                .build(),
+            alice,
+            Zone::Battlefield,
+        );
+        game.object_mut(source_id)
+            .expect("probe should exist")
+            .abilities
+            .push(Ability::activated_with_costs(
+                TotalCost::free(),
+                vec![Cost::tap()],
+                vec![Effect::gain_life(1)],
+            ));
+        game.tap(source_id);
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility { source, .. } if *source == source_id
+            )),
+            "tapped permanents should not expose non-mana tap abilities as legal actions"
         );
     }
 

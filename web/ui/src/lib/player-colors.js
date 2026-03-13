@@ -36,3 +36,12 @@ export function playerAccentVars(accent) {
     "--player-accent-rgb": accent.rgb,
   };
 }
+
+export function activePlayerZoneStyle(accent) {
+  if (!accent) return undefined;
+  return {
+    ...playerAccentVars(accent),
+    borderColor: accent.hex,
+    boxShadow: `inset 0 0 0 1px rgba(${accent.rgb}, 0.28), 0 0 0 1px rgba(${accent.rgb}, 0.52), 0 0 18px rgba(${accent.rgb}, 0.16)`,
+  };
+}

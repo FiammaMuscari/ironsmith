@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useRef, useMemo, useE
 import { useWasmGame } from "@/hooks/useWasmGame";
 import { usePeerLobby } from "@/hooks/usePeerLobby";
 import { isCombatPhase, isEndingPhase, isMainPhase } from "@/lib/constants";
+import { emitSyncFailureNotice } from "@/lib/ui-notices";
 import { cardsMeetingThresholdFromStats, loadSemanticStats } from "@/lib/semanticCache";
 import {
   buildTriggerOrderingKey,
@@ -155,103 +156,21 @@ function tryBuildAutoResolveCommand(decision) {
   return null;
 }
 
-function buildPriorityActionDescriptor(action) {
-  return {
-    kind: String(action?.kind || ""),
-    label: String(action?.label || ""),
-    object_id: action?.object_id == null ? null : Number(action.object_id),
-    from_zone: action?.from_zone == null ? null : String(action.from_zone),
-    to_zone: action?.to_zone == null ? null : String(action.to_zone),
-  };
-}
-
-function samePriorityActionDescriptor(left, right) {
-  return (
-    left.kind === right.kind &&
-    left.label === right.label &&
-    left.object_id === right.object_id &&
-    left.from_zone === right.from_zone &&
-    left.to_zone === right.to_zone
-  );
-}
-
-function buildOptionDescriptor(option) {
-  return {
-    description: String(option?.description || ""),
-    object_id: option?.object_id == null ? null : Number(option.object_id),
-  };
-}
-
-function sameOptionDescriptor(left, right) {
-  return left.description === right.description && left.object_id === right.object_id;
-}
-
-function buildObjectDescriptor(candidate) {
-  return {
-    name: String(candidate?.name || ""),
-    legal: candidate?.legal !== false,
-  };
-}
-
-function sameObjectDescriptor(left, right) {
-  return left.name === right.name && left.legal === right.legal;
-}
-
-function buildOrdinalDescriptor(items, targetIndex, buildDescriptor, sameDescriptor) {
-  const normalizedTargetIndex = Number(targetIndex);
-  let target = null;
-  for (const item of items || []) {
-    if (Number(item?.index) === normalizedTargetIndex) {
-      target = item;
-      break;
-    }
+function normalizeMultiplayerTarget(target) {
+  if (!target || typeof target !== "object") return target;
+  if (target.kind === "player") {
+    return {
+      kind: "player",
+      player: Number(target.player),
+    };
   }
-  if (!target) return null;
-
-  const descriptor = buildDescriptor(target);
-  let ordinal = 0;
-  for (const item of items || []) {
-    if (Number(item?.index) === normalizedTargetIndex) break;
-    if (sameDescriptor(buildDescriptor(item), descriptor)) {
-      ordinal += 1;
-    }
+  if (target.kind === "object") {
+    return {
+      kind: "object",
+      object: Number(target.object),
+    };
   }
-
-  return { ...descriptor, ordinal };
-}
-
-function buildObjectOrdinalDescriptor(items, targetObjectId, buildDescriptor, sameDescriptor) {
-  const normalizedTargetObjectId = Number(targetObjectId);
-  let target = null;
-  for (const item of items || []) {
-    if (Number(item?.id) === normalizedTargetObjectId) {
-      target = item;
-      break;
-    }
-  }
-  if (!target) return null;
-
-  const descriptor = buildDescriptor(target);
-  let ordinal = 0;
-  for (const item of items || []) {
-    if (Number(item?.id) === normalizedTargetObjectId) break;
-    if (sameDescriptor(buildDescriptor(item), descriptor)) {
-      ordinal += 1;
-    }
-  }
-
-  return { ...descriptor, ordinal };
-}
-
-function resolveOrdinalDescriptor(items, descriptor, buildDescriptor, sameDescriptor) {
-  const expectedOrdinal = Math.max(0, Number(descriptor?.ordinal) || 0);
-  let ordinal = 0;
-  for (const item of items || []) {
-    if (!sameDescriptor(buildDescriptor(item), descriptor)) continue;
-    if (ordinal === expectedOrdinal) return item;
-    ordinal += 1;
-  }
-  return null;
+  return target;
 }
 
 function serializeMultiplayerCommand(command, currentState) {
@@ -260,61 +179,79 @@ function serializeMultiplayerCommand(command, currentState) {
   if (command.type === "priority_action") {
     const decision = currentState?.decision;
     if (decision?.kind !== "priority") return command;
-    const action_ref = buildOrdinalDescriptor(
-      decision.actions,
-      command.action_index,
-      buildPriorityActionDescriptor,
-      samePriorityActionDescriptor
-    );
-    if (!action_ref) return command;
     return {
       type: "priority_action",
-      action_ref,
+      action_index: Number(command.action_index),
     };
   }
 
   if (command.type === "select_options") {
     const decision = currentState?.decision;
     if (decision?.kind !== "select_options") return command;
-    const option_refs = (command.option_indices || [])
-      .map((optionIndex) =>
-        buildOrdinalDescriptor(
-          decision.options,
-          optionIndex,
-          buildOptionDescriptor,
-          sameOptionDescriptor
-        )
-      )
-      .filter(Boolean);
-    if (option_refs.length !== (command.option_indices || []).length) {
+    const option_indices = (command.option_indices || []).map((optionIndex) => Number(optionIndex));
+    const validIndices = new Set((decision.options || []).map((option) => Number(option.index)));
+    if (option_indices.some((optionIndex) => !validIndices.has(optionIndex))) {
       return command;
     }
     return {
       type: "select_options",
-      option_refs,
+      option_indices,
     };
   }
 
   if (command.type === "select_objects") {
     const decision = currentState?.decision;
     if (decision?.kind !== "select_objects") return command;
-    const object_refs = (command.object_ids || [])
-      .map((objectId) =>
-        buildObjectOrdinalDescriptor(
-          decision.candidates,
-          objectId,
-          buildObjectDescriptor,
-          sameObjectDescriptor
-        )
-      )
-      .filter(Boolean);
-    if (object_refs.length !== (command.object_ids || []).length) {
+    const object_ids = (command.object_ids || []).map((objectId) => Number(objectId));
+    const validObjectIds = new Set((decision.candidates || []).map((candidate) => Number(candidate.id)));
+    if (object_ids.some((objectId) => !validObjectIds.has(objectId))) {
       return command;
     }
     return {
       type: "select_objects",
-      object_refs,
+      object_ids,
     };
+  }
+
+  if (command.type === "select_targets") {
+    return {
+      type: "select_targets",
+      targets: (command.targets || []).map(normalizeMultiplayerTarget),
+    };
+  }
+
+  if (command.type === "number_choice") {
+    return {
+      type: "number_choice",
+      value: Number(command.value),
+    };
+  }
+
+  if (command.type === "declare_attackers") {
+    return {
+      type: "declare_attackers",
+      declarations: (command.declarations || []).map((declaration) => ({
+        attacker: Number(declaration.attacker),
+        target_player: declaration.target_player == null ? null : Number(declaration.target_player),
+        target_battlefield: declaration.target_battlefield == null
+          ? null
+          : Number(declaration.target_battlefield),
+      })),
+    };
+  }
+
+  if (command.type === "declare_blockers") {
+    return {
+      type: "declare_blockers",
+      declarations: (command.declarations || []).map((declaration) => ({
+        blocker: Number(declaration.blocker),
+        attacker: Number(declaration.attacker),
+      })),
+    };
+  }
+
+  if (command.type === "cancel_decision") {
+    return { type: "cancel_decision" };
   }
 
   return command;
@@ -323,70 +260,77 @@ function serializeMultiplayerCommand(command, currentState) {
 function resolveSyncedCommand(command, currentState) {
   if (!command || typeof command !== "object") return command;
 
-  if (command.type === "priority_action" && command.action_ref) {
+  if (command.type === "priority_action" && command.action_index != null) {
     const decision = currentState?.decision;
     if (decision?.kind !== "priority") {
       throw new Error("Expected a priority decision while syncing an action");
     }
-    const match = resolveOrdinalDescriptor(
-      decision.actions,
-      command.action_ref,
-      buildPriorityActionDescriptor,
-      samePriorityActionDescriptor
+    const normalizedIndex = Number(command.action_index);
+    const directMatch = (decision.actions || []).find(
+      (action) => Number(action?.index) === normalizedIndex
     );
-    if (!match) {
-      throw new Error(`Could not resolve synced priority action: ${command.action_ref.label}`);
+    if (directMatch) {
+      return {
+        type: "priority_action",
+        action_index: normalizedIndex,
+      };
     }
-    return {
-      type: "priority_action",
-      action_index: Number(match.index),
-    };
+    throw new Error(`Could not resolve synced priority action index: ${normalizedIndex}`);
   }
 
-  if (command.type === "select_options" && Array.isArray(command.option_refs)) {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "select_options") {
-      throw new Error("Expected an options decision while syncing a choice");
-    }
-    const option_indices = command.option_refs.map((optionRef) => {
-      const match = resolveOrdinalDescriptor(
-        decision.options,
-        optionRef,
-        buildOptionDescriptor,
-        sameOptionDescriptor
-      );
-      if (!match) {
-        throw new Error(`Could not resolve synced option: ${optionRef.description}`);
-      }
-      return Number(match.index);
-    });
+  if (command.type === "select_options" && Array.isArray(command.option_indices)) {
     return {
       type: "select_options",
-      option_indices,
+      option_indices: command.option_indices.map((optionIndex) => Number(optionIndex)),
     };
   }
 
-  if (command.type === "select_objects" && Array.isArray(command.object_refs)) {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "select_objects") {
-      throw new Error("Expected an object-selection decision while syncing a choice");
-    }
-    const object_ids = command.object_refs.map((objectRef) => {
-      const match = resolveOrdinalDescriptor(
-        decision.candidates,
-        objectRef,
-        buildObjectDescriptor,
-        sameObjectDescriptor
-      );
-      if (!match) {
-        throw new Error(`Could not resolve synced object choice: ${objectRef.name}`);
-      }
-      return Number(match.id);
-    });
+  if (command.type === "select_objects" && Array.isArray(command.object_ids)) {
     return {
       type: "select_objects",
-      object_ids,
+      object_ids: command.object_ids.map((objectId) => Number(objectId)),
     };
+  }
+
+  if (command.type === "select_targets" && Array.isArray(command.targets)) {
+    return {
+      type: "select_targets",
+      targets: command.targets.map(normalizeMultiplayerTarget),
+    };
+  }
+
+  if (command.type === "number_choice") {
+    return {
+      type: "number_choice",
+      value: Number(command.value),
+    };
+  }
+
+  if (command.type === "declare_attackers" && Array.isArray(command.declarations)) {
+    return {
+      type: "declare_attackers",
+      declarations: command.declarations.map((declaration) => ({
+        attacker: Number(declaration.attacker),
+        target_player: declaration.target_player == null ? null : Number(declaration.target_player),
+        target_battlefield: declaration.target_battlefield == null
+          ? null
+          : Number(declaration.target_battlefield),
+      })),
+    };
+  }
+
+  if (command.type === "declare_blockers" && Array.isArray(command.declarations)) {
+    return {
+      type: "declare_blockers",
+      declarations: command.declarations.map((declaration) => ({
+        blocker: Number(declaration.blocker),
+        attacker: Number(declaration.attacker),
+      })),
+    };
+  }
+
+  if (command.type === "cancel_decision") {
+    return { type: "cancel_decision" };
   }
 
   return command;
@@ -942,7 +886,7 @@ export function GameProvider({ children }) {
   );
 
   const applySyncedCommand = useCallback(
-    async (command, successMessage = "") => {
+    async (command, successMessage = "", syncContext = null) => {
       const currentGame = gameRef.current;
       if (!currentGame) {
         throw new Error("WASM game is not ready");
@@ -954,22 +898,62 @@ export function GameProvider({ children }) {
       console.debug("[ironsmith] synced dispatch:start", {
         command: commandSummary,
         decision: decisionBefore,
+        sync_context: syncContext,
         compatible: isDecisionCommandCompatible(stateRef.current?.decision || null, resolvedCommand),
       });
-      const st = resolvedCommand?.type === "cancel_decision"
-        ? await currentGame.cancelDecision()
-        : await currentGame.dispatch(resolvedCommand);
-      console.debug("[ironsmith] synced dispatch:success", {
-        command: commandSummary,
-        decision_before: decisionBefore,
-        decision_after: summarizeDecision(st?.decision || null),
-      });
-      return finalizeState(currentGame, st, {
-        message: successMessage,
-        allowOpponentAutomation: false,
-        allowTrivialAutomation: false,
-        clearViewedCards: true,
-      });
+
+      try {
+        const st = resolvedCommand?.type === "cancel_decision"
+          ? await currentGame.cancelDecision()
+          : await currentGame.dispatch(resolvedCommand);
+        console.debug("[ironsmith] synced dispatch:success", {
+          command: commandSummary,
+          decision_before: decisionBefore,
+          decision_after: summarizeDecision(st?.decision || null),
+          sync_context: syncContext,
+        });
+        return finalizeState(currentGame, st, {
+          message: successMessage,
+          allowOpponentAutomation: false,
+          allowTrivialAutomation: false,
+          clearViewedCards: true,
+        });
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        emitSyncFailureNotice("Sync failed", errorMessage);
+        let decisionAfterError = null;
+        try {
+          const liveState = await currentGame.uiState();
+          decisionAfterError = summarizeDecision(liveState?.decision || null);
+        } catch {
+          // Best effort only; keep the original failure as the main error.
+        }
+        console.error("[ironsmith] synced dispatch:failed", {
+          error: errorMessage,
+          command: commandSummary,
+          decision_before: decisionBefore,
+          decision_after_error: decisionAfterError,
+          sync_context: syncContext,
+          compatible_before: isDecisionCommandCompatible(decisionBefore, commandSummary),
+          compatible_after_error: isDecisionCommandCompatible(
+            decisionAfterError,
+            commandSummary
+          ),
+        });
+
+        try {
+          const rollbackState = await currentGame.cancelDecision();
+          await finalizeState(currentGame, rollbackState, {
+            allowOpponentAutomation: false,
+            allowTrivialAutomation: false,
+            clearViewedCards: true,
+          });
+        } catch {
+          // Keep the original sync failure.
+        }
+
+        throw err;
+      }
     },
     [finalizeState]
   );
@@ -1047,6 +1031,10 @@ export function GameProvider({ children }) {
           const syncedCommand = serializeMultiplayerCommand(command, currentState);
           await submitMultiplayerCommand(syncedCommand, successMessage);
         } catch (err) {
+          emitSyncFailureNotice(
+            "Sync failed",
+            err instanceof Error ? err.message : String(err)
+          );
           setStatus(`Sync failed: ${err}`, true);
           console.error(err);
         }
@@ -1130,6 +1118,10 @@ export function GameProvider({ children }) {
         try {
           await submitMultiplayerCommand({ type: "cancel_decision" }, "Decision cancelled");
         } catch (err) {
+          emitSyncFailureNotice(
+            "Sync failed",
+            err instanceof Error ? err.message : String(err)
+          );
           setStatus(`Cancel failed: ${err}`, true);
           console.error(err);
         }
