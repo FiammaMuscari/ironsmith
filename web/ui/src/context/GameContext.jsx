@@ -173,43 +173,35 @@ function normalizeMultiplayerTarget(target) {
   return target;
 }
 
-function serializeMultiplayerCommand(command, currentState) {
+function serializeMultiplayerCommand(command, _currentState) {
   if (!command || typeof command !== "object") return command;
 
   if (command.type === "priority_action") {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "priority") return command;
+    const actions = Array.isArray(_currentState?.decision?.actions)
+      ? _currentState.decision.actions
+      : [];
+    const normalizedIndex = Number(command.action_index);
+    const action = actions.find((candidate) => Number(candidate?.index) === normalizedIndex);
+    if (!action?.action_ref) {
+      throw new Error(`Missing priority action ref for action index ${normalizedIndex}`);
+    }
     return {
       type: "priority_action",
-      action_index: Number(command.action_index),
+      action_ref: action.action_ref,
     };
   }
 
   if (command.type === "select_options") {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "select_options") return command;
-    const option_indices = (command.option_indices || []).map((optionIndex) => Number(optionIndex));
-    const validIndices = new Set((decision.options || []).map((option) => Number(option.index)));
-    if (option_indices.some((optionIndex) => !validIndices.has(optionIndex))) {
-      return command;
-    }
     return {
       type: "select_options",
-      option_indices,
+      option_indices: (command.option_indices || []).map((optionIndex) => Number(optionIndex)),
     };
   }
 
   if (command.type === "select_objects") {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "select_objects") return command;
-    const object_ids = (command.object_ids || []).map((objectId) => Number(objectId));
-    const validObjectIds = new Set((decision.candidates || []).map((candidate) => Number(candidate.id)));
-    if (object_ids.some((objectId) => !validObjectIds.has(objectId))) {
-      return command;
-    }
     return {
       type: "select_objects",
-      object_ids,
+      object_ids: (command.object_ids || []).map((objectId) => Number(objectId)),
     };
   }
 
@@ -257,25 +249,21 @@ function serializeMultiplayerCommand(command, currentState) {
   return command;
 }
 
-function resolveSyncedCommand(command, currentState) {
+function resolveSyncedCommand(command, _currentState) {
   if (!command || typeof command !== "object") return command;
 
+  if (command.type === "priority_action" && command.action_ref) {
+    return {
+      type: "priority_action",
+      action_ref: command.action_ref,
+    };
+  }
+
   if (command.type === "priority_action" && command.action_index != null) {
-    const decision = currentState?.decision;
-    if (decision?.kind !== "priority") {
-      throw new Error("Expected a priority decision while syncing an action");
-    }
-    const normalizedIndex = Number(command.action_index);
-    const directMatch = (decision.actions || []).find(
-      (action) => Number(action?.index) === normalizedIndex
-    );
-    if (directMatch) {
-      return {
-        type: "priority_action",
-        action_index: normalizedIndex,
-      };
-    }
-    throw new Error(`Could not resolve synced priority action index: ${normalizedIndex}`);
+    return {
+      type: "priority_action",
+      action_index: Number(command.action_index),
+    };
   }
 
   if (command.type === "select_options" && Array.isArray(command.option_indices)) {

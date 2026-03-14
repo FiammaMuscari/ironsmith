@@ -243,7 +243,7 @@ pub struct OptionalCostOption {
     /// Index of this optional cost in the spell's optional_costs list.
     pub index: usize,
     /// Label for this cost (e.g., "Kicker", "Buyback").
-    pub label: &'static str,
+    pub label: String,
     /// Whether this cost can be paid multiple times (multikicker).
     pub repeatable: bool,
     /// Whether the player can currently afford this cost.

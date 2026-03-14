@@ -726,7 +726,7 @@ pub(super) fn check_optional_costs_or_continue(
 
                 OptionalCostOption {
                     index,
-                    label: opt_cost.label,
+                    label: opt_cost.label.clone(),
                     repeatable: opt_cost.repeatable,
                     affordable,
                     cost_description,

@@ -1,5 +1,7 @@
 use super::*;
 
+const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+
 // ============================================================================
 // State-Based Actions Integration
 // ============================================================================
@@ -210,7 +212,12 @@ fn order_triggers_for_controller(
     let items: Vec<(ObjectId, String)> = labels
         .into_iter()
         .enumerate()
-        .map(|(index, label)| (ObjectId::from_raw(u64::MAX - index as u64), label))
+        .map(|(index, label)| {
+            (
+                ObjectId::from_raw(JS_SAFE_INTEGER_MAX.saturating_sub(index as u64)),
+                label,
+            )
+        })
         .collect();
     let ctx = crate::decisions::context::enrich_display_hints(
         game,
@@ -682,6 +689,7 @@ pub(super) fn triggered_to_stack_entry(
     let source_snapshot = game
         .object(trigger.source)
         .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game))
+        .or_else(|| trigger.source_snapshot.clone())
         .or_else(|| {
             trigger
                 .triggering_event

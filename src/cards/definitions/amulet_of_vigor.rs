@@ -1,6 +1,7 @@
 //! Amulet of Vigor card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::CardType;
@@ -319,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_cultivator_colossus_triggers_amulet_for_each_land() {
-        use crate::cards::builders::CardDefinitionBuilder;
+        use super::CardDefinitionBuilder;
         use crate::cards::definitions::{basic_forest, grizzly_bears};
         use crate::executor::execute_effect;
         use crate::game_loop::{

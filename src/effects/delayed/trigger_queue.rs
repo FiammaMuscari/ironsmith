@@ -174,6 +174,20 @@ impl DelayedTriggerTemplate {
 
 /// Push a delayed trigger onto the game queue.
 pub(crate) fn queue_delayed_trigger(game: &mut GameState, config: DelayedTriggerConfig) {
+    let (ability_source_stable_id, ability_source_name, ability_source_snapshot) = config
+        .ability_source
+        .and_then(|source_id| {
+            game.object(source_id).map(|object| {
+                (
+                    object.stable_id,
+                    object.name.clone(),
+                    ObjectSnapshot::from_object_with_calculated_characteristics(object, game),
+                )
+            })
+        })
+        .map(|(stable_id, name, snapshot)| (Some(stable_id), Some(name), Some(snapshot)))
+        .unwrap_or((None, None, None));
+
     game.delayed_triggers.push(DelayedTrigger {
         trigger: config.trigger,
         effects: config.effects,
@@ -183,6 +197,9 @@ pub(crate) fn queue_delayed_trigger(game: &mut GameState, config: DelayedTrigger
         expires_at_turn: config.expires_at_turn,
         target_objects: config.target_objects,
         ability_source: config.ability_source,
+        ability_source_stable_id,
+        ability_source_name,
+        ability_source_snapshot,
         controller: config.controller,
         choices: config.choices,
         tagged_objects: config.tagged_objects,
@@ -277,6 +294,9 @@ mod tests {
         assert_eq!(delayed.not_before_turn, None);
         assert_eq!(delayed.expires_at_turn, None);
         assert_eq!(delayed.ability_source, None);
+        assert_eq!(delayed.ability_source_stable_id, None);
+        assert_eq!(delayed.ability_source_name, None);
+        assert!(delayed.ability_source_snapshot.is_none());
     }
 
     #[test]

@@ -23,7 +23,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_single_object_from_spec;
+use crate::effects::helpers::resolve_single_object_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::grant::{GrantDuration, Grantable};
@@ -66,7 +66,7 @@ impl EffectExecutor for GrantEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
 
         let obj = game
             .object(target_id)

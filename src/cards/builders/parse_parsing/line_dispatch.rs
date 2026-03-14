@@ -1,11 +1,12 @@
 use crate::cards::builders::{
-    AdditionalCostChoiceOptionAst, CardTextError, ClauseView, KeywordAction, LineAst,
-    ParsedAbility, RULE_SHAPE_HAS_COLON, RuleDef, RuleIndex, StaticAbilityAst, Token, TriggerSpec,
-    UnsupportedDiagnoser, UnsupportedRuleDef, dash_labeled_remainder_starts_with_trigger,
-    find_verb, is_non_mana_additional_cost_modifier_line,
-    is_untap_during_each_other_players_untap_step_words, leading_mana_symbols_to_oracle,
-    parse_ability_line, parse_activated_line, parse_activated_line_with_raw, parse_activation_cost,
-    parse_buyback_line, parse_cast_this_spell_only_line, parse_channel_line, parse_cycling_line,
+    AdditionalCostChoiceOptionAst, CardTextError, ClauseView, EffectAst, IT_TAG, KeywordAction,
+    LineAst, ParsedAbility, PlayerAst, RULE_SHAPE_HAS_COLON, RuleDef, RuleIndex, StaticAbilityAst,
+    Token, TriggerSpec, UnsupportedDiagnoser, UnsupportedRuleDef,
+    dash_labeled_remainder_starts_with_trigger, find_verb,
+    is_non_mana_additional_cost_modifier_line, is_untap_during_each_other_players_untap_step_words,
+    leading_mana_symbols_to_oracle, parse_ability_line, parse_activated_line,
+    parse_activated_line_with_raw, parse_activation_cost, parse_buyback_line,
+    parse_cast_this_spell_only_line, parse_channel_line, parse_cycling_line,
     parse_effect_sentences, parse_enters_with_counters_line, parse_entwine_line, parse_equip_line,
     parse_escape_line, parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line,
     parse_level_up_line, parse_loyalty_shorthand_activation_cost, parse_madness_line,
@@ -16,6 +17,7 @@ use crate::cards::builders::{
     starts_with_until_end_of_turn, tokenize_line, trim_commas, unsupported_rule_error_for_view,
     words,
 };
+use crate::costs::Cost;
 use crate::{AlternativeCastingMethod, OptionalCost, TotalCost};
 
 const PRE_TOKEN_DIAGNOSTIC_RULES: [UnsupportedRuleDef; 22] = [
@@ -1221,6 +1223,14 @@ fn parse_additional_cost_line_rule(
             "additional cost line missing effect clause".to_string(),
         ));
     }
+    if let Some(parsed) = parse_repeatable_optional_additional_cost_with_when_you_do(effect_tokens)?
+    {
+        parser_trace(
+            "parse_line:branch=additional-cost-when-you-do",
+            effect_tokens,
+        );
+        return Ok(Some(parsed));
+    }
 
     parser_trace("parse_line:branch=additional-cost", effect_tokens);
     if let Some(options) = parse_additional_cost_choice_options(effect_tokens)? {
@@ -1228,6 +1238,165 @@ fn parse_additional_cost_line_rule(
     }
     let effects = parse_effect_sentences(effect_tokens)?;
     Ok(Some(LineAst::AdditionalCost { effects }))
+}
+
+fn trim_terminal_clause_punctuation(tokens: &[Token]) -> Vec<Token> {
+    let mut trimmed = trim_commas(tokens).to_vec();
+    while matches!(
+        trimmed.last(),
+        Some(Token::Period(_)) | Some(Token::Semicolon(_)) | Some(Token::Colon(_))
+    ) {
+        trimmed.pop();
+    }
+    trimmed
+}
+
+fn rewrite_copy_count_to_times_paid_label(effects: &mut [EffectAst], label: &str) {
+    for effect in effects {
+        match effect {
+            EffectAst::CopySpell { target, count, .. } => {
+                let crate::cards::builders::TargetAst::Source(_) = target else {
+                    continue;
+                };
+                let crate::effect::Value::Count(filter) = count else {
+                    continue;
+                };
+                if filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+                {
+                    *count = crate::effect::Value::TimesPaidLabel(label.to_string());
+                }
+            }
+            EffectAst::Conditional {
+                if_true, if_false, ..
+            } => {
+                rewrite_copy_count_to_times_paid_label(if_true, label);
+                rewrite_copy_count_to_times_paid_label(if_false, label);
+            }
+            EffectAst::UnlessPays { effects, .. }
+            | EffectAst::May { effects }
+            | EffectAst::MayByPlayer { effects, .. }
+            | EffectAst::MayByTaggedController { effects, .. }
+            | EffectAst::ResolvedIfResult { effects, .. }
+            | EffectAst::ResolvedWhenResult { effects, .. }
+            | EffectAst::IfResult { effects, .. }
+            | EffectAst::WhenResult { effects, .. }
+            | EffectAst::ForEachOpponent { effects }
+            | EffectAst::ForEachPlayersFiltered { effects, .. }
+            | EffectAst::ForEachPlayer { effects }
+            | EffectAst::ForEachTargetPlayers { effects, .. }
+            | EffectAst::ForEachObject { effects, .. }
+            | EffectAst::ForEachTagged { effects, .. }
+            | EffectAst::ForEachOpponentDoesNot { effects, .. }
+            | EffectAst::ForEachPlayerDoesNot { effects, .. }
+            | EffectAst::ForEachOpponentDid { effects, .. }
+            | EffectAst::ForEachPlayerDid { effects, .. }
+            | EffectAst::ForEachTaggedPlayer { effects, .. }
+            | EffectAst::RepeatProcess { effects, .. }
+            | EffectAst::DelayedUntilNextEndStep { effects, .. }
+            | EffectAst::DelayedUntilNextUpkeep { effects, .. }
+            | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+            | EffectAst::DelayedUntilEndOfCombat { effects }
+            | EffectAst::DelayedTriggerThisTurn { effects, .. }
+            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+            | EffectAst::VoteOption { effects, .. } => {
+                rewrite_copy_count_to_times_paid_label(effects, label);
+            }
+            EffectAst::UnlessAction {
+                effects,
+                alternative,
+                ..
+            } => {
+                rewrite_copy_count_to_times_paid_label(effects, label);
+                rewrite_copy_count_to_times_paid_label(alternative, label);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn parse_repeatable_optional_additional_cost_with_when_you_do(
+    effect_tokens: &[Token],
+) -> Result<Option<LineAst>, CardTextError> {
+    let when_idx = effect_tokens
+        .windows(3)
+        .position(|window| {
+            window[0].is_word("when") && window[1].is_word("you") && window[2].is_word("do")
+        })
+        .map(|idx| idx);
+    let Some(when_idx) = when_idx else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_terminal_clause_punctuation(&effect_tokens[..when_idx]);
+    if head_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let comma_after_when_idx = effect_tokens[when_idx + 3..]
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+        .map(|idx| when_idx + 3 + idx);
+    let Some(comma_idx) = comma_after_when_idx else {
+        return Ok(None);
+    };
+    let followup_tokens = trim_terminal_clause_punctuation(&effect_tokens[comma_idx + 1..]);
+    if followup_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let stripped_head_tokens = trim_commas(&head_tokens);
+    if stripped_head_tokens.len() < 3
+        || !stripped_head_tokens[0].is_word("you")
+        || !stripped_head_tokens[1].is_word("may")
+    {
+        return Ok(None);
+    }
+    let head_effects = parse_effect_sentences(&stripped_head_tokens[2..])?;
+    let [
+        EffectAst::ChooseObjects {
+            filter,
+            count,
+            player,
+            ..
+        },
+        EffectAst::SacrificeAll {
+            filter: sacrificed_filter,
+            player: sacrificed_player,
+        },
+    ] = head_effects.as_slice()
+    else {
+        return Ok(None);
+    };
+    if *player != PlayerAst::Implicit
+        || *sacrificed_player != PlayerAst::Implicit
+        || count.min != 1
+        || count.max.is_some()
+        || !matches!(sacrificed_filter, crate::target::ObjectFilter { tagged_constraints, .. } if tagged_constraints.iter().any(|constraint| constraint.tag.as_str() == IT_TAG))
+    {
+        return Ok(None);
+    }
+
+    let label = format!(
+        "As an additional cost to cast this spell, {}",
+        words(&head_tokens).join(" ")
+    );
+    let cost = OptionalCost::custom(
+        label.clone(),
+        TotalCost::from_cost(Cost::sacrifice(filter.clone())),
+    )
+    .repeatable();
+
+    let mut effects = parse_effect_sentences(&followup_tokens)?;
+    rewrite_copy_count_to_times_paid_label(&mut effects, &label);
+
+    Ok(Some(LineAst::OptionalCostWithCastTrigger {
+        cost,
+        effects,
+        followup_text: format!("When you do, {}", words(&followup_tokens).join(" ")),
+    }))
 }
 
 fn parse_alternative_cast_line_rule(

@@ -6,7 +6,7 @@ use crate::combat_state::{AttackTarget, AttackerInfo};
 use crate::decisions::context::{SelectOptionsContext, SelectableOption};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter, resolve_value};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::PlayerId;
@@ -347,7 +347,7 @@ impl EffectExecutor for CreateTokenCopyEffect {
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
 
         // Resolve target from spec (supports tagged/spec-specific references)
-        let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let target_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         let target_id = *target_ids.first().ok_or(ExecutionError::InvalidTarget)?;
 
         // Resolve target object (supports tagged LKI with stable_id lookup)

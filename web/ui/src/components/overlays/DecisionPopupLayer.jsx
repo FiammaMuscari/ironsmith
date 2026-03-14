@@ -21,8 +21,19 @@ import {
 } from "@/lib/trigger-ordering";
 import { cn } from "@/lib/utils";
 
+const ACTION_STRIP_BODY_CLASS = "h-[74px]";
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function actionStripAccentStyle(accent, baseStyle = undefined) {
+  if (!accent) return baseStyle;
+  return {
+    ...(baseStyle || {}),
+    borderColor: accent.hex,
+    boxShadow: `inset 0 0 0 1px rgba(${accent.rgb}, 0.22), 0 0 0 1px rgba(${accent.rgb}, 0.72), 0 0 18px rgba(${accent.rgb}, 0.18)`,
+  };
 }
 
 function priorityAnchorStyle(anchor) {
@@ -1063,6 +1074,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     if (!viewedCardsToken) return;
     setAcknowledgedViewedCardsToken(viewedCardsToken);
   }, [viewedCardsToken]);
+  const decisionAccent = getPlayerAccent(state?.players || [], decision?.player);
 
   if (!decision || isCombatDecision) return null;
   if (isPriorityDecision && !passAction) return null;
@@ -1071,7 +1083,8 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     return (
       <div className="pointer-events-none absolute inset-0 z-[120] flex items-center px-2">
         <div
-          className="priority-inline-panel pointer-events-auto relative flex w-full flex-col rounded bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          className="priority-inline-panel pointer-events-auto relative flex w-full flex-col rounded border bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          style={actionStripAccentStyle(decisionAccent)}
         >
           {isPriorityDecision ? (
             showViewedCardsStep ? (
@@ -1223,7 +1236,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                     </div>
                   )}
                 </div>
-                <div className="min-w-0 flex-1 overflow-hidden">
+                <div className={cn("min-w-0 flex-1 overflow-hidden", ACTION_STRIP_BODY_CLASS)}>
                   {canAct ? (
                     showViewedCardsStep ? (
                       <ViewedCardsStrip
@@ -1267,12 +1280,12 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   return (
     <div
       className={cn(
-        "pointer-events-auto z-[120] rounded bg-[rgba(7,15,23,0.97)] shadow-[0_16px_36px_rgba(0,0,0,0.55)] backdrop-blur-[2px]",
+        "pointer-events-auto z-[120] rounded border bg-[rgba(7,15,23,0.97)] shadow-[0_16px_36px_rgba(0,0,0,0.55)] backdrop-blur-[2px]",
         anchoredStyle
           ? "fixed"
           : "fixed left-2 bottom-[148px] w-[min(92vw,348px)]"
       )}
-      style={anchoredStyle || undefined}
+      style={actionStripAccentStyle(decisionAccent, anchoredStyle || undefined)}
     >
       <div className="border-b border-[#2f4662]/85 bg-[rgba(10,22,34,0.88)] px-2 py-0">
         <div className="flex min-h-[46px] items-stretch gap-2">
@@ -1390,7 +1403,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
           )}
         </div>
       </div>
-      <div className="border-b border-[#2f4662]/70 px-2 py-1.5">
+      <div className={cn("border-b border-[#2f4662]/70 px-2 py-1.5", !isPriorityDecision && ACTION_STRIP_BODY_CLASS)}>
         {isPriorityDecision ? (
           showViewedCardsStep ? (
             <ViewedCardsStrip
@@ -1423,7 +1436,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
             />
           )
         ) : (
-          <div className="min-w-0">
+          <div className="min-w-0 h-full">
             {showViewedCardsStep ? (
               <ViewedCardsStrip
                 label={viewedCardsLabel}
@@ -1462,10 +1475,12 @@ function CombatBar({ anchor = null, inline = false, decision, canAct }) {
     setHoldRule,
     confirmEnabled,
     setConfirmEnabled,
+    state,
   } = useGame();
   if (!decision || (decision.kind !== "attackers" && decision.kind !== "blockers")) return null;
 
   const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
+  const decisionAccent = getPlayerAccent(state?.players || [], decision?.player);
   const panelClass = inline
     ? "pointer-events-none absolute inset-0 z-[120] flex items-center px-2"
     : "pointer-events-none fixed left-2 bottom-[148px] z-[120] w-[min(96vw,740px)]";
@@ -1477,7 +1492,7 @@ function CombatBar({ anchor = null, inline = false, decision, canAct }) {
 
   return (
     <div className={panelClass}>
-      <div className={innerClass} style={anchoredStyle || undefined}>
+      <div className={innerClass} style={actionStripAccentStyle(decisionAccent, anchoredStyle || undefined)}>
         <div className="min-w-0 flex-1">
           <DecisionRouter
             decision={decision}

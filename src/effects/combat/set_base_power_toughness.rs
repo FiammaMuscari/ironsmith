@@ -2,7 +2,7 @@
 
 use crate::continuous::{EffectTarget, Modification, PtSublayer};
 use crate::effect::{Effect, EffectOutcome, Until, Value};
-use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_single_object_for_effect, resolve_value};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -50,7 +50,7 @@ impl EffectExecutor for SetBasePowerToughnessEffect {
         let base_power = resolve_value(game, &self.power, ctx)?;
         let base_toughness = resolve_value(game, &self.toughness, ctx)?;
 
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
 
         let target = game
             .object(target_id)

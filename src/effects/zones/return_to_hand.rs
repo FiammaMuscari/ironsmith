@@ -248,3 +248,74 @@ impl CostExecutableEffect for ReturnToHandEffect {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::CardBuilder;
+    use crate::decision::DecisionMaker;
+    use crate::decisions::context::SelectObjectsContext;
+    use crate::executor::ExecutionContext;
+    use crate::game_state::GameState;
+    use crate::ids::{CardId, ObjectId, PlayerId};
+    use crate::types::CardType;
+
+    struct SelectIdsDecisionMaker {
+        chosen: Vec<ObjectId>,
+    }
+
+    impl DecisionMaker for SelectIdsDecisionMaker {
+        fn decide_objects(
+            &mut self,
+            _game: &GameState,
+            ctx: &SelectObjectsContext,
+        ) -> Vec<ObjectId> {
+            self.chosen
+                .iter()
+                .copied()
+                .filter(|id| {
+                    ctx.candidates
+                        .iter()
+                        .any(|candidate| candidate.legal && candidate.id == *id)
+                })
+                .collect()
+        }
+    }
+
+    fn add_land(game: &mut GameState, card_id: u32, name: &str, controller: PlayerId) -> ObjectId {
+        let card = CardBuilder::new(CardId::from_raw(card_id), name)
+            .card_types(vec![CardType::Land])
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    #[test]
+    fn growth_chamber_style_bounce_can_choose_the_source_land() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = game.players[0].id;
+        let growth_chamber = add_land(&mut game, 561, "Simic Growth Chamber", alice);
+        let forest = add_land(&mut game, 562, "Forest", alice);
+        let mut dm = SelectIdsDecisionMaker {
+            chosen: vec![growth_chamber],
+        };
+        let mut ctx =
+            ExecutionContext::new_default(growth_chamber, alice).with_decision_maker(&mut dm);
+        let effect = ReturnToHandEffect::with_spec(
+            ChooseSpec::Object(ObjectFilter::land().you_control())
+                .with_count(ChoiceCount::exactly(1)),
+        );
+
+        let outcome = effect
+            .execute(&mut game, &mut ctx)
+            .expect("bounce effect should resolve");
+        let bounced_card_in_hand = game.players[0].hand.iter().any(|&id| {
+            game.object(id)
+                .is_some_and(|obj| obj.name == "Simic Growth Chamber")
+        });
+
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
+        assert!(bounced_card_in_hand);
+        assert!(!game.battlefield.contains(&growth_chamber));
+        assert!(game.battlefield.contains(&forest));
+    }
+}

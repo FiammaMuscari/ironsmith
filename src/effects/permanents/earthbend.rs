@@ -2,7 +2,7 @@
 
 use crate::continuous::{EffectSourceType, EffectTarget, Modification, PtSublayer};
 use crate::effect::{Effect, EffectOutcome, Until, Value};
-use crate::effects::helpers::resolve_single_object_from_spec;
+use crate::effects::helpers::resolve_single_object_for_effect;
 use crate::effects::{
     ApplyContinuousEffect, EffectExecutor, PutCountersEffect, ScheduleDelayedTriggerEffect,
 };
@@ -35,7 +35,7 @@ impl EffectExecutor for EarthbendEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
         let locked_targets = vec![target_id];
 
         let base_effect = ApplyContinuousEffect::new(

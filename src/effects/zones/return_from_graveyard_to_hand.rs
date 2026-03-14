@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -119,7 +119,7 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
         }
 
         // Non-random: return all resolved object targets that are still in a graveyard.
-        let resolved_targets = match resolve_objects_from_spec(game, &self.target, ctx) {
+        let resolved_targets = match resolve_objects_for_effect(game, ctx, &self.target) {
             Ok(targets) => targets,
             Err(_) => return Ok(EffectOutcome::target_invalid()),
         };

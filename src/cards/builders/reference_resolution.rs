@@ -369,7 +369,6 @@ fn advance_reference_frame_for_effect(
             }
         }
         EffectAst::MoveToLibraryNthFromTop { target, .. }
-        | EffectAst::MoveToLibrarySecondFromTop { target }
         | EffectAst::MoveToZone { target, .. } => {
             let refs = lowering_reference_frame(frame);
             let (spec, _) = resolve_target_spec_with_choices(&target, &refs)?;
@@ -1300,7 +1299,6 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
         | EffectAst::ReturnToHand { target, .. }
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::MoveToLibraryNthFromTop { target, .. }
-        | EffectAst::MoveToLibrarySecondFromTop { target }
         | EffectAst::LookAtHand { target }
         | EffectAst::TargetOnly { target }
         | EffectAst::Destroy { target }

@@ -6,7 +6,8 @@
 //! Note: Full MDFC support requires game-level handling for choosing which face
 //! to play. This file defines both faces as separate card definitions.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::types::CardType;
 

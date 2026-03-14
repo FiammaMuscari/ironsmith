@@ -54,7 +54,7 @@ export default function SelectObjectsDecision({
   const focusedToHover = hoveredObjectId != null
     && candidates.some((c) => String(c.id) === String(hoveredObjectId));
 
-  const toggleObject = (id) => {
+  const toggleObject = useCallback((id) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -64,7 +64,25 @@ export default function SelectObjectsDecision({
       }
       return next;
     });
-  };
+  }, [max]);
+
+  useEffect(() => {
+    const onExternalObjectChoice = (event) => {
+      if (!canAct) return;
+      const externalObjectId = event?.detail?.objectId;
+      if (externalObjectId == null) return;
+      const matchedCandidate = candidates.find(
+        (candidate) => String(candidate?.id) === String(externalObjectId)
+      );
+      if (!matchedCandidate || matchedCandidate.legal === false) return;
+      toggleObject(matchedCandidate.id);
+    };
+
+    window.addEventListener("ironsmith:select-object-choice", onExternalObjectChoice);
+    return () => {
+      window.removeEventListener("ironsmith:select-object-choice", onExternalObjectChoice);
+    };
+  }, [canAct, candidates, toggleObject]);
 
   const canSubmit = selected.size >= min && selected.size <= max;
   const selectedIds = useMemo(() => Array.from(selected), [selected]);

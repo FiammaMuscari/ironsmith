@@ -1,11 +1,10 @@
 //! Black Market Connections card definition.
 
-use crate::ability::Ability;
+use super::CardDefinitionBuilder;
 use crate::card::PowerToughness;
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
-use crate::static_abilities::StaticAbility;
 use crate::types::{CardType, Subtype};
 
 /// Black Market Connections - {2}{B}
@@ -39,8 +38,8 @@ fn shapeshifter_mercenary_token() -> CardDefinition {
         .card_types(vec![CardType::Creature])
         .subtypes(vec![Subtype::Shapeshifter])
         .power_toughness(PowerToughness::fixed(3, 2))
-        .with_ability(Ability::static_ability(StaticAbility::changeling()))
-        .build()
+        .parse_text("Changeling")
+        .expect("Shapeshifter token text should be supported")
 }
 
 #[cfg(test)]

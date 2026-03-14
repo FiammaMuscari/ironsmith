@@ -1,7 +1,7 @@
 //! Card definition for Flooded Strand.
 
+use super::CardDefinitionBuilder;
 use crate::cards::CardDefinition;
-use crate::cards::builders::CardDefinitionBuilder;
 use crate::ids::CardId;
 use crate::types::CardType;
 

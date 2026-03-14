@@ -141,6 +141,11 @@ pub(crate) enum NormalizedLineChunk {
         prepared: PreparedEffectsForLowering,
     },
     OptionalCost(OptionalCost),
+    OptionalCostWithCastTrigger {
+        cost: OptionalCost,
+        prepared: PreparedEffectsForLowering,
+        followup_text: String,
+    },
     AdditionalCostChoice {
         options: Vec<NormalizedAdditionalCostChoiceOptionAst>,
     },
@@ -517,6 +522,21 @@ fn normalize_line_ast(
                 }
             }
             LineAst::OptionalCost(cost) => NormalizedLineChunk::OptionalCost(cost),
+            LineAst::OptionalCostWithCastTrigger {
+                cost,
+                effects,
+                followup_text,
+            } => {
+                let prepared = prepare_effects_for_lowering(
+                    &effects,
+                    state.latest_additional_cost_exports.to_imports(),
+                )?;
+                NormalizedLineChunk::OptionalCostWithCastTrigger {
+                    cost,
+                    prepared,
+                    followup_text,
+                }
+            }
             LineAst::AdditionalCostChoice { options } => {
                 let mut normalized_options = Vec::with_capacity(options.len());
                 let mut exports = ReferenceExports::default();
@@ -1400,6 +1420,43 @@ fn apply_line_ast(
         }
         NormalizedLineChunk::OptionalCost(cost) => {
             builder = builder.optional_cost(cost);
+        }
+        NormalizedLineChunk::OptionalCostWithCastTrigger {
+            cost,
+            prepared,
+            followup_text,
+        } => {
+            let cost_label = cost.label.clone();
+            builder = builder.optional_cost(cost);
+            let parsed = parsed_triggered_ability(
+                TriggerSpec::YouCastThisSpell,
+                prepared.effects.clone(),
+                vec![Zone::Stack],
+                Some(followup_text),
+                Some(crate::ConditionExpr::ThisSpellPaidLabel(cost_label)),
+                prepared.imports.clone(),
+            );
+            let parsed = match lower_prepared_ability(NormalizedParsedAbility {
+                parsed,
+                prepared: Some(NormalizedPreparedAbility::Triggered {
+                    trigger: TriggerSpec::YouCastThisSpell,
+                    prepared: PreparedTriggeredEffectsForLowering {
+                        prepared,
+                        intervening_if: None,
+                    },
+                }),
+            }) {
+                Ok(parsed) => parsed,
+                Err(err) if allow_unsupported => {
+                    return Ok(push_unsupported_marker(
+                        builder,
+                        info.raw_line.as_str(),
+                        format!("{err:?}"),
+                    ));
+                }
+                Err(err) => return Err(err),
+            };
+            builder = builder.with_ability(parsed.ability);
         }
         NormalizedLineChunk::AdditionalCostChoice { options } => {
             if options.len() < 2 {

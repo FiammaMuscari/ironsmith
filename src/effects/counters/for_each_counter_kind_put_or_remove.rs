@@ -2,7 +2,7 @@
 
 use crate::decisions::context::{SelectOptionsContext, SelectableOption};
 use crate::effect::EffectOutcome;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::effects::{EffectExecutor, PutCountersEffect, RemoveCountersEffect};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -32,7 +32,7 @@ impl EffectExecutor for ForEachCounterKindPutOrRemoveEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let target_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         if target_ids.is_empty() {
             return Ok(EffectOutcome::resolved());
         }

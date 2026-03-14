@@ -157,7 +157,9 @@ export default function AddCardBar({
       setAutocompleteOptions([]);
       setAutocompleteOpen(false);
       setAutocompleteIndex(-1);
-      setAddCardMenuOpen(false);
+      window.requestAnimationFrame(() => {
+        cardNameInputRef.current?.focus();
+      });
       await refresh(`Added ${name} to ${zone}`);
     } catch (err) {
       const errMsg = String(err?.message || err);

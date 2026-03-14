@@ -29,6 +29,7 @@ mod boggart_brute;
 mod bosh_iron_golem;
 mod braids_arisen_nightmare;
 mod brightclimb_pathway;
+mod builder;
 pub mod buried_alive;
 mod butcher_ghoul;
 mod cataclysm;
@@ -141,6 +142,8 @@ mod windswept_heath;
 mod yawgmoth_thran_physician;
 mod yawgmoths_will;
 mod zodiac_rooster;
+
+pub(crate) use builder::CardDefinitionBuilder;
 
 // Re-export all card definition functions
 pub use accursed_duneyard::accursed_duneyard;

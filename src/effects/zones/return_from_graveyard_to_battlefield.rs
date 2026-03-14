@@ -5,7 +5,7 @@ use super::battlefield_entry::{
 };
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_single_object_from_spec;
+use crate::effects::helpers::resolve_single_object_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -76,7 +76,7 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
 
         // Verify target is in a graveyard
         let obj = game
@@ -116,6 +116,8 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::decision::DecisionMaker;
+    use crate::decisions::context::SelectObjectsContext;
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -156,6 +158,28 @@ mod tests {
         let obj = Object::from_card(id, &card, controller, Zone::Battlefield);
         game.add_object(obj);
         id
+    }
+
+    struct SelectIdsDecisionMaker {
+        chosen: Vec<ObjectId>,
+    }
+
+    impl DecisionMaker for SelectIdsDecisionMaker {
+        fn decide_objects(
+            &mut self,
+            _game: &GameState,
+            ctx: &SelectObjectsContext,
+        ) -> Vec<ObjectId> {
+            self.chosen
+                .iter()
+                .copied()
+                .filter(|id| {
+                    ctx.candidates
+                        .iter()
+                        .any(|candidate| candidate.legal && candidate.id == *id)
+                })
+                .collect()
+        }
     }
 
     #[test]
@@ -208,6 +232,33 @@ mod tests {
         } else {
             panic!("Expected Objects result");
         }
+    }
+
+    #[test]
+    fn test_reanimate_non_targeted_choice_uses_selected_graveyard_card() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_creature_in_graveyard(&mut game, "First", alice);
+        let second = create_creature_in_graveyard(&mut game, "Second", alice);
+        let source = game.new_object_id();
+        let mut dm = SelectIdsDecisionMaker {
+            chosen: vec![second],
+        };
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+
+        let effect = ReturnFromGraveyardToBattlefieldEffect::creature();
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        let crate::effect::OutcomeValue::Objects(ids) = result.value else {
+            panic!("Expected Objects result");
+        };
+        assert_eq!(ids.len(), 1);
+        let returned_name = game
+            .object(ids[0])
+            .map(|obj| obj.name.clone())
+            .expect("reanimated permanent should exist");
+        assert_eq!(returned_name, "Second");
+        assert!(game.players[0].graveyard.contains(&first));
     }
 
     #[test]

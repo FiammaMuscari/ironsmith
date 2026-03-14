@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -64,7 +64,7 @@ impl EffectExecutor for ExileUntilEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let objects = resolve_objects_from_spec(game, &self.spec, ctx)?;
+        let objects = resolve_objects_for_effect(game, ctx, &self.spec)?;
         let mut exiled_count = 0_i32;
         for object_id in objects {
             let Some(obj) = game.object(object_id) else {

@@ -42,6 +42,8 @@ pub struct TriggeredAbilityEntry {
     pub source_stable_id: StableId,
     /// Name of the source for display purposes.
     pub source_name: String,
+    /// Source snapshot captured earlier when available.
+    pub source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
     /// Tagged objects captured at trigger time for delayed/tagged follow-up effects.
     pub tagged_objects:
         std::collections::HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
@@ -69,6 +71,12 @@ pub struct DelayedTrigger {
     /// Optional source object to use for the triggered ability when it fires.
     /// If unset, the watched/target object is used as the source.
     pub ability_source: Option<ObjectId>,
+    /// Stable source identity captured when the delayed trigger was scheduled.
+    pub ability_source_stable_id: Option<StableId>,
+    /// Source display name captured when the delayed trigger was scheduled.
+    pub ability_source_name: Option<String>,
+    /// Source snapshot captured when the delayed trigger was scheduled.
+    pub ability_source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
     /// The controller of this delayed trigger.
     pub controller: PlayerId,
     /// Target choices for when the trigger resolves (e.g., haunt effects that target a player).
@@ -253,6 +261,7 @@ fn push_monarch_trigger(
         triggering_event: trigger_event.clone(),
         source_stable_id,
         source_name,
+        source_snapshot: None,
         tagged_objects: std::collections::HashMap::new(),
         trigger_identity,
     });
@@ -393,6 +402,7 @@ pub(crate) fn check_triggers_with_view(
                     triggering_event: trigger_event.clone(),
                     source_stable_id: obj.stable_id,
                     source_name: obj.name.clone(),
+                    source_snapshot: None,
                     tagged_objects: std::collections::HashMap::new(),
                     trigger_identity,
                 };
@@ -456,6 +466,7 @@ pub(crate) fn check_triggers_with_view(
                         triggering_event: trigger_event.clone(),
                         source_stable_id: snapshot.stable_id,
                         source_name: snapshot.name.clone(),
+                        source_snapshot: Some(snapshot.clone()),
                         tagged_objects: std::collections::HashMap::new(),
                         trigger_identity,
                     };
@@ -548,6 +559,7 @@ pub(crate) fn check_triggers_with_view(
                     triggering_event: trigger_event.clone(),
                     source_stable_id: obj.stable_id,
                     source_name: obj.name.clone(),
+                    source_snapshot: None,
                     tagged_objects: std::collections::HashMap::new(),
                     trigger_identity,
                 });
@@ -590,6 +602,7 @@ pub(crate) fn check_triggers_with_view(
                 triggering_event: trigger_event.clone(),
                 source_stable_id: obj.stable_id,
                 source_name: obj.name.clone(),
+                source_snapshot: None,
                 tagged_objects: std::collections::HashMap::new(),
                 trigger_identity,
             });
@@ -644,9 +657,16 @@ pub fn check_delayed_triggers(
 
             fired = true;
             let ability_source = delayed.ability_source.unwrap_or(source);
-            let source_stable_id = game
-                .object(ability_source)
-                .map(|o| o.stable_id)
+            let source_stable_id = delayed
+                .ability_source_stable_id
+                .or_else(|| game.object(ability_source).map(|o| o.stable_id))
+                .or_else(|| {
+                    delayed
+                        .ability_source_stable_id
+                        .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
+                        .and_then(|id| game.object(id))
+                        .map(|o| o.stable_id)
+                })
                 .or_else(|| {
                     game.find_object_by_stable_id(StableId::from(ability_source))
                         .and_then(|id| game.object(id))
@@ -660,9 +680,10 @@ pub fn check_delayed_triggers(
                     }
                 })
                 .unwrap_or_else(|| StableId::from(ability_source));
-            let source_name = game
-                .object(ability_source)
-                .map(|o| o.name.clone())
+            let source_name = delayed
+                .ability_source_name
+                .clone()
+                .or_else(|| game.object(ability_source).map(|o| o.name.clone()))
                 .or_else(|| {
                     game.find_object_by_stable_id(source_stable_id)
                         .and_then(|id| game.object(id))
@@ -692,6 +713,7 @@ pub fn check_delayed_triggers(
                 triggering_event: trigger_event.clone(),
                 source_stable_id,
                 source_name,
+                source_snapshot: delayed.ability_source_snapshot.clone(),
                 tagged_objects: delayed.tagged_objects.clone(),
                 trigger_identity,
             });
@@ -777,6 +799,7 @@ fn check_triggers_in_zone(
                 triggering_event: trigger_event.clone(),
                 source_stable_id: obj.stable_id,
                 source_name: obj.name.clone(),
+                source_snapshot: None,
                 tagged_objects: std::collections::HashMap::new(),
                 trigger_identity,
             };

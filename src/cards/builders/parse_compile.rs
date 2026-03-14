@@ -1007,7 +1007,6 @@ macro_rules! direct_target_effect_variants {
                 target: $target,
                 ..
             }
-            | EffectAst::MoveToLibrarySecondFromTop { target: $target }
             | EffectAst::CreateTokenCopyFromSource {
                 source: $target,
                 ..
@@ -1844,7 +1843,8 @@ pub(crate) fn collect_tag_spans_from_line(
     match line {
         LineAst::Triggered { effects, .. }
         | LineAst::Statement { effects }
-        | LineAst::AdditionalCost { effects } => {
+        | LineAst::AdditionalCost { effects }
+        | LineAst::OptionalCostWithCastTrigger { effects, .. } => {
             collect_tag_spans_from_effects_with_context(effects, annotations, ctx);
         }
         LineAst::AdditionalCostChoice { options } => {
@@ -1854,8 +1854,8 @@ pub(crate) fn collect_tag_spans_from_line(
         }
         LineAst::AlternativeCastingMethod(_)
         | LineAst::OptionalCost(_)
-        | LineAst::StaticAbility(_)
         | LineAst::StaticAbilities(_)
+        | LineAst::StaticAbility(_)
         | LineAst::Ability(_)
         | LineAst::Abilities(_) => {}
     }
@@ -7086,8 +7086,9 @@ fn lower_granted_ability_grant_modifications(
     let mut modifications = Vec::with_capacity(abilities.len());
     for ability in abilities {
         match ability {
-            GrantedAbilityAst::ParsedObjectAbility { ability, .. } => {
-                let lowered = lower_parsed_ability(ability.clone())?;
+            GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
+                let mut lowered = lower_parsed_ability(ability.clone())?;
+                lowered.ability.text = Some(display.clone());
                 modifications.push(crate::continuous::Modification::AddAbilityGeneric(
                     lowered.ability,
                 ));
@@ -7517,19 +7518,6 @@ fn try_compile_object_zone_and_exchange_effect(
             }
             effects.push(effect);
             (effects, choices)
-        }
-        EffectAst::MoveToLibrarySecondFromTop { target } => {
-            let (spec, choices) =
-                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
-            let mut effect = Effect::new(crate::effects::MoveToLibrarySecondFromTopEffect::new(
-                spec.clone(),
-            ));
-            if choose_spec_targets_object(&spec) && ctx.auto_tag_object_targets {
-                let tag = ctx.next_tag("moved");
-                ctx.last_object_tag = Some(tag.clone());
-                effect = effect.tag(tag);
-            }
-            (vec![effect], choices)
         }
         EffectAst::MoveToLibraryNthFromTop { target, position } => {
             let (spec, choices) =

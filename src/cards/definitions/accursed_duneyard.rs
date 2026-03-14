@@ -1,6 +1,7 @@
 //! Accursed Duneyard card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::types::CardType;
 
@@ -18,8 +19,6 @@ use crate::zone::Zone;
 pub fn accursed_duneyard() -> CardDefinition {
     CardDefinitionBuilder::new(CardId::new(), "Accursed Duneyard")
         .card_types(vec![CardType::Land])
-        //.taps_for(ManaSymbol::Colorless)
-        //.with_ability(regenerate_ability)
         .parse_text(
             "{T}: Add {C}.\n{2}, {T}: Regenerate target Shade, Skeleton, Specter, Spirit, Vampire, Wraith, or Zombie.",
         )

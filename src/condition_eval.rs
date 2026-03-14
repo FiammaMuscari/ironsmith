@@ -230,6 +230,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::TargetIsBlocked => {}
         Condition::TargetWasKicked => {}
         Condition::ThisSpellWasKicked => {}
+        Condition::ThisSpellPaidLabel(..) => {}
         Condition::TargetSpellCastOrderThisTurn(..) => {}
         Condition::TargetSpellControllerIsPoisoned => {}
         Condition::TargetSpellManaSpentToCastAtLeast { .. } => {}
@@ -376,6 +377,9 @@ pub fn evaluate_condition_external(
         Condition::ThisSpellWasKicked => game
             .object(ctx.source)
             .is_some_and(|obj| obj.optional_costs_paid.was_kicked()),
+        Condition::ThisSpellPaidLabel(label) => game
+            .object(ctx.source)
+            .is_some_and(|obj| obj.optional_costs_paid.was_paid_label(label)),
         Condition::YouControl(filter) => {
             let filter_ctx = game.filter_context_for(ctx.controller, ctx.filter_source);
             game.battlefield.iter().any(|&obj_id| {
@@ -1115,6 +1119,9 @@ fn evaluate_condition_simple(
         Condition::ThisSpellWasKicked => game
             .object(source)
             .is_some_and(|obj| obj.optional_costs_paid.was_kicked()),
+        Condition::ThisSpellPaidLabel(label) => game
+            .object(source)
+            .is_some_and(|obj| obj.optional_costs_paid.was_paid_label(label)),
         Condition::YouControl(filter) => game
             .battlefield
             .iter()
@@ -1958,6 +1965,9 @@ fn evaluate_condition(
             Ok(false)
         }
         Condition::ThisSpellWasKicked => Ok(resolve_value(game, &Value::WasKicked, ctx)? != 0),
+        Condition::ThisSpellPaidLabel(label) => {
+            Ok(resolve_value(game, &Value::WasPaidLabel(label.clone()), ctx)? != 0)
+        }
         Condition::TargetSpellCastOrderThisTurn(order) => {
             for target in &ctx.targets {
                 if let crate::executor::ResolvedTarget::Object(id) = target {

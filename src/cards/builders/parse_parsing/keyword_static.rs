@@ -25,8 +25,8 @@ use crate::cards::builders::parse_parsing::{
     parse_subtype_flexible, parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word,
     parser_trace, parser_trace_stack, replace_unbound_x_with_value,
     scale_dynamic_cost_modifier_value, spell_filter_has_identity, split_on_and, split_on_comma,
-    split_on_comma_or_semicolon, starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation,
-    value_contains_unbound_x, words,
+    split_on_comma_or_semicolon, split_on_period, starts_with_until_end_of_turn, trim_commas,
+    trim_edge_punctuation, value_contains_unbound_x, words,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{

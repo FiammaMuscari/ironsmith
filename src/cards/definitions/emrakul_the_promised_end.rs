@@ -1,6 +1,7 @@
 //! Emrakul, the Promised End card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 
 /// Emrakul, the Promised End - Legendary Creature — Eldrazi

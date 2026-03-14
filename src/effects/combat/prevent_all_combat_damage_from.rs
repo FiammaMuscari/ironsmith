@@ -3,7 +3,7 @@
 use super::prevention_helpers::register_prevention_shield;
 use crate::effect::{EffectOutcome, Until};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::prevention::{DamageFilter, PreventionTarget};
@@ -30,7 +30,7 @@ impl EffectExecutor for PreventAllCombatDamageFromEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let source_id = *resolve_objects_from_spec(game, &self.source, ctx)?
+        let source_id = *resolve_objects_for_effect(game, ctx, &self.source)?
             .first()
             .ok_or(ExecutionError::InvalidTarget)?;
 

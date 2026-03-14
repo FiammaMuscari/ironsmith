@@ -1,7 +1,7 @@
 //! Card definition for Reverse Engineer.
 
+use super::CardDefinitionBuilder;
 use crate::cards::CardDefinition;
-use crate::cards::builders::CardDefinitionBuilder;
 use crate::ids::CardId;
 
 /// Creates the Reverse Engineer card definition.

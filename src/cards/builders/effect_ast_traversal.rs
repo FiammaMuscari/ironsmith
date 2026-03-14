@@ -225,7 +225,6 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ReturnToBattlefield { .. } => {}
         EffectAst::MoveToZone { .. } => {}
         EffectAst::MoveToLibraryNthFromTop { .. } => {}
-        EffectAst::MoveToLibrarySecondFromTop { .. } => {}
         EffectAst::ReturnAllToHand { .. } => {}
         EffectAst::ReturnAllToHandOfChosenColor { .. } => {}
         EffectAst::ReturnAllToBattlefield { .. } => {}

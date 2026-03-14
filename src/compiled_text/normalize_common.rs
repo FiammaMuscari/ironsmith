@@ -7435,6 +7435,7 @@ pub(super) fn describe_condition(condition: &Condition) -> String {
         Condition::TargetIsBlocked => "the target is blocked".to_string(),
         Condition::TargetWasKicked => "the target spell was kicked".to_string(),
         Condition::ThisSpellWasKicked => "this spell was kicked".to_string(),
+        Condition::ThisSpellPaidLabel(label) => format!("this spell paid {label}"),
         Condition::TargetSpellCastOrderThisTurn(2) => {
             "the target spell was the second spell cast this turn".to_string()
         }

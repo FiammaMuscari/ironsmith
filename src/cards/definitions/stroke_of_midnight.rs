@@ -1,16 +1,17 @@
 //! Stroke of Midnight card definition.
 
+use super::CardDefinitionBuilder;
+#[cfg(test)]
 use crate::card::{CardBuilder, PowerToughness};
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
-use crate::color::ColorSet;
-use crate::effect::Effect;
-use crate::filter::ObjectFilter;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
-use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
-use crate::types::{CardType, Subtype};
+use crate::types::CardType;
+#[cfg(test)]
+use crate::{color::ColorSet, types::Subtype};
 
 /// Creates a 1/1 white Human creature token.
+#[cfg(test)]
 fn human_token() -> CardDefinition {
     CardDefinition::new(
         CardBuilder::new(CardId::new(), "Human")
@@ -27,7 +28,7 @@ fn human_token() -> CardDefinition {
 /// Instant
 /// Destroy target nonland permanent. Its controller creates a 1/1 white Human creature token.
 pub fn stroke_of_midnight() -> CardDefinition {
-    let mut def = CardDefinitionBuilder::new(CardId::new(), "Stroke of Midnight")
+    CardDefinitionBuilder::new(CardId::new(), "Stroke of Midnight")
         .mana_cost(ManaCost::from_pips(vec![
             vec![ManaSymbol::Generic(2)],
             vec![ManaSymbol::White],
@@ -36,20 +37,7 @@ pub fn stroke_of_midnight() -> CardDefinition {
         .parse_text(
             "Destroy target nonland permanent. Its controller creates a 1/1 white Human creature token.",
         )
-        .expect("Card text should be supported");
-
-    def.spell_effect = Some(vec![
-        // Destroy target nonland permanent (tagged for later reference)
-        Effect::destroy(ChooseSpec::Object(ObjectFilter::nonland_permanent())).tag("destroyed"),
-        // Its controller creates a 1/1 white Human creature token
-        Effect::create_tokens_player(
-            human_token(),
-            1,
-            PlayerFilter::ControllerOf(ObjectRef::tagged("destroyed")),
-        ),
-    ]);
-
-    def
+        .expect("Card text should be supported")
 }
 
 #[cfg(test)]

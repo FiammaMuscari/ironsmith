@@ -1,6 +1,7 @@
 //! Fate Transfer card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::CardType;
@@ -17,10 +18,6 @@ pub fn fate_transfer() -> CardDefinition {
             vec![ManaSymbol::Blue, ManaSymbol::Black],
         ]))
         .card_types(vec![CardType::Instant])
-        // .with_spell_effect(vec![Effect::move_all_counters(
-        //     ChooseSpec::creature(),
-        //     ChooseSpec::creature(),
-        // )])
         .parse_text("Move all counters from target creature onto another target creature.")
         .unwrap()
 }

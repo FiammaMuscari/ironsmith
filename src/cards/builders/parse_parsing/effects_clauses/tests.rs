@@ -829,11 +829,13 @@ fn parse_put_into_library_second_from_top_clause() {
         0,
     );
     let effects = parse_effect_sentence(&tokens).expect("parse put second-from-top sentence");
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, EffectAst::MoveToLibrarySecondFromTop { .. }))
-    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        EffectAst::MoveToLibraryNthFromTop {
+            position: crate::effect::Value::Fixed(2),
+            ..
+        }
+    )));
 }
 
 #[test]

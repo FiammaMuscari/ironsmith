@@ -513,6 +513,7 @@ fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_trigger
         triggering_event: upkeep_event.clone(),
         source_stable_id: alpha_stable_id,
         source_name: "Alpha Trigger".to_string(),
+        source_snapshot: None,
         tagged_objects: std::collections::HashMap::new(),
         trigger_identity: crate::triggers::compute_trigger_identity(&ability),
     });
@@ -524,6 +525,7 @@ fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_trigger
         triggering_event: upkeep_event,
         source_stable_id: beta_stable_id,
         source_name: "Beta Trigger".to_string(),
+        source_snapshot: None,
         tagged_objects: std::collections::HashMap::new(),
         trigger_identity: crate::triggers::compute_trigger_identity(&ability),
     });
@@ -605,6 +607,7 @@ fn put_triggers_on_stack_orders_each_controller_in_apnap_order() {
             triggering_event: upkeep_event.clone(),
             source_stable_id: stable_id,
             source_name: name.to_string(),
+            source_snapshot: None,
             tagged_objects: std::collections::HashMap::new(),
             trigger_identity: crate::triggers::compute_trigger_identity(&ability),
         }
@@ -666,6 +669,9 @@ fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
         expires_at_turn: None,
         target_objects: vec![stangg_id],
         ability_source: None,
+        ability_source_stable_id: None,
+        ability_source_name: None,
+        ability_source_snapshot: None,
         controller: alice,
         choices: vec![],
         tagged_objects: std::collections::HashMap::new(),
@@ -7556,8 +7562,8 @@ fn test_omniscience_does_not_bypass_sorcery_timing_restrictions() {
 fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile_for_free() {
     use crate::alternative_cast::CastingMethod;
     use crate::decision::{LegalAction, compute_legal_actions};
-    use crate::executor::{ExecutionContext, execute_effect};
     use crate::event_processor::ZoneChangeOutcome;
+    use crate::executor::{ExecutionContext, execute_effect};
     use crate::object::CounterType;
 
     let mut game = setup_game();
@@ -7602,7 +7608,9 @@ fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile
         .find_object_by_stable_id(bears_stable_id)
         .expect("exiled Grizzly Bears should be findable by stable id");
     assert_eq!(
-        game.object(exiled_bears_id).expect("exiled bears should exist").zone,
+        game.object(exiled_bears_id)
+            .expect("exiled bears should exist")
+            .zone,
         Zone::Exile,
         "Grizzly Bears should be exiled by Dauthi's replacement effect"
     );
@@ -7640,7 +7648,8 @@ fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile
 
     let mut ctx = ExecutionContext::new(dauthi_id, alice, &mut dm);
     for effect in &activated.effects {
-        execute_effect(&mut game, effect, &mut ctx).expect("Dauthi activation effect should resolve");
+        execute_effect(&mut game, effect, &mut ctx)
+            .expect("Dauthi activation effect should resolve");
     }
 
     let actions_after = compute_legal_actions(&game, alice);

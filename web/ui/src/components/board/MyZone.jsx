@@ -4,7 +4,7 @@ import BattlefieldRow from "./BattlefieldRow";
 import DeckZonePile from "./DeckZonePile";
 import ManaPool from "@/components/left-rail/ManaPool";
 import StackTimelineRail from "@/components/right-rail/StackTimelineRail";
-import { activePlayerZoneStyle, getPlayerAccent } from "@/lib/player-colors";
+import { getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
 import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
@@ -139,7 +139,6 @@ export default function MyZone({
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const { state } = useGame();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
-  const isActivePlayer = Number(state?.active_player) === Number(player?.id);
 
   const transientZoneViews = Object.keys(zoneActivity || {});
   const zoneEntries = buildZoneEntries(player, [...zoneViews, ...transientZoneViews]);
@@ -197,7 +196,7 @@ export default function MyZone({
       }
     }
 
-    onInspect?.(card.id);
+    onInspect?.(card.id, { candidateObjectIds });
   };
 
   const handleCardPointerDown = useCallback((event, card) => {
@@ -249,12 +248,8 @@ export default function MyZone({
 
   return (
     <section
-      className="board-zone-bg relative z-[28] min-h-0 h-full overflow-visible grid rounded border border-transparent px-2 pb-2 pt-0 transition-[border-color,box-shadow] duration-150"
-      style={{
-        gridTemplateRows: `${MY_ZONE_HEADER_HEIGHT}px minmax(0,1fr)`,
-        alignContent: "stretch",
-        ...(isActivePlayer ? activePlayerZoneStyle(playerAccent) : undefined),
-      }}
+      className="board-zone-bg relative z-[28] min-h-0 h-full overflow-visible grid px-2 pb-2 pt-0"
+      style={{ gridTemplateRows: `${MY_ZONE_HEADER_HEIGHT}px minmax(0,1fr)`, alignContent: "stretch" }}
       data-my-zone
     >
       <div className="relative min-h-0 overflow-visible">

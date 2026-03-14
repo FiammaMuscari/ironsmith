@@ -9,8 +9,58 @@ use crate::cards::builders::{
     trim_commas, try_build_unless, words,
 };
 use crate::effect::Until;
+use crate::mana::ManaCost;
 use crate::target::PlayerFilter;
 use crate::zone::Zone;
+
+fn display_text_for_tokens(tokens: &[Token]) -> String {
+    let mut text = String::new();
+    let mut needs_space = false;
+    let mut in_effect_text = false;
+
+    for token in tokens {
+        match token {
+            Token::Word(word, _) => {
+                if needs_space && !text.is_empty() {
+                    text.push(' ');
+                }
+                let numeric_like = word
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+                let rendered = match word.as_str() {
+                    "t" => "{T}".to_string(),
+                    "q" => "{Q}".to_string(),
+                    _ if in_effect_text && numeric_like => word.clone(),
+                    _ => crate::cards::builders::parse_mana_symbol(word)
+                        .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
+                        .unwrap_or_else(|_| word.clone()),
+                };
+                text.push_str(&rendered);
+                needs_space = true;
+            }
+            Token::Colon(_) => {
+                text.push(':');
+                needs_space = true;
+                in_effect_text = true;
+            }
+            Token::Comma(_) => {
+                text.push(',');
+                needs_space = true;
+            }
+            Token::Period(_) => {
+                text.push('.');
+                needs_space = true;
+            }
+            Token::Semicolon(_) => {
+                text.push(';');
+                needs_space = true;
+            }
+            Token::Quote(_) => {}
+        }
+    }
+
+    text
+}
 
 fn grants_protection_from_everything(ability: &GrantedAbilityAst) -> bool {
     matches!(
@@ -629,7 +679,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
         return Ok(None);
     }
 
-    let display = words(&ability_tokens).join(" ");
+    let display = display_text_for_tokens(&ability_tokens);
     let parsed_ability = if has_colon {
         let Some(parsed) = parse_activated_line(&ability_tokens)? else {
             return Err(CardTextError::ParseError(format!(
@@ -752,8 +802,8 @@ pub(crate) fn parse_gain_ability_to_source_sentence(
         return Ok(None);
     }
 
-    let ability_tokens = &tokens[gain_idx + 1..];
-    if let Some(parsed) = parse_activated_line(ability_tokens)? {
+    let ability_tokens = crate::cards::builders::trim_edge_punctuation(&tokens[gain_idx + 1..]);
+    if let Some(parsed) = parse_activated_line(&ability_tokens)? {
         return Ok(Some(EffectAst::GrantAbilityToSource { ability: parsed }));
     }
 
@@ -816,8 +866,10 @@ mod tests {
             .expect("target gain clause should lower");
         let compiled_debug = format!("{compiled:?}");
         assert!(
-            compiled_debug.contains("GrantObjectAbilityForFilter"),
-            "expected lowered granted object ability, got {compiled_debug}"
+            compiled_debug.contains("ApplyContinuousEffect")
+                && (compiled_debug.contains("AddAbilityGeneric")
+                    || compiled_debug.contains("GrantObjectAbilityForFilter")),
+            "expected lowered granted ability effect, got {compiled_debug}"
         );
     }
 

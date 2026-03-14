@@ -4,7 +4,7 @@ use crate::continuous::{ContinuousEffect, EffectSourceType, EffectTarget, Modifi
 use crate::effect::{ChoiceCount, EffectOutcome, Until, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
-    resolve_objects_from_spec, resolve_player_filter, resolve_value, validate_target,
+    resolve_objects_for_effect, resolve_player_filter, resolve_value, validate_target,
 };
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_state::GameState;
@@ -186,14 +186,14 @@ impl ApplyContinuousEffect {
 
     fn resolve_target(
         &self,
-        game: &GameState,
-        ctx: &ExecutionContext,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
     ) -> Result<(EffectTarget, Option<Vec<ObjectId>>, bool), ExecutionError> {
         let Some(spec) = &self.target_spec else {
             return Ok((self.target.clone(), None, false));
         };
 
-        let mut objects = resolve_objects_from_spec(game, spec, ctx)?;
+        let mut objects = resolve_objects_for_effect(game, ctx, spec)?;
         if spec.is_target() {
             objects.retain(|id| validate_target(game, &ResolvedTarget::Object(*id), spec, ctx));
         }
@@ -262,8 +262,8 @@ impl ApplyContinuousEffect {
     }
 
     fn resolve_runtime_modification(
-        game: &GameState,
-        ctx: &ExecutionContext,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
         modification: &RuntimeModification,
     ) -> Result<Modification, ExecutionError> {
         match modification {
@@ -274,7 +274,7 @@ impl ApplyContinuousEffect {
                 Modification::ChangeController(resolve_player_filter(game, player, ctx)?),
             ),
             RuntimeModification::CopyOf(spec) => {
-                let source = resolve_objects_from_spec(game, spec, ctx)?
+                let source = resolve_objects_for_effect(game, ctx, spec)?
                     .into_iter()
                     .next()
                     .ok_or(ExecutionError::InvalidTarget)?;

@@ -251,7 +251,8 @@ export default function HandZone({ player, selectedObjectId, onInspect, isExpand
   });
 
   const handleCardClick = (_e, card) => {
-    onInspect?.(card.id);
+    const candidateObjectIds = [Number(card?.id)].filter((id) => Number.isFinite(id));
+    onInspect?.(card.id, { candidateObjectIds });
   };
 
   const clearPendingDragListeners = () => {

@@ -4794,15 +4794,6 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             describe_library_top_position(&move_to_nth.position)
         );
     }
-    if let Some(move_to_second) =
-        effect.downcast_ref::<crate::effects::MoveToLibrarySecondFromTopEffect>()
-    {
-        let target = describe_choose_spec(&move_to_second.target);
-        return format!(
-            "Put {target} into {} second from the top",
-            owner_library_phrase_for_spec(&move_to_second.target)
-        );
-    }
     if let Some(put_onto_battlefield) =
         effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
     {
@@ -8955,8 +8946,14 @@ pub(super) fn describe_imprint_from_hand_phrase(
 }
 
 pub(super) fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {
-    let label = cost.label;
+    let label = cost.label.as_str();
     let cost_text = describe_cost_list(cost.cost.costs());
+    if label
+        .to_ascii_lowercase()
+        .starts_with("as an additional cost to cast this spell")
+    {
+        return label.trim().trim_end_matches('.').to_string();
+    }
     match label {
         "Replicate" => format!("Replicate—{}.", cost_text.trim_end_matches('.')),
         // Most optional-cost keywords render with a space-separated payload.

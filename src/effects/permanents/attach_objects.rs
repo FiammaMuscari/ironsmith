@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -30,7 +30,7 @@ impl EffectExecutor for AttachObjectsEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let target_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         let Some(target_id) = target_ids.first().copied() else {
             return Ok(EffectOutcome::target_invalid());
         };
@@ -41,7 +41,7 @@ impl EffectExecutor for AttachObjectsEffect {
             return Ok(EffectOutcome::target_invalid());
         }
 
-        let object_ids = resolve_objects_from_spec(game, &self.objects, ctx)?;
+        let object_ids = resolve_objects_for_effect(game, ctx, &self.objects)?;
         if object_ids.is_empty() {
             return Ok(EffectOutcome::count(0));
         }

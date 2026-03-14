@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter, resolve_value};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter, resolve_value};
 use crate::events::spells::SpellCopiedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
@@ -77,7 +77,7 @@ impl EffectExecutor for CopySpellEffect {
         let copy_count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
 
         // Resolve the spell object to copy (source, specific, tagged, or targeted spell).
-        let target_id = *resolve_objects_from_spec(game, &self.target, ctx)?
+        let target_id = *resolve_objects_for_effect(game, ctx, &self.target)?
             .first()
             .ok_or(ExecutionError::InvalidTarget)?;
 

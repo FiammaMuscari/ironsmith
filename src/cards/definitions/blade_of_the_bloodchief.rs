@@ -1,6 +1,7 @@
 //! Blade of the Bloodchief card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype};

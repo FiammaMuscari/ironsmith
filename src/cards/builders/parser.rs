@@ -523,7 +523,8 @@ fn collect_line_infos(
                 ))
                 && let Some(previous) = line_infos.pop()
             {
-                let combined_raw_line = format!("{} {}", previous.raw_line.trim(), split_line.trim());
+                let combined_raw_line =
+                    format!("{} {}", previous.raw_line.trim(), split_line.trim());
                 let Some(normalized) = normalize_line_for_parse(
                     combined_raw_line.as_str(),
                     full_lower.as_str(),
@@ -1212,7 +1213,9 @@ fn looks_like_if_result_followup(tokens: &[Token]) -> bool {
 }
 
 fn looks_like_otherwise_followup(tokens: &[Token]) -> bool {
-    tokens.first().is_some_and(|token| token.is_word("otherwise"))
+    tokens
+        .first()
+        .is_some_and(|token| token.is_word("otherwise"))
 }
 
 fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {

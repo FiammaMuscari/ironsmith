@@ -5,7 +5,7 @@ use super::battlefield_entry::{
 };
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
@@ -70,7 +70,7 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let controller_id = resolve_player_filter(game, &self.controller, ctx)?;
-        let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let object_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         if object_ids.is_empty() {
             return Ok(EffectOutcome::target_invalid());
         }

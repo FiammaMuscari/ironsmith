@@ -113,16 +113,29 @@ export function ManaCostIcons({ cost, size = 12 }) {
   );
 }
 
-export function SymbolText({ text, className, style }) {
+export function SymbolText({
+  text,
+  className,
+  style,
+  symbolSize = 14,
+  noWrap = false,
+}) {
   if (!text) return null;
   const parts = [];
   let last = 0;
   let key = 0;
   for (const match of text.matchAll(SYMBOL_RE)) {
     if (match.index > last) parts.push(text.slice(last, match.index));
-    parts.push(<ManaSymbol key={key++} sym={match[1]} size={14} />);
+    parts.push(<ManaSymbol key={key++} sym={match[1]} size={symbolSize} />);
     last = match.index + match[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
-  return <span className={className} style={{ whiteSpace: "pre-wrap", ...style }}>{parts}</span>;
+  return (
+    <span
+      className={className}
+      style={{ whiteSpace: noWrap ? "nowrap" : "pre-wrap", ...style }}
+    >
+      {parts}
+    </span>
+  );
 }

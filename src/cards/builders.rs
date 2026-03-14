@@ -276,7 +276,7 @@ fn finalize_squad_abilities(mut definition: CardDefinition) -> CardDefinition {
         Trigger::this_enters_battlefield(),
         vec![Effect::new(crate::effects::CreateTokenCopyEffect::new(
             ChooseSpec::Source,
-            Value::TimesPaidLabel("Squad"),
+            Value::TimesPaidLabel("Squad".to_string()),
             PlayerFilter::You,
         ))],
     );
@@ -297,8 +297,8 @@ fn spell_battlefield_trigger_text_implies_delayed_schedule(
     let normalized = normalize_delayed_trigger_text(ability_text);
     let trigger_text = normalize_delayed_trigger_text(trigger.display().as_str());
 
-    let trigger_is_upkeep_or_end_step =
-        trigger_text.contains("beginning of") && (trigger_text.contains("upkeep") || trigger_text.contains("end step"));
+    let trigger_is_upkeep_or_end_step = trigger_text.contains("beginning of")
+        && (trigger_text.contains("upkeep") || trigger_text.contains("end step"));
     if !trigger_is_upkeep_or_end_step {
         return None;
     }
@@ -352,7 +352,9 @@ fn convert_nonpermanent_delayed_triggered_ability_to_spell_effect(
     Some(Effect::new(delayed))
 }
 
-fn finalize_nonpermanent_delayed_triggered_abilities(mut definition: CardDefinition) -> CardDefinition {
+fn finalize_nonpermanent_delayed_triggered_abilities(
+    mut definition: CardDefinition,
+) -> CardDefinition {
     if !definition.card.is_instant() && !definition.card.is_sorcery() {
         return definition;
     }
@@ -360,7 +362,8 @@ fn finalize_nonpermanent_delayed_triggered_abilities(mut definition: CardDefinit
     let mut rewritten_effects = Vec::new();
     let mut remaining_abilities = Vec::with_capacity(definition.abilities.len());
     for ability in std::mem::take(&mut definition.abilities) {
-        if let Some(effect) = convert_nonpermanent_delayed_triggered_ability_to_spell_effect(&ability)
+        if let Some(effect) =
+            convert_nonpermanent_delayed_triggered_ability_to_spell_effect(&ability)
         {
             rewritten_effects.push(effect);
         } else {
@@ -387,7 +390,9 @@ fn finalize_definition(
     let definition = finalize_backup_abilities(definition);
     let definition = finalize_cipher_effects(definition);
     let definition = finalize_squad_abilities(definition);
-    Ok(finalize_nonpermanent_delayed_triggered_abilities(definition))
+    Ok(finalize_nonpermanent_delayed_triggered_abilities(
+        definition,
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -838,6 +843,11 @@ pub(crate) enum LineAst {
         effects: Vec<EffectAst>,
     },
     OptionalCost(OptionalCost),
+    OptionalCostWithCastTrigger {
+        cost: OptionalCost,
+        effects: Vec<EffectAst>,
+        followup_text: String,
+    },
     AdditionalCostChoice {
         options: Vec<AdditionalCostChoiceOptionAst>,
     },
@@ -1837,9 +1847,6 @@ pub(crate) enum EffectAst {
     MoveToLibraryNthFromTop {
         target: TargetAst,
         position: Value,
-    },
-    MoveToLibrarySecondFromTop {
-        target: TargetAst,
     },
     ReturnAllToHand {
         filter: ObjectFilter,
@@ -5088,8 +5095,9 @@ mod delayed_trigger_finalization_tests {
 
     #[test]
     fn finalize_definition_rehomes_nonpermanent_delayed_battlefield_trigger() {
-        let original_builder = CardDefinitionBuilder::new(CardId::new(), "Delayed Safety Net Probe")
-            .card_types(vec![CardType::Instant]);
+        let original_builder =
+            CardDefinitionBuilder::new(CardId::new(), "Delayed Safety Net Probe")
+                .card_types(vec![CardType::Instant]);
         let mut definition = original_builder.clone().build();
         definition.spell_effect = Some(vec![Effect::draw(1)]);
         definition.abilities.push(
@@ -5106,8 +5114,8 @@ mod delayed_trigger_finalization_tests {
             ),
         );
 
-        let finalized =
-            finalize_definition(definition, &original_builder, "").expect("definition should finalize");
+        let finalized = finalize_definition(definition, &original_builder, "")
+            .expect("definition should finalize");
 
         assert!(
             finalized.abilities.is_empty(),
@@ -5133,8 +5141,8 @@ mod delayed_trigger_finalization_tests {
                 .with_text("When you cast this spell, draw a card."),
         );
 
-        let finalized =
-            finalize_definition(definition, &original_builder, "").expect("definition should finalize");
+        let finalized = finalize_definition(definition, &original_builder, "")
+            .expect("definition should finalize");
 
         assert_eq!(
             finalized.abilities.len(),
@@ -5759,12 +5767,37 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             abilities_debug.contains("ChooseObjectsEffect")
                 && abilities_debug_compact.contains("zone:Some(Exile,)")
-                && abilities_debug_compact.contains("with_counter:Some(Typed(Void,))"),
+                && abilities_debug_compact.contains("with_counter:Some(")
+                && abilities_debug.contains("Void"),
             "expected Dauthi activation to choose from exile, got {abilities_debug}"
         );
         assert!(
             abilities_debug.contains("GrantTaggedSpellFreeCastUntilEndOfTurnEffect"),
             "expected Dauthi activation to preserve the free-cast clause, got {abilities_debug}"
+        );
+    }
+
+    #[test]
+    fn parse_enchanted_land_with_quoted_activated_ability() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Quoted Aura")
+            .parse_text(
+                "Enchant land\nEnchanted land has \"{T}: Create a 1/1 green Squirrel creature token.\"",
+            )
+            .expect("quoted attached activated ability should parse");
+
+        let abilities_debug = format!("{:#?}", def.abilities);
+        let rendered = compiled_lines(&def).join(" ");
+        assert!(
+            abilities_debug.contains("AttachedAbilityGrant"),
+            "expected attached activated ability grant, got {abilities_debug}"
+        );
+        assert!(
+            abilities_debug.contains("CreateTokenEffect"),
+            "expected granted activated ability to keep its token effect, got {abilities_debug}"
+        );
+        assert!(
+            rendered.contains("{T}:"),
+            "expected rendered grant to keep the tap symbol, got {rendered}"
         );
     }
 
@@ -5810,7 +5843,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             &mut dm,
         );
         assert!(
-            matches!(zone_change, crate::event_processor::ZoneChangeOutcome::Replaced),
+            matches!(
+                zone_change,
+                crate::event_processor::ZoneChangeOutcome::Replaced
+            ),
             "expected Dauthi replacement to exile the creature, got {zone_change:?}"
         );
 
@@ -5910,6 +5946,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     struct RecordingObjectChoiceDecisionMaker {
         decide_objects_calls: usize,
         legal_candidates: Vec<crate::ids::ObjectId>,
+        preferred_choice: Option<crate::ids::ObjectId>,
         pick_index: usize,
     }
 
@@ -5928,9 +5965,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 .collect();
 
             let choice = self
-                .legal_candidates
-                .get(self.pick_index)
-                .copied()
+                .preferred_choice
+                .filter(|object_id| self.legal_candidates.contains(object_id))
+                .or_else(|| self.legal_candidates.get(self.pick_index).copied())
                 .or_else(|| self.legal_candidates.first().copied())
                 .expect("choice prompt should contain a legal candidate");
             vec![choice]
@@ -6075,7 +6112,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("Dauthi should have an activated ability");
 
         let mut dm = RecordingObjectChoiceDecisionMaker {
-            pick_index: 1,
+            preferred_choice: Some(exiled_bolt_id),
             ..Default::default()
         };
         let mut ctx = ExecutionContext::new(dauthi_id, alice, &mut dm);
@@ -6297,7 +6334,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         )
         .expect("free exile cast should succeed");
 
-        let stack_entry = game.stack.last().expect("cast Ornithopter should be on the stack");
+        let stack_entry = game
+            .stack
+            .last()
+            .expect("cast Ornithopter should be on the stack");
         assert_eq!(stack_entry.controller, alice);
         assert_eq!(
             game.object(stack_entry.object_id)

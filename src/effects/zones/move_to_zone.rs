@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::event_processor::{EventOutcome, process_zone_change};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -106,7 +106,7 @@ impl EffectExecutor for MoveToZoneEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let object_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         if object_ids.is_empty() {
             return Ok(EffectOutcome::target_invalid());
         }

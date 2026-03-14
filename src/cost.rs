@@ -108,7 +108,7 @@ impl From<Cost> for TotalCost {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OptionalCost {
     /// Label shown to player (e.g., "Kicker", "Buyback", "Multikicker")
-    pub label: &'static str,
+    pub label: String,
 
     /// The cost to pay for this optional cost
     pub cost: TotalCost,
@@ -124,7 +124,7 @@ impl OptionalCost {
     /// Create a simple kicker cost.
     pub fn kicker(cost: TotalCost) -> Self {
         Self {
-            label: "Kicker",
+            label: "Kicker".to_string(),
             cost,
             repeatable: false,
             returns_to_hand: false,
@@ -134,7 +134,7 @@ impl OptionalCost {
     /// Create a multikicker cost (can be paid any number of times).
     pub fn multikicker(cost: TotalCost) -> Self {
         Self {
-            label: "Multikicker",
+            label: "Multikicker".to_string(),
             cost,
             repeatable: true,
             returns_to_hand: false,
@@ -144,7 +144,7 @@ impl OptionalCost {
     /// Create a buyback cost (spell returns to hand).
     pub fn buyback(cost: TotalCost) -> Self {
         Self {
-            label: "Buyback",
+            label: "Buyback".to_string(),
             cost,
             repeatable: false,
             returns_to_hand: true,
@@ -154,7 +154,7 @@ impl OptionalCost {
     /// Create an entwine cost (for modal spells, choose all modes).
     pub fn entwine(cost: TotalCost) -> Self {
         Self {
-            label: "Entwine",
+            label: "Entwine".to_string(),
             cost,
             repeatable: false,
             returns_to_hand: false,
@@ -164,7 +164,7 @@ impl OptionalCost {
     /// Create a squad cost (may be paid any number of times).
     pub fn squad(cost: TotalCost) -> Self {
         Self {
-            label: "Squad",
+            label: "Squad".to_string(),
             cost,
             repeatable: true,
             returns_to_hand: false,
@@ -172,9 +172,9 @@ impl OptionalCost {
     }
 
     /// Create a custom optional cost with a specific label.
-    pub fn custom(label: &'static str, cost: TotalCost) -> Self {
+    pub fn custom(label: impl Into<String>, cost: TotalCost) -> Self {
         Self {
-            label,
+            label: label.into(),
             cost,
             repeatable: false,
             returns_to_hand: false,
@@ -198,21 +198,21 @@ impl OptionalCost {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OptionalCostsPaid {
     /// For each optional cost: (label, times_paid)
-    pub costs: Vec<(&'static str, u32)>,
+    pub costs: Vec<(String, u32)>,
 }
 
 impl OptionalCostsPaid {
     /// Create a new tracker with no costs paid.
     pub fn new(num_optional_costs: usize) -> Self {
         Self {
-            costs: vec![("", 0); num_optional_costs],
+            costs: vec![("".to_string(), 0); num_optional_costs],
         }
     }
 
     /// Create a tracker from a list of optional costs.
     pub fn from_costs(costs: &[OptionalCost]) -> Self {
         Self {
-            costs: costs.iter().map(|c| (c.label, 0)).collect(),
+            costs: costs.iter().map(|c| (c.label.clone(), 0)).collect(),
         }
     }
 

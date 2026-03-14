@@ -1,7 +1,7 @@
 //! Remove counters effect implementation.
 
 use crate::effect::{EffectOutcome, Value};
-use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_single_object_for_effect, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -67,7 +67,7 @@ impl EffectExecutor for RemoveCountersEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
 
         // Verify the object exists

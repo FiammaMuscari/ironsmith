@@ -1,8 +1,8 @@
 //! Card definition for Bello, Bard of the Brambles.
 
+use super::CardDefinitionBuilder;
 use crate::card::PowerToughness;
 use crate::cards::CardDefinition;
-use crate::cards::builders::CardDefinitionBuilder;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype, Supertype};

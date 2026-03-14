@@ -570,6 +570,25 @@ export default function Workspace({
         );
         return;
       }
+      if (
+        decision?.kind === "select_objects"
+        && decision.player === state?.perspective
+      ) {
+        const candidateIds = Array.isArray(options?.candidateObjectIds) && options.candidateObjectIds.length > 0
+          ? options.candidateObjectIds
+          : [objectId];
+        const matchedCandidate = (decision.candidates || []).find((candidate) =>
+          candidate?.legal !== false
+          && candidateIds.some((candidateId) => String(candidate?.id) === String(candidateId))
+        );
+        if (matchedCandidate) {
+          window.dispatchEvent(
+            new CustomEvent("ironsmith:select-object-choice", {
+              detail: { objectId: matchedCandidate.id },
+            })
+          );
+        }
+      }
       const stackEntry = options?.source === "stack" ? options?.stackEntry : null;
       if (
         stackEntry

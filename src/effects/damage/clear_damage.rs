@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_single_object_from_spec;
+use crate::effects::helpers::resolve_single_object_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -55,7 +55,7 @@ impl EffectExecutor for ClearDamageEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         // Resolve the target creature through ChooseSpec (targets, tags, source, etc.).
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
 
         // Clear all damage from the creature
         game.clear_damage(target_id);

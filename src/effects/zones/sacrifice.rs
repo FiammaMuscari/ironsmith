@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, ExecutionFact, Value};
 use crate::effects::helpers::{
-    normalize_object_selection, resolve_player_filter, resolve_single_object_from_spec,
+    normalize_object_selection, resolve_player_filter, resolve_single_object_for_effect,
     resolve_value,
 };
 use crate::effects::{CostExecutableEffect, EffectExecutor};
@@ -352,7 +352,7 @@ impl EffectExecutor for SacrificeTargetEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         // Resolve through ChooseSpec helpers (targets, source, tagged, specific object, etc.).
-        let object_id = match resolve_single_object_from_spec(game, &self.target, ctx) {
+        let object_id = match resolve_single_object_for_effect(game, ctx, &self.target) {
             Ok(id) => id,
             Err(ExecutionError::InvalidTarget) => return Ok(EffectOutcome::count(0)),
             Err(err) => return Err(err),

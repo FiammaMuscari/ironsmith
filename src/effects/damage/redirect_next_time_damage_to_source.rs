@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::events::damage::matchers::DamageSourceConstraint;
 use crate::events::traits::{EventKind, GameEventType, ReplacementMatcher};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -77,7 +77,7 @@ impl EffectExecutor for RedirectNextTimeDamageToSourceEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let protected_target = resolve_objects_from_spec(game, &self.target, ctx)?
+        let protected_target = resolve_objects_for_effect(game, ctx, &self.target)?
             .into_iter()
             .next()
             .ok_or(ExecutionError::InvalidTarget)?;

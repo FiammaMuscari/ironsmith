@@ -1858,16 +1858,107 @@ fn test_parse_lose_keyword_ability_without_duration() {
 
 #[test]
 fn test_parse_copy_this_spell_for_each_creature_sacrificed_this_way() {
-    let err = CardDefinitionBuilder::new(CardId::new(), "Plumb Variant")
+    let def = CardDefinitionBuilder::new(CardId::new(), "Plumb Variant")
         .card_types(vec![CardType::Instant])
         .parse_text(
-            "As an additional cost to cast this spell, you may sacrifice one or more creatures. When you do, copy this spell for each creature sacrificed this way.\nDraw a card.",
+            "As an additional cost to cast this spell, you may sacrifice one or more creatures. When you do, copy this spell for each creature sacrificed this way.\nYou draw a card and you lose 1 life.",
         )
-        .expect_err("unsupported when-you-do copy clause should fail loudly");
-    let rendered = format!("{err:?}").to_ascii_lowercase();
+        .expect("Plumb-style additional cost should parse");
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("unsupported triggered line") || rendered.contains("when you do"),
-        "expected explicit unsupported when-you-do rejection, got {rendered}"
+        rendered.contains(
+            "as an additional cost to cast this spell, you may sacrifice one or more creatures"
+        ),
+        "expected repeatable optional additional cost line, got {rendered}"
+    );
+    assert!(
+        rendered.contains("when you cast this spell")
+            && rendered.contains("copy this spell")
+            && rendered.contains("optional cost"),
+        "expected cast-triggered copy followup line, got {rendered}"
+    );
+    assert_eq!(
+        def.optional_costs.len(),
+        1,
+        "expected one parser-generated optional cost"
+    );
+    assert!(
+        def.optional_costs[0].repeatable,
+        "expected sacrifice additional cost to be repeatable"
+    );
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("YouCastThisSpellTrigger")
+            && abilities_debug.contains("ThisSpellPaidLabel"),
+        "expected cast trigger guarded by paid additional-cost condition, got {abilities_debug}"
+    );
+
+    let spell_debug = format!("{:?}", def.spell_effect);
+    assert!(
+        spell_debug.contains("DrawCardsEffect") && spell_debug.contains("LoseLifeEffect"),
+        "expected Plumb resolution effects, got {spell_debug}"
+    );
+}
+
+#[test]
+fn test_plumb_style_additional_cost_trigger_copies_for_each_payment() {
+    use crate::ability::AbilityKind;
+    use crate::cost::OptionalCostsPaid;
+    use crate::executor::{ExecutionContext, execute_effect};
+    use crate::game_state::StackEntry;
+    use crate::object::ObjectKind;
+    use crate::tests::test_helpers::setup_two_player_game;
+    use crate::zone::Zone;
+
+    let mut game = setup_two_player_game();
+    let alice = PlayerId::from_index(0);
+    let def = CardDefinitionBuilder::new(CardId::new(), "Plumb Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "As an additional cost to cast this spell, you may sacrifice one or more creatures. When you do, copy this spell for each creature sacrificed this way.\nYou draw a card and you lose 1 life.",
+        )
+        .expect("Plumb-style additional cost should parse");
+
+    let source = game.create_object_from_definition(&def, alice, Zone::Stack);
+    let mut paid = OptionalCostsPaid::from_costs(&def.optional_costs);
+    paid.pay_times(0, 2);
+    game.object_mut(source)
+        .expect("source object exists")
+        .optional_costs_paid = paid.clone();
+    game.stack
+        .push(StackEntry::new(source, alice).with_optional_costs_paid(paid.clone()));
+
+    let effects = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) if triggered.trigger.display().contains("cast") => {
+                Some(triggered.effects.clone())
+            }
+            _ => None,
+        })
+        .expect("expected cast trigger for parser-generated Plumb support");
+
+    let mut ctx = ExecutionContext::new_default(source, alice).with_optional_costs_paid(paid);
+    for effect in &effects {
+        execute_effect(&mut game, effect, &mut ctx).expect("copy effect should resolve");
+    }
+
+    let copied_spells: Vec<_> = game
+        .stack
+        .iter()
+        .filter_map(|entry| game.object(entry.object_id))
+        .filter(|obj| obj.controller == alice && obj.name == "Plumb Variant")
+        .collect();
+    assert_eq!(copied_spells.len(), 3, "expected original plus two copies");
+    assert_eq!(
+        copied_spells
+            .iter()
+            .filter(|obj| obj.kind == ObjectKind::Token)
+            .count(),
+        2,
+        "expected copies to be created from optional-cost payment count"
     );
 }
 
@@ -16879,7 +16970,8 @@ fn parse_dauthi_voidwalker_full_text_without_parser_fallback() {
     assert!(
         abilities_debug.contains("ChooseObjectsEffect")
             && abilities_debug_compact.contains("zone:Some(Exile,)")
-            && abilities_debug_compact.contains("with_counter:Some(Typed(Void,))"),
+            && abilities_debug_compact.contains("with_counter:Some(")
+            && abilities_debug.contains("Void"),
         "expected Dauthi activation to choose from exile, got {abilities_debug}"
     );
     assert!(

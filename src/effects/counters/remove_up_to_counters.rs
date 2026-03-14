@@ -4,7 +4,7 @@ use crate::decision::FallbackStrategy;
 use crate::decisions::{NumberSpec, make_decision_with_fallback};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_single_object_for_effect, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::CounterType;
@@ -62,7 +62,7 @@ impl EffectExecutor for RemoveUpToCountersEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
         let max_count = resolve_value(game, &self.max_count, ctx)?.max(0) as u32;
 
         // Get the current count of counters on the target

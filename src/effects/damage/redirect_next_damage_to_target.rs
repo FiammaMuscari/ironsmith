@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_value};
 use crate::events::damage::matchers::DamageToSelfMatcher;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -36,7 +36,7 @@ impl EffectExecutor for RedirectNextDamageToTargetEffect {
             return Ok(EffectOutcome::resolved());
         }
 
-        let target = resolve_objects_from_spec(game, &self.target, ctx)?
+        let target = resolve_objects_for_effect(game, ctx, &self.target)?
             .into_iter()
             .next()
             .ok_or(ExecutionError::InvalidTarget)?;

@@ -2935,11 +2935,7 @@ pub(crate) fn parse_put_into_hand(
             Some(Zone::Graveyard)
         } else if let Some(position) = parse_library_nth_from_top_destination(destination_tokens) {
             let target = parse_target_phrase(&target_tokens)?;
-            return Ok(if position == Value::Fixed(2) {
-                EffectAst::MoveToLibrarySecondFromTop { target }
-            } else {
-                EffectAst::MoveToLibraryNthFromTop { target, position }
-            });
+            return Ok(EffectAst::MoveToLibraryNthFromTop { target, position });
         } else {
             None
         };

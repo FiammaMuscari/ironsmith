@@ -1,6 +1,7 @@
 //! Tivit, Seller of Secrets card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 
 /// Tivit, Seller of Secrets - Legendary Creature — Sphinx Rogue

@@ -1,7 +1,7 @@
 //! Put counters effect implementation.
 
 use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact, Value};
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_value};
 use crate::effects::{CostExecutableEffect, EffectExecutor};
 use crate::event_processor::process_put_counters_with_event;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -100,7 +100,7 @@ impl EffectExecutor for PutCountersEffect {
         // Handle Source target specially (for abilities like level-up that target themselves).
         let target_ids = match &self.target {
             ChooseSpec::Source => vec![ctx.source],
-            _ => match resolve_objects_from_spec(game, &self.target, ctx) {
+            _ => match resolve_objects_for_effect(game, ctx, &self.target) {
                 Ok(objects) if !objects.is_empty() => objects,
                 _ => {
                     // No target chosen (valid for "up to" effects).

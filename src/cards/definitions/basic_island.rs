@@ -1,6 +1,7 @@
 //! Island basic land card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::types::{CardType, Subtype, Supertype};
 

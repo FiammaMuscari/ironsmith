@@ -1,8 +1,9 @@
 //! Generous Gift card definition.
 
+use super::CardDefinitionBuilder;
 #[cfg(test)]
 use crate::card::{CardBuilder, PowerToughness};
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use crate::cards::CardDefinition;
 #[cfg(test)]
 use crate::color::ColorSet;
 use crate::ids::CardId;

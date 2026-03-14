@@ -3,7 +3,7 @@
 use crate::ability::Ability;
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -46,7 +46,7 @@ impl EffectExecutor for GrantObjectAbilityEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let targets = resolve_objects_from_spec(game, &self.target, ctx)
+        let targets = resolve_objects_for_effect(game, ctx, &self.target)
             .map_err(|_| ExecutionError::InvalidTarget)?;
         if targets.is_empty() {
             return Ok(EffectOutcome::default());

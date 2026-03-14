@@ -27,6 +27,85 @@ fn scale_value_by_factor(base: Value, factor: u32) -> Option<Value> {
     Some(value)
 }
 
+pub(crate) fn display_text_for_tokens(
+    tokens: &[Token],
+    capitalize_effect_start: bool,
+) -> String {
+    let mut text = String::new();
+    let mut needs_space = false;
+    let mut in_effect_text = false;
+    let mut capitalize_next_effect_word = false;
+    let mut capitalize_next_cost_action = true;
+
+    for token in tokens {
+        match token {
+            Token::Word(word, _) => {
+                if needs_space && !text.is_empty() {
+                    text.push(' ');
+                }
+                let numeric_like = word
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+                let mut rendered = match word.as_str() {
+                    "t" => "{T}".to_string(),
+                    "q" => "{Q}".to_string(),
+                    _ if in_effect_text && numeric_like => word.clone(),
+                    _ => crate::cards::builders::parse_mana_symbol(word)
+                        .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
+                        .unwrap_or_else(|_| word.clone()),
+                };
+                if !in_effect_text
+                    && capitalize_next_cost_action
+                    && matches!(
+                        word.as_str(),
+                        "sacrifice" | "discard" | "exile" | "remove" | "reveal" | "pay"
+                    )
+                {
+                    if let Some(first) = rendered.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                }
+                if capitalize_next_effect_word {
+                    if let Some(first) = rendered.get_mut(0..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    capitalize_next_effect_word = false;
+                }
+                text.push_str(&rendered);
+                needs_space = true;
+                capitalize_next_cost_action = false;
+            }
+            Token::Colon(_) => {
+                text.push(':');
+                needs_space = true;
+                in_effect_text = true;
+                capitalize_next_effect_word = capitalize_effect_start;
+            }
+            Token::Comma(_) => {
+                text.push(',');
+                needs_space = true;
+                if !in_effect_text {
+                    capitalize_next_cost_action = true;
+                }
+            }
+            Token::Period(_) => {
+                text.push('.');
+                needs_space = true;
+                if in_effect_text {
+                    capitalize_next_effect_word = capitalize_effect_start;
+                }
+            }
+            Token::Semicolon(_) => {
+                text.push(';');
+                needs_space = true;
+            }
+            Token::Quote(_) => {}
+        }
+    }
+
+    text
+}
+
 pub(crate) fn cumulative_upkeep_granted_ability(
     mana_symbols_per_counter: Vec<ManaSymbol>,
     life_per_counter: u32,
@@ -71,14 +150,14 @@ pub(crate) fn parse_equipped_creature_has_line(
         return Ok(None);
     }
 
-    let ability_tokens = &tokens[3..];
+    let ability_tokens = trim_edge_punctuation(&tokens[3..]);
     if ability_tokens.is_empty() {
         return Ok(None);
     }
 
     let mut actions_to_grant = Vec::new();
     let mut extra_grants: Vec<StaticAbilityAst> = Vec::new();
-    let Some(actions) = parse_ability_line(ability_tokens) else {
+    let Some(actions) = parse_ability_line(&ability_tokens) else {
         return Ok(None);
     };
     for action in actions {
@@ -144,7 +223,7 @@ pub(crate) fn parse_enchanted_creature_has_line(
         return Ok(None);
     }
 
-    let mut ability_tokens = trim_commas(&tokens[3..]);
+    let mut ability_tokens = trim_edge_punctuation(&tokens[3..]);
     if ability_tokens.is_empty() {
         return Ok(None);
     }
@@ -163,11 +242,11 @@ pub(crate) fn parse_enchanted_creature_has_line(
         else {
             return Ok(None);
         };
-        let ability_head = trim_commas(&ability_tokens[..as_long_token_idx]);
+        let ability_head = trim_edge_punctuation(&ability_tokens[..as_long_token_idx]);
         if ability_head.is_empty() {
             return Ok(None);
         }
-        let condition_tokens = trim_commas(&ability_tokens[condition_start_idx..]);
+        let condition_tokens = trim_edge_punctuation(&ability_tokens[condition_start_idx..]);
         if condition_tokens.is_empty() {
             return Ok(None);
         }
@@ -853,11 +932,47 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         }
     }
 
+    for and_idx in ability_tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, token)| token.is_word("and").then_some(idx))
+        .rev()
+    {
+        let keyword_tokens = trim_edge_punctuation(&ability_tokens[..and_idx]);
+        let granted_tokens = trim_edge_punctuation(&ability_tokens[and_idx + 1..]);
+        if keyword_tokens.is_empty() || granted_tokens.is_empty() {
+            continue;
+        }
+
+        let Some(actions) = parse_ability_line(&keyword_tokens) else {
+            continue;
+        };
+        reject_unimplemented_keyword_actions(&actions, &line_words.join(" "))?;
+        let keyword_actions = actions
+            .into_iter()
+            .filter(|action| action.lowers_to_static_ability())
+            .collect::<Vec<_>>();
+        if keyword_actions.is_empty() {
+            continue;
+        }
+
+        if let Some(parsed) = parse_activated_line(&granted_tokens)? {
+            let mut out = vec![anthem.clone().into()];
+            for action in keyword_actions {
+                out.push(grant_keyword_action_for_anthem_subject(&clause, action));
+            }
+            let display = display_text_for_tokens(&granted_tokens, false);
+            let grant = grant_object_ability_for_anthem_subject(&clause, parsed, display);
+            out.push(grant);
+            return Ok(Some(out));
+        }
+    }
+
     let has_colon = ability_tokens
         .iter()
         .any(|token| matches!(token, Token::Colon(_)));
     if let Some(parsed) = parse_activated_line(&ability_tokens)? {
-        let display = words(&ability_tokens).join(" ");
+        let display = display_text_for_tokens(&ability_tokens, false);
         let grant = grant_object_ability_for_anthem_subject(&clause, parsed, display);
         return Ok(Some(vec![anthem.into(), grant]));
     }
@@ -915,11 +1030,14 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
     if has_idx + 1 >= tokens.len() {
         return Ok(None);
     }
-    let ability_tokens = &tokens[has_idx + 1..];
+    let ability_tokens = trim_edge_punctuation(&tokens[has_idx + 1..]);
+    if ability_tokens.is_empty() {
+        return Ok(None);
+    }
     let has_colon = ability_tokens
         .iter()
         .any(|token| matches!(token, Token::Colon(_)));
-    let Some(parsed) = parse_activated_line(ability_tokens)? else {
+    let Some(parsed) = parse_activated_line(&ability_tokens)? else {
         if has_colon {
             return Err(CardTextError::ParseError(format!(
                 "unsupported equipped activated-ability grant (clause: '{}')",
@@ -949,7 +1067,11 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
 
     static_abilities.push(StaticAbilityAst::AttachedObjectAbilityGrant {
         ability: parsed,
-        display: line_words.join(" "),
+        display: format!(
+            "{} has {}",
+            words(&tokens[..has_idx]).join(" "),
+            display_text_for_tokens(&ability_tokens, true)
+        ),
         condition: None,
     });
 
@@ -968,14 +1090,21 @@ pub(crate) fn parse_enchanted_has_activated_ability_line(
     let Some(has_idx) = tokens.iter().position(|token| token.is_word("has")) else {
         return Ok(None);
     };
-    let ability_tokens = &tokens[has_idx + 1..];
-    let Some(parsed) = parse_activated_line(ability_tokens)? else {
+    let ability_tokens = trim_edge_punctuation(&tokens[has_idx + 1..]);
+    if ability_tokens.is_empty() {
+        return Ok(None);
+    }
+    let Some(parsed) = parse_activated_line(&ability_tokens)? else {
         return Ok(None);
     };
 
     Ok(Some(StaticAbilityAst::AttachedObjectAbilityGrant {
         ability: parsed,
-        display: token_words.join(" "),
+        display: format!(
+            "{} has {}",
+            words(&tokens[..has_idx]).join(" "),
+            display_text_for_tokens(&ability_tokens, true)
+        ),
         condition: None,
     }))
 }

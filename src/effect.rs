@@ -962,15 +962,15 @@ pub enum Value {
     WasPaid(usize),
 
     /// 1 if the optional cost with the given label was paid, 0 otherwise.
-    /// More readable than index-based: `WasPaidLabel("Kicker")` vs `WasPaid(0)`.
-    WasPaidLabel(&'static str),
+    /// More readable than index-based: `WasPaidLabel("Kicker".into())` vs `WasPaid(0)`.
+    WasPaidLabel(String),
 
     /// The number of times the optional cost at the given index was paid.
     /// Useful for multikicker: "create a token for each time it was kicked."
     TimesPaid(usize),
 
     /// The number of times the optional cost with the given label was paid.
-    TimesPaidLabel(&'static str),
+    TimesPaidLabel(String),
 
     /// The number of times the kicker was paid.
     /// Convenience for multikicker cards.
@@ -1953,6 +1953,9 @@ pub enum Condition {
     ///
     /// Unlike `TargetWasKicked`, this does not require a spell target.
     ThisSpellWasKicked,
+
+    /// This resolving spell paid the optional cost with the given label.
+    ThisSpellPaidLabel(String),
 
     /// The targeted spell was the Nth spell cast this turn.
     TargetSpellCastOrderThisTurn(u32),

@@ -6,6 +6,7 @@
 //! - Target finding and validation
 
 use crate::cost::OptionalCostsPaid;
+use crate::decisions::{make_decision, specs::ChooseObjectsSpec};
 use crate::effect::{EffectOutcome, EventValueSpec, OutcomeStatus, Value};
 use crate::events::DamageEvent;
 use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
@@ -1372,6 +1373,169 @@ pub struct ObjectApplyResult {
     pub outcome: EffectOutcome,
 }
 
+fn candidate_object_ids_for_filter(
+    game: &GameState,
+    filter: &crate::filter::ObjectFilter,
+    ctx: &ExecutionContext,
+) -> Vec<ObjectId> {
+    let filter_ctx = ctx.filter_context(game);
+    let candidate_ids: Vec<ObjectId> = match filter.zone {
+        Some(Zone::Battlefield) => game.battlefield.clone(),
+        Some(Zone::Graveyard) => game
+            .players
+            .iter()
+            .flat_map(|player| player.graveyard.iter().copied())
+            .collect(),
+        Some(Zone::Hand) => game
+            .players
+            .iter()
+            .flat_map(|player| player.hand.iter().copied())
+            .collect(),
+        Some(Zone::Library) => game
+            .players
+            .iter()
+            .flat_map(|player| player.library.iter().copied())
+            .collect(),
+        Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
+        Some(Zone::Exile) => game.exile.clone(),
+        Some(Zone::Command) => game.command_zone.clone(),
+        None => game.battlefield.clone(),
+    };
+
+    candidate_ids
+        .iter()
+        .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+        .filter(|(_, obj)| filter.matches(obj, &filter_ctx, game))
+        .map(|(id, _)| id)
+        .collect()
+}
+
+pub fn resolve_objects_for_effect(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    spec: &ChooseSpec,
+) -> Result<Vec<ObjectId>, ExecutionError> {
+    if !spec.is_target()
+        && let ChooseSpec::Object(filter) = spec.base()
+    {
+        if !ctx.targets.is_empty()
+            && matches!(spec.base(), ChooseSpec::Object(_))
+            && !matches!(spec, ChooseSpec::WithCount(_, _))
+        {
+            if let Ok(objects) = resolve_objects_from_spec(game, spec, ctx)
+                && !objects.is_empty()
+            {
+                return Ok(objects);
+            }
+        }
+
+        let count = spec.count();
+        let mut candidates = candidate_object_ids_for_filter(game, filter, ctx);
+        if candidates.is_empty() {
+            return Err(ExecutionError::InvalidTarget);
+        }
+
+        let (min, max) = if count.is_dynamic_x() {
+            let x = ctx
+                .x_value
+                .ok_or_else(|| ExecutionError::UnresolvableValue("X value not set".to_string()))?
+                as usize;
+            if count.is_up_to_dynamic_x() {
+                (0, x.min(candidates.len()))
+            } else if x > candidates.len() {
+                return Err(ExecutionError::InvalidTarget);
+            } else {
+                (x, x)
+            }
+        } else {
+            (
+                count.min.min(candidates.len()),
+                count.max.unwrap_or(candidates.len()),
+            )
+        };
+
+        if count.is_random() {
+            game.shuffle_slice(&mut candidates);
+            candidates.truncate(max);
+            if candidates.len() < min {
+                return Err(ExecutionError::InvalidTarget);
+            }
+            return Ok(candidates);
+        }
+
+        if candidates.len() < min {
+            return Err(ExecutionError::InvalidTarget);
+        }
+
+        if candidates.len() == 1 && min == 1 && max == 1 {
+            return Ok(candidates);
+        }
+
+        let chosen: Vec<ObjectId> = make_decision(
+            game,
+            ctx.decision_maker,
+            ctx.controller,
+            Some(ctx.source),
+            ChooseObjectsSpec::new(
+                ctx.source,
+                format!("Choose {}", filter.description()),
+                candidates.clone(),
+                min,
+                Some(max),
+            ),
+        );
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(Vec::new());
+        }
+
+        let chosen = normalize_objects_for_count(chosen, &candidates, min, max);
+        return Ok(chosen);
+    }
+
+    resolve_objects_from_spec(game, spec, ctx)
+}
+
+pub fn resolve_single_object_for_effect(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    spec: &ChooseSpec,
+) -> Result<ObjectId, ExecutionError> {
+    resolve_objects_for_effect(game, ctx, spec)?
+        .into_iter()
+        .next()
+        .ok_or(ExecutionError::InvalidTarget)
+}
+
+fn normalize_objects_for_count(
+    mut chosen: Vec<ObjectId>,
+    candidates: &[ObjectId],
+    min: usize,
+    max: usize,
+) -> Vec<ObjectId> {
+    let mut normalized = Vec::new();
+    for id in chosen.drain(..) {
+        if normalized.len() == max {
+            break;
+        }
+        if candidates.contains(&id) && !normalized.contains(&id) {
+            normalized.push(id);
+        }
+    }
+
+    if normalized.len() < min {
+        for id in candidates {
+            if normalized.len() >= min {
+                break;
+            }
+            if !normalized.contains(id) {
+                normalized.push(*id);
+            }
+        }
+    }
+
+    normalized
+}
+
 /// Resolve objects from `spec`, apply an operation per object, and shape the result.
 pub fn apply_to_selected_objects(
     game: &mut GameState,
@@ -1384,7 +1548,14 @@ pub fn apply_to_selected_objects(
         ObjectId,
     ) -> Result<bool, ExecutionError>,
 ) -> Result<ObjectApplyResult, ExecutionError> {
-    let objects = resolve_objects_from_spec(game, spec, ctx)?;
+    let objects = resolve_objects_for_effect(game, ctx, spec)?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(ObjectApplyResult {
+            selected_count: 0,
+            applied_count: 0,
+            outcome: EffectOutcome::count(0),
+        });
+    }
     let selected_count = objects.len();
     let mut applied_count = 0usize;
 
@@ -1937,6 +2108,9 @@ fn resolve_player_filter_to_list(
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::decision::DecisionMaker;
+    use crate::decisions::context::SelectObjectsContext;
+    use crate::effect::ChoiceCount;
     use crate::ids::{ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::types::CardType;
@@ -1959,6 +2133,28 @@ mod tests {
             .power_toughness(PowerToughness::fixed(2, 2))
             .build();
         game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    struct SelectIdsDecisionMaker {
+        chosen: Vec<ObjectId>,
+    }
+
+    impl DecisionMaker for SelectIdsDecisionMaker {
+        fn decide_objects(
+            &mut self,
+            _game: &GameState,
+            ctx: &SelectObjectsContext,
+        ) -> Vec<ObjectId> {
+            self.chosen
+                .iter()
+                .copied()
+                .filter(|id| {
+                    ctx.candidates
+                        .iter()
+                        .any(|candidate| candidate.legal && candidate.id == *id)
+                })
+                .collect()
+        }
     }
 
     #[test]
@@ -2287,6 +2483,45 @@ mod tests {
             result.outcome.status,
             crate::effect::OutcomeStatus::Succeeded
         );
+    }
+
+    #[test]
+    fn test_apply_to_selected_objects_prompts_for_non_targeted_with_count_object_specs() {
+        let mut game = new_test_game();
+        let alice = game.players[0].id;
+        let source_id = add_battlefield_permanent(
+            &mut game,
+            200,
+            "Simic Growth Chamber",
+            alice,
+            vec![CardType::Land],
+        );
+        let other_land =
+            add_battlefield_permanent(&mut game, 201, "Forest", alice, vec![CardType::Land]);
+        let mut dm = SelectIdsDecisionMaker {
+            chosen: vec![source_id],
+        };
+        let mut ctx = ExecutionContext::new_default(source_id, alice).with_decision_maker(&mut dm);
+        let spec = ChooseSpec::Object(crate::filter::ObjectFilter::land().you_control())
+            .with_count(ChoiceCount::exactly(1));
+        let mut seen = Vec::new();
+
+        let result = apply_to_selected_objects(
+            &mut game,
+            &mut ctx,
+            &spec,
+            ObjectApplyResultPolicy::CountApplied,
+            |_game, _ctx, object_id| {
+                seen.push(object_id);
+                Ok(true)
+            },
+        )
+        .expect("selection should resolve");
+
+        assert_eq!(result.selected_count, 1);
+        assert_eq!(result.applied_count, 1);
+        assert_eq!(seen, vec![source_id]);
+        assert_ne!(seen, vec![other_land]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Card definition for Blood Moon.
 
+use super::CardDefinitionBuilder;
 use crate::cards::CardDefinition;
-use crate::cards::builders::CardDefinitionBuilder;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::CardType;

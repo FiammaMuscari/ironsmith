@@ -1,7 +1,8 @@
 //! Geist of Saint Traft card definition.
 
+use super::CardDefinitionBuilder;
 use crate::card::PowerToughness;
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype, Supertype};
@@ -22,7 +23,6 @@ pub fn geist_of_saint_traft() -> CardDefinition {
         .card_types(vec![CardType::Creature])
         .subtypes(vec![Subtype::Spirit, Subtype::Cleric])
         .power_toughness(PowerToughness::fixed(2, 2))
-        .hexproof()
         .parse_text(
             "Hexproof\nWhenever Geist of Saint Traft attacks, create a 4/4 white Angel creature \
              token with flying that's tapped and attacking. Exile that token at end of combat.",

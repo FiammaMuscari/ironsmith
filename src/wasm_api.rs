@@ -428,6 +428,8 @@ struct StackObjectSnapshot {
 
 fn build_stack_object_snapshot(
     game: &GameState,
+    perspective: PlayerId,
+    viewed_cards: Option<&ActiveViewedCards>,
     entry: &crate::game_state::StackEntry,
 ) -> StackObjectSnapshot {
     let obj = game.object(entry.object_id);
@@ -450,7 +452,8 @@ fn build_stack_object_snapshot(
     let targets = entry
         .targets
         .iter()
-        .map(|target| target_choice_view(game, target))
+        .enumerate()
+        .map(|(index, target)| target_choice_view(game, perspective, viewed_cards, index, target))
         .collect();
 
     if entry.is_ability {
@@ -747,9 +750,8 @@ impl GameSnapshot {
                         && view.subject == p.id
                         && (view.public || view.viewer == perspective)
                 });
-                let visible_hand_ids = visible_hand_view.map(|view| {
-                    view.cards.iter().copied().collect::<HashSet<_>>()
-                });
+                let visible_hand_ids = visible_hand_view
+                    .map(|view| view.cards.iter().copied().collect::<HashSet<_>>());
                 let can_view_hand = is_perspective_player || visible_hand_view.is_some();
                 PlayerSnapshot {
                     can_view_hand,
@@ -895,7 +897,7 @@ impl GameSnapshot {
             .stack
             .iter()
             .rev()
-            .map(|entry| build_stack_object_snapshot(game, entry))
+            .map(|entry| build_stack_object_snapshot(game, perspective, viewed_cards, entry))
             .collect();
         let mut stack_size = game.stack.len();
 
@@ -974,12 +976,8 @@ impl GameSnapshot {
                     source: view.source.map(|id| id.0),
                     description: view.description.clone(),
                 }),
-            decision: decision.map(|ctx| DecisionView::from_context(
-                game,
-                ctx,
-                perspective,
-                viewed_cards,
-            )),
+            decision: decision
+                .map(|ctx| DecisionView::from_context(game, ctx, perspective, viewed_cards)),
             game_over: game_over.map(|r| GameOverView::from_result(game, r)),
             cancelable,
             undo_land_stable_id,
@@ -996,6 +994,91 @@ struct ActionView {
     ability_index: Option<usize>,
     from_zone: Option<String>,
     to_zone: Option<String>,
+    action_ref: PriorityActionRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PriorityActionRef {
+    PassPriority,
+    KeepOpeningHand,
+    TakeMulligan,
+    SerumPowderMulligan {
+        card_id: u64,
+    },
+    ContinuePregame,
+    BeginGame,
+    UsePregameAction {
+        card_id: u64,
+        ability_index: usize,
+    },
+    CastSpell {
+        spell_id: u64,
+        from_zone: String,
+        casting_method: CastingMethodRef,
+    },
+    ActivateAbility {
+        source: u64,
+        ability_index: usize,
+    },
+    PlayLand {
+        land_id: u64,
+    },
+    ActivateManaAbility {
+        source: u64,
+        ability_index: usize,
+    },
+    TurnFaceUp {
+        creature_id: u64,
+    },
+    SpecialAction {
+        action: SpecialActionRef,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SpecialActionRef {
+    PlayLand {
+        card_id: u64,
+    },
+    TurnFaceUp {
+        permanent_id: u64,
+    },
+    Suspend {
+        card_id: u64,
+    },
+    Foretell {
+        card_id: u64,
+    },
+    Plot {
+        card_id: u64,
+    },
+    ActivateManaAbility {
+        permanent_id: u64,
+        ability_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum CastingMethodRef {
+    Normal,
+    SplitOtherHalf,
+    Fuse,
+    Alternative {
+        index: usize,
+    },
+    GrantedEscape {
+        source: u64,
+        exile_count: u32,
+    },
+    GrantedFlashback,
+    PlayFrom {
+        source: u64,
+        zone: String,
+        use_alternative: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1145,8 +1228,7 @@ impl DecisionView {
         };
         let resolve_source_id = |source: Option<ObjectId>| -> Option<u64> {
             source.and_then(|id| {
-                object_visible_to_perspective(game, perspective, viewed_cards, id)
-                    .then_some(id.0)
+                object_visible_to_perspective(game, perspective, viewed_cards, id).then_some(id.0)
             })
         };
         let context_text = || ctx.context_text().map(str::to_string);
@@ -1233,7 +1315,9 @@ impl DecisionView {
                             });
                             OptionView {
                                 index: opt.index,
-                                description: if opt.object_id.is_some() && visible_object_id.is_none() {
+                                description: if opt.object_id.is_some()
+                                    && visible_object_id.is_none()
+                                {
                                     hidden_object_label()
                                 } else {
                                     opt.description.clone()
@@ -1541,12 +1625,8 @@ impl DecisionView {
                     .iter()
                     .enumerate()
                     .map(|(index, obj)| {
-                        let visible = object_visible_to_perspective(
-                            game,
-                            perspective,
-                            viewed_cards,
-                            obj.id,
-                        );
+                        let visible =
+                            object_visible_to_perspective(game, perspective, viewed_cards, obj.id);
                         ObjectChoiceView {
                             id: if visible {
                                 obj.id.0
@@ -1583,13 +1663,7 @@ impl DecisionView {
                             .iter()
                             .enumerate()
                             .map(|(index, target)| {
-                                target_choice_view(
-                                    game,
-                                    perspective,
-                                    viewed_cards,
-                                    index,
-                                    target,
-                                )
+                                target_choice_view(game, perspective, viewed_cards, index, target)
                             })
                             .collect(),
                     })
@@ -1671,7 +1745,10 @@ impl GameOverView {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum UiCommand {
     PriorityAction {
-        action_index: usize,
+        #[serde(default)]
+        action_index: Option<usize>,
+        #[serde(default)]
+        action_ref: Option<PriorityActionRef>,
     },
     NumberChoice {
         value: u32,
@@ -4679,10 +4756,26 @@ impl WasmGame {
             };
 
         match (&pending_ctx, command) {
-            (DecisionContext::Priority(priority), UiCommand::PriorityAction { action_index }) => {
-                let action =
-                    resolve_priority_action_by_index(priority, action_index).ok_or_else(|| {
-                        JsValue::from_str(&format!("invalid priority action index: {action_index}"))
+            (
+                DecisionContext::Priority(priority),
+                UiCommand::PriorityAction {
+                    action_index,
+                    action_ref,
+                },
+            ) => {
+                let action = resolve_priority_action(priority, action_index, action_ref.as_ref())
+                    .ok_or_else(|| {
+                        if let Some(action_ref) = action_ref.as_ref() {
+                            JsValue::from_str(&format!(
+                                "invalid priority action ref: {action_ref:?}"
+                            ))
+                        } else if let Some(action_index) = action_index {
+                            JsValue::from_str(&format!(
+                                "invalid priority action index: {action_index}"
+                            ))
+                        } else {
+                            JsValue::from_str("missing priority action selector")
+                        }
                     });
                 let action = match action {
                     Ok(action) => action,
@@ -5524,7 +5617,12 @@ impl WasmGame {
         {
             return None;
         }
-        Some(build_stack_object_snapshot(&self.game, entry))
+        Some(build_stack_object_snapshot(
+            &self.game,
+            self.perspective,
+            self.active_viewed_cards.as_ref(),
+            entry,
+        ))
     }
 
     fn update_active_resolving_stack_object_from_checkpoint(
@@ -5629,11 +5727,23 @@ impl WasmGame {
                 )?;
                 Ok(ReplayDecisionAnswer::Options(option_indices))
             }
-            (DecisionContext::Priority(priority), UiCommand::PriorityAction { action_index }) => {
-                let action =
-                    resolve_priority_action_by_index(priority, action_index).ok_or_else(|| {
+            (
+                DecisionContext::Priority(priority),
+                UiCommand::PriorityAction {
+                    action_index,
+                    action_ref,
+                },
+            ) => {
+                let action = resolve_priority_action(priority, action_index, action_ref.as_ref())
+                    .ok_or_else(|| {
+                    if let Some(action_ref) = action_ref.as_ref() {
+                        JsValue::from_str(&format!("invalid priority action ref: {action_ref:?}"))
+                    } else if let Some(action_index) = action_index {
                         JsValue::from_str(&format!("invalid priority action index: {action_index}"))
-                    })?;
+                    } else {
+                        JsValue::from_str("missing priority action selector")
+                    }
+                })?;
                 Ok(ReplayDecisionAnswer::Priority(action))
             }
             (DecisionContext::SelectObjects(objects), UiCommand::SelectObjects { object_ids }) => {
@@ -5916,11 +6026,23 @@ impl WasmGame {
         command: UiCommand,
     ) -> Result<PriorityResponse, JsValue> {
         match (ctx, command) {
-            (DecisionContext::Priority(priority), UiCommand::PriorityAction { action_index }) => {
-                let action =
-                    resolve_priority_action_by_index(priority, action_index).ok_or_else(|| {
+            (
+                DecisionContext::Priority(priority),
+                UiCommand::PriorityAction {
+                    action_index,
+                    action_ref,
+                },
+            ) => {
+                let action = resolve_priority_action(priority, action_index, action_ref.as_ref())
+                    .ok_or_else(|| {
+                    if let Some(action_ref) = action_ref.as_ref() {
+                        JsValue::from_str(&format!("invalid priority action ref: {action_ref:?}"))
+                    } else if let Some(action_index) = action_index {
                         JsValue::from_str(&format!("invalid priority action index: {action_index}"))
-                    })?;
+                    } else {
+                        JsValue::from_str("missing priority action selector")
+                    }
+                })?;
                 Ok(PriorityResponse::PriorityAction(action))
             }
             (DecisionContext::Number(number), UiCommand::NumberChoice { value }) => {
@@ -6314,6 +6436,7 @@ fn build_action_view(
         ability_index,
         from_zone: source_visible.then_some(from_zone).flatten(),
         to_zone: source_visible.then_some(to_zone).flatten(),
+        action_ref: priority_action_ref(action),
     }
 }
 
@@ -6572,8 +6695,10 @@ fn hidden_object_label() -> String {
     "Hidden card".to_string()
 }
 
+const JS_SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+
 fn redacted_choice_id(index: usize) -> u64 {
-    u64::MAX.saturating_sub(index as u64)
+    JS_SAFE_INTEGER_MAX.saturating_sub(index as u64)
 }
 
 fn object_visible_to_perspective(
@@ -6590,9 +6715,8 @@ fn object_visible_to_perspective(
         return true;
     }
 
-    viewed_cards.is_some_and(|view| {
-        (view.public || view.viewer == perspective) && view.cards.contains(&id)
-    })
+    viewed_cards
+        .is_some_and(|view| (view.public || view.viewer == perspective) && view.cards.contains(&id))
 }
 
 fn redacted_action_label(action: &LegalAction) -> String {
@@ -6627,11 +6751,128 @@ fn optional_cost_selection_metadata(
     }
 }
 
-fn resolve_priority_action_by_index(
+fn priority_action_ref(action: &LegalAction) -> PriorityActionRef {
+    match action {
+        LegalAction::PassPriority => PriorityActionRef::PassPriority,
+        LegalAction::KeepOpeningHand => PriorityActionRef::KeepOpeningHand,
+        LegalAction::TakeMulligan => PriorityActionRef::TakeMulligan,
+        LegalAction::SerumPowderMulligan { card_id } => {
+            PriorityActionRef::SerumPowderMulligan { card_id: card_id.0 }
+        }
+        LegalAction::ContinuePregame => PriorityActionRef::ContinuePregame,
+        LegalAction::BeginGame => PriorityActionRef::BeginGame,
+        LegalAction::UsePregameAction {
+            card_id,
+            ability_index,
+        } => PriorityActionRef::UsePregameAction {
+            card_id: card_id.0,
+            ability_index: *ability_index,
+        },
+        LegalAction::CastSpell {
+            spell_id,
+            from_zone,
+            casting_method,
+        } => PriorityActionRef::CastSpell {
+            spell_id: spell_id.0,
+            from_zone: zone_name(*from_zone),
+            casting_method: casting_method_ref(casting_method),
+        },
+        LegalAction::ActivateAbility {
+            source,
+            ability_index,
+        } => PriorityActionRef::ActivateAbility {
+            source: source.0,
+            ability_index: *ability_index,
+        },
+        LegalAction::PlayLand { land_id } => PriorityActionRef::PlayLand { land_id: land_id.0 },
+        LegalAction::ActivateManaAbility {
+            source,
+            ability_index,
+        } => PriorityActionRef::ActivateManaAbility {
+            source: source.0,
+            ability_index: *ability_index,
+        },
+        LegalAction::TurnFaceUp { creature_id } => PriorityActionRef::TurnFaceUp {
+            creature_id: creature_id.0,
+        },
+        LegalAction::SpecialAction(action) => PriorityActionRef::SpecialAction {
+            action: special_action_ref(action),
+        },
+    }
+}
+
+fn special_action_ref(action: &crate::special_actions::SpecialAction) -> SpecialActionRef {
+    match action {
+        crate::special_actions::SpecialAction::PlayLand { card_id } => {
+            SpecialActionRef::PlayLand { card_id: card_id.0 }
+        }
+        crate::special_actions::SpecialAction::TurnFaceUp { permanent_id } => {
+            SpecialActionRef::TurnFaceUp {
+                permanent_id: permanent_id.0,
+            }
+        }
+        crate::special_actions::SpecialAction::Suspend { card_id } => {
+            SpecialActionRef::Suspend { card_id: card_id.0 }
+        }
+        crate::special_actions::SpecialAction::Foretell { card_id } => {
+            SpecialActionRef::Foretell { card_id: card_id.0 }
+        }
+        crate::special_actions::SpecialAction::Plot { card_id } => {
+            SpecialActionRef::Plot { card_id: card_id.0 }
+        }
+        crate::special_actions::SpecialAction::ActivateManaAbility {
+            permanent_id,
+            ability_index,
+        } => SpecialActionRef::ActivateManaAbility {
+            permanent_id: permanent_id.0,
+            ability_index: *ability_index,
+        },
+    }
+}
+
+fn casting_method_ref(method: &crate::alternative_cast::CastingMethod) -> CastingMethodRef {
+    match method {
+        crate::alternative_cast::CastingMethod::Normal => CastingMethodRef::Normal,
+        crate::alternative_cast::CastingMethod::SplitOtherHalf => CastingMethodRef::SplitOtherHalf,
+        crate::alternative_cast::CastingMethod::Fuse => CastingMethodRef::Fuse,
+        crate::alternative_cast::CastingMethod::Alternative(index) => {
+            CastingMethodRef::Alternative { index: *index }
+        }
+        crate::alternative_cast::CastingMethod::GrantedEscape {
+            source,
+            exile_count,
+        } => CastingMethodRef::GrantedEscape {
+            source: source.0,
+            exile_count: *exile_count,
+        },
+        crate::alternative_cast::CastingMethod::GrantedFlashback => {
+            CastingMethodRef::GrantedFlashback
+        }
+        crate::alternative_cast::CastingMethod::PlayFrom {
+            source,
+            zone,
+            use_alternative,
+        } => CastingMethodRef::PlayFrom {
+            source: source.0,
+            zone: zone_name(*zone),
+            use_alternative: *use_alternative,
+        },
+    }
+}
+
+fn resolve_priority_action(
     priority: &crate::decisions::context::PriorityContext,
-    action_index: usize,
+    action_index: Option<usize>,
+    action_ref: Option<&PriorityActionRef>,
 ) -> Option<LegalAction> {
-    priority.actions.get(action_index).cloned()
+    if let Some(action_ref) = action_ref {
+        return priority
+            .actions
+            .iter()
+            .find(|action| priority_action_ref(action) == *action_ref)
+            .cloned();
+    }
+    action_index.and_then(|index| priority.actions.get(index).cloned())
 }
 
 /// Derive a short structured reason label from a DecisionContext.
@@ -6747,7 +6988,11 @@ fn target_choice_view(
         Target::Object(id) => {
             let visible = object_visible_to_perspective(game, perspective, viewed_cards, *id);
             TargetChoiceView::Object {
-                object: if visible { id.0 } else { redacted_choice_id(index) },
+                object: if visible {
+                    id.0
+                } else {
+                    redacted_choice_id(index)
+                },
                 name: if visible {
                     object_name(game, *id)
                 } else {
@@ -7320,7 +7565,7 @@ mod tests {
         let battlefield_id = game
             .move_object(stack_id, Zone::Battlefield)
             .expect("spell should resolve to battlefield");
-        let snapshot = build_stack_object_snapshot(&game, &entry);
+        let snapshot = build_stack_object_snapshot(&game, alice, None, &entry);
 
         assert_eq!(snapshot.name, "Tall as a Beanstalk");
         assert_eq!(snapshot.inspect_object_id, Some(battlefield_id.0));
@@ -7328,6 +7573,64 @@ mod tests {
             snapshot.source_stable_id,
             game.object(battlefield_id).map(|obj| obj.stable_id.0.0)
         );
+    }
+
+    #[test]
+    fn delayed_trigger_snapshot_keeps_source_name_after_source_changes_zones() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = CardBuilder::new(CardId::from_raw(70_002), "Flickerwisp")
+            .card_types(vec![CardType::Creature])
+            .build();
+
+        let source_id = game.create_object_from_card(&source, alice, Zone::Battlefield);
+        let source_stable_id = game
+            .object(source_id)
+            .expect("source should exist")
+            .stable_id;
+
+        crate::effects::delayed::trigger_queue::queue_delayed_trigger(
+            &mut game,
+            crate::effects::delayed::trigger_queue::DelayedTriggerConfig::new(
+                Trigger::beginning_of_end_step(crate::target::PlayerFilter::Specific(alice)),
+                Vec::new(),
+                true,
+                Vec::new(),
+                alice,
+            )
+            .with_ability_source(Some(source_id)),
+        );
+
+        let moved_source_id = game
+            .move_object(source_id, Zone::Exile)
+            .expect("source should move to exile");
+        assert_ne!(moved_source_id, source_id);
+
+        let event = TriggerEvent::new_with_provenance(
+            crate::events::phase::BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::default(),
+        );
+        let triggered = crate::triggers::check_delayed_triggers(&mut game, &event);
+        assert_eq!(triggered.len(), 1, "delayed trigger should fire");
+
+        let mut entry = StackEntry::ability(
+            triggered[0].source,
+            triggered[0].controller,
+            triggered[0].ability.effects.clone(),
+        )
+        .with_source_info(
+            triggered[0].source_stable_id,
+            triggered[0].source_name.clone(),
+        )
+        .with_triggering_event(triggered[0].triggering_event.clone());
+        if let Some(snapshot) = triggered[0].source_snapshot.clone() {
+            entry = entry.with_source_snapshot(snapshot);
+        }
+        let snapshot = build_stack_object_snapshot(&game, alice, None, &entry);
+
+        assert_eq!(snapshot.name, "Flickerwisp");
+        assert_eq!(snapshot.source_stable_id, Some(source_stable_id.0.0));
+        assert_eq!(snapshot.ability_kind.as_deref(), Some("Triggered"));
     }
 
     #[test]
@@ -8210,11 +8513,15 @@ mod tests {
 
         assert_eq!(redacted_candidates.len(), 2);
         assert!(
-            redacted_candidates.iter().all(|candidate| candidate.name == "Hidden card"),
+            redacted_candidates
+                .iter()
+                .all(|candidate| candidate.name == "Hidden card"),
             "opponent hand choices should be redacted for other perspectives"
         );
         assert!(
-            redacted_candidates.iter().all(|candidate| candidate.id != card_a && candidate.id != card_b),
+            redacted_candidates
+                .iter()
+                .all(|candidate| candidate.id != card_a && candidate.id != card_b),
             "redacted candidates should not expose the real hidden object ids"
         );
     }

@@ -2,7 +2,7 @@
 
 use crate::continuous::{EffectTarget, Modification};
 use crate::effect::{Effect, EffectOutcome, Until, Value};
-use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
+use crate::effects::helpers::{resolve_single_object_for_effect, resolve_value};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -88,7 +88,7 @@ impl EffectExecutor for ModifyPowerToughnessForEachEffect {
         let power_mod = self.power_per * multiplier;
         let toughness_mod = self.toughness_per * multiplier;
 
-        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
+        let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
 
         // Verify the target exists
         let _target = game

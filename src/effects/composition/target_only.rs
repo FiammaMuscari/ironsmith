@@ -5,7 +5,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_players_from_spec};
+use crate::effects::helpers::{resolve_objects_for_effect, resolve_players_from_spec};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -31,7 +31,7 @@ impl EffectExecutor for TargetOnlyEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if let Ok(objects) = resolve_objects_from_spec(game, &self.target, ctx)
+        if let Ok(objects) = resolve_objects_for_effect(game, ctx, &self.target)
             && !objects.is_empty()
         {
             return Ok(EffectOutcome::count(objects.len() as i32));

@@ -1,6 +1,7 @@
 //! Invisible Stalker card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 
 /// Invisible Stalker - {1}{U}

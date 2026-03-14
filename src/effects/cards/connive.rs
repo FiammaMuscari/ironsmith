@@ -3,7 +3,7 @@
 use crate::effect::EffectOutcome;
 use crate::effects::DrawCardsEffect;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{normalize_object_selection, resolve_objects_from_spec};
+use crate::effects::helpers::{normalize_object_selection, resolve_objects_for_effect};
 use crate::events::cause::EventCause;
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -34,7 +34,7 @@ impl EffectExecutor for ConniveEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        let target_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
         if target_ids.is_empty() {
             return Ok(EffectOutcome::target_invalid());
         }

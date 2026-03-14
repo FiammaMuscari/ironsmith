@@ -74,7 +74,7 @@ impl EffectExecutor for RegenerateEffect {
 
         // Resolve all matching targets. This supports both traditional
         // "target creature" regeneration and "regenerate each/all ..." forms.
-        let targets = crate::effects::helpers::resolve_objects_from_spec(game, &self.target, ctx)
+        let targets = crate::effects::helpers::resolve_objects_for_effect(game, ctx, &self.target)
             .map_err(|_| ExecutionError::InvalidTarget)?;
         if targets.is_empty() {
             return Err(ExecutionError::InvalidTarget);

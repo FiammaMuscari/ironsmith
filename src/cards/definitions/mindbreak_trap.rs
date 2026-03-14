@@ -1,7 +1,7 @@
 //! Card definition for Mindbreak Trap.
 
+use super::CardDefinitionBuilder;
 use crate::cards::CardDefinition;
-use crate::cards::builders::CardDefinitionBuilder;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype};

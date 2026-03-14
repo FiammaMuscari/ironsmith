@@ -1,7 +1,8 @@
 //! Hanweir Battlements card definition.
 
+use super::CardDefinitionBuilder;
 use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use crate::cards::CardDefinition;
 use crate::cost::TotalCost;
 use crate::costs::Cost;
 use crate::effect::Effect;

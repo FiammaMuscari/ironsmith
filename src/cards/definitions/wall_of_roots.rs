@@ -1,7 +1,8 @@
 //! Wall of Roots card definition.
 
+use super::CardDefinitionBuilder;
 use crate::card::PowerToughness;
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype};

@@ -421,20 +421,21 @@ pub(crate) fn parse_granted_keyword_static_line(
         return Ok(None);
     }
 
-    let tail_tokens = trim_commas(&tokens[have_token_idx + 1..]);
+    let tail_tokens = trim_edge_punctuation(&tokens[have_token_idx + 1..]);
     if tail_tokens.is_empty() {
         return Ok(None);
     }
 
     let mut tail_tokens = tail_tokens;
     let mut trailing_clause_tokens: Vec<Token> = Vec::new();
-    if let Some(period_idx) = tail_tokens
-        .iter()
-        .position(|token| matches!(token, Token::Period(_)))
-    {
-        let leading = trim_commas(&tail_tokens[..period_idx]);
-        let trailing = trim_commas(&tail_tokens[period_idx + 1..]);
-        trailing_clause_tokens = trailing.to_vec();
+    let tail_sentences = split_on_period(&tail_tokens);
+    if tail_sentences.len() > 1 {
+        let leading = trim_edge_punctuation(&tail_sentences[0]);
+        let trailing = tail_sentences[1..]
+            .iter()
+            .flat_map(|sentence| trim_edge_punctuation(sentence))
+            .collect::<Vec<_>>();
+        trailing_clause_tokens = trailing;
         tail_tokens = leading;
     }
 
@@ -2355,7 +2356,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
         return Ok(None);
     }
 
-    let mut ability_tokens = trim_commas(&tokens[have_token_idx + 1..]);
+    let mut ability_tokens = trim_edge_punctuation(&tokens[have_token_idx + 1..]);
     let mut trailing_condition: Option<crate::ConditionExpr> = None;
     if let Some(as_long_idx) = words(&ability_tokens)
         .windows(3)
@@ -2375,14 +2376,14 @@ pub(crate) fn parse_anthem_and_keyword_line(
                     clause_words.join(" ")
                 ))
             })?;
-        let ability_head = trim_commas(&ability_tokens[..as_token_idx]);
+        let ability_head = trim_edge_punctuation(&ability_tokens[..as_token_idx]);
         if ability_head.is_empty() {
             return Err(CardTextError::ParseError(format!(
                 "missing granted keyword list before trailing condition (clause: '{}')",
                 clause_words.join(" ")
             )));
         }
-        let condition_tokens = trim_commas(&ability_tokens[condition_start_idx..]);
+        let condition_tokens = trim_edge_punctuation(&ability_tokens[condition_start_idx..]);
         if condition_tokens.is_empty() {
             return Err(CardTextError::ParseError(format!(
                 "missing condition after trailing 'as long as' keyword clause (clause: '{}')",
@@ -2402,7 +2403,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
             && (ability_tokens[*idx + 1].is_word("has") || ability_tokens[*idx + 1].is_word("have"))
     });
     if let Some(and_has_idx) = and_has_idx {
-        let keyword_tokens = trim_commas(&ability_tokens[..and_has_idx]);
+        let keyword_tokens = trim_edge_punctuation(&ability_tokens[..and_has_idx]);
         if !keyword_tokens.is_empty() {
             if let Some(actions) = parse_ability_line(&keyword_tokens) {
                 reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
@@ -2416,7 +2417,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
             }
         }
 
-        let ability_tail_tokens = trim_commas(&ability_tokens[and_has_idx + 2..]);
+        let ability_tail_tokens = trim_edge_punctuation(&ability_tokens[and_has_idx + 2..]);
         if !ability_tail_tokens.is_empty() {
             let has_colon = ability_tail_tokens
                 .iter()
@@ -2809,7 +2810,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             .first()
             .is_some_and(|word| *word == "has" || *word == "have")
         {
-            let mut ability_tokens = trim_commas(&segment[1..]).to_vec();
+            let mut ability_tokens = trim_edge_punctuation(&segment[1..]);
             if ability_tokens.is_empty() {
                 return Ok(None);
             }
@@ -2852,8 +2853,8 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                 let Some(and_idx) = and_idx else {
                     return Ok(None);
                 };
-                let keyword_head = trim_commas(&ability_tokens[..and_idx]);
-                let activated_tail = trim_commas(&ability_tokens[and_idx + 1..]);
+                let keyword_head = trim_edge_punctuation(&ability_tokens[..and_idx]);
+                let activated_tail = trim_edge_punctuation(&ability_tokens[and_idx + 1..]);
                 if keyword_head.is_empty() || activated_tail.is_empty() {
                     return Ok(None);
                 }
@@ -3587,7 +3588,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
     if subject_words.contains(&"may") {
         return Ok(None);
     }
-    let ability_tokens = &tokens[has_idx + 1..];
+    let ability_tokens = trim_edge_punctuation(&tokens[has_idx + 1..]);
     let has_colon = ability_tokens
         .iter()
         .any(|token| matches!(token, Token::Colon(_)));
@@ -3602,17 +3603,17 @@ pub(crate) fn parse_filter_has_granted_ability_line(
     let mut granted_static: Vec<StaticAbilityAst> = Vec::new();
     let mut granted_object_abilities: Vec<ParsedAbility> = Vec::new();
     if has_colon {
-        let Some(parsed) = parse_activated_line(ability_tokens)? else {
+        let Some(parsed) = parse_activated_line(&ability_tokens)? else {
             return Err(CardTextError::ParseError(format!(
                 "unsupported granted activated/triggered ability clause (clause: '{}')",
                 clause_words.join(" ")
             )));
         };
         granted_object_abilities.push(parsed);
-    } else if let Some(parsed) = parse_cycling_line(ability_tokens)? {
+    } else if let Some(parsed) = parse_cycling_line(&ability_tokens)? {
         granted_object_abilities.push(parsed);
     } else if looks_like_trigger {
-        match parse_triggered_line(ability_tokens)? {
+        match parse_triggered_line(&ability_tokens)? {
             LineAst::Triggered {
                 trigger,
                 effects,
@@ -3641,7 +3642,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 )));
             }
         }
-    } else if let Some(actions) = parse_ability_line(ability_tokens) {
+    } else if let Some(actions) = parse_ability_line(&ability_tokens) {
         let [
             KeywordAction::CumulativeUpkeep {
                 mana_symbols_per_counter,
@@ -3662,7 +3663,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
             reference_imports: ReferenceImports::default(),
             trigger_spec: None,
         });
-    } else if let Some(abilities) = parse_static_ability_ast_line(ability_tokens)? {
+    } else if let Some(abilities) = parse_static_ability_ast_line(&ability_tokens)? {
         granted_static = abilities;
     } else {
         return Ok(None);

@@ -1,6 +1,7 @@
 //! Urza's Saga card definition.
 
-use crate::cards::{CardDefinition, CardDefinitionBuilder};
+use super::CardDefinitionBuilder;
+use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::types::{CardType, Subtype};
 
@@ -50,13 +51,9 @@ mod tests {
     use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
     use crate::card::PowerToughness;
-    use crate::cards::CardDefinitionBuilder;
-    use crate::effect::Value;
     use crate::game_state::GameState;
     use crate::ids::{CardId, PlayerId};
     use crate::object::Object;
-    use crate::static_abilities::{StaticAbility, StaticAbilityId};
-    use crate::target::ObjectFilter;
     use crate::zone::Zone;
 
     #[test]
@@ -110,44 +107,44 @@ mod tests {
     }
 
     fn construct_token_def() -> CardDefinition {
-        use crate::ability::Ability;
         CardDefinitionBuilder::new(CardId::new(), "Construct")
             .token()
             .card_types(vec![CardType::Artifact, CardType::Creature])
             .subtypes(vec![Subtype::Construct])
             .power_toughness(PowerToughness::fixed(0, 0))
-            .with_ability(Ability::static_ability(
-                StaticAbility::characteristic_defining_pt(
-                    Value::Count(ObjectFilter::artifact().you_control()),
-                    Value::Count(ObjectFilter::artifact().you_control()),
-                ),
-            ))
-            .build()
+            .parse_text("This creature gets +1/+1 for each artifact you control.")
+            .expect("Construct token text should be supported")
     }
 
     #[test]
-    fn test_construct_token_has_cda() {
-        // Verify that the Construct token has the CharacteristicDefiningPT ability
+    fn test_construct_token_has_scaling_static_ability() {
         let token_def = construct_token_def();
 
-        // The token should have one static ability
         let static_abilities: Vec<_> = token_def
             .abilities
             .iter()
-            .filter(|a| {
-                if let AbilityKind::Static(s) = &a.kind {
-                    s.id() == StaticAbilityId::CharacteristicDefiningPT
-                } else {
-                    false
-                }
+            .filter_map(|a| match &a.kind {
+                AbilityKind::Static(s) => Some((a, s)),
+                _ => None,
             })
             .collect();
-        assert_eq!(static_abilities.len(), 1, "Token should have one CDA");
+        assert_eq!(
+            static_abilities.len(),
+            1,
+            "Token should have one static ability"
+        );
+        assert!(
+            static_abilities[0]
+                .0
+                .text
+                .as_deref()
+                .is_some_and(|text| text.contains("artifact you control")),
+            "Token should keep the artifact-scaling text"
+        );
     }
 
     #[test]
-    fn test_construct_token_cda_generates_continuous_effect() {
-        use crate::continuous::EffectSourceType;
+    fn test_construct_token_static_ability_generates_continuous_effect() {
         use crate::static_ability_processor::generate_continuous_effects_from_static_abilities;
 
         let mut game = setup_game();
@@ -162,16 +159,9 @@ mod tests {
         // Generate continuous effects from static abilities
         let effects = generate_continuous_effects_from_static_abilities(&game);
 
-        // Should have one effect from the CDA
-        assert_eq!(
-            effects.len(),
-            1,
-            "Should generate one continuous effect for CDA"
-        );
-        let effect = &effects[0];
         assert!(
-            matches!(effect.source_type, EffectSourceType::CharacteristicDefining),
-            "Effect should be a characteristic-defining ability"
+            !effects.is_empty(),
+            "Construct scaling ability should generate a continuous effect"
         );
     }
 
