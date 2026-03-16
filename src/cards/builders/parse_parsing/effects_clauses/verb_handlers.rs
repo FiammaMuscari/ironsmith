@@ -4,10 +4,11 @@ use crate::cards::builders::parse_parsing::effects_clauses::{
     parse_equal_to_number_of_counters_on_reference_value,
     parse_equal_to_number_of_filter_plus_or_minus_fixed_value,
     parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
-    parse_exchange, parse_exile, parse_flip, parse_get, parse_investigate, parse_mill, parse_pay,
-    parse_put_counters, parse_regenerate, parse_remove, parse_return, parse_sacrifice, parse_scry,
-    parse_skip, parse_surveil, parse_switch, parse_tap, parse_transform, parse_untap,
-    parse_who_did_this_way_predicate, wrap_return_with_delayed_timing,
+    parse_exchange, parse_exile, parse_flip, parse_get, parse_graveyard_owner_prefix,
+    parse_investigate, parse_mill, parse_pay, parse_put_counters, parse_regenerate, parse_remove,
+    parse_return, parse_sacrifice, parse_scry, parse_skip, parse_surveil, parse_switch, parse_tap,
+    parse_transform, parse_untap, parse_who_did_this_way_predicate,
+    wrap_return_with_delayed_timing,
 };
 use crate::cards::builders::parse_parsing::{
     extract_subject_player, parse_add_mana_equal_amount_value,
@@ -317,27 +318,20 @@ pub(crate) fn parse_reorder(
         ));
     }
 
-    let (player, rest) = if clause_words.starts_with(&["your", "graveyard"]) {
-        (PlayerAst::You, &clause_words[2..])
-    } else if clause_words.starts_with(&["their", "graveyard"]) {
-        (PlayerAst::That, &clause_words[2..])
-    } else if clause_words.starts_with(&["that", "player", "graveyard"])
-        || clause_words.starts_with(&["that", "players", "graveyard"])
-    {
-        (PlayerAst::That, &clause_words[3..])
-    } else if clause_words.starts_with(&["its", "controller", "graveyard"])
-        || clause_words.starts_with(&["its", "controllers", "graveyard"])
-    {
-        (PlayerAst::ItsController, &clause_words[3..])
-    } else if clause_words.starts_with(&["its", "owner", "graveyard"])
-        || clause_words.starts_with(&["its", "owners", "graveyard"])
-    {
-        (PlayerAst::ItsOwner, &clause_words[3..])
-    } else {
+    let Some((player, consumed)) = parse_graveyard_owner_prefix(&clause_words) else {
         return Err(CardTextError::ParseError(format!(
             "unsupported reorder clause (clause: '{clause}')"
         )));
     };
+    if !matches!(
+        player,
+        PlayerAst::You | PlayerAst::That | PlayerAst::ItsController | PlayerAst::ItsOwner
+    ) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported reorder clause (clause: '{clause}')"
+        )));
+    }
+    let rest = &clause_words[consumed..];
 
     if !rest.is_empty() && rest != ["as", "you", "choose"] {
         return Err(CardTextError::ParseError(format!(

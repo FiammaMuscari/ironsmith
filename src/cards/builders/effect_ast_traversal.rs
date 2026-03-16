@@ -302,6 +302,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::GrantAbilitiesChoiceAll { .. } => {}
         EffectAst::GrantAbilitiesToTarget { .. } => {}
         EffectAst::GrantToTarget { .. } => {}
+        EffectAst::GrantBySpec { .. } => {}
         EffectAst::RemoveAbilitiesFromTarget { .. } => {}
         EffectAst::GrantAbilitiesChoiceToTarget { .. } => {}
         EffectAst::GrantAbilityToSource { .. } => {}

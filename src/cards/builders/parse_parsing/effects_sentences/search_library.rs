@@ -53,9 +53,9 @@ fn extract_search_library_mana_constraint(
     filter_tokens: &[Token],
 ) -> Option<(Vec<Token>, SearchLibraryManaConstraint)> {
     let filter_words = words(filter_tokens);
-    let with_idx = filter_words
-        .windows(3)
-        .position(|window| window[0] == "with" && window[1] == "mana" && matches!(window[2], "cost" | "value"))?;
+    let with_idx = filter_words.windows(3).position(|window| {
+        window[0] == "with" && window[1] == "mana" && matches!(window[2], "cost" | "value")
+    })?;
     let clause_word_start = with_idx + 3;
     let clause_token_start = token_index_for_word_index(filter_tokens, with_idx)?;
     let base_filter_tokens = trim_commas(&filter_tokens[..clause_token_start]);
@@ -503,10 +503,7 @@ pub(crate) fn parse_search_library_sentence(
         }
         while end > for_idx + 1 {
             let token = &search_tokens[end - 1];
-            if matches!(token, Token::Comma(_))
-                || token.is_word("and")
-                || token.is_word("then")
-            {
+            if matches!(token, Token::Comma(_)) || token.is_word("and") || token.is_word("then") {
                 end -= 1;
             } else {
                 break;
@@ -532,7 +529,10 @@ pub(crate) fn parse_search_library_sentence(
     {
         count = ChoiceCount::any_number();
         count_used = 2;
-    } else if count_tokens.first().is_some_and(|token| token.is_word("any")) {
+    } else if count_tokens
+        .first()
+        .is_some_and(|token| token.is_word("any"))
+    {
         if let Some((value, used)) = parse_number(&count_tokens[1..]) {
             count = ChoiceCount::up_to(value as usize);
             count_used = 1 + used;
@@ -587,14 +587,13 @@ pub(crate) fn parse_search_library_sentence(
     }
 
     let raw_filter_tokens = trim_commas(&search_tokens[filter_start..filter_end]);
-    let (mut filter_tokens, mana_constraint) =
-        if let Some((base_filter_tokens, mana_constraint)) =
-            extract_search_library_mana_constraint(&raw_filter_tokens)
-        {
-            (base_filter_tokens, Some(mana_constraint))
-        } else {
-            (raw_filter_tokens.clone(), None)
-        };
+    let (mut filter_tokens, mana_constraint) = if let Some((base_filter_tokens, mana_constraint)) =
+        extract_search_library_mana_constraint(&raw_filter_tokens)
+    {
+        (base_filter_tokens, Some(mana_constraint))
+    } else {
+        (raw_filter_tokens.clone(), None)
+    };
     let mut same_name_reference: Option<SameNameReference> = None;
     let raw_filter_words = words(&raw_filter_tokens);
     if raw_filter_words.len() >= 3
@@ -700,8 +699,7 @@ pub(crate) fn parse_search_library_sentence(
         };
         base_filter.name = Some(name);
         base_filter
-    } else if filter_words.len() == 1 && (filter_words[0] == "card" || filter_words[0] == "cards")
-    {
+    } else if filter_words.len() == 1 && (filter_words[0] == "card" || filter_words[0] == "cards") {
         ObjectFilter::default()
     } else if filter_words.contains(&"or") {
         parse_search_library_disjunction_filter(&filter_tokens)

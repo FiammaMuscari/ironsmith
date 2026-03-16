@@ -278,6 +278,9 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
                 },
                 PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
                 PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+                PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+                    "that player".to_string()
+                }
             });
         }
         if let Some(object_filter) = targets_object {

@@ -209,10 +209,21 @@ pub trait GameEventType: Debug + Send + Sync + GameEventTypeClone {
 
     /// Get the player involved in this event, if any.
     ///
+    /// This is the lightweight trigger-facing accessor used to bind "that player"
+    /// style references during triggered ability resolution.
+    ///
     /// For phase events, this is the active player.
     /// For life gain/loss, this is the affected player.
     fn player(&self) -> Option<PlayerId> {
         None
+    }
+
+    /// Get the player that triggered abilities should treat as "that player".
+    ///
+    /// By default this reuses `player()`, but the explicit name makes it easier to
+    /// distinguish from `affected_player()` at call sites.
+    fn trigger_player(&self) -> Option<PlayerId> {
+        self.player()
     }
 
     /// Get the controller of the object involved in this event, if any.

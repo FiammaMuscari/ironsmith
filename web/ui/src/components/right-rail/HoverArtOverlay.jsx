@@ -17,6 +17,7 @@ const METADATA_TEXT_STYLE = {
 };
 const INSPECTOR_ART_SWAP_MS = 240;
 const MIN_INSPECTOR_TEXT_SCALE = 0.74;
+const MIN_INSPECTOR_TITLE_SCALE = 0.28;
 const INSPECTOR_TITLE_FONT_SIZE = 22;
 const INSPECTOR_STATS_FONT_SIZE = 20;
 const INSPECTOR_METADATA_FONT_SIZE = 13;
@@ -497,6 +498,7 @@ export default function HoverArtOverlay({
   const objectIdKey = Number.isFinite(objectIdNum) ? String(objectIdNum) : null;
   const topHeaderRef = useRef(null);
   const topMetadataRef = useRef(null);
+  const inspectorTitleRef = useRef(null);
   const oracleBodyRef = useRef(null);
   const oracleContainerRef = useRef(null);
   const oracleScrollRef = useRef(null);
@@ -507,6 +509,7 @@ export default function HoverArtOverlay({
   const [copiedDebug, setCopiedDebug] = useState(false);
   const [compiledViewObjectKey, setCompiledViewObjectKey] = useState(null);
   const [inspectorScaleSession, setInspectorScaleSession] = useState({ key: null, scale: 1 });
+  const [inspectorTitleScaleSession, setInspectorTitleScaleSession] = useState({ key: null, scale: 1 });
   const [measuredPreferredInspectorWidth, setMeasuredPreferredInspectorWidth] = useState({
     key: null,
     width: null,
@@ -712,6 +715,19 @@ export default function HoverArtOverlay({
     ),
     [compact, displayMode, displayRulesText, metadataText, objectIdKey, statsText]
   );
+  const inspectorTitleScaleSessionKey = useMemo(
+    () => (
+      compact || displayMode !== "inspector"
+        ? null
+        : [
+          objectIdKey || "none",
+          displayMode,
+          objectName || "",
+          groupedCardCount,
+        ].join("|")
+    ),
+    [compact, displayMode, groupedCardCount, objectIdKey, objectName]
+  );
 
   const preferredInlineWidth = useMemo(() => {
     if (!compact || typeof document === "undefined") return null;
@@ -862,6 +878,13 @@ export default function HoverArtOverlay({
   const activeInspectorTextScale = compact || displayMode !== "inspector"
     ? 1
     : (inspectorScaleSession.key === inspectorScaleSessionKey ? inspectorScaleSession.scale : 1);
+  const activeInspectorTitleScale = compact || displayMode !== "inspector"
+    ? 1
+    : (
+      inspectorTitleScaleSession.key === inspectorTitleScaleSessionKey
+        ? inspectorTitleScaleSession.scale
+        : activeInspectorTextScale
+    );
   const topStackMatchesInspectorObject = useMemo(() => {
     if (!topStackObject) return false;
     if (objectIdNum != null && topStackId === String(objectIdNum)) return true;
@@ -1067,6 +1090,76 @@ export default function HoverArtOverlay({
     objectIdKey,
     preferredInspectorWidth,
     statsText,
+  ]);
+
+  useLayoutEffect(() => {
+    if (compact || displayMode !== "inspector" || !objectName) return undefined;
+
+    const banner = inspectorTitleRef.current;
+    const header = topHeaderRef.current;
+    const overlay = header?.parentElement;
+    if (!banner || !overlay || !inspectorTitleScaleSessionKey) return undefined;
+
+    let rafId = null;
+    const publishScale = () => {
+      const currentScale = Math.max(activeInspectorTitleScale, 0.01);
+      const naturalWidth = banner.scrollWidth / currentScale;
+      const availableWidth = Math.max(0, Math.floor(overlay.clientWidth * 0.82) - 2);
+
+      if (!Number.isFinite(naturalWidth) || naturalWidth <= 0 || availableWidth <= 0) {
+        return;
+      }
+
+      const fittedScale = clampNumber(
+        (availableWidth / naturalWidth) * 0.995,
+        MIN_INSPECTOR_TITLE_SCALE,
+        1
+      );
+      const nextScale = Math.min(activeInspectorTextScale, fittedScale);
+
+      setInspectorTitleScaleSession((currentSession) => {
+        const sessionScale = currentSession.key === inspectorTitleScaleSessionKey
+          ? currentSession.scale
+          : activeInspectorTextScale;
+        if (
+          currentSession.key === inspectorTitleScaleSessionKey
+          && Math.abs(sessionScale - nextScale) < 0.01
+        ) {
+          return currentSession;
+        }
+        return {
+          key: inspectorTitleScaleSessionKey,
+          scale: nextScale,
+        };
+      });
+    };
+
+    const scheduleScale = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        publishScale();
+      });
+    };
+
+    scheduleScale();
+    const observer = new ResizeObserver(scheduleScale);
+    observer.observe(banner);
+    observer.observe(overlay);
+    window.addEventListener("resize", scheduleScale);
+
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleScale);
+    };
+  }, [
+    activeInspectorTextScale,
+    activeInspectorTitleScale,
+    compact,
+    displayMode,
+    inspectorTitleScaleSessionKey,
+    objectName,
   ]);
 
   useLayoutEffect(() => {
@@ -1302,6 +1395,7 @@ export default function HoverArtOverlay({
   }, [objectIdKey, highlightedRuleLineIndices, displayRulesText]);
 
   const inspectorScale = activeInspectorTextScale;
+  const inspectorTitleScale = activeInspectorTitleScale;
   const oracleContainerClass = compact
     ? "relative z-10 px-2.5 pb-1.5"
     : "relative z-10 min-h-full flex flex-col justify-end";
@@ -1315,8 +1409,8 @@ export default function HoverArtOverlay({
     ? "text-[13px] leading-[1.28] text-white font-semibold text-right"
     : "text-white font-semibold text-right";
   const inspectorTitleStyle = compact ? undefined : {
-    fontSize: `${INSPECTOR_TITLE_FONT_SIZE * inspectorScale}px`,
-    padding: `${6 * inspectorScale}px ${12 * inspectorScale}px`,
+    fontSize: `${INSPECTOR_TITLE_FONT_SIZE * inspectorTitleScale}px`,
+    padding: `${6 * inspectorTitleScale}px ${12 * inspectorTitleScale}px`,
   };
   const inspectorTopMetaStyle = compact ? undefined : {
     padding: `${4 * inspectorScale}px ${10 * inspectorScale}px`,
@@ -1464,17 +1558,21 @@ export default function HoverArtOverlay({
         <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)]" />
         <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex max-w-[82%] flex-col items-start gap-1">
           {objectName && (
-            <div className={cn(
-              "inspector-banner inspector-banner--title rounded-none bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
+            <div
+              ref={inspectorTitleRef}
+              className={cn(
+                "inspector-banner inspector-banner--title max-w-full overflow-hidden rounded-none bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
               compact ? "text-[17px]" : "text-[22px]"
-            )} style={inspectorTitleStyle}>
-              <span className="inline-flex items-center gap-2">
+              )}
+              style={inspectorTitleStyle}
+            >
+              <span className="inline-flex max-w-full items-center gap-2 whitespace-nowrap">
                 {groupedCardCount > 1 && (
                   <span className="inspector-chip-count inline-flex h-5 min-w-5 items-center justify-center rounded-none border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
                     x{groupedCardCount}
                   </span>
                 )}
-                <span>{objectName}</span>
+                <span className="whitespace-nowrap">{objectName}</span>
               </span>
             </div>
           )}

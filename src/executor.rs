@@ -468,7 +468,7 @@ impl<'a> ExecutionContext<'a> {
             self.set_tagged_objects("it", snapshots);
         }
         if self.iterated_player.is_none() {
-            self.iterated_player = event.player();
+            self.iterated_player = event.trigger_player();
         }
 
         // If the event is vote-related, compute tags from THIS ability controller's perspective.

@@ -11,6 +11,7 @@ use crate::events::EventKind;
 use crate::events::spells::SpellCastEvent;
 use crate::game_state::Phase;
 use crate::ids::CardId;
+use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::ObjectKind;
 use crate::static_abilities::StaticAbility;
 use crate::triggers::Trigger;
@@ -2873,6 +2874,134 @@ fn test_combat_damage_with_triggers() {
 
     // Should have triggered
     assert!(!trigger_queue.is_empty());
+}
+
+#[test]
+fn test_ragavan_trigger_exiles_top_card_of_damaged_players_library() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+    game.turn.phase = Phase::Combat;
+    game.turn.step = Some(crate::game_state::Step::CombatDamage);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Red, 1);
+
+    let ragavan_def = CardDefinitionBuilder::new(CardId::new(), "Ragavan Runtime Probe")
+        .parse_text(
+            "Whenever this creature deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.\nDash {1}{R}",
+        )
+        .expect("ragavan runtime probe should parse");
+    let ragavan_id = game.create_object_from_definition(&ragavan_def, alice, Zone::Battlefield);
+
+    let top_card = CardBuilder::new(CardId::new(), "Bob Topdeck")
+        .card_types(vec![CardType::Sorcery])
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Red]]))
+        .build();
+    game.create_object_from_card(&top_card, bob, Zone::Library);
+
+    let triggered = ragavan_def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) => Some(triggered),
+            _ => None,
+        })
+        .expect("ragavan probe should have a triggered ability");
+
+    let damage_event = TriggerEvent::new_with_provenance(
+        crate::events::DamageEvent::new(
+            ragavan_id,
+            crate::game_event::DamageTarget::Player(bob),
+            2,
+            true,
+        ),
+        crate::provenance::ProvNodeId::default(),
+    );
+
+    let library_before = game.player(bob).expect("bob exists").library.len();
+    let exile_before = game.exile.len();
+    let battlefield_before = game.battlefield.len();
+
+    let mut dm = AutoPassDecisionMaker;
+    let mut ctx = ExecutionContext::new_default(ragavan_id, alice)
+        .with_decision_maker(&mut dm)
+        .with_triggering_event(damage_event);
+    for effect in &triggered.effects {
+        execute_effect(&mut game, effect, &mut ctx).expect("ragavan trigger should resolve");
+    }
+
+    let exiled_id = *game
+        .exile
+        .last()
+        .expect("ragavan should exile the damaged player's top card");
+    let exiled_obj = game.object(exiled_id).expect("exiled object should exist");
+
+    assert_eq!(
+        game.player(bob).expect("bob exists").library.len(),
+        library_before - 1,
+        "ragavan should exile the top card from the damaged player's library"
+    );
+    assert_eq!(
+        game.exile.len(),
+        exile_before + 1,
+        "ragavan should add one card to exile"
+    );
+    assert_eq!(
+        exiled_obj.name, "Bob Topdeck",
+        "ragavan should exile the damaged player's top card"
+    );
+    assert_eq!(
+        game.battlefield.len(),
+        battlefield_before + 1,
+        "ragavan should also create a Treasure token"
+    );
+    assert!(
+        game.grant_registry
+            .card_can_play_from_zone(&game, exiled_id, Zone::Exile, alice),
+        "ragavan should let its controller cast the exiled card until end of turn"
+    );
+
+    let combat_actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        !combat_actions.iter().any(|action| matches!(
+            action,
+            crate::decision::LegalAction::CastSpell {
+                spell_id,
+                from_zone: Zone::Exile,
+                casting_method: crate::alternative_cast::CastingMethod::PlayFrom {
+                    zone: Zone::Exile,
+                    use_alternative: None,
+                    ..
+                },
+            } if *spell_id == exiled_id
+        )),
+        "sorcery-speed exiled cards should not be castable during combat even when Ragavan grants permission"
+    );
+
+    game.turn.phase = Phase::NextMain;
+    game.turn.step = None;
+    game.turn.priority_player = Some(alice);
+
+    let postcombat_actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        postcombat_actions.iter().any(|action| matches!(
+            action,
+            crate::decision::LegalAction::CastSpell {
+                spell_id,
+                from_zone: Zone::Exile,
+                casting_method: crate::alternative_cast::CastingMethod::PlayFrom {
+                    zone: Zone::Exile,
+                    use_alternative: None,
+                    ..
+                },
+            } if *spell_id == exiled_id
+        )),
+        "Ragavan's exiled card should become castable in the postcombat main phase once timing allows it"
+    );
 }
 
 // === Full Game Flow Integration Test ===

@@ -111,6 +111,10 @@ impl GameEventType for DamageEvent {
         EventKind::Damage
     }
 
+    fn object_id(&self) -> Option<ObjectId> {
+        Some(self.source)
+    }
+
     fn affected_player(&self, game: &GameState) -> PlayerId {
         match self.target {
             DamageTarget::Player(player) => player,
@@ -152,6 +156,13 @@ impl GameEventType for DamageEvent {
 
     fn source_object(&self) -> Option<ObjectId> {
         Some(self.source)
+    }
+
+    fn player(&self) -> Option<PlayerId> {
+        match self.target {
+            DamageTarget::Player(player) => Some(player),
+            DamageTarget::Object(_) => None,
+        }
     }
 
     fn display(&self) -> String {
@@ -315,5 +326,18 @@ mod tests {
         );
 
         assert_eq!(event.source_object(), Some(source));
+    }
+
+    #[test]
+    fn test_damage_event_player_returns_damaged_player() {
+        let damaged_player = PlayerId::from_index(1);
+        let event = DamageEvent::new(
+            ObjectId::from_raw(42),
+            DamageTarget::Player(damaged_player),
+            3,
+            true,
+        );
+
+        assert_eq!(event.player(), Some(damaged_player));
     }
 }

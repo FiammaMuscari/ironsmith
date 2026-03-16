@@ -21,6 +21,7 @@ import {
   isTriggerOrderingDecision,
   normalizeTriggerOrderingOrder,
 } from "@/lib/trigger-ordering";
+import { useHoverSuppressedWhileScrolling } from "@/lib/useHoverSuppressedWhileScrolling";
 import { cn } from "@/lib/utils";
 
 const ACTION_STRIP_BODY_CLASS = "min-h-0 h-full";
@@ -600,6 +601,9 @@ function PriorityActionStrip({
   const [carouselResetByGroupKey, setCarouselResetByGroupKey] = useState({});
   const [isPointerInStrip, setIsPointerInStrip] = useState(false);
   const [loopEnabled, setLoopEnabled] = useState(false);
+  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
+    onScrollStart: onActionHoverEnd,
+  });
   const effectiveLoopCycles = loopEnabled ? BASE_LOOP_CYCLES : 1;
   const middleLoopIndex = Math.floor(effectiveLoopCycles / 2);
   const groupKeysSignature = useMemo(
@@ -880,14 +884,17 @@ function PriorityActionStrip({
 
   return (
     <div
-      ref={viewportRef}
+      ref={(node) => {
+        viewportRef.current = node;
+        attachScrollableRef(node);
+      }}
       className="action-strip-scroll min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap"
       onMouseEnter={() => setIsPointerInStrip(true)}
       onMouseLeave={() => setIsPointerInStrip(false)}
     >
       <div className="flex w-max min-w-full min-h-[32px] items-stretch gap-1.5 pr-2">
         {displayGroups.map(({ key, cycle, group }) => {
-          const isInteractiveCycle = cycle === middleLoopIndex;
+          const isPrimaryCycle = cycle === middleLoopIndex;
           const linkedActive = isGroupHoveredLinked(group) || isGroupSelectedLinked(group);
           const highlightName = group.hoverObjectId != null
             ? objectNameById.get(String(group.hoverObjectId)) || ""
@@ -919,7 +926,7 @@ function PriorityActionStrip({
             linkedActive
               ? "is-linked-active text-[#fff5de]"
               : "text-[#d8ccb4]",
-            isInteractiveCycle && "is-interactive"
+            "is-interactive"
           );
           const pillContent = (
             <>
@@ -938,24 +945,12 @@ function PriorityActionStrip({
             </>
           );
 
-          if (!isInteractiveCycle) {
-            return (
-              <div
-                key={key}
-                aria-hidden="true"
-                ref={setNodeRef}
-                className={pillClassName}
-                style={{ textOverflow: "clip" }}
-              >
-                {pillContent}
-              </div>
-            );
-          }
-
           return (
             <button
               key={key}
               type="button"
+              aria-hidden={isPrimaryCycle ? undefined : true}
+              tabIndex={isPrimaryCycle ? undefined : -1}
               ref={setNodeRef}
               className={pillClassName}
               style={{ textOverflow: "clip" }}
@@ -971,7 +966,10 @@ function PriorityActionStrip({
                 if (event.detail !== 0) return;
                 onActionClick(group.firstAction);
               }}
-              onMouseEnter={() => onActionHoverStart(group)}
+              onMouseEnter={() => {
+                if (hoverSuppressed) return;
+                onActionHoverStart(group);
+              }}
               onMouseLeave={onActionHoverEnd}
             >
               {pillContent}
@@ -1026,6 +1024,10 @@ function ViewedCardsStrip({
   onCardHoverStart,
   onCardHoverEnd,
 }) {
+  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
+    onScrollStart: onCardHoverEnd,
+  });
+
   const normalizedSourceName = String(sourceName || "").trim();
   const normalizedDescription = String(description || "").trim();
 
@@ -1047,7 +1049,10 @@ function ViewedCardsStrip({
             <SymbolText text={normalizeDecisionText(normalizedDescription)} />
           </div>
         )}
-        <div className="action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden">
+        <div
+          ref={attachScrollableRef}
+          className="action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden"
+        >
           <div className="flex w-max min-w-full items-center gap-1.5 pb-0.5">
             {cards.length > 0 ? cards.map((card) => (
               <button
@@ -1059,7 +1064,10 @@ function ViewedCardsStrip({
                     ? "is-linked-active text-[#fff5de]"
                     : "is-interactive text-[#decfae]"
                 )}
-                onMouseEnter={() => onCardHoverStart?.(card)}
+                onMouseEnter={() => {
+                  if (hoverSuppressed) return;
+                  onCardHoverStart?.(card);
+                }}
                 onMouseLeave={() => onCardHoverEnd?.()}
               >
                 <span className="truncate">

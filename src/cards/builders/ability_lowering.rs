@@ -8,6 +8,7 @@ use crate::cards::builders::{
     materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
     materialize_prepared_triggered_effects, prepare_effects_for_lowering,
     prepare_effects_with_trigger_context_for_lowering, prepare_triggered_effects_for_lowering,
+    trigger_binds_player_reference_context, validate_iterated_player_bindings_in_lowered_effects,
 };
 use crate::effect::{Effect, EffectMode};
 use crate::zone::Zone;
@@ -135,6 +136,11 @@ fn lower_parsed_ability_internal(
             };
             let (lowered, parsed_intervening_if) =
                 materialize_prepared_triggered_effects(&prepared)?;
+            validate_iterated_player_bindings_in_lowered_effects(
+                &lowered,
+                trigger_binds_player_reference_context(&trigger),
+                "triggered ability effects",
+            )?;
             triggered.trigger = compile_trigger_spec(trigger);
             triggered.effects = lowered.effects;
             triggered.choices = lowered.choices;
@@ -154,6 +160,11 @@ fn lower_parsed_ability_internal(
         return Ok(parsed);
     };
     let lowered = materialize_prepared_effects_with_trigger_context(&prepared)?;
+    validate_iterated_player_bindings_in_lowered_effects(
+        &lowered,
+        false,
+        "activated ability effects",
+    )?;
     activated.effects = lowered.effects;
     activated.choices = lowered.choices;
     Ok(parsed)

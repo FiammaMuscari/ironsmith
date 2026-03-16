@@ -63,9 +63,6 @@ pub fn generate_continuous_effects_from_static_abilities(
                     if !ability.functions_in(&zone) {
                         continue;
                     }
-                    if !static_ability.is_active(game, object_id) {
-                        continue;
-                    }
                     // Generate effects directly from the trait method
                     let mut ability_effects =
                         static_ability.generate_effects(object_id, controller, game);

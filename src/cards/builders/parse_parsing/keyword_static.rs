@@ -10,8 +10,8 @@ use crate::cards::builders::materialize_static_abilities_ast;
 use crate::cards::builders::parse_parsing::{
     color_from_color_set, contains_until_end_of_turn, intern_counter_name, is_article,
     is_at_trigger_intro, is_land_subtype, is_negated_untap_clause, is_source_reference_words,
-    is_untap_during_each_other_players_untap_step_words, keyword_title, merge_spell_filters,
-    normalize_cant_words, parse_ability_phrase, parse_activated_line, parse_activation_cost,
+    is_untap_during_each_other_players_untap_step_words, merge_spell_filters, normalize_cant_words,
+    parse_ability_phrase, parse_activated_line, parse_activation_cost,
     parse_all_creatures_able_to_block_source_line, parse_cant_clauses, parse_card_type,
     parse_color, parse_cost_reduction_line, parse_counter_type_from_tokens,
     parse_counter_type_word, parse_cycling_line, parse_devotion_value_from_add_clause,
@@ -21,9 +21,9 @@ use crate::cards::builders::parse_parsing::{
     parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
     parse_flashback_keyword_line, parse_granted_activated_or_triggered_ability_for_gain,
     parse_mana_symbol, parse_named_number, parse_number, parse_number_word_i32,
-    parse_object_filter, parse_source_must_be_blocked_if_able_line, parse_spell_filter,
-    parse_subtype_flexible, parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word,
-    parser_trace, parser_trace_stack, replace_unbound_x_with_value,
+    parse_object_filter, parse_permission_clause_spec, parse_source_must_be_blocked_if_able_line,
+    parse_spell_filter, parse_subtype_flexible, parse_subtype_word, parse_triggered_line,
+    parse_value, parse_zone_word, parser_trace, parser_trace_stack, replace_unbound_x_with_value,
     scale_dynamic_cost_modifier_value, spell_filter_has_identity, split_on_and, split_on_comma,
     split_on_comma_or_semicolon, split_on_period, starts_with_until_end_of_turn, trim_commas,
     trim_edge_punctuation, value_contains_unbound_x, words,
@@ -850,38 +850,6 @@ pub(crate) fn parse_ward_discard_card_type_cost(tokens: &[Token]) -> Option<Tota
         crate::costs::Cost::discard(count, None)
     };
     Some(TotalCost::from_cost(cost))
-}
-
-pub(crate) fn format_ward_marker_tail(tokens: &[Token]) -> String {
-    let mut parts = Vec::new();
-    let mut previous_word: Option<String> = None;
-    for word in words(tokens) {
-        if word.chars().all(|ch| ch.is_ascii_digit()) {
-            let should_brace = matches!(previous_word.as_deref(), Some("waterbend"));
-            if should_brace {
-                parts.push(format!("{{{word}}}"));
-            } else {
-                parts.push(word.to_string());
-            }
-            previous_word = Some(word.to_string());
-            continue;
-        }
-        if let Ok(symbol) = parse_mana_symbol(word) {
-            parts.push(ManaCost::from_symbols(vec![symbol]).to_oracle());
-            previous_word = Some(word.to_string());
-            continue;
-        }
-        parts.push(word.to_string());
-        previous_word = Some(word.to_string());
-    }
-
-    if let Some(first) = parts.first_mut()
-        && !first.starts_with('{')
-    {
-        *first = keyword_title(first);
-    }
-
-    parts.join(" ")
 }
 
 pub(crate) fn parse_composed_anthem_effects_line(
@@ -4735,52 +4703,16 @@ pub(crate) fn parse_assign_damage_as_unblocked_line(
 pub(crate) fn parse_grant_flash_to_noncreature_spells_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let normalized = words(tokens)
-        .into_iter()
-        .map(|word| if word == "cannot" { "cant" } else { word })
-        .collect::<Vec<_>>();
-
-    let mut idx = 0;
-    if normalized.get(idx) != Some(&"you") {
-        return Ok(None);
+    match parse_permission_clause_spec(tokens)? {
+        Some(crate::cards::builders::parse_parsing::PermissionClauseSpec::GrantBySpec {
+            player: crate::cards::builders::PlayerAst::You,
+            spec,
+            lifetime: crate::cards::builders::parse_parsing::PermissionLifetime::Static,
+        }) if spec == crate::grant::GrantSpec::flash_to_noncreature_spells() => {
+            Ok(Some(StaticAbility::grants(spec)))
+        }
+        _ => Ok(None),
     }
-    idx += 1;
-    if normalized.get(idx) == Some(&"may") {
-        idx += 1;
-    }
-    if normalized.get(idx) != Some(&"cast") {
-        return Ok(None);
-    }
-    idx += 1;
-
-    let tail = &normalized[idx..];
-    let matches =
-        tail == [
-            "noncreature",
-            "spells",
-            "as",
-            "though",
-            "they",
-            "had",
-            "flash",
-        ] || tail
-            == [
-                "noncreature",
-                "spells",
-                "as",
-                "though",
-                "they",
-                "have",
-                "flash",
-            ];
-
-    if matches {
-        return Ok(Some(StaticAbility::grants(
-            crate::grant::GrantSpec::flash_to_noncreature_spells(),
-        )));
-    }
-
-    Ok(None)
 }
 
 pub(crate) fn parse_cast_this_spell_as_though_it_had_flash_line(
@@ -4788,9 +4720,13 @@ pub(crate) fn parse_cast_this_spell_as_though_it_had_flash_line(
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let normalized = words(tokens);
     let matches = normalized.as_slice()
-        == ["you", "may", "cast", "this", "spell", "as", "though", "it", "had", "flash"]
+        == [
+            "you", "may", "cast", "this", "spell", "as", "though", "it", "had", "flash",
+        ]
         || normalized.as_slice()
-            == ["you", "may", "cast", "this", "as", "though", "it", "had", "flash"];
+            == [
+                "you", "may", "cast", "this", "as", "though", "it", "had", "flash",
+            ];
     if matches {
         return Ok(Some(StaticAbility::flash()));
     }
@@ -4881,11 +4817,7 @@ pub(crate) fn parse_play_lands_from_graveyard_line(
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let words = words(tokens);
     if words.as_slice() == ["you", "may", "play", "lands", "from", "your", "graveyard"] {
-        let spec = crate::grant::GrantSpec::new(
-            crate::grant::Grantable::play_from(),
-            ObjectFilter::land(),
-            Zone::Graveyard,
-        );
+        let spec = crate::grant::GrantSpec::play_lands_from_graveyard();
         return Ok(Some(StaticAbility::grants(spec)));
     }
     Ok(None)
@@ -4894,63 +4826,24 @@ pub(crate) fn parse_play_lands_from_graveyard_line(
 pub(crate) fn parse_cast_spells_from_hand_without_paying_mana_costs_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let normalized = words(tokens);
-    if !normalized.starts_with(&["you", "may", "cast"]) {
-        return Ok(None);
+    match parse_permission_clause_spec(tokens)? {
+        Some(crate::cards::builders::parse_parsing::PermissionClauseSpec::GrantBySpec {
+            player: crate::cards::builders::PlayerAst::You,
+            spec,
+            lifetime: crate::cards::builders::parse_parsing::PermissionLifetime::Static,
+        }) if spec.zone == Zone::Hand
+            && matches!(
+                &spec.grantable,
+                crate::grant::Grantable::AlternativeCast(method)
+                    if method.cast_from_zone() == Zone::Hand
+                        && method.mana_cost().is_none()
+                        && method.non_mana_costs().is_empty()
+            ) =>
+        {
+            Ok(Some(StaticAbility::grants(spec)))
+        }
+        _ => Ok(None),
     }
-
-    let Some(from_hand_word_idx) = normalized
-        .windows(3)
-        .position(|window| window == ["from", "your", "hand"])
-    else {
-        return Ok(None);
-    };
-
-    let suffix = &normalized[from_hand_word_idx..];
-    let is_supported_suffix = matches!(
-        suffix,
-        [
-            "from", "your", "hand", "without", "paying", "their", "mana", "costs"
-        ] | [
-            "from", "your", "hand", "without", "paying", "their", "mana", "cost"
-        ] | [
-            "from", "your", "hand", "without", "paying", "its", "mana", "cost"
-        ]
-    );
-    if !is_supported_suffix {
-        return Ok(None);
-    }
-
-    let Some(filter_start_token_idx) = token_index_for_word_index(tokens, 3) else {
-        return Ok(None);
-    };
-    let Some(filter_end_token_idx) = token_index_for_word_index(tokens, from_hand_word_idx) else {
-        return Ok(None);
-    };
-
-    let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
-    let filter_words = words(&filter_tokens);
-    if filter_words.is_empty()
-        || !filter_words
-            .iter()
-            .any(|word| *word == "spell" || *word == "spells")
-    {
-        return Ok(None);
-    }
-
-    let mut filter = ObjectFilter::nonland();
-    merge_spell_filters(&mut filter, parse_spell_filter(&filter_tokens));
-
-    let spec = crate::grant::GrantSpec::new(
-        crate::grant::Grantable::AlternativeCast(AlternativeCastingMethod::alternative_cost(
-            "Without paying mana cost",
-            None,
-            Vec::new(),
-        )),
-        filter,
-        Zone::Hand,
-    );
-    Ok(Some(StaticAbility::grants(spec)))
 }
 
 pub(crate) fn parse_pt_modifier(raw: &str) -> Result<(i32, i32), CardTextError> {

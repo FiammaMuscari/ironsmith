@@ -142,6 +142,12 @@ fn resolve_contextual_player_filter(
         PlayerFilter::OwnerOf(reference) => {
             PlayerFilter::OwnerOf(resolve_object_ref(reference, refs))
         }
+        PlayerFilter::AliasedOwnerOf(reference) => {
+            PlayerFilter::AliasedOwnerOf(resolve_object_ref(reference, refs))
+        }
+        PlayerFilter::AliasedControllerOf(reference) => {
+            PlayerFilter::AliasedControllerOf(resolve_object_ref(reference, refs))
+        }
         _ => filter.clone(),
     })
 }
@@ -302,6 +308,44 @@ pub(crate) fn resolve_restriction_it_tag(
     refs: &ReferenceEnv,
 ) -> Result<Restriction, CardTextError> {
     let resolved = match restriction {
+        Restriction::AdditionalLandPlays(player, count) => Restriction::additional_land_plays(
+            resolve_contextual_player_filter(player, refs)?,
+            *count,
+        ),
+        Restriction::GainLife(player) => {
+            Restriction::gain_life(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::SearchLibraries(player) => {
+            Restriction::search_libraries(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::CastSpellsMatching(player, filter) => Restriction::cast_spells_matching(
+            resolve_contextual_player_filter(player, refs)?,
+            resolve_it_tag(filter, refs)?,
+        ),
+        Restriction::ActivateNonManaAbilities(player) => Restriction::activate_non_mana_abilities(
+            resolve_contextual_player_filter(player, refs)?,
+        ),
+        Restriction::CastMoreThanOneSpellEachTurn(player, filter) => {
+            Restriction::CastMoreThanOneSpellEachTurn(
+                resolve_contextual_player_filter(player, refs)?,
+                resolve_it_tag(filter, refs)?,
+            )
+        }
+        Restriction::DrawCards(player) => {
+            Restriction::DrawCards(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::DrawExtraCards(player) => {
+            Restriction::DrawExtraCards(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::ChangeLifeTotal(player) => {
+            Restriction::ChangeLifeTotal(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::LoseGame(player) => {
+            Restriction::LoseGame(resolve_contextual_player_filter(player, refs)?)
+        }
+        Restriction::WinGame(player) => {
+            Restriction::WinGame(resolve_contextual_player_filter(player, refs)?)
+        }
         Restriction::Attack(filter) => Restriction::attack(resolve_it_tag(filter, refs)?),
         Restriction::Block(filter) => Restriction::block(resolve_it_tag(filter, refs)?),
         Restriction::BlockSpecificAttacker { blockers, attacker } => {
@@ -331,6 +375,9 @@ pub(crate) fn resolve_restriction_it_tag(
             Restriction::have_counters_placed(resolve_it_tag(filter, refs)?)
         }
         Restriction::BeTargeted(filter) => Restriction::be_targeted(resolve_it_tag(filter, refs)?),
+        Restriction::BeTargetedPlayer(player) => {
+            Restriction::BeTargetedPlayer(resolve_contextual_player_filter(player, refs)?)
+        }
         Restriction::BeCountered(filter) => {
             Restriction::be_countered(resolve_it_tag(filter, refs)?)
         }

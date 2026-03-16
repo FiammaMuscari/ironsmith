@@ -1,4 +1,4 @@
-use crate::card::PowerToughness;
+use crate::card::{LinkedFaceLayout, PowerToughness};
 use crate::cards::{
     CardDefinition, ParseAnnotations,
     builders::{CardDefinitionBuilder as RawCardDefinitionBuilder, CardTextError},
@@ -44,6 +44,22 @@ impl CardDefinitionBuilder {
 
     pub(crate) fn oracle_text(self, text: impl Into<String>) -> Self {
         Self(self.0.oracle_text(text))
+    }
+
+    pub(crate) fn other_face(self, face: CardId) -> Self {
+        Self(self.0.other_face(face))
+    }
+
+    pub(crate) fn other_face_name(self, name: impl Into<String>) -> Self {
+        Self(self.0.other_face_name(name))
+    }
+
+    pub(crate) fn linked_face_layout(self, layout: LinkedFaceLayout) -> Self {
+        Self(self.0.linked_face_layout(layout))
+    }
+
+    pub(crate) fn has_fuse(self) -> Self {
+        Self(self.0.has_fuse())
     }
 
     pub(crate) fn power_toughness(self, pt: PowerToughness) -> Self {

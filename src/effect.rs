@@ -3166,6 +3166,16 @@ impl Effect {
         Self::new(GrantEffect::new(grantable, target, duration))
     }
 
+    /// Create a unified filter-based grant effect from a shared grant spec.
+    pub fn grant_by_spec(
+        spec: crate::grant::GrantSpec,
+        player: crate::target::PlayerFilter,
+        duration: crate::grant::GrantDuration,
+    ) -> Self {
+        use crate::effects::GrantBySpecEffect;
+        Self::new(GrantBySpecEffect::new(spec, player, duration))
+    }
+
     /// Create an effect that grants an ability directly to an object.
     ///
     /// This is useful for effects like saga chapters that say "this permanent gains ...".
@@ -4018,8 +4028,11 @@ impl Effect {
 
     /// Grant play from graveyard until end of turn.
     pub fn grant_play_from_graveyard_until_eot(player: PlayerFilter) -> Self {
-        use crate::effects::GrantPlayFromGraveyardEffect;
-        Self::new(GrantPlayFromGraveyardEffect::new(player))
+        Self::grant_by_spec(
+            crate::grant::GrantSpec::play_from_graveyard(),
+            player,
+            crate::grant::GrantDuration::UntilEndOfTurn,
+        )
     }
 
     /// Grant additional land plays for a duration.

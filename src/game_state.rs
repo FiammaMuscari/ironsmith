@@ -2995,6 +2995,9 @@ impl GameState {
         id: ObjectId,
         effects: &[ContinuousEffect],
     ) -> Option<crate::continuous::CalculatedCharacteristics> {
+        if let Some(chars) = crate::continuous::in_progress_characteristics(id) {
+            return Some(chars);
+        }
         crate::continuous::calculate_characteristics_with_effects(
             id,
             &self.objects,
@@ -3009,6 +3012,9 @@ impl GameState {
         &self,
         id: ObjectId,
     ) -> Option<crate::continuous::CalculatedCharacteristics> {
+        if let Some(chars) = crate::continuous::in_progress_characteristics(id) {
+            return Some(chars);
+        }
         let all_effects = self.all_continuous_effects();
         self.calculated_characteristics_with_effects(id, &all_effects)
     }

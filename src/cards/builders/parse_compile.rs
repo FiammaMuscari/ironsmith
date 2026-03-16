@@ -373,6 +373,257 @@ pub(crate) fn materialize_prepared_triggered_effects(
     Ok((lowered, intervening_if))
 }
 
+fn validate_unbound_iterated_player(
+    debug_repr: String,
+    context: &str,
+) -> Result<(), CardTextError> {
+    if debug_repr.contains("IteratedPlayer") {
+        return Err(CardTextError::InvariantViolation(format!(
+            "{context} references PlayerFilter::IteratedPlayer without a trigger or loop that binds \"that player\": {debug_repr}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_choose_specs_for_iterated_player(
+    choices: &[ChooseSpec],
+    iterated_player_bound: bool,
+    context: &str,
+) -> Result<(), CardTextError> {
+    if iterated_player_bound {
+        return Ok(());
+    }
+    for choice in choices {
+        validate_unbound_iterated_player(format!("{choice:?}"), context)?;
+    }
+    Ok(())
+}
+
+fn validate_condition_for_iterated_player(
+    condition: &Condition,
+    iterated_player_bound: bool,
+    context: &str,
+) -> Result<(), CardTextError> {
+    if iterated_player_bound {
+        return Ok(());
+    }
+    validate_unbound_iterated_player(format!("{condition:?}"), context)
+}
+
+fn validate_effects_for_iterated_player(
+    effects: &[Effect],
+    iterated_player_bound: bool,
+    context: &str,
+) -> Result<(), CardTextError> {
+    for effect in effects {
+        validate_effect_for_iterated_player(effect, iterated_player_bound, context)?;
+    }
+    Ok(())
+}
+
+fn validate_effect_for_iterated_player(
+    effect: &Effect,
+    iterated_player_bound: bool,
+    context: &str,
+) -> Result<(), CardTextError> {
+    if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+        return validate_effects_for_iterated_player(
+            &sequence.effects,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
+        if !iterated_player_bound && let Some(decider) = &may.decider {
+            validate_unbound_iterated_player(format!("{decider:?}"), context)?;
+        }
+        return validate_effects_for_iterated_player(&may.effects, iterated_player_bound, context);
+    }
+    if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(format!("{:?}", unless_pays.player), context)?;
+        }
+        return validate_effects_for_iterated_player(
+            &unless_pays.effects,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(unless_action) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(format!("{:?}", unless_action.player), context)?;
+        }
+        validate_effects_for_iterated_player(
+            &unless_action.effects,
+            iterated_player_bound,
+            context,
+        )?;
+        return validate_effects_for_iterated_player(
+            &unless_action.alternative,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(for_players) = effect.downcast_ref::<crate::effects::ForPlayersEffect>() {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(format!("{:?}", for_players.filter), context)?;
+        }
+        return validate_effects_for_iterated_player(&for_players.effects, true, context);
+    }
+    if let Some(for_each_object) = effect.downcast_ref::<crate::effects::ForEachObject>() {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(format!("{:?}", for_each_object.filter), context)?;
+        }
+        return validate_effects_for_iterated_player(&for_each_object.effects, true, context);
+    }
+    if let Some(for_each_tagged) = effect.downcast_ref::<crate::effects::ForEachTaggedEffect>() {
+        return validate_effects_for_iterated_player(&for_each_tagged.effects, true, context);
+    }
+    if let Some(for_each_controller) =
+        effect.downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
+    {
+        return validate_effects_for_iterated_player(&for_each_controller.effects, true, context);
+    }
+    if let Some(for_each_player) =
+        effect.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()
+    {
+        return validate_effects_for_iterated_player(&for_each_player.effects, true, context);
+    }
+    if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
+        validate_condition_for_iterated_player(
+            &conditional.condition,
+            iterated_player_bound,
+            context,
+        )?;
+        validate_effects_for_iterated_player(&conditional.if_true, iterated_player_bound, context)?;
+        return validate_effects_for_iterated_player(
+            &conditional.if_false,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(if_effect) = effect.downcast_ref::<crate::effects::IfEffect>() {
+        validate_effects_for_iterated_player(&if_effect.then, iterated_player_bound, context)?;
+        return validate_effects_for_iterated_player(
+            &if_effect.else_,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+        return validate_effect_for_iterated_player(&tagged.effect, iterated_player_bound, context);
+    }
+    if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+        return validate_effect_for_iterated_player(
+            &with_id.effect,
+            iterated_player_bound,
+            context,
+        );
+    }
+    if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+        for mode in &choose_mode.modes {
+            validate_effects_for_iterated_player(&mode.effects, iterated_player_bound, context)?;
+        }
+        return Ok(());
+    }
+    if let Some(vote) = effect.downcast_ref::<crate::effects::VoteEffect>() {
+        for option in &vote.options {
+            validate_effects_for_iterated_player(
+                &option.effects_per_vote,
+                iterated_player_bound,
+                context,
+            )?;
+        }
+        return Ok(());
+    }
+    if let Some(reflexive) = effect.downcast_ref::<crate::effects::ReflexiveTriggerEffect>() {
+        validate_choose_specs_for_iterated_player(&reflexive.choices, false, context)?;
+        return validate_effects_for_iterated_player(&reflexive.effects, false, context);
+    }
+    if let Some(schedule_delayed) =
+        effect.downcast_ref::<crate::effects::ScheduleDelayedTriggerEffect>()
+    {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(
+                format!("{:?}", schedule_delayed.controller),
+                context,
+            )?;
+            if let Some(filter) = &schedule_delayed.target_filter {
+                validate_unbound_iterated_player(format!("{filter:?}"), context)?;
+            }
+        }
+        return validate_effects_for_iterated_player(&schedule_delayed.effects, false, context);
+    }
+    if let Some(schedule_when_leaves) =
+        effect.downcast_ref::<crate::effects::ScheduleEffectsWhenTaggedLeavesEffect>()
+    {
+        if !iterated_player_bound {
+            validate_unbound_iterated_player(
+                format!("{:?}", schedule_when_leaves.controller),
+                context,
+            )?;
+        }
+        return validate_effects_for_iterated_player(&schedule_when_leaves.effects, false, context);
+    }
+    if let Some(haunt) = effect.downcast_ref::<crate::effects::HauntExileEffect>() {
+        validate_choose_specs_for_iterated_player(&haunt.haunt_choices, false, context)?;
+        return validate_effects_for_iterated_player(&haunt.haunt_effects, false, context);
+    }
+    if let Some(choose) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
+        if !iterated_player_bound && matches!(choose.chooser, PlayerFilter::Target(_)) {
+            return Ok(());
+        }
+    }
+
+    if !iterated_player_bound {
+        validate_unbound_iterated_player(format!("{effect:?}"), context)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_iterated_player_bindings_in_lowered_effects(
+    lowered: &LoweredEffects,
+    initial_iterated_player_bound: bool,
+    context: &str,
+) -> Result<(), CardTextError> {
+    let iterated_player_bound = initial_iterated_player_bound || lowered.exports.iterated_player;
+    validate_effects_for_iterated_player(&lowered.effects, iterated_player_bound, context)?;
+    validate_choose_specs_for_iterated_player(&lowered.choices, iterated_player_bound, context)
+}
+
+pub(crate) fn trigger_binds_iterated_player(trigger: &TriggerSpec) -> bool {
+    match trigger {
+        TriggerSpec::SpellCast { .. }
+        | TriggerSpec::SpellCopied { .. }
+        | TriggerSpec::PlayerLosesLife(_)
+        | TriggerSpec::PlayerLosesLifeDuringTurn { .. }
+        | TriggerSpec::PlayerDrawsCard(_)
+        | TriggerSpec::PlayerDrawsNthCardEachTurn { .. }
+        | TriggerSpec::PlayerDiscardsCard { .. }
+        | TriggerSpec::PlayerPlaysLand { .. }
+        | TriggerSpec::PlayerTapsForMana { .. }
+        | TriggerSpec::PlayerSacrifices { .. }
+        | TriggerSpec::BeginningOfUpkeep(_)
+        | TriggerSpec::BeginningOfDrawStep(_)
+        | TriggerSpec::BeginningOfCombat(_)
+        | TriggerSpec::BeginningOfEndStep(_)
+        | TriggerSpec::BeginningOfPrecombatMain(_)
+        | TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. }
+        | TriggerSpec::AttacksYouOrPlaneswalkerYouControl(_)
+        | TriggerSpec::AttacksYouOrPlaneswalkerYouControlOneOrMore(_)
+        | TriggerSpec::KeywordAction { .. }
+        | TriggerSpec::KeywordActionFromSource { .. }
+        | TriggerSpec::Expend { .. } => true,
+        TriggerSpec::BecomesTargetedBySourceController {
+            source_controller, ..
+        } => *source_controller != PlayerFilter::Any,
+        TriggerSpec::Either(left, right) => {
+            trigger_binds_iterated_player(left) && trigger_binds_iterated_player(right)
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn compile_effect_prelude_tags(prelude: &[EffectPreludeTag]) -> Vec<Effect> {
     prelude
         .iter()
@@ -434,7 +685,13 @@ pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<Pl
         TriggerSpec::PlayerPlaysLand { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerTapsForMana { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerSacrifices { .. } => Some(PlayerFilter::IteratedPlayer),
-        TriggerSpec::ThisDealsDamageToPlayer { .. } => Some(PlayerFilter::IteratedPlayer),
+        TriggerSpec::ThisDealsDamageToPlayer { .. }
+        | TriggerSpec::ThisDealsCombatDamageToPlayer
+        | TriggerSpec::DealsCombatDamageToPlayer { .. } => Some(PlayerFilter::DamagedPlayer),
+        TriggerSpec::AttacksYouOrPlaneswalkerYouControl(_)
+        | TriggerSpec::AttacksYouOrPlaneswalkerYouControlOneOrMore(_) => {
+            Some(PlayerFilter::IteratedPlayer)
+        }
         TriggerSpec::BeginningOfUpkeep(player)
         | TriggerSpec::BeginningOfDrawStep(player)
         | TriggerSpec::BeginningOfCombat(player)
@@ -469,6 +726,13 @@ pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<Pl
         }
         _ => None,
     }
+}
+
+pub(crate) fn trigger_binds_player_reference_context(trigger: &TriggerSpec) -> bool {
+    trigger_binds_iterated_player(trigger)
+        || inferred_trigger_player_filter(trigger)
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
 }
 
 pub(crate) fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec) -> bool {
@@ -1115,6 +1379,10 @@ fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
         | EffectAst::GrantAbilitiesAll { filter, .. }
         | EffectAst::RemoveAbilitiesAll { filter, .. }
         | EffectAst::GrantAbilitiesChoiceAll { filter, .. }
+        | EffectAst::GrantBySpec {
+            spec: crate::grant::GrantSpec { filter, .. },
+            ..
+        }
         | EffectAst::Enchant { filter }
         | EffectAst::SearchLibrary { filter, .. }
         | EffectAst::DestroyAllAttachedTo { filter, .. } => Some(filter),
@@ -1251,9 +1519,10 @@ pub(crate) fn object_ref_references_tag(reference: &ObjectRef, tag: &str) -> boo
 pub(crate) fn player_filter_references_tag(filter: &PlayerFilter, tag: &str) -> bool {
     match filter {
         PlayerFilter::Target(inner) => player_filter_references_tag(inner, tag),
-        PlayerFilter::ControllerOf(reference) | PlayerFilter::OwnerOf(reference) => {
-            object_ref_references_tag(reference, tag)
-        }
+        PlayerFilter::ControllerOf(reference)
+        | PlayerFilter::OwnerOf(reference)
+        | PlayerFilter::AliasedOwnerOf(reference)
+        | PlayerFilter::AliasedControllerOf(reference) => object_ref_references_tag(reference, tag),
         _ => false,
     }
 }
@@ -1406,6 +1675,7 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::PlayFromGraveyardUntilEot { player }
         | EffectAst::AdditionalLandPlays { player, .. }
         | EffectAst::GrantPlayTaggedUntilEndOfTurn { player, .. }
+        | EffectAst::GrantBySpec { player, .. }
         | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
             player,
             ..
@@ -2892,6 +3162,107 @@ fn preserve_chooser_relative_player_filters(
     }
 }
 
+fn bind_relative_iterated_player_filters_to_chooser(
+    filter: &mut ObjectFilter,
+    chooser: &PlayerFilter,
+) {
+    if matches!(chooser, PlayerFilter::IteratedPlayer) {
+        return;
+    }
+
+    if matches!(filter.owner, Some(PlayerFilter::IteratedPlayer)) {
+        filter.owner = Some(chooser.clone());
+    }
+    if matches!(filter.controller, Some(PlayerFilter::IteratedPlayer)) {
+        filter.controller = Some(chooser.clone());
+    }
+    if matches!(filter.targets_player, Some(PlayerFilter::IteratedPlayer)) {
+        filter.targets_player = Some(chooser.clone());
+    }
+    if matches!(
+        filter.targets_only_player,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        filter.targets_only_player = Some(chooser.clone());
+    }
+    if matches!(
+        filter.attacking_player_or_planeswalker_controlled_by,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        filter.attacking_player_or_planeswalker_controlled_by = Some(chooser.clone());
+    }
+    if matches!(
+        filter.entered_battlefield_controller,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        filter.entered_battlefield_controller = Some(chooser.clone());
+    }
+    if let Some(targets) = filter.targets_object.as_deref_mut() {
+        bind_relative_iterated_player_filters_to_chooser(targets, chooser);
+    }
+    if let Some(targets) = filter.targets_only_object.as_deref_mut() {
+        bind_relative_iterated_player_filters_to_chooser(targets, chooser);
+    }
+    for any_of in &mut filter.any_of {
+        bind_relative_iterated_player_filters_to_chooser(any_of, chooser);
+    }
+}
+
+fn bind_relative_iterated_player_in_value_to_player_filter(
+    value: &mut Value,
+    player_filter: &PlayerFilter,
+) {
+    match value {
+        Value::Add(left, right) => {
+            bind_relative_iterated_player_in_value_to_player_filter(left, player_filter);
+            bind_relative_iterated_player_in_value_to_player_filter(right, player_filter);
+        }
+        Value::Scaled(inner, _) => {
+            bind_relative_iterated_player_in_value_to_player_filter(inner, player_filter);
+        }
+        Value::Count(filter)
+        | Value::CountScaled(filter, _)
+        | Value::TotalPower(filter)
+        | Value::TotalToughness(filter)
+        | Value::TotalManaValue(filter)
+        | Value::GreatestPower(filter)
+        | Value::GreatestToughness(filter)
+        | Value::GreatestManaValue(filter)
+        | Value::BasicLandTypesAmong(filter)
+        | Value::ColorsAmong(filter)
+        | Value::DistinctNames(filter) => {
+            bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+        }
+        Value::CreaturesDiedThisTurnControlledBy(filter) => {
+            if matches!(filter, PlayerFilter::IteratedPlayer)
+                && !matches!(player_filter, PlayerFilter::IteratedPlayer)
+            {
+                *filter = player_filter.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn choose_followup_player_filter(
+    filter: &ObjectFilter,
+    chooser: &PlayerFilter,
+) -> Option<PlayerFilter> {
+    let inferred = infer_player_filter_from_object_filter(filter);
+    if inferred
+        .as_ref()
+        .is_some_and(PlayerFilter::mentions_iterated_player)
+        && matches!(
+            chooser,
+            PlayerFilter::Target(_) | PlayerFilter::Opponent | PlayerFilter::Specific(_)
+        )
+    {
+        Some(chooser.clone())
+    } else {
+        inferred.or_else(|| Some(chooser.clone()))
+    }
+}
+
 pub(crate) fn hand_exile_filter_and_count(
     target: &TargetAst,
     ctx: &EffectLoweringContext,
@@ -2935,6 +3306,8 @@ pub(crate) fn lower_hand_exile_target(
         if matches!(filter.controller, Some(PlayerFilter::Target(_))) {
             filter.controller = Some(PlayerFilter::IteratedPlayer);
         }
+    } else {
+        bind_relative_iterated_player_filters_to_chooser(&mut filter, &chooser);
     }
 
     let (mut prelude, choices) = target_context_prelude_for_filter(&filter);
@@ -2991,6 +3364,8 @@ pub(crate) fn lower_counted_non_target_exile_target(
         if matches!(resolved_filter.controller, Some(PlayerFilter::Target(_))) {
             resolved_filter.controller = Some(PlayerFilter::IteratedPlayer);
         }
+    } else {
+        bind_relative_iterated_player_filters_to_chooser(&mut resolved_filter, &chooser);
     }
 
     if choice_zone == Zone::Battlefield
@@ -3058,6 +3433,8 @@ pub(crate) fn lower_single_non_target_exile_target(
         if matches!(resolved_filter.controller, Some(PlayerFilter::Target(_))) {
             resolved_filter.controller = Some(PlayerFilter::IteratedPlayer);
         }
+    } else {
+        bind_relative_iterated_player_filters_to_chooser(&mut resolved_filter, &chooser);
     }
 
     let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
@@ -3338,7 +3715,16 @@ fn try_compile_combat_and_damage_effect(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let compiled = match effect {
         EffectAst::DealDamage { amount, target } => {
-            let resolved_amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            let mut resolved_amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
+                target
+                && !ctx.iterated_player
+            {
+                bind_relative_iterated_player_in_value_to_player_filter(
+                    &mut resolved_amount,
+                    &PlayerFilter::Target(Box::new(filter.clone())),
+                );
+            }
             let (effects, choices) =
                 compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
                     Effect::deal_damage(resolved_amount.clone(), spec)
@@ -3347,6 +3733,11 @@ fn try_compile_combat_and_damage_effect(
                 target
             {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+            } else if matches!(
+                target,
+                TargetAst::AnyTarget(_) | TargetAst::AnyOtherTarget(_)
+            ) {
+                ctx.last_player_filter = Some(PlayerFilter::DamagedPlayer);
             }
             (effects, choices)
         }
@@ -3394,6 +3785,11 @@ fn try_compile_combat_and_damage_effect(
                 target
             {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+            } else if matches!(
+                target,
+                TargetAst::AnyTarget(_) | TargetAst::AnyOtherTarget(_)
+            ) {
+                ctx.last_player_filter = Some(PlayerFilter::DamagedPlayer);
             }
 
             (effects, choices)
@@ -6858,6 +7254,21 @@ fn try_compile_continuous_and_modifier_effect(
         } => compile_tagged_effect_for_target(target, ctx, "granted", |spec| {
             Effect::grant(grantable.clone(), spec, *duration)
         })?,
+        EffectAst::GrantBySpec {
+            spec,
+            player,
+            duration,
+        } => {
+            let resolved_filter = resolve_it_tag(&spec.filter, &current_reference_env(ctx))?;
+            let player =
+                resolve_non_target_player_filter(player.clone(), &current_reference_env(ctx))?;
+            let mut resolved_spec = spec.clone();
+            resolved_spec.filter = resolved_filter;
+            (
+                vec![Effect::grant_by_spec(resolved_spec, player, *duration)],
+                Vec::new(),
+            )
+        }
         EffectAst::RemoveAbilitiesFromTarget {
             target,
             abilities,
@@ -7165,7 +7576,7 @@ fn try_compile_object_zone_and_exchange_effect(
             {
                 resolved_filter.controller = Some(chooser.clone());
             }
-            let followup_player = infer_player_filter_from_object_filter(&resolved_filter)
+            let followup_player = choose_followup_player_filter(&resolved_filter, &chooser)
                 .unwrap_or_else(|| chooser.clone());
             let choose_effect = crate::effects::ChooseObjectsEffect::new(
                 resolved_filter,
@@ -7214,7 +7625,7 @@ fn try_compile_object_zone_and_exchange_effect(
             {
                 resolved_filter.controller = Some(chooser.clone());
             }
-            let followup_player = infer_player_filter_from_object_filter(&resolved_filter)
+            let followup_player = choose_followup_player_filter(&resolved_filter, &chooser)
                 .unwrap_or_else(|| chooser.clone());
             let mut choose_effect = crate::effects::ChooseObjectsEffect::new(
                 resolved_filter,
@@ -7445,6 +7856,13 @@ fn try_compile_object_zone_and_exchange_effect(
                 ctx,
                 "returned",
             );
+            ctx.last_player_filter = Some(if spec.is_target() {
+                PlayerFilter::AliasedOwnerOf(ObjectRef::Target)
+            } else if let Some(tag) = ctx.last_object_tag.clone() {
+                PlayerFilter::AliasedOwnerOf(ObjectRef::tagged(TagKey::from(tag.as_str())))
+            } else {
+                PlayerFilter::AliasedOwnerOf(ObjectRef::Target)
+            });
             (vec![effect], choices)
         }
         EffectAst::ReturnToBattlefield {

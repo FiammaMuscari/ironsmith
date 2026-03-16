@@ -3,15 +3,58 @@
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact};
-use crate::effects::helpers::resolve_player_filter;
+use crate::effects::helpers::{resolve_player_filter, resolve_player_filter_to_list};
 use crate::executor::{ExecutionContext, ExecutionError};
-use crate::filter::ObjectFilter;
+use crate::filter::{ObjectFilter, PlayerFilter};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
 use crate::zone::Zone;
 
 use super::choose_objects::ChooseObjectsEffect;
+
+fn object_filter_mentions_iterated_player(filter: &ObjectFilter) -> bool {
+    filter
+        .controller
+        .as_ref()
+        .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .owner
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .cast_by
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .targets_player
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .targets_only_player
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .attacking_player_or_planeswalker_controlled_by
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .entered_battlefield_controller
+            .as_ref()
+            .is_some_and(PlayerFilter::mentions_iterated_player)
+        || filter
+            .targets_object
+            .as_deref()
+            .is_some_and(object_filter_mentions_iterated_player)
+        || filter
+            .targets_only_object
+            .as_deref()
+            .is_some_and(object_filter_mentions_iterated_player)
+        || filter
+            .any_of
+            .iter()
+            .any(object_filter_mentions_iterated_player)
+}
 
 /// Build a human-readable prompt from an ObjectFilter when the
 /// effect carries only the bare default description.
@@ -82,67 +125,79 @@ fn should_auto_choose_single_candidate(candidates: &[ObjectId], min: usize, max:
 fn graveyard_candidate_players(
     effect: &ChooseObjectsEffect,
     game: &GameState,
+    ctx: &ExecutionContext,
     filter_ctx: &crate::filter::FilterContext,
     chooser_id: PlayerId,
-) -> Vec<PlayerId> {
+) -> Result<Vec<PlayerId>, ExecutionError> {
     if let Some(owner_filter) = &effect.filter.owner {
-        let owners = game
-            .players
-            .iter()
-            .map(|player| player.id)
-            .filter(|player_id| owner_filter.matches_player(*player_id, filter_ctx))
-            .collect::<Vec<_>>();
-        if !owners.is_empty() {
-            return owners;
+        if owner_filter.mentions_iterated_player() && filter_ctx.iterated_player.is_none() {
+            return Err(ExecutionError::UnresolvableValue(
+                "ChooseObjectsEffect graveyard search needs IteratedPlayer, but no triggering/iterated player is bound".to_string(),
+            ));
         }
+        let owners = resolve_player_filter_to_list(game, owner_filter, filter_ctx, ctx)?;
+        if owners.is_empty() {
+            return Err(ExecutionError::UnresolvableValue(format!(
+                "ChooseObjectsEffect graveyard search owner filter matched no players: {owner_filter:?}"
+            )));
+        }
+        return Ok(owners);
     }
 
     if effect.filter.single_graveyard {
-        return game.players.iter().map(|player| player.id).collect();
+        return Ok(game.players.iter().map(|player| player.id).collect());
     }
 
-    vec![chooser_id]
+    Ok(vec![chooser_id])
 }
 
 fn hand_candidate_players(
     effect: &ChooseObjectsEffect,
     game: &GameState,
+    ctx: &ExecutionContext,
     filter_ctx: &crate::filter::FilterContext,
     chooser_id: PlayerId,
-) -> Vec<PlayerId> {
+) -> Result<Vec<PlayerId>, ExecutionError> {
     if let Some(owner_filter) = &effect.filter.owner {
-        let owners = game
-            .players
-            .iter()
-            .map(|player| player.id)
-            .filter(|player_id| owner_filter.matches_player(*player_id, filter_ctx))
-            .collect::<Vec<_>>();
-        if !owners.is_empty() {
-            return owners;
+        if owner_filter.mentions_iterated_player() && filter_ctx.iterated_player.is_none() {
+            return Err(ExecutionError::UnresolvableValue(
+                "ChooseObjectsEffect hand search needs IteratedPlayer, but no triggering/iterated player is bound".to_string(),
+            ));
         }
+        let owners = resolve_player_filter_to_list(game, owner_filter, filter_ctx, ctx)?;
+        if owners.is_empty() {
+            return Err(ExecutionError::UnresolvableValue(format!(
+                "ChooseObjectsEffect hand search owner filter matched no players: {owner_filter:?}"
+            )));
+        }
+        return Ok(owners);
     }
 
-    vec![chooser_id]
+    Ok(vec![chooser_id])
 }
 
 fn library_candidate_players(
     effect: &ChooseObjectsEffect,
     game: &GameState,
+    ctx: &ExecutionContext,
     filter_ctx: &crate::filter::FilterContext,
     chooser_id: PlayerId,
-) -> Vec<PlayerId> {
+) -> Result<Vec<PlayerId>, ExecutionError> {
     if let Some(owner_filter) = &effect.filter.owner {
-        let owners = game
-            .players
-            .iter()
-            .map(|player| player.id)
-            .filter(|player_id| owner_filter.matches_player(*player_id, filter_ctx))
-            .collect::<Vec<_>>();
-        if !owners.is_empty() {
-            return owners;
+        if owner_filter.mentions_iterated_player() && filter_ctx.iterated_player.is_none() {
+            return Err(ExecutionError::UnresolvableValue(
+                "ChooseObjectsEffect library search needs IteratedPlayer, but no triggering/iterated player is bound".to_string(),
+            ));
         }
+        let owners = resolve_player_filter_to_list(game, owner_filter, filter_ctx, ctx)?;
+        if owners.is_empty() {
+            return Err(ExecutionError::UnresolvableValue(format!(
+                "ChooseObjectsEffect library search owner filter matched no players: {owner_filter:?}"
+            )));
+        }
+        return Ok(owners);
     }
-    vec![chooser_id]
+    Ok(vec![chooser_id])
 }
 
 fn effective_search_zones(
@@ -164,8 +219,23 @@ fn collect_candidates_in_zone(
     chooser_id: PlayerId,
     search_zone: Zone,
 ) -> Result<Vec<ObjectId>, ExecutionError> {
-    let filter_ctx = ctx.filter_context(game);
+    let filter_ctx = if object_filter_mentions_iterated_player(&effect.filter)
+        && matches!(effect.chooser, PlayerFilter::Target(_))
+    {
+        let base_ctx = ctx.filter_context(game);
+        if base_ctx.iterated_player.is_none() {
+            base_ctx.with_iterated_player(Some(chooser_id))
+        } else {
+            base_ctx
+        }
+    } else {
+        ctx.filter_context(game)
+    };
     let top_only_limit = effect.top_only_selection_limit(ctx.x_value);
+    let mut hidden_zone_filter = effect.filter.clone();
+    if matches!(search_zone, Zone::Hand | Zone::Graveyard | Zone::Library) {
+        hidden_zone_filter.owner = None;
+    }
 
     let candidates = match search_zone {
         Zone::Battlefield => game
@@ -175,16 +245,17 @@ fn collect_candidates_in_zone(
             .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
             .map(|(id, _)| id)
             .collect(),
-        Zone::Hand => hand_candidate_players(effect, game, &filter_ctx, chooser_id)
+        Zone::Hand => hand_candidate_players(effect, game, ctx, &filter_ctx, chooser_id)?
             .iter()
             .filter_map(|owner_id| game.player(*owner_id))
             .flat_map(|player| player.hand.iter())
             .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-            .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
+            .filter(|(_, obj)| hidden_zone_filter.matches(obj, &filter_ctx, game))
             .map(|(id, _)| id)
             .collect(),
         Zone::Graveyard => {
-            let owner_ids = graveyard_candidate_players(effect, game, &filter_ctx, chooser_id);
+            let owner_ids =
+                graveyard_candidate_players(effect, game, ctx, &filter_ctx, chooser_id)?;
 
             if effect.top_only {
                 let mut top_matches = Vec::new();
@@ -201,7 +272,7 @@ fn collect_candidates_in_zone(
                         .rev()
                         .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
                     {
-                        if !effect.filter.matches(obj, &filter_ctx, game) {
+                        if !hidden_zone_filter.matches(obj, &filter_ctx, game) {
                             continue;
                         }
                         top_matches.push(id);
@@ -217,13 +288,13 @@ fn collect_candidates_in_zone(
                     .filter_map(|owner_id| game.player(*owner_id))
                     .flat_map(|player| player.graveyard.iter())
                     .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                    .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
+                    .filter(|(_, obj)| hidden_zone_filter.matches(obj, &filter_ctx, game))
                     .map(|(id, _)| id)
                     .collect()
             }
         }
         Zone::Library => {
-            let owner_ids = library_candidate_players(effect, game, &filter_ctx, chooser_id);
+            let owner_ids = library_candidate_players(effect, game, ctx, &filter_ctx, chooser_id)?;
             if effect.top_only {
                 let mut top_matches = Vec::new();
                 for owner_id in owner_ids {
@@ -239,7 +310,7 @@ fn collect_candidates_in_zone(
                         .rev()
                         .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
                     {
-                        if !effect.filter.matches(obj, &filter_ctx, game) {
+                        if !hidden_zone_filter.matches(obj, &filter_ctx, game) {
                             continue;
                         }
                         top_matches.push(id);
@@ -255,7 +326,7 @@ fn collect_candidates_in_zone(
                     .filter_map(|owner_id| game.player(*owner_id))
                     .flat_map(|player| player.library.iter())
                     .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                    .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
+                    .filter(|(_, obj)| hidden_zone_filter.matches(obj, &filter_ctx, game))
                     .map(|(id, _)| id)
                     .collect()
             }
@@ -769,6 +840,34 @@ mod tests {
         assert_eq!(
             chosen[0], alice_card,
             "should only search chooser's library"
+        );
+    }
+
+    #[test]
+    fn test_library_search_errors_when_iterated_owner_is_unbound() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let _bob_card = create_library_card(&mut game, "Bob Creature", bob);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let filter = ObjectFilter::default()
+            .with_type(CardType::Creature)
+            .owned_by(PlayerFilter::IteratedPlayer);
+        let effect = ChooseObjectsEffect::new(filter, 1, PlayerFilter::You, "chosen")
+            .in_zone(Zone::Library)
+            .top_only();
+        let err =
+            run_choose_objects(&effect, &mut game, &mut ctx).expect_err("missing binding errors");
+
+        assert!(
+            matches!(err, ExecutionError::UnresolvableValue(_)),
+            "expected unresolvable iterated-player error, got {err:?}"
+        );
+        assert!(
+            format!("{err:?}").contains("IteratedPlayer"),
+            "error should mention the missing iterated-player binding, got {err:?}"
         );
     }
 

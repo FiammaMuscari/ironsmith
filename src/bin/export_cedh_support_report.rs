@@ -641,7 +641,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(summary) if summary.decklists_with_embedded_text > 0 => Some(summary),
                     Ok(_) => None,
                     Err(err) => {
-                        eprintln!("warning: failed to fetch {} ({}): {err}", event.id, event.name);
+                        eprintln!(
+                            "warning: failed to fetch {} ({}): {err}",
+                            event.id, event.name
+                        );
                         None
                     }
                 },
@@ -664,17 +667,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rows = build_rows(&ranked_cards, &cards);
 
     rows.sort_by(|left, right| {
-        left.supported
-            .cmp(&right.supported)
-            .then_with(|| {
-                if left.supported && right.supported {
-                    left.similarity_score
-                        .total_cmp(&right.similarity_score)
-                        .then_with(|| left.rank.cmp(&right.rank))
-                } else {
-                    left.rank.cmp(&right.rank)
-                }
-            })
+        left.supported.cmp(&right.supported).then_with(|| {
+            if left.supported && right.supported {
+                left.similarity_score
+                    .total_cmp(&right.similarity_score)
+                    .then_with(|| left.rank.cmp(&right.rank))
+            } else {
+                left.rank.cmp(&right.rank)
+            }
+        })
     });
 
     write_csv(&args.out_csv, &rows)?;

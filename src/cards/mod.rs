@@ -451,6 +451,8 @@ impl CardRegistry {
         maybe_register!(bloodstained_mire);
         maybe_register!(bosh_iron_golem);
         maybe_register!(braids_arisen_nightmare);
+        maybe_register!(breaking);
+        maybe_register!(entering);
         maybe_register!(brightclimb_pathway);
         maybe_register!(grimclimb_pathway);
         maybe_register!(buried_alive);

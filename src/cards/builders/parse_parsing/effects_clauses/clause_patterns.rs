@@ -1,3 +1,4 @@
+use crate::cards::builders::parse_parsing::merge_spell_filters;
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, PlayerAst, PredicateAst,
@@ -6,7 +7,7 @@ use crate::cards::builders::{
     is_until_end_of_turn, parse_card_type, parse_color, parse_counter_type_from_tokens,
     parse_counter_type_word, parse_distribute_counters_sentence, parse_effect_with_verb,
     parse_may_cast_it_sentence, parse_number, parse_object_filter, parse_predicate,
-    parse_subtype_word, parse_target_phrase, parse_value, span_from_tokens,
+    parse_spell_filter, parse_subtype_word, parse_target_phrase, parse_value, span_from_tokens,
     starts_with_target_indicator, starts_with_until_end_of_turn, title_case_token_word,
     token_index_for_word_index, trim_commas, words,
 };
@@ -125,6 +126,285 @@ pub(crate) fn parse_tagged_cast_or_play_target(words: &[&str]) -> Option<(bool, 
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PermissionLifetime {
+    Immediate,
+    ThisTurn,
+    UntilEndOfTurn,
+    UntilYourNextTurn,
+    Static,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PermissionClauseSpec {
+    Tagged {
+        player: PlayerAst,
+        allow_land: bool,
+        as_copy: bool,
+        without_paying_mana_cost: bool,
+        lifetime: PermissionLifetime,
+    },
+    GrantBySpec {
+        player: PlayerAst,
+        spec: crate::grant::GrantSpec,
+        lifetime: PermissionLifetime,
+    },
+}
+
+fn parse_permission_duration_prefix(words: &[&str]) -> Option<(PermissionLifetime, usize)> {
+    if words.starts_with(&["until", "the", "end", "of", "your", "next", "turn"]) {
+        return Some((PermissionLifetime::UntilYourNextTurn, 7));
+    }
+    if words.starts_with(&["until", "end", "of", "your", "next", "turn"]) {
+        return Some((PermissionLifetime::UntilYourNextTurn, 6));
+    }
+    if words.starts_with(&["until", "the", "end", "of", "turn"]) {
+        return Some((PermissionLifetime::UntilEndOfTurn, 5));
+    }
+    if starts_with_until_end_of_turn(words) {
+        return Some((PermissionLifetime::UntilEndOfTurn, 4));
+    }
+    None
+}
+
+fn is_without_paying_mana_cost_tail(words: &[&str]) -> bool {
+    matches!(
+        words,
+        ["without", "paying", "its", "mana", "cost"]
+            | ["without", "paying", "their", "mana", "cost"]
+            | ["without", "paying", "their", "mana", "costs"]
+            | ["without", "paying", "that", "card", "mana", "cost"]
+            | ["without", "paying", "that", "cards", "mana", "cost"]
+    )
+}
+
+fn parse_permission_tail(
+    words: &[&str],
+    default_lifetime: PermissionLifetime,
+) -> Option<(PermissionLifetime, bool)> {
+    if words.is_empty() {
+        return Some((default_lifetime, false));
+    }
+    if is_without_paying_mana_cost_tail(words) {
+        return Some((default_lifetime, true));
+    }
+    if words == ["this", "turn"] {
+        return Some((PermissionLifetime::ThisTurn, false));
+    }
+    if words.starts_with(&["this", "turn"]) && is_without_paying_mana_cost_tail(&words[2..]) {
+        return Some((PermissionLifetime::ThisTurn, true));
+    }
+    if is_until_end_of_turn(words) || words == ["until", "the", "end", "of", "turn"] {
+        return Some((PermissionLifetime::UntilEndOfTurn, false));
+    }
+    if (words.starts_with(&["until", "end", "of", "turn"])
+        || words.starts_with(&["until", "the", "end", "of", "turn"]))
+        && is_without_paying_mana_cost_tail(&words[if words[1] == "the" { 5 } else { 4 }..])
+    {
+        return Some((PermissionLifetime::UntilEndOfTurn, true));
+    }
+    None
+}
+
+pub(crate) fn parse_permission_clause_spec(
+    tokens: &[Token],
+) -> Result<Option<PermissionClauseSpec>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Ok(None);
+    }
+
+    let (prefixed_lifetime, prefix_len) = parse_permission_duration_prefix(&clause_words)
+        .map_or((None, 0usize), |(lifetime, consumed)| {
+            (Some(lifetime), consumed)
+        });
+    let body = &clause_words[prefix_len..];
+
+    let Some((player, allow_land, lead_len)) = (if body.starts_with(&["you", "may", "cast"]) {
+        Some((PlayerAst::You, false, 3usize))
+    } else if body.starts_with(&["you", "may", "play"]) {
+        Some((PlayerAst::You, true, 3usize))
+    } else if body.starts_with(&["cast"]) {
+        Some((PlayerAst::Implicit, false, 1usize))
+    } else if body.starts_with(&["play"]) {
+        Some((PlayerAst::Implicit, true, 1usize))
+    } else {
+        None
+    }) else {
+        return Ok(None);
+    };
+
+    let rest = &body[lead_len..];
+    if let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(rest) {
+        let mut tail = &rest[consumed..];
+        if tail.starts_with(&["from", "exile"]) {
+            tail = &tail[2..];
+        }
+
+        let default_lifetime = prefixed_lifetime.unwrap_or(PermissionLifetime::Immediate);
+        let Some((lifetime, without_paying_mana_cost)) =
+            parse_permission_tail(tail, default_lifetime)
+        else {
+            if let Some(prefixed) = prefixed_lifetime {
+                let label = match prefixed {
+                    PermissionLifetime::UntilEndOfTurn => "until-end-of-turn",
+                    PermissionLifetime::UntilYourNextTurn => "until-next-turn",
+                    _ => "permission",
+                };
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported {label} play target (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            return Ok(None);
+        };
+
+        let single_tagged_target = matches!(
+            &rest[..consumed],
+            ["it"] | ["that", "card"] | ["that", "spell"]
+        );
+        if matches!(
+            lifetime,
+            PermissionLifetime::ThisTurn
+                | PermissionLifetime::UntilEndOfTurn
+                | PermissionLifetime::UntilYourNextTurn
+        ) && as_copy
+        {
+            let label = match lifetime {
+                PermissionLifetime::UntilYourNextTurn => "until-next-turn",
+                _ => "until-end-of-turn",
+            };
+            return Err(CardTextError::ParseError(format!(
+                "unsupported {label} play target (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        if without_paying_mana_cost
+            && matches!(
+                lifetime,
+                PermissionLifetime::ThisTurn | PermissionLifetime::UntilEndOfTurn
+            )
+            && !single_tagged_target
+        {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported temporary play/cast permission clause with alternative cost (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        if lifetime == PermissionLifetime::UntilYourNextTurn
+            && (!allow_land || without_paying_mana_cost)
+        {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported until-next-turn play target (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        return Ok(Some(PermissionClauseSpec::Tagged {
+            player,
+            allow_land,
+            as_copy,
+            without_paying_mana_cost,
+            lifetime,
+        }));
+    }
+
+    if !allow_land {
+        let (spec, subject_len) = if rest.starts_with(&["spells"]) {
+            (crate::grant::GrantSpec::flash_to_spells(), 1usize)
+        } else if rest.starts_with(&["noncreature", "spells"]) {
+            (
+                crate::grant::GrantSpec::flash_to_noncreature_spells(),
+                2usize,
+            )
+        } else {
+            (crate::grant::GrantSpec::flash_to_spells(), 0usize)
+        };
+        if subject_len > 0 {
+            let tail = &rest[subject_len..];
+            if tail == ["as", "though", "they", "had", "flash"]
+                || tail == ["as", "though", "they", "have", "flash"]
+                || tail == ["this", "turn", "as", "though", "they", "had", "flash"]
+                || tail == ["this", "turn", "as", "though", "they", "have", "flash"]
+                || tail
+                    == [
+                        "until", "end", "of", "turn", "as", "though", "they", "had", "flash",
+                    ]
+                || tail
+                    == [
+                        "until", "the", "end", "of", "turn", "as", "though", "they", "had", "flash",
+                    ]
+            {
+                let lifetime = if tail.starts_with(&["this", "turn"]) {
+                    PermissionLifetime::ThisTurn
+                } else if tail.starts_with(&["until"]) {
+                    PermissionLifetime::UntilEndOfTurn
+                } else {
+                    PermissionLifetime::Static
+                };
+                return Ok(Some(PermissionClauseSpec::GrantBySpec {
+                    player,
+                    spec,
+                    lifetime,
+                }));
+            }
+        }
+    }
+
+    if prefixed_lifetime.is_none() && !allow_land {
+        let Some(from_hand_word_idx) = clause_words
+            .windows(3)
+            .position(|window| window == ["from", "your", "hand"])
+        else {
+            return Ok(None);
+        };
+
+        let suffix = &clause_words[from_hand_word_idx..];
+        if !matches!(
+            suffix,
+            [
+                "from", "your", "hand", "without", "paying", "their", "mana", "costs"
+            ] | [
+                "from", "your", "hand", "without", "paying", "their", "mana", "cost"
+            ] | [
+                "from", "your", "hand", "without", "paying", "its", "mana", "cost"
+            ]
+        ) {
+            return Ok(None);
+        }
+
+        let filter_start_word_idx = prefix_len + lead_len;
+        let Some(filter_start_token_idx) =
+            token_index_for_word_index(tokens, filter_start_word_idx)
+        else {
+            return Ok(None);
+        };
+        let Some(filter_end_token_idx) = token_index_for_word_index(tokens, from_hand_word_idx)
+        else {
+            return Ok(None);
+        };
+        let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+        let filter_words = words(&filter_tokens);
+        if filter_words.is_empty()
+            || !filter_words
+                .iter()
+                .any(|word| *word == "spell" || *word == "spells")
+        {
+            return Ok(None);
+        }
+
+        let mut filter = ObjectFilter::nonland();
+        merge_spell_filters(&mut filter, parse_spell_filter(&filter_tokens));
+        return Ok(Some(PermissionClauseSpec::GrantBySpec {
+            player,
+            spec: crate::grant::GrantSpec::cast_from_hand_without_paying_mana_cost_matching(filter),
+            lifetime: PermissionLifetime::Static,
+        }));
+    }
+
+    Ok(None)
+}
+
 fn clause_has_may_play_or_cast(words: &[&str]) -> bool {
     words
         .windows(2)
@@ -169,128 +449,47 @@ pub(crate) fn parse_unsupported_play_cast_permission_clause(
         )));
     }
 
-    let Some(verb_word) = clause_words.first().copied() else {
-        return Ok(None);
-    };
-    if !matches!(verb_word, "play" | "cast") {
-        return Ok(None);
-    }
-
-    let Some((_as_copy, consumed)) = parse_tagged_cast_or_play_target(&clause_words[1..]) else {
-        return Ok(None);
-    };
-
-    let mut tail = &clause_words[1 + consumed..];
-    if tail.starts_with(&["from", "exile"]) {
-        tail = &tail[2..];
-    }
-
-    let has_temporary_duration = tail.starts_with(&["this", "turn"])
-        || tail.starts_with(&["until", "end", "of", "turn"])
-        || tail.starts_with(&["until", "the", "end", "of", "turn"]);
-    let has_without_paying = tail
-        .windows(2)
-        .any(|window| window == ["without", "paying"]);
-
-    let single_tagged_target = matches!(
-        &clause_words[1..1 + consumed],
-        ["it"] | ["that", "card"] | ["that", "spell"]
-    );
-    if has_temporary_duration && has_without_paying && !single_tagged_target {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported temporary play/cast permission clause with alternative cost (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
-
+    let _ = parse_permission_clause_spec(tokens)?;
     Ok(None)
 }
 
 pub(crate) fn parse_until_end_of_turn_may_play_tagged_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let clause_words = words(tokens);
-    let prefix_len = if clause_words.starts_with(&["until", "the", "end", "of", "turn"]) {
-        5
-    } else if starts_with_until_end_of_turn(&clause_words) {
-        4
-    } else {
-        return Ok(None);
-    };
-
-    let tail = &clause_words[prefix_len..];
-    let is_cast = tail.starts_with(&["you", "may", "cast"]);
-    let is_play = tail.starts_with(&["you", "may", "play"]);
-    if !is_cast && !is_play {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported until-end-of-turn permission clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    match parse_permission_clause_spec(tokens)? {
+        Some(PermissionClauseSpec::Tagged {
+            player,
+            allow_land,
+            as_copy: false,
+            without_paying_mana_cost,
+            lifetime: PermissionLifetime::UntilEndOfTurn,
+        }) if player == PlayerAst::You => Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
+            tag: TagKey::from(IT_TAG),
+            player,
+            allow_land,
+            without_paying_mana_cost,
+        })),
+        _ => Ok(None),
     }
-    let target_words = &tail[3..];
-    let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(target_words) else {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported until-end-of-turn play target (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    };
-    let permission_tail = &target_words[consumed..];
-    let without_paying_mana_cost = permission_tail == ["without", "paying", "its", "mana", "cost"]
-        || permission_tail == ["without", "paying", "their", "mana", "cost"]
-        || permission_tail == ["without", "paying", "that", "cards", "mana", "cost"]
-        || permission_tail == ["without", "paying", "that", "card", "mana", "cost"];
-    if as_copy || !(permission_tail.is_empty() || without_paying_mana_cost) {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported until-end-of-turn play target (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
-
-    Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
-        tag: TagKey::from(IT_TAG),
-        player: PlayerAst::You,
-        allow_land: is_play,
-        without_paying_mana_cost,
-    }))
 }
 
 pub(crate) fn parse_until_your_next_turn_may_play_tagged_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let clause_words = words(tokens);
-    let prefix_len =
-        if clause_words.starts_with(&["until", "the", "end", "of", "your", "next", "turn"]) {
-            7
-        } else if clause_words.starts_with(&["until", "end", "of", "your", "next", "turn"]) {
-            6
-        } else {
-            return Ok(None);
-        };
-
-    let tail = &clause_words[prefix_len..];
-    if !tail.starts_with(&["you", "may", "play"]) {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported until-next-turn permission clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    match parse_permission_clause_spec(tokens)? {
+        Some(PermissionClauseSpec::Tagged {
+            player,
+            allow_land: true,
+            as_copy: false,
+            without_paying_mana_cost: false,
+            lifetime: PermissionLifetime::UntilYourNextTurn,
+        }) if player == PlayerAst::You => Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
+            tag: TagKey::from(IT_TAG),
+            player,
+            allow_land: true,
+        })),
+        _ => Ok(None),
     }
-    let target_words = &tail[3..];
-    let is_supported_target = matches!(
-        target_words,
-        ["those", "cards"] | ["those", "card"] | ["them"] | ["it"] | ["that", "card"]
-    );
-    if !is_supported_target {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported until-next-turn play target (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
-
-    Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
-        tag: TagKey::from(IT_TAG),
-        player: PlayerAst::You,
-        allow_land: true,
-    }))
 }
 
 pub(crate) fn parse_additional_land_plays_clause(
@@ -326,80 +525,69 @@ pub(crate) fn parse_additional_land_plays_clause(
     }))
 }
 
+pub(crate) fn parse_cast_spells_as_though_they_had_flash_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    match parse_permission_clause_spec(tokens)? {
+        Some(PermissionClauseSpec::GrantBySpec {
+            player,
+            spec,
+            lifetime: PermissionLifetime::ThisTurn | PermissionLifetime::UntilEndOfTurn,
+        }) if spec == crate::grant::GrantSpec::flash_to_spells()
+            || spec == crate::grant::GrantSpec::flash_to_noncreature_spells() =>
+        {
+            Ok(Some(EffectAst::GrantBySpec {
+                spec,
+                player,
+                duration: crate::grant::GrantDuration::UntilEndOfTurn,
+            }))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub(crate) fn parse_cast_or_play_tagged_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let mut clause_words = words(tokens);
-    while clause_words
+    let mut trimmed = trim_commas(tokens).to_vec();
+    while trimmed
         .first()
-        .is_some_and(|word| *word == "then" || *word == "and")
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
     {
-        clause_words.remove(0);
-    }
-    if clause_words.starts_with(&["you", "may"]) {
-        clause_words.drain(..2);
-    }
-    let Some(verb_word) = clause_words.first().copied() else {
-        return Ok(None);
-    };
-    let is_cast = verb_word == "cast";
-    let is_play = verb_word == "play";
-    if !is_cast && !is_play {
-        return Ok(None);
+        trimmed.remove(0);
     }
 
-    let rest = &clause_words[1..];
-    let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(rest) else {
-        return Ok(None);
-    };
-    let mut tail = &rest[consumed..];
-    if tail.starts_with(&["from", "exile"]) {
-        tail = &tail[2..];
-    }
-
-    let without_paying_its_cost = tail == ["without", "paying", "its", "mana", "cost"]
-        || tail == ["without", "paying", "their", "mana", "cost"]
-        || tail == ["this", "turn", "without", "paying", "its", "mana", "cost"]
-        || tail
-            == [
-                "until", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
-            ]
-        || tail
-            == [
-                "until", "the", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
-            ];
-    let has_this_turn_duration = tail == ["this", "turn"];
-    let has_until_end_of_turn_duration =
-        is_until_end_of_turn(tail) || tail == ["until", "the", "end", "of", "turn"];
-    if has_this_turn_duration
-        || has_until_end_of_turn_duration
-        || tail == ["this", "turn", "without", "paying", "its", "mana", "cost"]
-        || tail
-            == [
-                "until", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
-            ]
-        || tail
-            == [
-                "until", "the", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
-            ]
-    {
-        return Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
-            tag: TagKey::from(IT_TAG),
-            player: PlayerAst::Implicit,
-            allow_land: is_play,
-            without_paying_mana_cost: without_paying_its_cost,
-        }));
-    }
-    if tail.is_empty() || without_paying_its_cost {
-        return Ok(Some(EffectAst::CastTagged {
-            tag: TagKey::from(IT_TAG),
-            allow_land: is_play,
+    match parse_permission_clause_spec(&trimmed)? {
+        Some(PermissionClauseSpec::Tagged {
+            player,
+            allow_land,
             as_copy,
-            without_paying_mana_cost: without_paying_its_cost,
-        }));
+            without_paying_mana_cost,
+            lifetime: PermissionLifetime::Immediate,
+        }) if player == PlayerAst::Implicit || player == PlayerAst::You => {
+            Ok(Some(EffectAst::CastTagged {
+                tag: TagKey::from(IT_TAG),
+                allow_land,
+                as_copy,
+                without_paying_mana_cost,
+            }))
+        }
+        Some(PermissionClauseSpec::Tagged {
+            player,
+            allow_land,
+            as_copy: false,
+            without_paying_mana_cost,
+            lifetime: PermissionLifetime::ThisTurn | PermissionLifetime::UntilEndOfTurn,
+        }) if player == PlayerAst::Implicit || player == PlayerAst::You => {
+            Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
+                tag: TagKey::from(IT_TAG),
+                player: PlayerAst::Implicit,
+                allow_land,
+                without_paying_mana_cost,
+            }))
+        }
+        _ => Ok(None),
     }
-
-    Ok(None)
 }
 
 pub(crate) fn parse_prevent_next_time_damage_sentence(
@@ -1753,4 +1941,52 @@ pub(crate) fn parse_subject(tokens: &[Token]) -> SubjectAst {
     }
 
     SubjectAst::This
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cards::builders::tokenize_line;
+    use crate::types::CardType;
+
+    #[test]
+    fn parse_permission_clause_spec_normalizes_until_end_of_turn_tagged_play() {
+        let tokens = tokenize_line("until end of turn you may play that card", 0);
+
+        let parsed = parse_permission_clause_spec(&tokens).expect("parse permission clause");
+
+        assert_eq!(
+            parsed,
+            Some(PermissionClauseSpec::Tagged {
+                player: PlayerAst::You,
+                allow_land: true,
+                as_copy: false,
+                without_paying_mana_cost: false,
+                lifetime: PermissionLifetime::UntilEndOfTurn,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_permission_clause_spec_normalizes_static_free_cast_from_hand() {
+        let tokens = tokenize_line(
+            "you may cast creature spells from your hand without paying their mana costs",
+            0,
+        );
+
+        let parsed = parse_permission_clause_spec(&tokens).expect("parse permission clause");
+        let Some(PermissionClauseSpec::GrantBySpec {
+            player,
+            spec,
+            lifetime,
+        }) = parsed
+        else {
+            panic!("expected normalized grant-by-spec permission");
+        };
+
+        assert_eq!(player, PlayerAst::You);
+        assert_eq!(lifetime, PermissionLifetime::Static);
+        assert_eq!(spec.zone, Zone::Hand);
+        assert!(spec.filter.card_types.contains(&CardType::Creature));
+    }
 }

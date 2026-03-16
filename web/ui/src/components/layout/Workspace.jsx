@@ -59,18 +59,20 @@ function objectExistsInState(state, objectId) {
   return false;
 }
 
-function shouldExpandInlineInspector(player, objectId) {
-  if (!player || objectId == null) return false;
+function shouldExpandInlineInspector(players, objectId) {
+  if (!Array.isArray(players) || objectId == null) return false;
   const needle = String(objectId);
 
-  if ((player.hand_cards || []).some((card) => String(card?.id) === needle)) {
-    return true;
-  }
+  for (const player of players) {
+    if ((player?.hand_cards || []).some((card) => String(card?.id) === needle)) {
+      return true;
+    }
 
-  for (const zone of [player.graveyard_cards || [], player.exile_cards || [], player.command_cards || []]) {
-    for (const card of zone) {
-      if (String(card?.id) === needle && card?.show_in_pseudo_hand) {
-        return true;
+    for (const zone of [player?.graveyard_cards || [], player?.exile_cards || [], player?.command_cards || []]) {
+      for (const card of zone) {
+        if (String(card?.id) === needle && card?.show_in_pseudo_hand) {
+          return true;
+        }
       }
     }
   }
@@ -206,7 +208,7 @@ export default function Workspace({
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
-  const inlineInspectorExpanded = shouldExpandInlineInspector(me, selectedObjectId);
+  const inlineInspectorExpanded = shouldExpandInlineInspector(players, selectedObjectId);
   const handLaneOpen = handLaneHovered;
   const decision = state?.decision || null;
   const combatDeclarationActive = decision?.kind === "attackers" || decision?.kind === "blockers";

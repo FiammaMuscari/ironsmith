@@ -228,6 +228,7 @@ pub(crate) struct ReferenceExports {
     pub(crate) last_object_tag: RefState<TagKey>,
     pub(crate) last_player_filter: RefState<PlayerFilter>,
     pub(crate) last_effect_id: RefState<EffectId>,
+    pub(crate) iterated_player: bool,
 }
 
 impl Default for ReferenceExports {
@@ -236,6 +237,7 @@ impl Default for ReferenceExports {
             last_object_tag: RefState::Unknown,
             last_player_filter: RefState::Unknown,
             last_effect_id: RefState::Unknown,
+            iterated_player: false,
         }
     }
 }
@@ -246,6 +248,7 @@ impl ReferenceExports {
             last_object_tag: env.last_object_tag.clone(),
             last_player_filter: env.last_player_filter.clone(),
             last_effect_id: env.last_effect_id.clone(),
+            iterated_player: env.iterated_player,
         }
     }
 
@@ -254,6 +257,7 @@ impl ReferenceExports {
             last_object_tag: RefState::join(&left.last_object_tag, &right.last_object_tag),
             last_player_filter: RefState::join(&left.last_player_filter, &right.last_player_filter),
             last_effect_id: RefState::join(&left.last_effect_id, &right.last_effect_id),
+            iterated_player: left.iterated_player && right.iterated_player,
         }
     }
 

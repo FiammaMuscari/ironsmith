@@ -174,6 +174,21 @@ fn track_player_from_object_filter(filter: &ObjectFilter, frame: &mut ReferenceF
     }
 }
 
+fn chooser_bound_followup_player_filter(
+    filter: &ObjectFilter,
+    chooser: Option<&PlayerFilter>,
+) -> Option<PlayerFilter> {
+    let inferred = infer_player_filter_from_object_filter(filter);
+    if inferred
+        .as_ref()
+        .is_some_and(PlayerFilter::mentions_iterated_player)
+    {
+        chooser.cloned().or(inferred)
+    } else {
+        inferred.or_else(|| chooser.cloned())
+    }
+}
+
 fn maybe_tag_target(
     target: &TargetAst,
     frame: &mut ReferenceFrame,
@@ -310,6 +325,12 @@ fn advance_reference_frame_for_effect(
         }
         EffectAst::DealDamage { target, .. } | EffectAst::DealDamageEqualToPower { target, .. } => {
             maybe_tag_target(&target, frame, id_gen, "damaged")?;
+            if matches!(
+                target,
+                TargetAst::AnyTarget(_) | TargetAst::AnyOtherTarget(_)
+            ) {
+                frame.last_player_filter = Some(PlayerFilter::DamagedPlayer);
+            }
         }
         EffectAst::PutCounters { target, .. }
         | EffectAst::PutOrRemoveCounters { target, .. }
@@ -358,7 +379,14 @@ fn advance_reference_frame_for_effect(
         EffectAst::Exile { target, .. } | EffectAst::ExileUntilSourceLeaves { target, .. } => {
             maybe_tag_target(&target, frame, id_gen, "exiled")?;
         }
-        EffectAst::ReturnToHand { target, .. } | EffectAst::Regenerate { target } => {
+        EffectAst::ReturnToHand { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "returned")?;
+            if let Some(tag) = frame.last_object_tag.as_deref() {
+                frame.last_player_filter =
+                    Some(PlayerFilter::AliasedOwnerOf(ObjectRef::tagged(tag)));
+            }
+        }
+        EffectAst::Regenerate { target } => {
             maybe_tag_target(&target, frame, id_gen, "returned")?;
         }
         EffectAst::ReturnToBattlefield { target, .. } => {
@@ -427,12 +455,11 @@ fn advance_reference_frame_for_effect(
                 None
             }
             .or_else(|| {
-                resolve_it_tag(filter, &refs)
-                    .ok()
-                    .and_then(|resolved| infer_player_filter_from_object_filter(&resolved))
+                resolve_it_tag(filter, &refs).ok().and_then(|resolved| {
+                    chooser_bound_followup_player_filter(&resolved, chooser_filter.as_ref())
+                })
             })
-            .or_else(|| infer_player_filter_from_object_filter(filter))
-            .or(chooser_filter)
+            .or_else(|| chooser_bound_followup_player_filter(filter, chooser_filter.as_ref()))
             {
                 frame.last_player_filter = Some(player_filter);
             }
@@ -472,12 +499,11 @@ fn advance_reference_frame_for_effect(
                 None
             }
             .or_else(|| {
-                resolve_it_tag(filter, &refs)
-                    .ok()
-                    .and_then(|resolved| infer_player_filter_from_object_filter(&resolved))
+                resolve_it_tag(filter, &refs).ok().and_then(|resolved| {
+                    chooser_bound_followup_player_filter(&resolved, chooser_filter.as_ref())
+                })
             })
-            .or_else(|| infer_player_filter_from_object_filter(filter))
-            .or(chooser_filter)
+            .or_else(|| chooser_bound_followup_player_filter(filter, chooser_filter.as_ref()))
             {
                 frame.last_player_filter = Some(player_filter);
             }
@@ -752,6 +778,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::GrantAbilitiesAll { .. }
         | EffectAst::RemoveAbilitiesAll { .. }
         | EffectAst::GrantAbilitiesChoiceAll { .. }
+        | EffectAst::GrantBySpec { .. }
         | EffectAst::GrantAbilityToSource { .. }
         | EffectAst::ReorderTopOfLibrary { .. }
         | EffectAst::VoteStart { .. }
@@ -1340,6 +1367,10 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
         | EffectAst::GrantAbilitiesAll { filter, .. }
         | EffectAst::RemoveAbilitiesAll { filter, .. }
         | EffectAst::GrantAbilitiesChoiceAll { filter, .. }
+        | EffectAst::GrantBySpec {
+            spec: crate::grant::GrantSpec { filter, .. },
+            ..
+        }
         | EffectAst::ForEachObject { filter, .. } => bind_unresolved_it_in_filter(filter, seed_tag),
         EffectAst::LoseLife { amount, .. }
         | EffectAst::GainLife { amount, .. }
@@ -1602,7 +1633,10 @@ fn bind_unresolved_it_in_player_filter(filter: &mut PlayerFilter, seed_tag: &Tag
             bind_unresolved_it_in_player_filter(base, seed_tag)
                 + bind_unresolved_it_in_player_filter(excluded, seed_tag)
         }
-        PlayerFilter::ControllerOf(reference) | PlayerFilter::OwnerOf(reference) => {
+        PlayerFilter::ControllerOf(reference)
+        | PlayerFilter::OwnerOf(reference)
+        | PlayerFilter::AliasedOwnerOf(reference)
+        | PlayerFilter::AliasedControllerOf(reference) => {
             bind_unresolved_it_in_runtime_object_ref(reference, seed_tag)
         }
         _ => 0,

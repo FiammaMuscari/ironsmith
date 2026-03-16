@@ -1188,6 +1188,34 @@ pub(crate) fn parse_anthem_subject(tokens: &[Token]) -> Result<AnthemSubjectAst,
         })
 }
 
+fn infer_attached_subject_filter_from_condition_tokens(tokens: &[Token]) -> Option<ObjectFilter> {
+    let condition_tokens = trim_edge_punctuation(tokens);
+    let condition_words = words(&condition_tokens);
+    let attached_subject_len = match condition_words.get(..2) {
+        Some(["enchanted", "artifact"])
+        | Some(["enchanted", "creature"])
+        | Some(["enchanted", "land"])
+        | Some(["enchanted", "permanent"])
+        | Some(["equipped", "creature"])
+        | Some(["equipped", "permanent"]) => Some(2usize),
+        _ => None,
+    }?;
+    let subject_end = token_index_for_word_index(&condition_tokens, attached_subject_len)?;
+    parse_object_filter(&condition_tokens[..subject_end], false).ok()
+}
+
+fn parse_anthem_subject_with_attached_fallback(
+    tokens: &[Token],
+    attached_subject_filter: Option<&ObjectFilter>,
+) -> Result<AnthemSubjectAst, CardTextError> {
+    if words(tokens).as_slice() == ["it"]
+        && let Some(filter) = attached_subject_filter
+    {
+        return Ok(AnthemSubjectAst::Filter(filter.clone()));
+    }
+    parse_anthem_subject(tokens)
+}
+
 pub(crate) fn parse_static_quantity_prefix(
     tokens: &[Token],
     allow_default_one: bool,
@@ -1826,6 +1854,12 @@ pub(crate) fn parse_anthem_clause(
     tail_end: usize,
 ) -> Result<ParsedAnthemClause, CardTextError> {
     let (prefix_condition, subject_start) = parse_anthem_prefix_condition(tokens, get_idx)?;
+    let prefix_attached_subject =
+        if subject_start > 3 && words_start_with(tokens, &["as", "long", "as"]) {
+            infer_attached_subject_filter_from_condition_tokens(&tokens[3..subject_start])
+        } else {
+            None
+        };
     let subject_tokens = trim_commas(&tokens[subject_start..get_idx]);
     if subject_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
@@ -1833,7 +1867,6 @@ pub(crate) fn parse_anthem_clause(
             words(tokens).join(" ")
         )));
     }
-    let subject = parse_anthem_subject(&subject_tokens)?;
 
     let mut modifier_idx = get_idx + 1;
     if tokens
@@ -1865,6 +1898,7 @@ pub(crate) fn parse_anthem_clause(
     let tail_tokens = trim_edge_punctuation(&tokens[modifier_idx + 1..tail_end]);
     let mut scale: Option<AnthemCountExpression> = None;
     let mut suffix_condition: Option<crate::ConditionExpr> = None;
+    let mut suffix_attached_subject: Option<ObjectFilter> = None;
     if !tail_tokens.is_empty() {
         if words_start_with(&tail_tokens, &["for", "each"]) {
             scale = Some(parse_anthem_for_each_expression(&tail_tokens)?);
@@ -1888,6 +1922,8 @@ pub(crate) fn parse_anthem_clause(
                 }
             });
         } else if words_start_with(&tail_tokens, &["as", "long", "as"]) {
+            suffix_attached_subject =
+                infer_attached_subject_filter_from_condition_tokens(&tail_tokens[3..]);
             suffix_condition = Some(parse_static_condition_clause(&tail_tokens[3..])?);
         } else {
             return Err(CardTextError::ParseError(format!(
@@ -1896,6 +1932,12 @@ pub(crate) fn parse_anthem_clause(
             )));
         }
     }
+
+    let attached_subject_filter = prefix_attached_subject
+        .as_ref()
+        .or(suffix_attached_subject.as_ref());
+    let subject =
+        parse_anthem_subject_with_attached_fallback(&subject_tokens, attached_subject_filter)?;
 
     let condition = match (prefix_condition, suffix_condition) {
         (Some(_prefix), Some(_)) => {

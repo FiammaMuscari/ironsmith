@@ -98,6 +98,9 @@ pub(super) fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
                     ));
                 }
             }
+            AlternativeCastingMethod::Dash { cost } => {
+                out.push(format!("Dash {}", cost.to_oracle()));
+            }
             AlternativeCastingMethod::Bestow { total_cost } => {
                 let costs = method.non_mana_costs();
                 let mana_cost = total_cost

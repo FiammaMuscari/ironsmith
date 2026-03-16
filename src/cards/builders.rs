@@ -8,7 +8,7 @@ use crate::ability::{
     self, Ability, AbilityKind, ActivationTiming, LevelAbility, TriggeredAbility,
 };
 use crate::alternative_cast::AlternativeCastingMethod;
-use crate::card::{CardBuilder, PowerToughness, PtValue};
+use crate::card::{CardBuilder, LinkedFaceLayout, PowerToughness, PtValue};
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, TotalCost};
 use crate::effect::{
@@ -554,7 +554,6 @@ pub(crate) enum KeywordAction {
         additional_restrictions: Vec<String>,
     },
     Marker(&'static str),
-    KeywordText(String),
     MarkerText(String),
 }
 
@@ -640,7 +639,6 @@ impl KeywordAction {
                 | Self::Devoid
                 | Self::Annihilator(_)
                 | Self::Marker(_)
-                | Self::KeywordText(_)
                 | Self::MarkerText(_)
         )
     }
@@ -802,7 +800,6 @@ impl KeywordAction {
             Self::Crew { amount, .. } => format!("Crew {amount}"),
             Self::Saddle { amount, .. } => format!("Saddle {amount}"),
             Self::Marker(name) => (*name).to_string(),
-            Self::KeywordText(text) => text.clone(),
             Self::MarkerText(text) => text.clone(),
         }
     }
@@ -2250,6 +2247,11 @@ pub(crate) enum EffectAst {
         grantable: crate::grant::Grantable,
         duration: crate::grant::GrantDuration,
     },
+    GrantBySpec {
+        spec: crate::grant::GrantSpec,
+        player: PlayerAst,
+        duration: crate::grant::GrantDuration,
+    },
     RemoveAbilitiesFromTarget {
         target: TargetAst,
         abilities: Vec<GrantedAbilityAst>,
@@ -2394,6 +2396,9 @@ pub struct CardDefinitionBuilder {
 
     /// For Auras: what this card can enchant (used for non-target attachments)
     aura_attach_filter: Option<ObjectFilter>,
+
+    /// True if this split card may be cast fused from hand.
+    has_fuse: bool,
 }
 
 impl CardDefinitionBuilder {
@@ -2487,6 +2492,7 @@ impl CardDefinitionBuilder {
             max_saga_chapter: None,
             additional_cost: TotalCost::free(),
             aura_attach_filter: None,
+            has_fuse: false,
         }
     }
 
@@ -2525,6 +2531,30 @@ impl CardDefinitionBuilder {
     /// Set the oracle text.
     pub fn oracle_text(mut self, text: impl Into<String>) -> Self {
         self.card_builder = self.card_builder.oracle_text(text);
+        self
+    }
+
+    /// Link this card to another face by card id.
+    pub fn other_face(mut self, face: CardId) -> Self {
+        self.card_builder = self.card_builder.other_face(face);
+        self
+    }
+
+    /// Link this card to another face by name.
+    pub fn other_face_name(mut self, name: impl Into<String>) -> Self {
+        self.card_builder = self.card_builder.other_face_name(name);
+        self
+    }
+
+    /// Set the linked-face layout semantics for this card.
+    pub fn linked_face_layout(mut self, layout: LinkedFaceLayout) -> Self {
+        self.card_builder = self.card_builder.linked_face_layout(layout);
+        self
+    }
+
+    /// Mark this card as a split card that may be cast fused from hand.
+    pub fn has_fuse(mut self) -> Self {
+        self.has_fuse = true;
         self
     }
 
@@ -2746,9 +2776,6 @@ impl CardDefinitionBuilder {
             }
             KeywordAction::Marker(name) => {
                 self.with_ability(Ability::static_ability(StaticAbility::keyword_marker(name)))
-            }
-            KeywordAction::KeywordText(text) => {
-                self.with_ability(Ability::static_ability(StaticAbility::keyword_text(text)))
             }
             KeywordAction::MarkerText(text) => {
                 self.with_ability(Ability::static_ability(StaticAbility::keyword_marker(text)))
@@ -5132,7 +5159,7 @@ impl CardDefinitionBuilder {
             spell_effect: self.spell_effect,
             aura_attach_filter: self.aura_attach_filter,
             alternative_casts: self.alternative_casts,
-            has_fuse: false,
+            has_fuse: self.has_fuse,
             optional_costs: self.optional_costs,
             max_saga_chapter: self.max_saga_chapter,
             additional_cost: self.additional_cost,
@@ -5755,12 +5782,11 @@ mod effect_parse_tests {
         AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect,
         AddScaledManaEffect, CreateTokenCopyEffect, DestroyEffect, DiscardEffect, DrawCardsEffect,
         EnergyCountersEffect, ExchangeControlEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
-        ForPlayersEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
-        ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveCountersEffect,
-        RemoveUpToAnyCountersEffect, ReturnFromGraveyardToBattlefieldEffect, SacrificeEffect,
-        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
-        SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
-        TapEffect,
+        ForPlayersEffect, GrantBySpecEffect, LookAtHandEffect, ModifyPowerToughnessForEachEffect,
+        PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
+        ReturnFromGraveyardToBattlefieldEffect, SacrificeEffect, SetBasePowerToughnessEffect,
+        SetLifeTotalEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
+        SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect, TapEffect,
     };
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
@@ -5783,7 +5809,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             effects
                 .iter()
-                .any(|e| e.downcast_ref::<GrantPlayFromGraveyardEffect>().is_some()),
+                .any(|e| e.downcast_ref::<GrantBySpecEffect>().is_some()),
             "should include play-from-graveyard effect"
         );
         assert!(
@@ -10551,7 +10577,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         assert!(
             displays.iter().any(|display| {
-                display.contains("this creature gets +1/+3")
+                display.contains("enchanted permanent gets +1/+3")
                     && display.contains("as long as enchanted permanent is a creature")
             }),
             "expected conditional attached anthem, got: {displays:?}"
@@ -10568,6 +10594,38 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 .iter()
                 .any(|display| { display.contains("t add g g") || display.contains("add {G}{G}") }),
             "expected conditional attached activated mana grant, got: {displays:?}"
+        );
+    }
+
+    #[test]
+    fn parse_clawing_torment_attached_pronoun_as_attached_permanent() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Clawing Torment Variant")
+            .parse_text(
+                "Enchant artifact or creature\nAs long as enchanted permanent is a creature, it gets -1/-1 and can't block.\nEnchanted permanent has \"At the beginning of your upkeep, you lose 1 life.\"",
+            )
+            .expect("clawing torment should parse");
+
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("enchanted permanent gets -1/-1")
+                    && display.contains("as long as enchanted permanent is a creature")
+            }),
+            "expected attached permanent anthem text, got: {displays:?}"
+        );
+        assert!(
+            displays.iter().any(|display| display
+                .to_ascii_lowercase()
+                .contains("enchanted permanent can't block")),
+            "expected attached permanent cant-block text, got: {displays:?}"
         );
     }
 

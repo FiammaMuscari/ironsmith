@@ -3499,7 +3499,9 @@ pub(crate) fn parse_cant_clauses(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let normalized_words = normalize_cant_words(tokens);
-    let is_direct_temporary_cast_restriction = normalized_words.windows(2).any(|window| window == ["this", "turn"])
+    let is_direct_temporary_cast_restriction = normalized_words
+        .windows(2)
+        .any(|window| window == ["this", "turn"])
         && !normalized_words.contains(&"unless")
         && !normalized_words.contains(&"who")
         && (normalized_words.starts_with(&["your", "opponents", "cant", "cast"])
@@ -5493,6 +5495,53 @@ fn marker_text_from_words(words: &[&str]) -> Option<String> {
     Some(text)
 }
 
+fn parse_numeric_keyword_action<F>(
+    words: &[&str],
+    keyword: &'static str,
+    build: F,
+) -> Option<KeywordAction>
+where
+    F: FnOnce(u32) -> KeywordAction,
+{
+    if words.first().copied() != Some(keyword) {
+        return None;
+    }
+    if let Some(amount) = words.get(1).and_then(|word| word.parse::<u32>().ok()) {
+        return Some(build(amount));
+    }
+    Some(KeywordAction::Marker(keyword))
+}
+
+enum KeywordCostFallback {
+    MarkerOnly,
+    MarkerOrText,
+}
+
+fn parse_cost_keyword_action<F>(
+    words: &[&str],
+    keyword: &'static str,
+    fallback: KeywordCostFallback,
+    build: F,
+) -> Option<KeywordAction>
+where
+    F: FnOnce(ManaCost) -> KeywordAction,
+{
+    if words.first().copied() != Some(keyword) {
+        return None;
+    }
+    if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
+        && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
+    {
+        return Some(build(cost));
+    }
+    if matches!(fallback, KeywordCostFallback::MarkerOrText) && words.len() > 1 {
+        if let Some(display) = marker_keyword_display(words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+    }
+    Some(KeywordAction::Marker(keyword))
+}
+
 pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordAction> {
     match word {
         "flying" => Some(KeywordAction::Flying),
@@ -5642,54 +5691,24 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::MarkerText(text));
     }
 
-    // Bushido appears as "Bushido N" and is often followed by reminder text.
-    if words.first().copied() == Some("bushido") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Bushido(amount));
-        }
-        return Some(KeywordAction::Marker("bushido"));
+    if let Some(action) = parse_numeric_keyword_action(&words, "bushido", KeywordAction::Bushido) {
+        return Some(action);
     }
-
-    // Bloodthirst appears as "Bloodthirst N" and is often followed by reminder text.
-    if words.first().copied() == Some("bloodthirst") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Bloodthirst(amount));
-        }
-        return Some(KeywordAction::Marker("bloodthirst"));
+    if let Some(action) =
+        parse_numeric_keyword_action(&words, "bloodthirst", KeywordAction::Bloodthirst)
+    {
+        return Some(action);
     }
-
-    // Backup appears as "Backup N" and is often followed by reminder text.
-    if words.first().copied() == Some("backup") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Backup(amount));
-        }
-        return Some(KeywordAction::Marker("backup"));
+    if let Some(action) = parse_numeric_keyword_action(&words, "backup", KeywordAction::Backup) {
+        return Some(action);
     }
-
-    // Rampage appears as "Rampage N" and is often followed by reminder text.
-    if words.first().copied() == Some("rampage") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Rampage(amount));
-        }
-        return Some(KeywordAction::Marker("rampage"));
+    if let Some(action) = parse_numeric_keyword_action(&words, "rampage", KeywordAction::Rampage) {
+        return Some(action);
     }
-
-    // Annihilator appears as "Annihilator N" and is often followed by reminder text.
-    if words.first().copied() == Some("annihilator") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Annihilator(amount));
-        }
-        return Some(KeywordAction::Marker("annihilator"));
+    if let Some(action) =
+        parse_numeric_keyword_action(&words, "annihilator", KeywordAction::Annihilator)
+    {
+        return Some(action);
     }
 
     // Crew appears as "Crew N" and is often followed by inline restrictions/reminder text.
@@ -5765,24 +5784,15 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Marker("saddle"));
     }
 
-    // Afterlife appears as "Afterlife N" and is often followed by reminder text.
-    if words.first().copied() == Some("afterlife") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Afterlife(amount));
-        }
-        return Some(KeywordAction::Marker("afterlife"));
+    if let Some(action) =
+        parse_numeric_keyword_action(&words, "afterlife", KeywordAction::Afterlife)
+    {
+        return Some(action);
     }
-
-    // Fabricate appears as "Fabricate N" and is often followed by reminder text.
-    if words.first().copied() == Some("fabricate") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Fabricate(amount));
-        }
-        return Some(KeywordAction::Marker("fabricate"));
+    if let Some(action) =
+        parse_numeric_keyword_action(&words, "fabricate", KeywordAction::Fabricate)
+    {
+        return Some(action);
     }
 
     if words.first().copied() == Some("evolve") {
@@ -5801,101 +5811,67 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Soulbond);
     }
 
-    // Renown appears as "Renown N" and is often followed by reminder text.
-    if words.first().copied() == Some("renown") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Renown(amount));
-        }
-        return Some(KeywordAction::Marker("renown"));
+    if let Some(action) = parse_numeric_keyword_action(&words, "renown", KeywordAction::Renown) {
+        return Some(action);
+    }
+    if let Some(action) =
+        parse_numeric_keyword_action(&words, "soulshift", KeywordAction::Soulshift)
+    {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("soulshift") {
-        if words.len() >= 2
-            && let Ok(amount) = words[1].parse::<u32>()
-        {
-            return Some(KeywordAction::Soulshift(amount));
-        }
-        return Some(KeywordAction::Marker("soulshift"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "outlast",
+        KeywordCostFallback::MarkerOnly,
+        KeywordAction::Outlast,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("outlast") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Outlast(cost));
-        }
-        return Some(KeywordAction::Marker("outlast"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "scavenge",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Scavenge,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("scavenge") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Scavenge(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("scavenge"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("scavenge"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "unearth",
+        KeywordCostFallback::MarkerOnly,
+        KeywordAction::Unearth,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("unearth") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Unearth(cost));
-        }
-        return Some(KeywordAction::Marker("unearth"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "ninjutsu",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Ninjutsu,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("ninjutsu") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Ninjutsu(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("ninjutsu"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("ninjutsu"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "dash",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Dash,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("dash") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Dash(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("dash"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("dash"));
-    }
-
-    if words.first().copied() == Some("plot") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Plot(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("plot"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("plot"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "plot",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Plot,
+    ) {
+        return Some(action);
     }
 
     if words.first().copied() == Some("suspend") {
@@ -5915,49 +5891,31 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Marker("suspend"));
     }
 
-    if words.first().copied() == Some("disturb") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Disturb(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("disturb"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("disturb"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "disturb",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Disturb,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("foretell") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Foretell(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("foretell"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("foretell"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "foretell",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Foretell,
+    ) {
+        return Some(action);
     }
 
-    if words.first().copied() == Some("spectacle") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Spectacle(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("spectacle"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("spectacle"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "spectacle",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Spectacle,
+    ) {
+        return Some(action);
     }
 
     if words.first().copied() == Some("hideaway") {
@@ -6002,19 +5960,13 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return marker_text_from_words(&words).map(KeywordAction::MarkerText);
     }
 
-    if words.first().copied() == Some("overload") {
-        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
-        {
-            return Some(KeywordAction::Overload(cost));
-        }
-        if words.len() == 1 {
-            return Some(KeywordAction::Marker("overload"));
-        }
-        if let Some(display) = marker_keyword_display(&words) {
-            return Some(KeywordAction::MarkerText(display));
-        }
-        return Some(KeywordAction::Marker("overload"));
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "overload",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Overload,
+    ) {
+        return Some(action);
     }
 
     if words.starts_with(&["umbra", "armor"]) {

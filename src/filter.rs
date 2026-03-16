@@ -693,6 +693,12 @@ pub enum PlayerFilter {
     /// - `ObjectRef::Specific(id)` = a specific object by ID
     /// - `ObjectRef::tagged(tag)` = an object referenced by tag from a prior effect
     OwnerOf(ObjectRef),
+
+    /// The owner of an object, but rendered as "that player" for follow-up text.
+    AliasedOwnerOf(ObjectRef),
+
+    /// The controller of an object, but rendered as "that player" for follow-up text.
+    AliasedControllerOf(ObjectRef),
 }
 
 impl PlayerFilter {
@@ -735,6 +741,32 @@ impl PlayerFilter {
         Self::Excluding {
             base: Box::new(base),
             excluded: Box::new(excluded),
+        }
+    }
+
+    pub fn mentions_iterated_player(&self) -> bool {
+        match self {
+            PlayerFilter::IteratedPlayer => true,
+            PlayerFilter::Target(inner) => inner.mentions_iterated_player(),
+            PlayerFilter::Excluding { base, excluded } => {
+                base.mentions_iterated_player() || excluded.mentions_iterated_player()
+            }
+            PlayerFilter::Any
+            | PlayerFilter::You
+            | PlayerFilter::NotYou
+            | PlayerFilter::Opponent
+            | PlayerFilter::Teammate
+            | PlayerFilter::Active
+            | PlayerFilter::Defending
+            | PlayerFilter::Attacking
+            | PlayerFilter::DamagedPlayer
+            | PlayerFilter::EffectController
+            | PlayerFilter::Specific(_)
+            | PlayerFilter::TargetPlayerOrControllerOfTarget
+            | PlayerFilter::ControllerOf(_)
+            | PlayerFilter::OwnerOf(_)
+            | PlayerFilter::AliasedOwnerOf(_)
+            | PlayerFilter::AliasedControllerOf(_) => false,
         }
     }
 
@@ -793,6 +825,12 @@ impl PlayerFilter {
             PlayerFilter::OwnerOf(object_ref) => self
                 .resolve_object_ref(object_ref, ctx)
                 .is_some_and(|snapshot| snapshot.owner == player),
+            PlayerFilter::AliasedControllerOf(object_ref) => self
+                .resolve_object_ref(object_ref, ctx)
+                .is_some_and(|snapshot| snapshot.controller == player),
+            PlayerFilter::AliasedOwnerOf(object_ref) => self
+                .resolve_object_ref(object_ref, ctx)
+                .is_some_and(|snapshot| snapshot.owner == player),
         }
     }
 
@@ -823,6 +861,9 @@ impl PlayerFilter {
             }
             PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
             PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+            PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+                "that player".to_string()
+            }
         }
     }
 }
@@ -3067,6 +3108,9 @@ impl ObjectFilter {
                 }
                 PlayerFilter::ControllerOf(_) => parts.push("a controller's".to_string()),
                 PlayerFilter::OwnerOf(_) => parts.push("an owner's".to_string()),
+                PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+                    parts.push("that player's".to_string())
+                }
             }
         }
 
@@ -3105,6 +3149,9 @@ impl ObjectFilter {
                 }
                 PlayerFilter::ControllerOf(_) => "that object's controller owns".to_string(),
                 PlayerFilter::OwnerOf(_) => "that object's owner owns".to_string(),
+                PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+                    "that player owns".to_string()
+                }
             });
         }
 
@@ -4041,6 +4088,9 @@ fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
         }
         PlayerFilter::ControllerOf(_) => "that object's controller's".to_string(),
         PlayerFilter::OwnerOf(_) => "that object's owner's".to_string(),
+        PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+            "that player's".to_string()
+        }
     }
 }
 
@@ -4069,6 +4119,9 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
         PlayerFilter::Target(inner) => format!("target {}", describe_player_filter(inner)),
         PlayerFilter::ControllerOf(_) => "controller".to_string(),
         PlayerFilter::OwnerOf(_) => "owner".to_string(),
+        PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+            "that player".to_string()
+        }
     }
 }
 

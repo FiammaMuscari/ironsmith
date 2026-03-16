@@ -65,6 +65,9 @@ pub(super) fn describe_player_filter(filter: &PlayerFilter) -> String {
         PlayerFilter::OwnerOf(crate::target::ObjectRef::Target) => "its owner".to_string(),
         PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
         PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+        PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+            "that player".to_string()
+        }
     }
 }
 
@@ -1311,9 +1314,16 @@ pub(super) fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
 
 pub(super) fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
     let lower = line.to_ascii_lowercase();
-    let singular_source = lower.contains("exile the top card")
-        || lower.contains("reveal the top card")
-        || lower.contains("look at the top card");
+    let singular_source = [
+        "exile the top card",
+        "exiles the top card",
+        "reveal the top card",
+        "reveals the top card",
+        "look at the top card",
+        "looks at the top card",
+    ]
+    .into_iter()
+    .any(|needle| lower.contains(needle));
     if !singular_source {
         return None;
     }

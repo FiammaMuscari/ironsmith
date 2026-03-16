@@ -282,23 +282,23 @@ fn grouped_battlefield_for_player(
     (snapshots, total)
 }
 
-fn should_surface_zone_card_in_pseudo_hand(
+fn pseudo_hand_glow_kind_for_zone_card(
     game: &GameState,
     perspective: PlayerId,
     object: &crate::object::Object,
     zone: Zone,
-) -> bool {
+) -> Option<&'static str> {
     if object.zone != zone
         || matches!(
             zone,
             Zone::Hand | Zone::Library | Zone::Battlefield | Zone::Stack
         )
     {
-        return false;
+        return None;
     }
 
     if zone == Zone::Command && object.owner == perspective && game.is_commander(object.id) {
-        return true;
+        return Some("extra");
     }
 
     if !game
@@ -306,7 +306,7 @@ fn should_surface_zone_card_in_pseudo_hand(
         .granted_play_from_for_card(game, object.id, zone, perspective)
         .is_empty()
     {
-        return true;
+        return Some("play-from");
     }
 
     if !game
@@ -314,13 +314,45 @@ fn should_surface_zone_card_in_pseudo_hand(
         .granted_alternative_casts_for_card(game, object.id, zone, perspective)
         .is_empty()
     {
-        return true;
+        return Some("extra");
     }
 
     object
         .alternative_casts
         .iter()
         .any(|method| method.cast_from_zone() == zone)
+        .then_some("extra")
+}
+
+fn build_zone_card_snapshot(
+    game: &GameState,
+    perspective: PlayerId,
+    object: &crate::object::Object,
+    zone: Zone,
+) -> ZoneCardSnapshot {
+    let pseudo_hand_glow_kind =
+        pseudo_hand_glow_kind_for_zone_card(game, perspective, object, zone).map(str::to_string);
+    let power_toughness = match (object.power(), object.toughness()) {
+        (Some(power), Some(toughness)) => Some(format!("{power}/{toughness}")),
+        _ => None,
+    };
+
+    ZoneCardSnapshot {
+        id: object.id.0,
+        stable_id: object.stable_id.0.0,
+        name: object.name.clone(),
+        mana_cost: object.mana_cost.as_ref().map(|mc| mc.to_oracle()),
+        power_toughness,
+        loyalty: object.loyalty(),
+        defense: object.defense(),
+        card_types: object
+            .card_types
+            .iter()
+            .map(|ct| ct.name().to_string())
+            .collect(),
+        show_in_pseudo_hand: pseudo_hand_glow_kind.is_some(),
+        pseudo_hand_glow_kind,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -406,7 +438,13 @@ struct ZoneCardSnapshot {
     id: u64,
     stable_id: u64,
     name: String,
+    mana_cost: Option<String>,
+    power_toughness: Option<String>,
+    loyalty: Option<u32>,
+    defense: Option<u32>,
+    card_types: Vec<String>,
     show_in_pseudo_hand: bool,
+    pseudo_hand_glow_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -892,18 +930,7 @@ impl GameSnapshot {
                         .iter()
                         .rev()
                         .filter_map(|id| game.object(*id))
-                        .map(|o| ZoneCardSnapshot {
-                            id: o.id.0,
-                            stable_id: o.stable_id.0.0,
-                            name: o.name.clone(),
-                            show_in_pseudo_hand: is_perspective_player
-                                && should_surface_zone_card_in_pseudo_hand(
-                                    game,
-                                    perspective,
-                                    o,
-                                    Zone::Graveyard,
-                                ),
-                        })
+                        .map(|o| build_zone_card_snapshot(game, perspective, o, Zone::Graveyard))
                         .collect(),
                     exile_cards: game
                         .exile
@@ -911,18 +938,7 @@ impl GameSnapshot {
                         .rev()
                         .filter_map(|id| game.object(*id))
                         .filter(|o| o.owner == p.id)
-                        .map(|o| ZoneCardSnapshot {
-                            id: o.id.0,
-                            stable_id: o.stable_id.0.0,
-                            name: o.name.clone(),
-                            show_in_pseudo_hand: is_perspective_player
-                                && should_surface_zone_card_in_pseudo_hand(
-                                    game,
-                                    perspective,
-                                    o,
-                                    Zone::Exile,
-                                ),
-                        })
+                        .map(|o| build_zone_card_snapshot(game, perspective, o, Zone::Exile))
                         .collect(),
                     command_cards: game
                         .command_zone
@@ -930,18 +946,7 @@ impl GameSnapshot {
                         .rev()
                         .filter_map(|id| game.object(*id))
                         .filter(|o| o.owner == p.id)
-                        .map(|o| ZoneCardSnapshot {
-                            id: o.id.0,
-                            stable_id: o.stable_id.0.0,
-                            name: o.name.clone(),
-                            show_in_pseudo_hand: is_perspective_player
-                                && should_surface_zone_card_in_pseudo_hand(
-                                    game,
-                                    perspective,
-                                    o,
-                                    Zone::Command,
-                                ),
-                        })
+                        .map(|o| build_zone_card_snapshot(game, perspective, o, Zone::Command))
                         .collect(),
                     library_top: p
                         .library
@@ -8823,6 +8828,100 @@ mod tests {
         assert_eq!(hidden_cast.object_id, None);
         assert_eq!(hidden_cast.from_zone, None);
         assert_eq!(hidden_cast.to_zone, None);
+    }
+
+    #[test]
+    fn snapshot_surfaces_cross_owner_play_from_cards_in_pseudo_hand() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let card = CardBuilder::new(CardId::from_raw(991001), "Borrowed Bolt")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Red]]))
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let exiled_id = game.create_object_from_card(&card, bob, Zone::Exile);
+
+        game.grant_registry.grant_to_card(
+            exiled_id,
+            Zone::Exile,
+            alice,
+            crate::grant::Grantable::PlayFrom,
+            crate::grant_registry::GrantSource::Effect {
+                source_id: ObjectId::from_raw(991002),
+                expires_end_of_turn: game.turn.turn_number,
+            },
+        );
+
+        let snapshot = GameSnapshot::from_game(
+            &game,
+            alice,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            false,
+            None,
+            0,
+        );
+        let bob_snapshot = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == bob.0)
+            .expect("opponent snapshot should exist");
+        let exiled_card = bob_snapshot
+            .exile_cards
+            .iter()
+            .find(|card| card.id == exiled_id.0)
+            .expect("exiled card should be present in opponent exile");
+
+        assert!(
+            exiled_card.show_in_pseudo_hand,
+            "play-from card in an opponent-owned exile pile should still surface in the perspective player's pseudo-hand"
+        );
+        assert_eq!(
+            exiled_card.pseudo_hand_glow_kind.as_deref(),
+            Some("play-from"),
+            "cross-owner play-from cards should carry the dedicated pseudo-hand glow kind"
+        );
+
+        game.turn.turn_number = game.turn.turn_number.saturating_add(1);
+        let expired_snapshot = GameSnapshot::from_game(
+            &game,
+            alice,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            false,
+            None,
+            0,
+        );
+        let expired_bob_snapshot = expired_snapshot
+            .players
+            .iter()
+            .find(|player| player.id == bob.0)
+            .expect("opponent snapshot should still exist");
+        let expired_card = expired_bob_snapshot
+            .exile_cards
+            .iter()
+            .find(|card| card.id == exiled_id.0)
+            .expect("expired card should remain in exile");
+
+        assert!(
+            !expired_card.show_in_pseudo_hand,
+            "pseudo-hand should stop surfacing the card once the play-from permission expires"
+        );
+        assert_eq!(
+            expired_card.pseudo_hand_glow_kind, None,
+            "expired play-from cards should no longer advertise a pseudo-hand glow"
+        );
     }
 
     #[test]

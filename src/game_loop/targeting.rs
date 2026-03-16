@@ -829,7 +829,10 @@ pub fn player_matches_filter_with_combat(
             player_matches_filter_with_combat(player_id, base, game, controller, combat)
                 && !player_matches_filter_with_combat(player_id, excluded, game, controller, combat)
         }
-        PlayerFilter::ControllerOf(_) | PlayerFilter::OwnerOf(_) => {
+        PlayerFilter::ControllerOf(_)
+        | PlayerFilter::OwnerOf(_)
+        | PlayerFilter::AliasedOwnerOf(_)
+        | PlayerFilter::AliasedControllerOf(_) => {
             // These require object resolution, not applicable for simple player matching
             false
         }

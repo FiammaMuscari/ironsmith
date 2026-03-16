@@ -7445,14 +7445,6 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             "If a card would be put into {graveyard_owner} graveyard from anywhere this turn, exile that card instead"
         );
     }
-    if let Some(grant_play) = effect.downcast_ref::<crate::effects::GrantPlayFromGraveyardEffect>()
-    {
-        let player = describe_player_filter(&grant_play.player);
-        let graveyard_owner = describe_possessive_player_filter(&grant_play.player);
-        return format!(
-            "Until end of turn, {player} may play lands and cast spells from {graveyard_owner} graveyard"
-        );
-    }
     if let Some(additional_land_plays) =
         effect.downcast_ref::<crate::effects::AdditionalLandPlaysEffect>()
     {
@@ -7643,6 +7635,13 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             grant.grantable.display(),
             duration
         );
+    }
+    if let Some(grant) = effect.downcast_ref::<crate::effects::GrantBySpecEffect>() {
+        let duration = match grant.duration {
+            crate::grant::GrantDuration::UntilEndOfTurn => " until end of turn",
+            crate::grant::GrantDuration::Forever => "",
+        };
+        return format!("{}{}", grant.spec.display(), duration);
     }
     if let Some(grant_play_tagged) = effect.downcast_ref::<crate::effects::GrantPlayTaggedEffect>()
     {

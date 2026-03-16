@@ -1101,6 +1101,18 @@
   cursor: grab;
 }
 
+.game-card.glow-play-from {
+  --glow-rgb: 255, 74, 74;
+  --aura-opacity-1-min: 0.24;
+  --aura-opacity-1-max: 0.6;
+  --aura-opacity-2-min: 0.12;
+  --aura-opacity-2-max: 0.34;
+  box-shadow:
+    0 0 10px 2px rgba(255, 74, 74, 0.5),
+    0 0 22px 6px rgba(255, 74, 74, 0.24),
+    inset 0 0 7px 2px rgba(255, 74, 74, 0.24);
+}
+
 @keyframes glow-pulse-extra {
   0%, 100% {
     box-shadow:
@@ -1623,6 +1635,15 @@
     0 0 18px 6px rgba(174, 118, 255, 0.7),
     0 0 36px 12px rgba(174, 118, 255, 0.35),
     inset 0 0 10px 4px rgba(174, 118, 255, 0.4) !important;
+}
+
+.game-card.glow-play-from:hover,
+.game-card.glow-play-from.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 20px 6px rgba(255, 74, 74, 0.74),
+    0 0 40px 12px rgba(255, 74, 74, 0.36),
+    inset 0 0 10px 4px rgba(255, 74, 74, 0.42) !important;
 }
 
 .game-card.playable:hover,

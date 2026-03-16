@@ -35,6 +35,14 @@ pub enum GrantSource {
 }
 
 impl GrantSource {
+    /// Create a grant sourced from a resolving effect that lasts through end of turn.
+    pub fn until_end_of_turn(source_id: ObjectId, turn: u32) -> Self {
+        GrantSource::Effect {
+            source_id,
+            expires_end_of_turn: turn,
+        }
+    }
+
     /// Source object that provided this grant.
     pub fn source_id(&self) -> ObjectId {
         match self {
@@ -202,6 +210,25 @@ impl GrantRegistry {
             grantable,
             source,
         });
+    }
+
+    /// Add a filter grant from a resolving effect until end of turn.
+    pub fn grant_to_filter_until_end_of_turn(
+        &mut self,
+        filter: ObjectFilter,
+        zone: Zone,
+        player: PlayerId,
+        grantable: Grantable,
+        source_id: ObjectId,
+        turn: u32,
+    ) {
+        self.grant_to_filter(
+            filter,
+            zone,
+            player,
+            grantable,
+            GrantSource::until_end_of_turn(source_id, turn),
+        );
     }
 
     /// Add an alternative cast grant for a specific card.
@@ -603,5 +630,27 @@ mod tests {
             &registry.grants[1].grantable,
             Grantable::Ability(_)
         ));
+    }
+
+    #[test]
+    fn test_grant_to_filter_until_end_of_turn_uses_effect_source() {
+        let mut registry = GrantRegistry::new();
+        let player = PlayerId::from_index(0);
+        let source_id = ObjectId::from_raw(7);
+
+        registry.grant_to_filter_until_end_of_turn(
+            ObjectFilter::nonland(),
+            Zone::Graveyard,
+            player,
+            Grantable::play_from(),
+            source_id,
+            3,
+        );
+
+        assert_eq!(registry.grants.len(), 1);
+        assert_eq!(
+            registry.grants[0].source,
+            GrantSource::until_end_of_turn(source_id, 3)
+        );
     }
 }

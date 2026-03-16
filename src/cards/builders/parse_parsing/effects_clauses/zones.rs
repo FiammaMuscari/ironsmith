@@ -3022,43 +3022,66 @@ pub(crate) fn split_exile_graveyard_replacement_suffix(tokens: &[Token]) -> &[To
     }
 }
 
-pub(crate) fn parse_target_player_graveyard_filter(tokens: &[Token]) -> Option<ObjectFilter> {
-    let words = words(tokens);
-    if words.as_slice() == ["target", "player", "graveyard"]
-        || words.as_slice() == ["target", "players", "graveyard"]
-        || words.as_slice() == ["that", "player", "graveyard"]
-        || words.as_slice() == ["that", "players", "graveyard"]
-    {
-        let mut filter = ObjectFilter::default().in_zone(Zone::Graveyard);
-        filter.owner = Some(PlayerFilter::target_player());
-        return Some(filter);
+pub(crate) fn parse_graveyard_owner_prefix(words: &[&str]) -> Option<(PlayerAst, usize)> {
+    if words.starts_with(&["your", "graveyard"]) {
+        return Some((PlayerAst::You, 2));
     }
-    if words.as_slice() == ["target", "opponent", "graveyard"]
-        || words.as_slice() == ["target", "opponents", "graveyard"]
-    {
-        let mut filter = ObjectFilter::default().in_zone(Zone::Graveyard);
-        filter.owner = Some(PlayerFilter::Target(Box::new(PlayerFilter::Opponent)));
-        return Some(filter);
+    if words.starts_with(&["their", "graveyard"]) {
+        return Some((PlayerAst::That, 2));
     }
-    if words.as_slice() == ["its", "controller", "graveyard"]
-        || words.as_slice() == ["its", "controllers", "graveyard"]
+    if words.starts_with(&["that", "player", "graveyard"])
+        || words.starts_with(&["that", "players", "graveyard"])
     {
-        let mut filter = ObjectFilter::default().in_zone(Zone::Graveyard);
-        filter.owner = Some(PlayerFilter::ControllerOf(
-            crate::filter::ObjectRef::tagged("triggering"),
-        ));
-        return Some(filter);
+        return Some((PlayerAst::That, 3));
     }
-    if words.as_slice() == ["its", "owner", "graveyard"]
-        || words.as_slice() == ["its", "owners", "graveyard"]
+    if words.starts_with(&["target", "player", "graveyard"])
+        || words.starts_with(&["target", "players", "graveyard"])
     {
-        let mut filter = ObjectFilter::default().in_zone(Zone::Graveyard);
-        filter.owner = Some(PlayerFilter::OwnerOf(crate::filter::ObjectRef::tagged(
-            "triggering",
-        )));
-        return Some(filter);
+        return Some((PlayerAst::Target, 3));
+    }
+    if words.starts_with(&["target", "opponent", "graveyard"])
+        || words.starts_with(&["target", "opponents", "graveyard"])
+    {
+        return Some((PlayerAst::TargetOpponent, 3));
+    }
+    if words.starts_with(&["its", "controller", "graveyard"])
+        || words.starts_with(&["its", "controllers", "graveyard"])
+    {
+        return Some((PlayerAst::ItsController, 3));
+    }
+    if words.starts_with(&["its", "owner", "graveyard"])
+        || words.starts_with(&["its", "owners", "graveyard"])
+    {
+        return Some((PlayerAst::ItsOwner, 3));
+    }
+    if words.starts_with(&["his", "or", "her", "graveyard"]) {
+        return Some((PlayerAst::That, 4));
     }
     None
+}
+
+pub(crate) fn parse_target_player_graveyard_filter(tokens: &[Token]) -> Option<ObjectFilter> {
+    let words = words(tokens);
+    let (player, consumed) = parse_graveyard_owner_prefix(&words)?;
+    if consumed != words.len() {
+        return None;
+    }
+
+    let mut filter = ObjectFilter::default().in_zone(Zone::Graveyard);
+    filter.owner = match player {
+        PlayerAst::You => Some(PlayerFilter::You),
+        PlayerAst::That | PlayerAst::Target => Some(PlayerFilter::target_player()),
+        PlayerAst::TargetOpponent => Some(PlayerFilter::Target(Box::new(PlayerFilter::Opponent))),
+        PlayerAst::ItsController => Some(PlayerFilter::ControllerOf(
+            crate::filter::ObjectRef::tagged("triggering"),
+        )),
+        PlayerAst::ItsOwner => Some(PlayerFilter::OwnerOf(crate::filter::ObjectRef::tagged(
+            "triggering",
+        ))),
+        _ => None,
+    };
+    filter.owner.as_ref()?;
+    Some(filter)
 }
 
 pub(crate) fn apply_exile_subject_hand_owner_context(
@@ -3072,6 +3095,36 @@ pub(crate) fn apply_exile_subject_hand_owner_context(
         return;
     }
     apply_exile_subject_owner_context(filter, subject);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cards::builders::tokenize_line;
+
+    #[test]
+    fn parse_graveyard_owner_prefix_handles_shared_phrases() {
+        assert_eq!(
+            parse_graveyard_owner_prefix(&["that", "player", "graveyard", "as", "you", "choose"]),
+            Some((PlayerAst::That, 3))
+        );
+        assert_eq!(
+            parse_graveyard_owner_prefix(&["its", "owner", "graveyard"]),
+            Some((PlayerAst::ItsOwner, 3))
+        );
+    }
+
+    #[test]
+    fn parse_target_player_graveyard_filter_uses_shared_owner_prefix() {
+        let tokens = tokenize_line("target opponent graveyard", 0);
+        let filter = parse_target_player_graveyard_filter(&tokens).expect("target graveyard");
+
+        assert_eq!(filter.zone, Some(Zone::Graveyard));
+        assert!(matches!(
+            filter.owner,
+            Some(PlayerFilter::Target(ref target)) if **target == PlayerFilter::Opponent
+        ));
+    }
 }
 
 pub(crate) fn apply_exile_subject_owner_context(

@@ -22,6 +22,7 @@ import {
   buildObjectControllerById,
   buildObjectNameById,
 } from "@/lib/decision-object-meta";
+import { useHoverSuppressedWhileScrolling } from "@/lib/useHoverSuppressedWhileScrolling";
 
 const STRIP_ITEM_BASE_CLASS = "decision-option-row decision-option-row--strip h-auto min-h-8 max-w-[360px] min-w-[120px] shrink-0 justify-start self-stretch overflow-hidden px-2.5 text-left text-[12px] font-semibold whitespace-nowrap";
 const STRIP_ITEM_ACTIVE_CLASS = "is-selected";
@@ -359,6 +360,9 @@ function SingleSelectDecision({
 }) {
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
+  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
+    onScrollStart: clearHover,
+  });
   const stripLayout = layout === "strip";
   const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
   const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
@@ -476,7 +480,8 @@ function SingleSelectDecision({
         <div className={cn(
           "w-full",
           stripLayout ? "" : "decision-options-panel"
-        )}>
+        )}
+        ref={stripLayout ? undefined : attachScrollableRef}>
           <div className={cn(
             stripLayout
               ? "flex w-max min-w-full flex-nowrap items-center gap-1.5 overflow-visible py-0.5 pr-1"
@@ -499,7 +504,10 @@ function SingleSelectDecision({
                       opt.description
                     )
                   }
-                  onMouseEnter={() => hoverObjectId && hoverCard(hoverObjectId)}
+                  onMouseEnter={() => {
+                    if (hoverSuppressed || !hoverObjectId) return;
+                    hoverCard(hoverObjectId);
+                  }}
                   onMouseLeave={() => hoverObjectId && clearHover()}
                 />
               );
@@ -531,6 +539,9 @@ function MultiSelectDecision({
 }) {
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
+  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
+    onScrollStart: clearHover,
+  });
   const stripLayout = layout === "strip";
   const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
   const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
@@ -614,6 +625,7 @@ function MultiSelectDecision({
             </div>
           )}
         <div
+          ref={stripLayout ? undefined : attachScrollableRef}
           className={cn(
             "w-full transition-[max-height] duration-300 ease-out",
             stripLayout ? "overflow-x-auto overflow-y-hidden pb-1" : "overflow-y-auto overflow-x-hidden"
@@ -640,7 +652,10 @@ function MultiSelectDecision({
                   isSelected={isSelected}
                   horizontal={stripLayout}
                   onClick={() => opt.legal !== false && toggle(opt.index)}
-                  onMouseEnter={() => hoverObjectId && hoverCard(hoverObjectId)}
+                  onMouseEnter={() => {
+                    if (hoverSuppressed || !hoverObjectId) return;
+                    hoverCard(hoverObjectId);
+                  }}
                   onMouseLeave={() => hoverObjectId && clearHover()}
                 />
               );

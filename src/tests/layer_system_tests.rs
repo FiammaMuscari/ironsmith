@@ -21,7 +21,7 @@ use crate::game_state::{GameState, Phase};
 use crate::ids::{CardId, PlayerId};
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
-use crate::static_abilities::StaticAbility;
+use crate::static_abilities::{StaticAbility, StaticAbilityId};
 use crate::triggers::TriggerQueue;
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
@@ -450,6 +450,49 @@ fn test_manascape_refractor_copies_squirrel_nest_ability() {
     assert!(
         has_squirrel_ability,
         "Manascape Refractor should copy the activated ability granted by Squirrel Nest"
+    );
+}
+
+#[test]
+fn test_conditional_attached_creature_check_uses_in_progress_characteristics() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    let creature = CardBuilder::new(CardId::new(), "Test Bear")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    let creature_id = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+
+    let aura_def = CardDefinitionBuilder::new(CardId::new(), "Clawing Torment Variant")
+        .parse_text(
+            "Enchant artifact or creature\nAs long as enchanted permanent is a creature, it gets -1/-1 and can't block.\nEnchanted permanent has \"At the beginning of your upkeep, you lose 1 life.\"",
+        )
+        .expect("clawing torment should parse");
+    let aura_id = game.create_object_from_definition(&aura_def, alice, Zone::Battlefield);
+
+    {
+        let aura = game.object_mut(aura_id).expect("aura should exist");
+        aura.attached_to = Some(creature_id);
+    }
+    {
+        let creature = game.object_mut(creature_id).expect("creature should exist");
+        creature.attachments.push(aura_id);
+    }
+
+    let chars = game
+        .calculated_characteristics(creature_id)
+        .expect("conditional attached effect should not recurse");
+
+    assert_eq!(chars.power, Some(1));
+    assert_eq!(chars.toughness, Some(1));
+    assert!(
+        chars
+            .static_abilities
+            .iter()
+            .any(|ability| ability.id() == StaticAbilityId::CantBlock),
+        "expected Clawing Torment to grant can't block, got: {:?}",
+        chars.static_abilities
     );
 }
 

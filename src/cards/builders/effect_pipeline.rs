@@ -3,7 +3,7 @@ use crate::alternative_cast::AlternativeCastingMethod;
 use crate::cards::ParseAnnotations;
 use crate::cards::builders::{
     AnnotatedEffectSequence, CardTextError, EffectAst, EffectReferenceResolutionConfig,
-    KeywordAction, LineAst, LineInfo, ParsedAbility, ParsedCardAst, ParsedCardItem,
+    KeywordAction, LineAst, LineInfo, LoweredEffects, ParsedAbility, ParsedCardAst, ParsedCardItem,
     ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst, ParsedModalAst,
     ParsedModalHeader, ParsedRestrictions, PredicateAst, ReferenceEnv, ReferenceExports,
     ReferenceImports, StaticAbilityAst, TriggerSpec, annotate_effect_sequence,
@@ -15,7 +15,8 @@ use crate::cards::builders::{
     lower_static_abilities_ast, lower_static_ability_ast, normalize_effects_ast,
     parse_activate_only_timing, parse_activation_condition, parse_mana_usage_restriction_sentence,
     parse_triggered_times_each_turn_from_words, parsed_triggered_ability,
-    static_ability_for_keyword_action, tokenize_line, trigger_supports_event_value, words,
+    static_ability_for_keyword_action, tokenize_line, trigger_binds_player_reference_context,
+    trigger_supports_event_value, validate_iterated_player_bindings_in_lowered_effects, words,
 };
 use crate::color::ColorSet;
 use crate::cost::OptionalCost;
@@ -1037,7 +1038,6 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Crew { amount, .. } => format!("Crew {amount}"),
         KeywordAction::Saddle { amount, .. } => format!("Saddle {amount}"),
         KeywordAction::Marker(name) => title_case_words(name),
-        KeywordAction::KeywordText(text) => text.clone(),
         KeywordAction::MarkerText(text) => text.clone(),
         KeywordAction::Casualty(power) => format!("Casualty {power}"),
         KeywordAction::Conspire => "Conspire".to_string(),
@@ -1324,6 +1324,11 @@ fn apply_line_ast(
                 }
                 Err(err) => return Err(err),
             };
+            validate_iterated_player_bindings_in_lowered_effects(
+                &lowered,
+                false,
+                "spell text effects",
+            )?;
             let compiled = lowered.effects;
             state.latest_spell_exports = lowered.exports;
 
@@ -1787,6 +1792,25 @@ fn finalize_pending_modal(
     } else {
         combined_effects.push(modal_effect);
     }
+
+    let modal_lowered = LoweredEffects {
+        effects: combined_effects.clone(),
+        choices: prefix_choices.clone(),
+        exports: ReferenceExports::default(),
+    };
+    validate_iterated_player_bindings_in_lowered_effects(
+        &modal_lowered,
+        trigger
+            .as_ref()
+            .is_some_and(trigger_binds_player_reference_context),
+        if trigger.is_some() {
+            "triggered modal ability effects"
+        } else if activated.is_some() {
+            "activated modal ability effects"
+        } else {
+            "modal spell effects"
+        },
+    )?;
 
     if let Some(trigger) = trigger {
         let mut ability = parsed_triggered_ability(

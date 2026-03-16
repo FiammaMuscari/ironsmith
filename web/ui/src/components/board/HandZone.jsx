@@ -37,7 +37,7 @@ function handGlowFromTypes(cardTypes) {
  */
 function buildPlayableMaps(state, player) {
   const handPlayable = new Map();   // objectId → actions[] (from hand)
-  const extraPlayable = new Map();  // objectId → { name, actions[], fromZone }
+  const extraPlayable = new Map();  // objectId → { name, card, actions[], fromZone, glowKind }
 
   const actions =
     state?.decision?.kind === "priority" && Array.isArray(state?.decision?.actions)
@@ -46,12 +46,24 @@ function buildPlayableMaps(state, player) {
 
   const handIds = new Set((player?.hand_cards || []).map((c) => Number(c.id)));
 
-  // Build zone lookup for card names (graveyard, exile, command)
+  // Build zone lookup for cards across all visible zones so pseudo-hand can
+  // surface cross-owner play-from cards such as Ragavan hits in exile.
   const cardNameById = new Map();
-  for (const c of player?.graveyard_cards || []) cardNameById.set(Number(c.id), c.name);
-  for (const c of player?.exile_cards || []) cardNameById.set(Number(c.id), c.name);
-  for (const c of player?.command_cards || []) cardNameById.set(Number(c.id), c.name);
-  for (const c of player?.hand_cards || []) cardNameById.set(Number(c.id), c.name);
+  const cardSnapshotById = new Map();
+  const addZoneCards = (cards) => {
+    for (const card of cards || []) {
+      const objId = Number(card?.id);
+      if (!Number.isFinite(objId)) continue;
+      cardNameById.set(objId, card.name);
+      cardSnapshotById.set(objId, card);
+    }
+  };
+  for (const snapshotPlayer of state?.players || []) {
+    addZoneCards(snapshotPlayer?.graveyard_cards);
+    addZoneCards(snapshotPlayer?.exile_cards);
+    addZoneCards(snapshotPlayer?.command_cards);
+    addZoneCards(snapshotPlayer?.hand_cards);
+  }
 
   for (const action of actions) {
     if (action.object_id == null) {
@@ -79,10 +91,13 @@ function buildPlayableMaps(state, player) {
     // don't show up as extra pseudo-hand cards.
     if (action.kind === "cast_spell" || action.kind === "play_land") {
       if (!extraPlayable.has(objId)) {
+        const card = cardSnapshotById.get(objId);
         extraPlayable.set(objId, {
           name: cardNameById.get(objId) || action.label?.replace(/^(Cast|Play)\s+/i, "") || `Card ${objId}`,
+          card: card || { id: objId, name: cardNameById.get(objId) || `Card ${objId}` },
           actions: [],
           fromZone: action.from_zone || "other",
+          glowKind: card?.pseudo_hand_glow_kind || "extra",
         });
       }
       extraPlayable.get(objId).actions.push(action);
@@ -99,16 +114,20 @@ function buildPlayableMaps(state, player) {
       if (!extraPlayable.has(objId)) {
         extraPlayable.set(objId, {
           name: card.name || cardNameById.get(objId) || `Card ${objId}`,
+          card,
           actions: [],
           fromZone,
+          glowKind: card.pseudo_hand_glow_kind || "extra",
         });
       }
     }
   };
 
-  addPseudoHandCandidates(player?.graveyard_cards, "graveyard");
-  addPseudoHandCandidates(player?.exile_cards, "exile");
-  addPseudoHandCandidates(player?.command_cards, "command");
+  for (const snapshotPlayer of state?.players || []) {
+    addPseudoHandCandidates(snapshotPlayer?.graveyard_cards, "graveyard");
+    addPseudoHandCandidates(snapshotPlayer?.exile_cards, "exile");
+    addPseudoHandCandidates(snapshotPlayer?.command_cards, "command");
+  }
 
   return { handPlayable, extraPlayable };
 }
@@ -501,9 +520,10 @@ export default function HandZone({ player, selectedObjectId, onInspect, isExpand
       }
 
       const { extra, visualIndex } = entry;
-      const card = { id: extra.id, name: extra.name };
+      const card = extra.card || { id: extra.id, name: extra.name };
       const plays = extra.actions;
       const isPlayable = plays.length > 0;
+      const baseGlowKind = extra.glowKind || (isPlayable ? "extra" : null);
       const isActionLinkedHover = (
         hoveredLinkedObjectIds.has(String(extra.id))
         || (
@@ -518,14 +538,14 @@ export default function HandZone({ player, selectedObjectId, onInspect, isExpand
           card={card}
           variant="hand"
           isPlayable={isPlayable}
-          glowKind={isActionLinkedHover ? "action-link" : (isPlayable ? "extra" : null)}
+          glowKind={isActionLinkedHover ? "action-link" : baseGlowKind}
           isNew={isPrimaryCycle}
           handCircuitMode={isExpanded ? "full" : "top"}
           isInspected={selectedObjectId != null && String(extra.id) === String(selectedObjectId)}
           onClick={plays.length === 0
             ? (e) => handleCardClick(e, card)
             : plays.length <= 1 ? undefined : (e) => handleCardClick(e, card)}
-          onPointerDown={plays.length > 0 ? (e) => handlePointerDown(e, card, plays, "extra") : undefined}
+          onPointerDown={plays.length > 0 ? (e) => handlePointerDown(e, card, plays, baseGlowKind || "extra") : undefined}
           onMouseEnter={() => handleHoverEnter(extra.id)}
           onMouseLeave={handleHoverLeave}
           style={{

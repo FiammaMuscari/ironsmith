@@ -684,6 +684,7 @@ export default function GameCard({
         glowKind === "ability" && "glow-ability",
         glowKind === "mana" && "glow-mana",
         glowKind === "extra" && "glow-extra",
+        glowKind === "play-from" && "glow-extra glow-play-from",
         glowKind === "instant" && "glow-instant",
         glowKind === "sorcery" && "glow-sorcery",
         glowKind === "creature" && "glow-creature",

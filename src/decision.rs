@@ -7208,7 +7208,6 @@ mod tests {
     use crate::effect::{Effect, Value};
     use crate::filter::Comparison;
     use crate::grant::Grantable;
-    use crate::grant_registry::GrantSource;
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::static_abilities::StaticAbility;
@@ -10433,15 +10432,13 @@ mod tests {
         let bolt_id = game.create_object_from_definition(&bolt, alice, Zone::Graveyard);
 
         let source_id = game.new_object_id();
-        game.grant_registry.grant_to_filter(
+        game.grant_registry.grant_to_filter_until_end_of_turn(
             ObjectFilter::nonland(),
             Zone::Graveyard,
             alice,
             Grantable::play_from(),
-            GrantSource::Effect {
-                source_id,
-                expires_end_of_turn: game.turn.turn_number,
-            },
+            source_id,
+            game.turn.turn_number,
         );
 
         let actions = compute_legal_actions(&game, alice);

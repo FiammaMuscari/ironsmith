@@ -168,13 +168,54 @@ impl GrantSpec {
         }
     }
 
-    /// Create a grant spec for flash to noncreature spells in hand.
-    pub fn flash_to_noncreature_spells() -> Self {
+    /// Create a grant spec for flash to spells in hand.
+    pub fn flash_to_spells() -> Self {
+        Self::flash_to_spells_matching(ObjectFilter::nonland())
+    }
+
+    /// Create a grant spec for flash to matching spells in hand.
+    pub fn flash_to_spells_matching(filter: ObjectFilter) -> Self {
         Self {
             grantable: Grantable::Ability(StaticAbility::flash()),
-            filter: ObjectFilter::noncreature_spell(),
+            filter,
             zone: Zone::Hand,
         }
+    }
+
+    /// Create a grant spec for flash to noncreature spells in hand.
+    pub fn flash_to_noncreature_spells() -> Self {
+        Self::flash_to_spells_matching(ObjectFilter::noncreature_spell())
+    }
+
+    /// Create a grant spec for playing cards from your graveyard.
+    pub fn play_from_graveyard() -> Self {
+        Self::new(
+            Grantable::play_from(),
+            ObjectFilter::default(),
+            Zone::Graveyard,
+        )
+    }
+
+    /// Create a grant spec for playing lands from your graveyard.
+    pub fn play_lands_from_graveyard() -> Self {
+        Self::new(
+            Grantable::play_from(),
+            ObjectFilter::land(),
+            Zone::Graveyard,
+        )
+    }
+
+    /// Create a grant spec for casting matching spells from hand without paying mana cost.
+    pub fn cast_from_hand_without_paying_mana_cost_matching(filter: ObjectFilter) -> Self {
+        Self::new(
+            Grantable::AlternativeCast(AlternativeCastingMethod::alternative_cost(
+                "Without paying mana cost",
+                None,
+                Vec::new(),
+            )),
+            filter,
+            Zone::Hand,
+        )
     }
 
     /// Create a grant spec for escape to nonland cards in graveyard.
@@ -227,6 +268,12 @@ impl GrantSpec {
         {
             return "You may play lands from your graveyard".to_string();
         }
+        if matches!(self.grantable, Grantable::PlayFrom)
+            && self.zone == Zone::Graveyard
+            && self.filter == ObjectFilter::default()
+        {
+            return "You may play lands and cast spells from your graveyard".to_string();
+        }
         if let Grantable::AlternativeCast(method) = &self.grantable
             && self.zone == Zone::Hand
             && self.filter == ObjectFilter::nonland()
@@ -253,6 +300,17 @@ impl GrantSpec {
             return format!(
                 "Each {filter_desc} has escape. The escape cost is equal to the card's mana cost plus exile {count_text} other cards from {graveyard}"
             );
+        }
+        if let Grantable::Ability(ability) = &self.grantable
+            && ability.has_flash()
+            && self.zone == Zone::Hand
+        {
+            if self.filter == ObjectFilter::nonland() {
+                return "You may cast spells as though they had flash".to_string();
+            }
+            if self.filter == ObjectFilter::noncreature_spell() {
+                return "You may cast noncreature spells as though they had flash".to_string();
+            }
         }
         format!(
             "Cards in {} have {}",
@@ -302,6 +360,18 @@ mod tests {
     }
 
     #[test]
+    fn test_grant_spec_flash_to_spells() {
+        let spec = GrantSpec::flash_to_spells();
+        assert_eq!(spec.zone, Zone::Hand);
+        assert!(matches!(spec.grantable, Grantable::Ability(_)));
+        assert!(spec.filter.excluded_card_types.contains(&CardType::Land));
+        assert_eq!(
+            spec.display(),
+            "You may cast spells as though they had flash"
+        );
+    }
+
+    #[test]
     fn test_grant_spec_escape_to_nonland() {
         let spec = GrantSpec::escape_to_nonland(3);
         assert_eq!(spec.zone, Zone::Graveyard);
@@ -312,5 +382,33 @@ mod tests {
             })
         ));
         assert!(spec.filter.excluded_card_types.contains(&CardType::Land));
+    }
+
+    #[test]
+    fn test_grant_spec_play_from_graveyard() {
+        let spec = GrantSpec::play_from_graveyard();
+        assert_eq!(spec.zone, Zone::Graveyard);
+        assert_eq!(
+            spec.display(),
+            "You may play lands and cast spells from your graveyard"
+        );
+    }
+
+    #[test]
+    fn test_grant_spec_cast_from_hand_without_paying_mana_cost_matching() {
+        let spec =
+            GrantSpec::cast_from_hand_without_paying_mana_cost_matching(ObjectFilter::nonland());
+        assert_eq!(spec.zone, Zone::Hand);
+        assert!(matches!(
+            &spec.grantable,
+            Grantable::AlternativeCast(method)
+                if method.cast_from_zone() == Zone::Hand
+                    && method.mana_cost().is_none()
+                    && method.non_mana_costs().is_empty()
+        ));
+        assert_eq!(
+            spec.display(),
+            "You may cast spells from your hand without paying their mana costs"
+        );
     }
 }

@@ -119,11 +119,11 @@ pub use permanents::{
 };
 pub use player::{
     AdditionalLandPlaysEffect, BecomeMonarchEffect, CascadeEffect, CastSourceEffect,
-    CastTaggedEffect, ChooseCardNameEffect, ChooseColorEffect, ControlPlayerEffect, CreateEmblemEffect,
-    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExileUntilMatchCastEffect,
-    ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
-    ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration,
-    GrantPlayTaggedEffect, GrantTaggedSpellFreeCastUntilEndOfTurnEffect,
+    CastTaggedEffect, ChooseCardNameEffect, ChooseColorEffect, ControlPlayerEffect,
+    CreateEmblemEffect, DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
+    ExileUntilMatchCastEffect, ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect,
+    ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantBySpecEffect, GrantEffect,
+    GrantPlayTaggedDuration, GrantPlayTaggedEffect, GrantTaggedSpellFreeCastUntilEndOfTurnEffect,
     GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect, PayEnergyEffect,
     PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
     SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,

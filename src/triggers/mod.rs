@@ -103,6 +103,9 @@ pub(crate) fn describe_player_filter_subject(filter: &PlayerFilter) -> String {
         }
         PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
         PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+        PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+            "that player".to_string()
+        }
     }
 }
 
@@ -127,6 +130,9 @@ pub(crate) fn describe_player_filter_possessive(filter: &PlayerFilter) -> String
         }
         PlayerFilter::ControllerOf(_) => "that object's controller's".to_string(),
         PlayerFilter::OwnerOf(_) => "that object's owner's".to_string(),
+        PlayerFilter::AliasedOwnerOf(_) | PlayerFilter::AliasedControllerOf(_) => {
+            "that player's".to_string()
+        }
     }
 }
 

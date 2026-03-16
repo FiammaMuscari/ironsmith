@@ -1574,7 +1574,9 @@ fn resolve_condition_player_simple(
         | PlayerFilter::TargetPlayerOrControllerOfTarget
         | PlayerFilter::Excluding { .. }
         | PlayerFilter::ControllerOf(_)
-        | PlayerFilter::OwnerOf(_) => None,
+        | PlayerFilter::OwnerOf(_)
+        | PlayerFilter::AliasedOwnerOf(_)
+        | PlayerFilter::AliasedControllerOf(_) => None,
     }
 }
 

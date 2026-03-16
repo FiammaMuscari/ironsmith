@@ -7,12 +7,14 @@ use crate::cards::builders::parse_parsing::{
     has_effect_head_without_verb, is_token_creation_context, parse_additional_land_plays_clause,
     parse_can_attack_as_though_no_defender_clause,
     parse_can_block_additional_creature_this_turn_clause, parse_cant_effect_sentence,
-    parse_cast_or_play_tagged_clause, parse_choose_target_and_verb_clause, parse_connive_clause,
-    parse_copy_spell_clause, parse_distribute_counters_clause, parse_double_counters_clause,
-    parse_for_each_object_subject, parse_for_each_opponent_clause, parse_for_each_player_clause,
+    parse_cast_or_play_tagged_clause, parse_cast_spells_as_though_they_had_flash_clause,
+    parse_choose_target_and_verb_clause, parse_connive_clause, parse_copy_spell_clause,
+    parse_distribute_counters_clause, parse_double_counters_clause, parse_for_each_object_subject,
+    parse_for_each_opponent_clause, parse_for_each_player_clause,
     parse_for_each_target_players_clause, parse_mana_symbol, parse_number, parse_object_filter,
-    parse_prevent_all_damage_clause, parse_prevent_next_damage_clause, parse_restriction_duration,
-    parse_search_library_sentence, parse_sentence_exile_source_with_counters,
+    parse_permission_clause_spec, parse_prevent_all_damage_clause,
+    parse_prevent_next_damage_clause, parse_restriction_duration, parse_search_library_sentence,
+    parse_sentence_exile_source_with_counters,
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
@@ -87,8 +89,28 @@ pub(crate) fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, Car
 
 fn leading_may_is_permission_clause(tokens: &[Token]) -> Result<bool, CardTextError> {
     Ok(parse_additional_land_plays_clause(tokens)?.is_some()
-        || parse_cast_or_play_tagged_clause(tokens)?.is_some()
+        || parse_permission_clause_spec(tokens)?.is_some()
         || parse_unsupported_play_cast_permission_clause(tokens)?.is_some())
+}
+
+fn starts_with_until_end_of_turn_trigger_clause(clause_words: &[&str]) -> bool {
+    (clause_words.starts_with(&["until", "end", "of", "turn"])
+        || clause_words.starts_with(&["until", "the", "end", "of", "turn"]))
+        && clause_words
+            .get(if clause_words.get(1) == Some(&"the") {
+                5
+            } else {
+                4
+            })
+            .is_some_and(|word| matches!(*word, "when" | "whenever" | "at"))
+}
+
+fn is_would_enter_replacement_clause(clause_words: &[&str]) -> bool {
+    clause_words.iter().any(|word| *word == "would")
+        && clause_words
+            .iter()
+            .any(|word| *word == "enter" || *word == "enters")
+        && clause_words.iter().any(|word| *word == "instead")
 }
 
 pub(crate) fn parse_or_action_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
@@ -168,6 +190,20 @@ mod tests {
 pub(crate) fn parse_effect_chain_with_sentence_primitives(
     tokens: &[Token],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    if starts_with_until_end_of_turn_trigger_clause(&clause_words) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-end-of-turn permission clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+    if is_would_enter_replacement_clause(&clause_words) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported would-enter replacement clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
     if let Some(effects) = run_sentence_primitives(
         tokens,
         PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
@@ -1691,6 +1727,9 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
         },
         ClausePrimitive {
             parser: parse_additional_land_plays_clause,
+        },
+        ClausePrimitive {
+            parser: parse_cast_spells_as_though_they_had_flash_clause,
         },
         ClausePrimitive {
             parser: parse_unsupported_play_cast_permission_clause,

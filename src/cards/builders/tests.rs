@@ -8018,7 +8018,8 @@ fn parse_mana_replacement_clause_deep_water_fails_instead_of_partial_tap() {
             .expect_err("unsupported mana replacement clause should fail parse");
     let message = format!("{err:?}");
     assert!(
-        message.contains("unsupported mana replacement clause"),
+        message.contains("unsupported mana replacement clause")
+            || message.contains("unsupported until-end-of-turn permission clause"),
         "expected strict mana replacement parse error, got {message}"
     );
 }
@@ -8032,7 +8033,8 @@ fn parse_mana_replacement_clause_harvest_mage_fails_instead_of_partial_tap() {
             .expect_err("unsupported mana replacement clause should fail parse");
     let message = format!("{err:?}");
     assert!(
-        message.contains("unsupported mana replacement clause"),
+        message.contains("unsupported mana replacement clause")
+            || message.contains("unsupported until-end-of-turn permission clause"),
         "expected strict mana replacement parse error, got {message}"
     );
 }
@@ -8046,7 +8048,8 @@ fn parse_mana_replacement_clause_with_taps_plural_fails_strictly() {
             .expect_err("unsupported mana replacement clause should fail parse");
     let message = format!("{err:?}");
     assert!(
-        message.contains("unsupported mana replacement clause"),
+        message.contains("unsupported mana replacement clause")
+            || message.contains("unsupported until-end-of-turn permission clause"),
         "expected strict mana replacement parse error, got {message}"
     );
 }
@@ -8060,7 +8063,8 @@ fn parse_mana_trigger_additional_clause_high_tide_fails_strictly() {
             .expect_err("unsupported mana-triggered additional-mana clause should fail parse");
     let message = format!("{err:?}");
     assert!(
-        message.contains("unsupported mana-triggered additional-mana clause"),
+        message.contains("unsupported mana-triggered additional-mana clause")
+            || message.contains("unsupported until-end-of-turn permission clause"),
         "expected strict mana-triggered parse error, got {message}"
     );
 }
@@ -15846,7 +15850,7 @@ fn parse_until_end_of_turn_you_may_cast_that_card() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ragavan Variant")
         .card_types(vec![CardType::Creature])
         .parse_text(
-            "Whenever this creature deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.",
+            "Whenever this creature deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.\nDash {1}{R}",
         )
         .expect("until-end-of-turn cast-that-card clause should parse");
 
@@ -15858,6 +15862,50 @@ fn parse_until_end_of_turn_you_may_cast_that_card() {
     assert!(
         !abilities_debug.contains("granttaggedspellfreecastuntilendofturneffect"),
         "expected ordinary cast permission without free-cast helper, got {abilities_debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Dash {1}{R}"),
+        "expected Dash keyword line in compiled output, got {rendered}"
+    );
+    assert!(
+        rendered.contains("you may cast that card until end of turn"),
+        "expected singular tagged cast permission in compiled output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("tagged 'exiled_"),
+        "expected internal exile tag to stay out of compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_rejects_unbound_that_player_hidden_zone_reference() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Broken Player Context")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Exile the top card of that player's library.")
+        .expect_err("unbound 'that player' hidden-zone reference should fail validation");
+
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("IteratedPlayer"),
+        "expected validation error to mention IteratedPlayer, got {err_text}"
+    );
+}
+
+#[test]
+fn parse_allows_that_player_when_trigger_binds_player_context() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Discard Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature deals combat damage to a player, that player discards a card.",
+        )
+        .expect("combat-damage trigger should bind 'that player'");
+
+    let debug = format!("{:#?}", def.abilities);
+    assert!(
+        debug.contains("DiscardEffect"),
+        "expected discard effect in triggered ability, got {debug}"
     );
 }
 
@@ -15894,7 +15942,8 @@ fn parse_your_opponents_cant_cast_spells_this_turn() {
         "expected cant effect for cast restriction, got {spell_debug}"
     );
     assert!(
-        spell_debug.contains("restriction: castspellsmatching(") && spell_debug.contains("opponent"),
+        spell_debug.contains("restriction: castspellsmatching(")
+            && spell_debug.contains("opponent"),
         "expected opponent cast restriction, got {spell_debug}"
     );
 }
@@ -17529,6 +17578,23 @@ fn parse_cast_this_spell_as_though_it_had_flash_line() {
     assert!(
         static_ids.contains(&StaticAbilityId::Flash),
         "expected flash static ability, got {static_ids:?}"
+    );
+}
+
+#[test]
+fn parse_borne_upon_a_wind_flash_permission_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Borne Upon a Wind")
+        .card_types(vec![CardType::Instant])
+        .parse_text("You may cast spells this turn as though they had flash.\nDraw a card.")
+        .expect("borne upon a wind clause should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("GrantBySpecEffect")
+            && debug.contains("You")
+            && debug.contains("Flash")
+            && debug.contains("DrawCardsEffect"),
+        "expected temporary flash grant plus draw, got {debug}"
     );
 }
 

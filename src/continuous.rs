@@ -3,6 +3,7 @@
 //! MTG uses a layer system (rule 613) to determine how continuous effects
 //! interact. Effects are applied in layer order, and within a layer by timestamp.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::ability::{Ability, AbilityKind, extract_static_abilities};
@@ -804,6 +805,93 @@ pub struct CalculatedCharacteristics {
     pub controller: PlayerId,
 }
 
+#[derive(Debug, Clone)]
+struct InProgressCharacteristicCalculation {
+    object_id: ObjectId,
+    chars: CalculatedCharacteristics,
+}
+
+thread_local! {
+    static IN_PROGRESS_CHARACTERISTIC_CALCULATIONS: RefCell<Vec<InProgressCharacteristicCalculation>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+struct CharacteristicCalculationGuard {
+    object_id: ObjectId,
+}
+
+impl CharacteristicCalculationGuard {
+    fn begin(object_id: ObjectId, chars: &CalculatedCharacteristics) -> Self {
+        IN_PROGRESS_CHARACTERISTIC_CALCULATIONS.with(|stack| {
+            stack
+                .borrow_mut()
+                .push(InProgressCharacteristicCalculation {
+                    object_id,
+                    chars: chars.clone(),
+                });
+        });
+        Self { object_id }
+    }
+
+    fn update(&self, chars: &CalculatedCharacteristics) {
+        IN_PROGRESS_CHARACTERISTIC_CALCULATIONS.with(|stack| {
+            if let Some(entry) = stack
+                .borrow_mut()
+                .iter_mut()
+                .rev()
+                .find(|entry| entry.object_id == self.object_id)
+            {
+                entry.chars = chars.clone();
+            }
+        });
+    }
+}
+
+impl Drop for CharacteristicCalculationGuard {
+    fn drop(&mut self) {
+        IN_PROGRESS_CHARACTERISTIC_CALCULATIONS.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            if let Some(idx) = stack
+                .iter()
+                .rposition(|entry| entry.object_id == self.object_id)
+            {
+                stack.remove(idx);
+            }
+        });
+    }
+}
+
+pub(crate) fn in_progress_characteristics(
+    object_id: ObjectId,
+) -> Option<CalculatedCharacteristics> {
+    IN_PROGRESS_CHARACTERISTIC_CALCULATIONS.with(|stack| {
+        stack
+            .borrow()
+            .iter()
+            .rev()
+            .find(|entry| entry.object_id == object_id)
+            .map(|entry| entry.chars.clone())
+    })
+}
+
+fn initial_characteristics(object: &Object) -> CalculatedCharacteristics {
+    let mut chars = CalculatedCharacteristics {
+        name: object.name.clone(),
+        power: object.base_power.as_ref().map(|p| p.base_value()),
+        toughness: object.base_toughness.as_ref().map(|t| t.base_value()),
+        card_types: object.card_types.clone(),
+        subtypes: object.subtypes.clone(),
+        supertypes: object.supertypes.clone(),
+        colors: object.colors(),
+        abilities: object.abilities.clone(),
+        static_abilities: extract_static_abilities(&object.abilities),
+        controller: object.controller,
+    };
+
+    add_abilities_from_counters(object, &mut chars);
+    chars
+}
+
 fn add_intrinsic_basic_land_mana_abilities(chars: &mut CalculatedCharacteristics) {
     if !chars.card_types.contains(&CardType::Land) {
         return;
@@ -845,6 +933,9 @@ impl ContinuousEffectManager {
         battlefield: &[ObjectId],
         game: &crate::game_state::GameState,
     ) -> Option<CalculatedCharacteristics> {
+        if let Some(chars) = in_progress_characteristics(object_id) {
+            return Some(chars);
+        }
         let object = objects.get(&object_id)?;
 
         let ctx = CalculationContext {
@@ -870,6 +961,9 @@ pub fn calculate_characteristics_with_effects(
     commanders: &HashSet<ObjectId>,
     game: &crate::game_state::GameState,
 ) -> Option<CalculatedCharacteristics> {
+    if let Some(chars) = in_progress_characteristics(object_id) {
+        return Some(chars);
+    }
     let object = objects.get(&object_id)?;
 
     Some(calculate_with_layers_direct_internal(
@@ -891,6 +985,9 @@ pub(crate) fn calculate_characteristics_with_effects_simple(
     commanders: &HashSet<ObjectId>,
     game: &crate::game_state::GameState,
 ) -> Option<CalculatedCharacteristics> {
+    if let Some(chars) = in_progress_characteristics(object_id) {
+        return Some(chars);
+    }
     let object = objects.get(&object_id)?;
 
     Some(calculate_with_layers_direct_internal(
@@ -918,22 +1015,8 @@ fn calculate_with_layers_direct_internal(
     use crate::dependency::sort_layer_effects;
     use crate::dependency::sort_layer_effects_with_baseline;
 
-    // Start with base characteristics
-    let mut chars = CalculatedCharacteristics {
-        name: object.name.clone(),
-        power: object.base_power.as_ref().map(|p| p.base_value()),
-        toughness: object.base_toughness.as_ref().map(|t| t.base_value()),
-        card_types: object.card_types.clone(),
-        subtypes: object.subtypes.clone(),
-        supertypes: object.supertypes.clone(),
-        colors: object.colors(),
-        abilities: object.abilities.clone(),
-        static_abilities: extract_static_abilities(&object.abilities),
-        controller: object.controller,
-    };
-
-    // Add abilities from ability-granting counters (deathtouch counter, flying counter, etc.)
-    add_abilities_from_counters(object, &mut chars);
+    let mut chars = initial_characteristics(object);
+    let calc_guard = CharacteristicCalculationGuard::begin(object.id, &chars);
 
     // Group effects by layer for dependency-aware sorting within each layer
     let mut effects_by_layer: HashMap<Layer, Vec<&ContinuousEffect>> = HashMap::with_capacity(7);
@@ -1009,6 +1092,7 @@ fn calculate_with_layers_direct_internal(
                 battlefield,
                 game,
             );
+            calc_guard.update(&chars);
         }
     }
 
@@ -1021,6 +1105,7 @@ fn calculate_with_layers_direct_internal(
         if let Some((lp, lt)) = get_level_ability_pt(object) {
             chars.power = Some(lp);
             chars.toughness = Some(lt);
+            calc_guard.update(&chars);
         }
         // Add level-granted abilities to the characteristics
         let level_abilities = get_level_granted_abilities(object);
@@ -1031,6 +1116,7 @@ fn calculate_with_layers_direct_internal(
                 .push(Ability::static_ability(ability.clone()));
             chars.static_abilities.push(ability);
         }
+        calc_guard.update(&chars);
     }
 
     // Now process Layer 7 effects from continuous effects
@@ -1080,13 +1166,16 @@ fn calculate_with_layers_direct_internal(
                 battlefield,
                 game,
             );
+            calc_guard.update(&chars);
         }
     }
 
     // Apply counter modifications for Layer 7c (after other 7c effects by timestamp)
     apply_counter_modifications(object, &mut chars.power, &mut chars.toughness);
+    calc_guard.update(&chars);
 
     add_intrinsic_basic_land_mana_abilities(&mut chars);
+    calc_guard.update(&chars);
 
     chars
 }
@@ -1669,22 +1758,8 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
     use crate::dependency::sort_layer_effects;
     use crate::dependency::sort_layer_effects_with_baseline;
 
-    // Start with base characteristics
-    let mut chars = CalculatedCharacteristics {
-        name: object.name.clone(),
-        power: object.base_power.as_ref().map(|p| p.base_value()),
-        toughness: object.base_toughness.as_ref().map(|t| t.base_value()),
-        card_types: object.card_types.clone(),
-        subtypes: object.subtypes.clone(),
-        supertypes: object.supertypes.clone(),
-        colors: object.colors(),
-        abilities: object.abilities.clone(),
-        static_abilities: extract_static_abilities(&object.abilities),
-        controller: object.controller,
-    };
-
-    // Add abilities from ability-granting counters (deathtouch counter, flying counter, etc.)
-    add_abilities_from_counters(object, &mut chars);
+    let mut chars = initial_characteristics(object);
+    let calc_guard = CharacteristicCalculationGuard::begin(object.id, &chars);
 
     // Get all effects sorted by layer/sublayer/timestamp
     let effects = ctx.effects.effects_sorted();
@@ -1986,6 +2061,8 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
                 | Modification::ModifyPowerToughness { .. }
                 | Modification::SwitchPowerToughness => {}
             }
+
+            calc_guard.update(&chars);
         }
     }
 
@@ -2003,10 +2080,11 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
     if let Some((lp, lt)) = level_pt {
         chars.power = Some(lp);
         chars.toughness = Some(lt);
+        calc_guard.update(&chars);
     }
 
     // Apply Layer 7 effects in sublayer order
-    apply_layer_7_effects(object, ctx, &mut chars, abilities_removed);
+    apply_layer_7_effects(object, ctx, &mut chars, abilities_removed, &calc_guard);
 
     // Add abilities from level tiers if not removed
     if !abilities_removed {
@@ -2016,9 +2094,11 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
                 chars.static_abilities.push(ability);
             }
         }
+        calc_guard.update(&chars);
     }
 
     add_intrinsic_basic_land_mana_abilities(&mut chars);
+    calc_guard.update(&chars);
 
     chars
 }
@@ -2038,6 +2118,7 @@ fn apply_layer_7_effects(
     ctx: &CalculationContext,
     chars: &mut CalculatedCharacteristics,
     _abilities_removed: bool,
+    calc_guard: &CharacteristicCalculationGuard,
 ) {
     use crate::dependency::needs_baseline_dependency_sort;
     use crate::dependency::sort_layer_effects;
@@ -2096,6 +2177,9 @@ fn apply_layer_7_effects(
             if counter_timestamp.is_none_or(|ct| ct <= effect.timestamp) {
                 apply_counter_modifications(object, &mut power, &mut toughness);
                 counters_applied = true;
+                chars.power = power;
+                chars.toughness = toughness;
+                calc_guard.update(chars);
             }
         }
 
@@ -2104,6 +2188,9 @@ fn apply_layer_7_effects(
         if effect_sublayer == Some(PtSublayer::Switching) && !counters_applied {
             apply_counter_modifications(object, &mut power, &mut toughness);
             counters_applied = true;
+            chars.power = power;
+            chars.toughness = toughness;
+            calc_guard.update(chars);
         }
 
         match &effect.modification {
@@ -2195,6 +2282,10 @@ fn apply_layer_7_effects(
             | Modification::CantBlock
             | Modification::DoesntUntap => {}
         }
+
+        chars.power = power;
+        chars.toughness = toughness;
+        calc_guard.update(chars);
     }
 
     // If counters still haven't been applied (no 7c or 7d effects, or all 7c effects
@@ -2205,6 +2296,7 @@ fn apply_layer_7_effects(
 
     chars.power = power;
     chars.toughness = toughness;
+    calc_guard.update(chars);
 }
 
 /// Apply P/T counter modifications to power and toughness.
@@ -2576,7 +2668,7 @@ fn resolve_value_with_context(
                 .filter(|player| player_filter.matches_player(player.id, &filter_ctx))
                 .map(|player| ctx.game.devotion_to_color(player.id, chosen) as i32)
                 .sum()
-        },
+        }
         Value::GreatestToughness(filter) => {
             let filter_ctx = continuous_filter_context(controller, source);
             let mut max_toughness = 0i32;

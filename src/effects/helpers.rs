@@ -532,12 +532,8 @@ pub fn resolve_value(
                     "DevotionToChosenColor requires a previously chosen color".to_string(),
                 )
             })?;
-            let player_ids = resolve_player_filter_to_list(
-                game,
-                player_spec,
-                &ctx.filter_context(game),
-                ctx,
-            )?;
+            let player_ids =
+                resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
             let devotion: usize = player_ids
                 .iter()
                 .map(|pid| game.devotion_to_color(*pid, chosen))
@@ -1086,8 +1082,12 @@ pub fn resolve_player_filter(
                 .ok_or_else(|| ExecutionError::UnresolvableValue("No matching players".to_string()))
         }
         PlayerFilter::Specific(id) => Ok(*id),
-        PlayerFilter::ControllerOf(object_ref) => resolve_controller_of(game, ctx, object_ref),
-        PlayerFilter::OwnerOf(object_ref) => resolve_owner_of(game, ctx, object_ref),
+        PlayerFilter::ControllerOf(object_ref) | PlayerFilter::AliasedControllerOf(object_ref) => {
+            resolve_controller_of(game, ctx, object_ref)
+        }
+        PlayerFilter::OwnerOf(object_ref) | PlayerFilter::AliasedOwnerOf(object_ref) => {
+            resolve_owner_of(game, ctx, object_ref)
+        }
         PlayerFilter::TargetPlayerOrControllerOfTarget => {
             for target in &ctx.targets {
                 if let ResolvedTarget::Player(id) = target {
@@ -2049,7 +2049,7 @@ pub fn resolve_players_from_spec(
 }
 
 /// Helper to resolve a PlayerFilter to a list of PlayerIds.
-fn resolve_player_filter_to_list(
+pub(crate) fn resolve_player_filter_to_list(
     game: &GameState,
     filter: &PlayerFilter,
     _filter_ctx: &FilterContext,
@@ -2113,6 +2113,7 @@ fn resolve_player_filter_to_list(
         }
         PlayerFilter::IteratedPlayer => ctx
             .iterated_player
+            .or(_filter_ctx.iterated_player)
             .map(|id| vec![id])
             .ok_or_else(|| ExecutionError::UnresolvableValue("IteratedPlayer not set".to_string())),
         PlayerFilter::TargetPlayerOrControllerOfTarget => Ok(vec![resolve_player_filter(
@@ -2126,10 +2127,12 @@ fn resolve_player_filter_to_list(
             base_players.retain(|id| !excluded_players.contains(id));
             Ok(base_players)
         }
-        PlayerFilter::ControllerOf(object_ref) => {
+        PlayerFilter::ControllerOf(object_ref) | PlayerFilter::AliasedControllerOf(object_ref) => {
             Ok(vec![resolve_controller_of(game, ctx, object_ref)?])
         }
-        PlayerFilter::OwnerOf(object_ref) => Ok(vec![resolve_owner_of(game, ctx, object_ref)?]),
+        PlayerFilter::OwnerOf(object_ref) | PlayerFilter::AliasedOwnerOf(object_ref) => {
+            Ok(vec![resolve_owner_of(game, ctx, object_ref)?])
+        }
         PlayerFilter::Teammate => Err(ExecutionError::UnresolvableValue(
             "Teammate filter not supported".to_string(),
         )),

@@ -701,7 +701,9 @@ fn object_matches_filter_with_chars(
             | PlayerFilter::Target(_)
             | PlayerFilter::Excluding { .. }
             | PlayerFilter::ControllerOf(_)
-            | PlayerFilter::OwnerOf(_) => return false,
+            | PlayerFilter::OwnerOf(_)
+            | PlayerFilter::AliasedOwnerOf(_)
+            | PlayerFilter::AliasedControllerOf(_) => return false,
         }
     }
 

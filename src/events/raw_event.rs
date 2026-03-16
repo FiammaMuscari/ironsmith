@@ -69,6 +69,11 @@ impl RawEvent {
         self.inner().player()
     }
 
+    /// Get the player that triggered abilities should treat as "that player".
+    pub fn trigger_player(&self) -> Option<PlayerId> {
+        self.inner().trigger_player()
+    }
+
     /// Get the controller involved in this event, if any.
     pub fn controller(&self) -> Option<PlayerId> {
         self.inner().controller()

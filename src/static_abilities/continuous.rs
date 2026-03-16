@@ -603,6 +603,16 @@ fn static_condition_is_active(
     crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
+fn effect_with_optional_static_condition(
+    effect: ContinuousEffect,
+    condition: &Option<crate::ConditionExpr>,
+) -> ContinuousEffect {
+    match condition {
+        Some(condition) => effect.with_condition(condition.clone()),
+        None => effect,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Anthem {
     /// Filter for which permanents are affected.
@@ -777,7 +787,7 @@ impl StaticAbilityKind for Anthem {
         } else {
             effect_target_for_filter(source, &self.filter)
         };
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -785,7 +795,8 @@ impl StaticAbilityKind for Anthem {
                 Modification::ModifyPowerToughness { power, toughness },
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 
     fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
@@ -856,16 +867,23 @@ impl StaticAbilityKind for GrantAbility {
     }
 
     fn display(&self) -> String {
-        let mut text = if self.source_only {
-            format!("this creature has {}", self.ability.display())
+        let subject = if self.source_only {
+            "this creature".to_string()
         } else {
-            let subject = grant_subject_text(&self.filter);
-            let singular_subject = subject.starts_with("enchanted ")
-                || subject.starts_with("equipped ")
-                || subject.starts_with("this ")
-                || subject.starts_with("that ");
-            let verb = if singular_subject { "has" } else { "have" };
-            format!("{subject} {verb} {}", self.ability.display())
+            grant_subject_text(&self.filter)
+        };
+        let mut text = match self.ability.id() {
+            StaticAbilityId::Unblockable => format!("{subject} can't be blocked"),
+            StaticAbilityId::CantAttack => format!("{subject} can't attack"),
+            StaticAbilityId::CantBlock => format!("{subject} can't block"),
+            _ => {
+                let singular_subject = subject.starts_with("enchanted ")
+                    || subject.starts_with("equipped ")
+                    || subject.starts_with("this ")
+                    || subject.starts_with("that ");
+                let verb = if singular_subject { "has" } else { "have" };
+                format!("{subject} {verb} {}", self.ability.display())
+            }
         };
         if let Some(condition) = &self.condition {
             text.push(' ');
@@ -893,7 +911,7 @@ impl StaticAbilityKind for GrantAbility {
         } else {
             effect_target_for_filter(source, &self.filter)
         };
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -901,7 +919,8 @@ impl StaticAbilityKind for GrantAbility {
                 Modification::AddAbility(self.ability.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -1262,14 +1281,9 @@ impl StaticAbilityKind for SetBasePowerToughnessForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1281,7 +1295,8 @@ impl StaticAbilityKind for SetBasePowerToughnessForFilter {
                 },
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -1355,7 +1370,7 @@ impl StaticAbilityKind for CopyActivatedAbilities {
         controller: PlayerId,
         _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1369,7 +1384,8 @@ impl StaticAbilityKind for CopyActivatedAbilities {
                 },
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 
     fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
@@ -1380,20 +1396,7 @@ impl StaticAbilityKind for CopyActivatedAbilities {
         let Some(source_obj) = game.object(source) else {
             return false;
         };
-        let controller = source_obj.controller;
-
-        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
-            controller,
-            source,
-            defending_player: None,
-            attacking_player: None,
-            filter_source: Some(source),
-            triggering_event: None,
-            trigger_identity: None,
-            ability_index: None,
-            options: Default::default(),
-        };
-        crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
+        static_condition_is_active(condition, game, source, source_obj.controller)
     }
 }
 
@@ -1460,14 +1463,9 @@ impl StaticAbilityKind for SetColorsForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1475,7 +1473,8 @@ impl StaticAbilityKind for SetColorsForFilter {
                 Modification::SetColors(self.colors),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -1633,14 +1632,9 @@ impl StaticAbilityKind for AddCardTypesForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1648,7 +1642,8 @@ impl StaticAbilityKind for AddCardTypesForFilter {
                 Modification::AddCardTypes(self.card_types.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -1712,14 +1707,9 @@ impl StaticAbilityKind for RemoveCardTypesForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1727,7 +1717,8 @@ impl StaticAbilityKind for RemoveCardTypesForFilter {
                 Modification::RemoveCardTypes(self.card_types.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -1867,14 +1858,9 @@ impl StaticAbilityKind for AddSubtypesForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -1882,7 +1868,8 @@ impl StaticAbilityKind for AddSubtypesForFilter {
                 Modification::AddSubtypes(self.subtypes.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -2223,14 +2210,9 @@ impl StaticAbilityKind for AttachedAbilityGrant {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -2238,7 +2220,8 @@ impl StaticAbilityKind for AttachedAbilityGrant {
                 Modification::AddAbilityGeneric(self.ability.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
@@ -2370,14 +2353,9 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        game: &GameState,
+        _game: &GameState,
     ) -> Vec<ContinuousEffect> {
-        if let Some(condition) = &self.condition
-            && !static_condition_is_active(condition, game, source, controller)
-        {
-            return Vec::new();
-        }
-        vec![
+        vec![effect_with_optional_static_condition(
             ContinuousEffect::new(
                 source,
                 controller,
@@ -2385,7 +2363,8 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
                 Modification::AddAbilityGeneric(self.ability.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
-        ]
+            &self.condition,
+        )]
     }
 }
 
