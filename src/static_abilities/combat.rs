@@ -824,7 +824,9 @@ impl CantAttackUnlessCondition {
                 Some(game.players.iter().any(|player| {
                     player.is_in_game()
                         && player.id != controller
-                        && game.turn_history.player_was_dealt_damage_this_turn(player.id)
+                        && game
+                            .turn_history
+                            .player_was_dealt_damage_this_turn(player.id)
                 }))
             }
             CantAttackUnlessConditionSpec::ControllerControlsMoreThanDefendingPlayer(_)

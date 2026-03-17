@@ -311,7 +311,9 @@ pub fn resolve_value(
             }
             Ok(seen.len() as i32)
         }
-        Value::CreaturesDiedThisTurn => Ok(game.turn_history.total_creatures_died_this_turn() as i32),
+        Value::CreaturesDiedThisTurn => {
+            Ok(game.turn_history.total_creatures_died_this_turn() as i32)
+        }
         Value::CreaturesDiedThisTurnControlledBy(player_filter) => {
             let filter_ctx = ctx.filter_context(game);
             let mut total = 0i32;
@@ -554,7 +556,9 @@ pub fn resolve_value(
         Value::NoncombatDamageDealtToPlayersThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let total = game.turn_history.total_noncombat_damage_to_players(&player_ids);
+            let total = game
+                .turn_history
+                .total_noncombat_damage_to_players(&player_ids);
             Ok(total as i32)
         }
 

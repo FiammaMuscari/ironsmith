@@ -66,7 +66,8 @@ fn test_generate_damage_triggers_emits_life_loss_for_player_damage() {
         1
     );
     assert_eq!(
-        game.turn_history.total_damage_to_player(PlayerId::from_index(1)),
+        game.turn_history
+            .total_damage_to_player(PlayerId::from_index(1)),
         3
     );
 }
@@ -198,7 +199,10 @@ fn test_queue_triggers_tracks_noncombat_damage_to_players_this_turn() {
     queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
 
     assert_eq!(game.turn_history.total_damage_to_player(bob), 4);
-    assert_eq!(game.turn_history.total_noncombat_damage_to_players(&[bob]), 4);
+    assert_eq!(
+        game.turn_history.total_noncombat_damage_to_players(&[bob]),
+        4
+    );
 }
 
 #[test]

@@ -391,10 +391,7 @@ pub fn execute_draw_step_with(
                 .provenance_graph
                 .alloc_root_event(crate::events::EventKind::CardsDrawn);
             let event = CardsDrawnEvent::new(active_player, drawn, is_first_draw);
-            let event = TriggerEvent::new_with_provenance(
-                event,
-                draw_event_provenance,
-            );
+            let event = TriggerEvent::new_with_provenance(event, draw_event_provenance);
             game.stage_turn_history_event(&event);
             draw_events.push(event);
         }

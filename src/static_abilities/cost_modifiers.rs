@@ -970,7 +970,9 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             }
         }
         ThisSpellCostCondition::YouGainedLifeThisTurnOrMore(n) => {
-            game.turn_history.total_life_gained_for_players(&[controller]) >= *n
+            game.turn_history
+                .total_life_gained_for_players(&[controller])
+                >= *n
         }
         ThisSpellCostCondition::OpponentHasPoisonCountersOrMore(n) => game
             .players
@@ -986,12 +988,12 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             .player(controller)
             .is_some_and(|player| player.life < player.starting_life),
         ThisSpellCostCondition::IsNight => game.is_night,
-        ThisSpellCostCondition::YouSacrificedArtifactThisTurn => {
-            game.turn_history.player_sacrificed_artifact_this_turn(controller)
-        }
-        ThisSpellCostCondition::YouCommittedCrimeThisTurn => {
-            game.turn_history.player_committed_crime_this_turn(controller)
-        }
+        ThisSpellCostCondition::YouSacrificedArtifactThisTurn => game
+            .turn_history
+            .player_sacrificed_artifact_this_turn(controller),
+        ThisSpellCostCondition::YouCommittedCrimeThisTurn => game
+            .turn_history
+            .player_committed_crime_this_turn(controller),
         ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn => {
             game.turn_history
                 .creatures_left_battlefield_under_controller(controller)

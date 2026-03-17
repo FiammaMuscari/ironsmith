@@ -7,26 +7,30 @@ export default function LogDrawer({ open, onOpenChange }) {
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[400px] bg-[#0b1017] border-game-line">
-        <SheetHeader>
-          <SheetTitle className="text-foreground">Game Log</SheetTitle>
-          <span className="text-muted-foreground text-[14px]">Latest 120 entries</span>
+      <SheetContent side="right" className="fantasy-sheet fantasy-sheet--log w-[min(92vw,400px)]">
+        <SheetHeader className="fantasy-sheet-header pr-12">
+          <SheetTitle className="text-[22px] uppercase tracking-[0.18em] text-foreground">
+            Game Log
+          </SheetTitle>
+          <span className="fantasy-sheet-subtitle text-[13px] uppercase tracking-[0.18em]">
+            Latest 120 entries
+          </span>
         </SheetHeader>
-        <ScrollArea className="h-[calc(100vh-100px)] mt-4">
-          <ul className="list-none p-0 m-0 flex flex-col gap-0.5">
+        <ScrollArea className="mt-1 h-[calc(100vh-108px)] px-4 pb-4">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {logEntries.map((entry, i) => (
               <li
                 key={i}
-                className={`text-[14px] leading-tight py-0.5 px-1 border-b border-game-line-2 ${
-                  entry.isError ? "text-destructive" : "text-foreground"
+                className={`fantasy-log-entry text-[14px] leading-tight ${
+                  entry.isError ? "fantasy-log-entry--error text-destructive" : "text-foreground"
                 }`}
               >
-                <small className="text-muted-foreground mr-1.5">{entry.time}</small>
+                <small className="fantasy-log-time mr-2">{entry.time}</small>
                 {entry.message}
               </li>
             ))}
             {logEntries.length === 0 && (
-              <li className="text-muted-foreground text-[16px] italic p-3 text-center">
+              <li className="fantasy-sheet-empty p-4 text-center text-[15px] italic">
                 No log entries yet
               </li>
             )}

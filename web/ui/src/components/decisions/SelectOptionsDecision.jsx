@@ -59,7 +59,7 @@ function isColorChoiceDecision(decision) {
   return String(decision.reason || "").trim().toLowerCase() === "choose color";
 }
 
-function buildContextualOptions(options, hoveredObjectId) {
+function buildContextualOptions(options, hoveredObjectId, { fallbackToAll = false } = {}) {
   const hasObjectBoundOptions = options.some((opt) => opt.object_id != null);
   if (!hasObjectBoundOptions) {
     return {
@@ -72,6 +72,13 @@ function buildContextualOptions(options, hoveredObjectId) {
   const hasMatchedHover = hasHoveredObject && options.some(
     (opt) => opt.object_id != null && String(opt.object_id) === String(hoveredObjectId)
   );
+
+  if (fallbackToAll && !hasMatchedHover) {
+    return {
+      options,
+      waitingForHover: false,
+    };
+  }
 
   const contextualOptions = options.filter((opt) => {
     if (opt.object_id == null) return true;
@@ -424,8 +431,8 @@ function SingleSelectDecision({
     return "Submit (1/1)";
   }, [singleLegalOption]);
   const contextual = useMemo(
-    () => buildContextualOptions(displayOptions, activeObjectId),
-    [activeObjectId, displayOptions]
+    () => buildContextualOptions(displayOptions, activeObjectId, { fallbackToAll: stripLayout }),
+    [activeObjectId, displayOptions, stripLayout]
   );
   const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
   const showHoverHint = contextual.waitingForHover && options.some((opt) => opt.object_id != null);
@@ -566,8 +573,8 @@ function MultiSelectDecision({
     return Math.max(180, Math.min(360, dynamicMax));
   }, [inspectorOracleTextHeight]);
   const contextual = useMemo(
-    () => buildContextualOptions(options, activeObjectId),
-    [activeObjectId, options]
+    () => buildContextualOptions(options, activeObjectId, { fallbackToAll: stripLayout }),
+    [activeObjectId, options, stripLayout]
   );
   const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
   const visibleOptionIndexSet = useMemo(

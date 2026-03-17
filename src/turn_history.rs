@@ -1,20 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::events::EnterBattlefieldEvent;
 use crate::events::other::{
     CardsDrawnEvent, KeywordActionEvent, KeywordActionKind, SearchLibraryEvent,
 };
 use crate::events::permanents::SacrificeEvent;
 use crate::events::spells::SpellCastEvent;
-use crate::events::EnterBattlefieldEvent;
 use crate::events::zones::ZoneChangeEvent;
 use crate::events::{DamageEvent, EventKind, LifeGainEvent, LifeLossEvent};
 use crate::game_state::TurnCounterTracker;
 use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::provenance::{ProvNodeId, ProvenanceGraph};
 use crate::snapshot::ObjectSnapshot;
-use crate::types::CardType;
 use crate::triggers::TriggerEvent;
 use crate::triggers::TriggerIdentity;
+use crate::types::CardType;
 use crate::zone::Zone;
 
 /// One ingested trigger/event observation for the current turn.
@@ -129,9 +129,10 @@ impl TurnHistory {
             .filter_map(|record| record.event.downcast::<ZoneChangeEvent>())
             .filter(|event| event.is_dies())
             .filter(|event| {
-                event.snapshot.as_ref().is_some_and(|snapshot| {
-                    snapshot.card_types.contains(&CardType::Creature)
-                })
+                event
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.card_types.contains(&CardType::Creature))
             })
             .count() as u32
     }
@@ -229,10 +230,10 @@ impl TurnHistory {
                 let damage = record.event.downcast::<DamageEvent>()?;
                 match damage.target {
                     crate::game_event::DamageTarget::Player(pid) if pid == player => {
-                        let source_is_creature = record
-                            .source_snapshot
-                            .as_ref()
-                            .is_some_and(|snapshot| snapshot.card_types.contains(&CardType::Creature));
+                        let source_is_creature =
+                            record.source_snapshot.as_ref().is_some_and(|snapshot| {
+                                snapshot.card_types.contains(&CardType::Creature)
+                            });
                         source_is_creature.then_some(damage.amount)
                     }
                     _ => None,
@@ -273,10 +274,7 @@ impl TurnHistory {
         self.creatures_entered_under_controller(player) > 0
     }
 
-    pub fn player_had_land_enter_battlefield_this_turn(
-        &self,
-        player: PlayerId,
-    ) -> bool {
+    pub fn player_had_land_enter_battlefield_this_turn(&self, player: PlayerId) -> bool {
         self.projected_records().any(|record| {
             (record.event.downcast::<EnterBattlefieldEvent>().is_some()
                 || record
@@ -293,21 +291,19 @@ impl TurnHistory {
         &self,
         stable_id: StableId,
     ) -> Option<PlayerId> {
-        self.projected_records()
-            .rev()
-            .find_map(|record| {
-                let is_entry = record.event.downcast::<EnterBattlefieldEvent>().is_some()
-                    || record
-                        .event
-                        .downcast::<ZoneChangeEvent>()
-                        .is_some_and(|event| event.is_etb());
-                is_entry.then_some(())?;
-                record
-                    .object_snapshot
-                    .as_ref()
-                    .filter(|snapshot| snapshot.stable_id == stable_id)
-                    .map(|snapshot| snapshot.controller)
-            })
+        self.projected_records().rev().find_map(|record| {
+            let is_entry = record.event.downcast::<EnterBattlefieldEvent>().is_some()
+                || record
+                    .event
+                    .downcast::<ZoneChangeEvent>()
+                    .is_some_and(|event| event.is_etb());
+            is_entry.then_some(())?;
+            record
+                .object_snapshot
+                .as_ref()
+                .filter(|snapshot| snapshot.stable_id == stable_id)
+                .map(|snapshot| snapshot.controller)
+        })
     }
 
     pub fn object_was_put_into_graveyard_this_turn(&self, stable_id: StableId) -> bool {
@@ -406,9 +402,10 @@ impl TurnHistory {
                     let sacrificing_player = event
                         .sacrificing_player
                         .or_else(|| event.snapshot.as_ref().map(|snapshot| snapshot.controller));
-                    let sacrificed_artifact = event.snapshot.as_ref().is_some_and(|snapshot| {
-                        snapshot.card_types.contains(&CardType::Artifact)
-                    });
+                    let sacrificed_artifact = event
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|snapshot| snapshot.card_types.contains(&CardType::Artifact));
                     sacrificing_player == Some(player) && sacrificed_artifact
                 })
         })
@@ -419,7 +416,8 @@ impl TurnHistory {
             .filter_map(|record| record.event.downcast::<ZoneChangeEvent>())
             .filter(|event| event.from == Zone::Battlefield)
             .filter(|event| {
-                event.snapshot
+                event
+                    .snapshot
                     .as_ref()
                     .is_some_and(|snapshot| snapshot.controller == player)
             })
@@ -485,9 +483,9 @@ impl TurnHistory {
         provenance_graph: &ProvenanceGraph,
         spell: ObjectId,
     ) -> u32 {
-        let cast_event_provenance = self
-            .spell_cast_event_provenance(spell)
-            .filter(|prov| *prov != ProvNodeId::default() && provenance_graph.node(*prov).is_some());
+        let cast_event_provenance = self.spell_cast_event_provenance(spell).filter(|prov| {
+            *prov != ProvNodeId::default() && provenance_graph.node(*prov).is_some()
+        });
 
         self.projected_records()
             .filter_map(|record| {

@@ -735,7 +735,10 @@ impl ReplacementMatcher for ThisWouldEnterWithBloodthirstMatcher {
         ctx.game.players.iter().any(|player| {
             player.is_in_game()
                 && player.id != ctx.controller
-                && ctx.game.turn_history.player_was_dealt_damage_this_turn(player.id)
+                && ctx
+                    .game
+                    .turn_history
+                    .player_was_dealt_damage_this_turn(player.id)
         })
     }
 
@@ -3111,9 +3114,10 @@ mod tests {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let source = ObjectId::from_raw(52);
         let alice = PlayerId::from_index(0);
-        let departed_permanent = CardBuilder::new(crate::ids::CardId::from_raw(9991), "Spent Relic")
-            .card_types(vec![crate::types::CardType::Artifact])
-            .build();
+        let departed_permanent =
+            CardBuilder::new(crate::ids::CardId::from_raw(9991), "Spent Relic")
+                .card_types(vec![crate::types::CardType::Artifact])
+                .build();
         let departed_id =
             game.create_object_from_card(&departed_permanent, alice, Zone::Battlefield);
         game.move_object(departed_id, Zone::Graveyard);

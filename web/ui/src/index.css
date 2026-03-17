@@ -5731,6 +5731,151 @@ textarea,
   color: rgba(214, 189, 143, 0.42);
 }
 
+.fantasy-sheet {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(132, 109, 78, 0.52) !important;
+  background:
+    radial-gradient(140% 110% at 50% -12%, rgba(255, 218, 138, 0.14), transparent 38%),
+    linear-gradient(180deg, rgba(42, 35, 30, 0.985) 0%, rgba(16, 14, 13, 0.992) 100%) !important;
+  color: #ece2ca;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.09),
+    inset 0 -1px 0 rgba(12, 9, 8, 0.72),
+    -16px 0 36px rgba(0, 0, 0, 0.36) !important;
+}
+
+.fantasy-sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    url("/theme/runes-strip.svg") right 26px top 18px / 260px 28px no-repeat,
+    url("/theme/knot-band.svg") left -24px top 72px / 220px 34px no-repeat;
+  opacity: 0.14;
+  pointer-events: none;
+}
+
+.fantasy-sheet-header {
+  position: relative;
+  border-bottom: 1px solid rgba(153, 124, 84, 0.22);
+  background:
+    linear-gradient(180deg, rgba(79, 63, 49, 0.36) 0%, rgba(34, 28, 24, 0.14) 100%),
+    linear-gradient(180deg, rgba(52, 44, 39, 0.92), rgba(22, 19, 17, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 244, 219, 0.08);
+}
+
+.fantasy-sheet-section {
+  position: relative;
+  border: 1px solid rgba(135, 112, 81, 0.3);
+  background:
+    linear-gradient(180deg, rgba(60, 52, 44, 0.76) 0%, rgba(31, 27, 24, 0.92) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.05),
+    0 10px 22px rgba(0, 0, 0, 0.14);
+}
+
+.fantasy-sheet-stat {
+  border: 1px solid rgba(138, 113, 81, 0.24);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(54, 46, 39, 0.9) 0%, rgba(28, 24, 21, 0.94) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 244, 219, 0.04);
+}
+
+.fantasy-sheet .stone-pill,
+.fantasy-sheet [data-slot="button"][data-variant="secondary"],
+.fantasy-sheet [data-slot="badge"][data-variant="secondary"],
+.fantasy-sheet-badge {
+  background:
+    linear-gradient(180deg, rgba(72, 58, 43, 0.96), rgba(39, 30, 24, 0.98)) !important;
+  border: 1px solid rgba(161, 130, 83, 0.4) !important;
+  color: #efdcb0 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.06),
+    0 8px 16px rgba(0, 0, 0, 0.14) !important;
+}
+
+.fantasy-sheet .stone-pill:hover,
+.fantasy-sheet [data-slot="button"][data-variant="secondary"]:hover,
+.fantasy-sheet [data-slot="badge"][data-variant="secondary"]:hover,
+.fantasy-sheet-badge:hover {
+  background:
+    linear-gradient(180deg, rgba(90, 71, 50, 0.96), rgba(49, 38, 29, 0.98)) !important;
+  color: #fff0ca !important;
+  filter: none !important;
+}
+
+.fantasy-field {
+  border: 1px solid rgba(147, 121, 84, 0.34) !important;
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(35, 30, 27, 0.98), rgba(18, 16, 14, 0.98)) !important;
+  color: #ecdcb8 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.05),
+    inset 0 0 0 1px rgba(14, 11, 9, 0.28);
+}
+
+.fantasy-field:focus {
+  border-color: rgba(200, 166, 105, 0.54) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.05),
+    0 0 0 1px rgba(200, 166, 105, 0.26) !important;
+}
+
+.fantasy-field option {
+  background: #1a1614;
+  color: #ecdcb8;
+}
+
+.fantasy-sheet-subtitle {
+  color: #bca37a;
+}
+
+.fantasy-log-entry {
+  border: 1px solid rgba(136, 112, 82, 0.22);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(53, 45, 38, 0.68) 0%, rgba(24, 21, 18, 0.86) 100%);
+  padding: 0.65rem 0.8rem;
+  box-shadow: inset 0 1px 0 rgba(255, 244, 219, 0.04);
+}
+
+.fantasy-log-entry--error {
+  border-color: rgba(176, 96, 82, 0.28);
+  background:
+    linear-gradient(180deg, rgba(70, 39, 35, 0.72) 0%, rgba(35, 20, 18, 0.88) 100%);
+}
+
+.fantasy-log-time {
+  color: #bca37a;
+  letter-spacing: 0.08em;
+}
+
+.fantasy-sheet-empty {
+  border: 1px dashed rgba(144, 118, 84, 0.24);
+  border-radius: 10px;
+  color: #b7a183;
+  background: rgba(35, 30, 26, 0.42);
+}
+
+.fantasy-sheet [data-slot="sheet-close-button"] {
+  border: 1px solid rgba(149, 121, 85, 0.34);
+  background:
+    linear-gradient(180deg, rgba(68, 55, 44, 0.94), rgba(34, 28, 24, 0.98));
+  color: #ecdcb8;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 219, 0.06),
+    0 8px 16px rgba(0, 0, 0, 0.12);
+}
+
+.fantasy-sheet [data-slot="sheet-close-button"]:hover {
+  background:
+    linear-gradient(180deg, rgba(86, 68, 52, 0.94), rgba(43, 34, 28, 0.98));
+  color: #fff0ca;
+}
+
 .add-card-toolbar {
   display: flex;
   align-items: center;

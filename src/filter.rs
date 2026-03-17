@@ -2197,9 +2197,9 @@ impl ObjectFilter {
 
         if self.entered_graveyard_from_battlefield_this_turn
             && (object.zone != Zone::Graveyard
-                || !game.turn_history.object_was_put_into_graveyard_from_battlefield_this_turn(
-                    object.stable_id,
-                ))
+                || !game
+                    .turn_history
+                    .object_was_put_into_graveyard_from_battlefield_this_turn(object.stable_id))
         {
             return false;
         }

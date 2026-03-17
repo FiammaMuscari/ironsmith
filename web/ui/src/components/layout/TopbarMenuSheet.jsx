@@ -13,17 +13,17 @@ import {
 import { ExternalLink, Github, RefreshCw, Settings2 } from "lucide-react";
 
 const inputClass =
-  "w-full rounded-md border border-[#344a61] bg-[#0b1118] px-3 py-2 text-[14px] text-foreground outline-none focus:border-primary/60 disabled:cursor-not-allowed disabled:opacity-50";
+  "fantasy-field w-full px-3 py-2 text-[14px] text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50";
 const labelClass =
   "grid gap-1 text-[11px] uppercase tracking-[0.2em] text-muted-foreground";
 const sectionClass =
-  "grid gap-3 rounded-lg border border-game-line bg-[linear-gradient(180deg,rgba(18,27,39,0.96)_0%,rgba(10,17,24,0.96)_100%)] p-3";
+  "fantasy-sheet-section grid gap-3 p-3";
 
 function MenuSection({ eyebrow, title, description, children }) {
   return (
     <section className={sectionClass}>
       <div className="grid gap-1">
-        <span className="text-[10px] uppercase tracking-[0.24em] text-[#7d97b4]">
+        <span className="text-[10px] uppercase tracking-[0.24em] text-[#c3a774]">
           {eyebrow}
         </span>
         <div className="text-[16px] font-bold uppercase tracking-[0.16em] text-foreground">
@@ -90,7 +90,7 @@ export default function TopbarMenuSheet({
         <Button
           variant="secondary"
           size="icon-xs"
-          className="rounded-none text-muted-foreground hover:text-foreground"
+          className="stone-pill rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
           aria-label="Open game menu"
         >
           <Settings2 className="size-3.5" />
@@ -98,10 +98,10 @@ export default function TopbarMenuSheet({
       </SheetTrigger>
       <SheetContent
         side="right"
-        className="w-[min(92vw,420px)] overflow-y-auto border-game-line bg-[#0b1017] p-0"
+        className="fantasy-sheet w-[min(92vw,420px)] overflow-y-auto p-0"
       >
-        <SheetHeader className="border-b border-game-line bg-[linear-gradient(180deg,rgba(18,28,41,0.98)_0%,rgba(11,16,23,0.98)_100%)] pr-12">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-[#7d97b4]">Menu</div>
+        <SheetHeader className="fantasy-sheet-header pr-12">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-[#cdb27a]">Menu</div>
           <SheetTitle className="text-[22px] uppercase tracking-[0.18em] text-foreground">
             Table Settings
           </SheetTitle>
@@ -143,6 +143,7 @@ export default function TopbarMenuSheet({
               <Button
                 variant="secondary"
                 size="sm"
+                className="stone-pill"
                 disabled={lobbyBusy}
                 onClick={onReset}
               >
@@ -151,15 +152,16 @@ export default function TopbarMenuSheet({
               <Button
                 variant="secondary"
                 size="sm"
+                className="stone-pill"
                 disabled={lobbyBusy}
                 onClick={handleToggleDeckLoading}
               >
                 {deckLoadingMode ? "Cancel Deck Load" : "Load Decks"}
               </Button>
-              <Button variant="secondary" size="sm" onClick={handleOpenLobby}>
+              <Button variant="secondary" size="sm" className="stone-pill" onClick={handleOpenLobby}>
                 {lobbyBusy ? "Open Lobby" : "Create Lobby"}
               </Button>
-              <Button variant="secondary" size="sm" onClick={onRefresh}>
+              <Button variant="secondary" size="sm" className="stone-pill" onClick={onRefresh}>
                 <RefreshCw className="size-3.5" />
                 Refresh View
               </Button>
@@ -194,28 +196,28 @@ export default function TopbarMenuSheet({
             description="Reference info that does not need to sit in the gameplay lane."
           >
             <div className="grid gap-2 text-[13px] text-foreground">
-              <div className="flex items-center justify-between gap-3 rounded-md border border-game-line-2 bg-[#0a1118] px-3 py-2">
+              <div className="fantasy-sheet-stat flex items-center justify-between gap-3 px-3 py-2">
                 <span className="uppercase tracking-[0.16em] text-muted-foreground">View</span>
-                <Badge variant="secondary" className="text-[12px] uppercase">
+                <Badge variant="secondary" className="fantasy-sheet-badge text-[12px] uppercase">
                   {me?.name || "-"}
                 </Badge>
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-game-line-2 bg-[#0a1118] px-3 py-2">
+              <div className="fantasy-sheet-stat flex items-center justify-between gap-3 px-3 py-2">
                 <span className="uppercase tracking-[0.16em] text-muted-foreground">
                   Cards Compiled
                 </span>
-                <Badge variant="secondary" className="text-[12px] uppercase">
+                <Badge variant="secondary" className="fantasy-sheet-badge text-[12px] uppercase">
                   {compiledLabel}
                 </Badge>
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-game-line-2 bg-[#0a1118] px-3 py-2">
+              <div className="fantasy-sheet-stat flex items-center justify-between gap-3 px-3 py-2">
                 <span className="uppercase tracking-[0.16em] text-muted-foreground">Lobby</span>
-                <Badge variant="secondary" className="text-[12px] uppercase">
+                <Badge variant="secondary" className="fantasy-sheet-badge text-[12px] uppercase">
                   {lobbyLabel}
                 </Badge>
               </div>
             </div>
-            <Button variant="secondary" size="sm" asChild>
+            <Button variant="secondary" size="sm" className="stone-pill" asChild>
               <a
                 href="https://github.com/Chiplis/ironsmith"
                 target="_blank"

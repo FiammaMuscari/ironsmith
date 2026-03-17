@@ -23,7 +23,6 @@ export default function Topbar({
   const {
     inspectorDebug,
     setInspectorDebug,
-    multiplayer,
     state,
   } = useGame();
 

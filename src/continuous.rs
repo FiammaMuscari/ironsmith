@@ -2591,7 +2591,9 @@ fn resolve_value_with_context(
             });
             seen.len() as i32
         }
-        Value::CreaturesDiedThisTurn => ctx.game.turn_history.total_creatures_died_this_turn() as i32,
+        Value::CreaturesDiedThisTurn => {
+            ctx.game.turn_history.total_creatures_died_this_turn() as i32
+        }
         Value::CreaturesDiedThisTurnControlledBy(player_filter) => {
             let filter_ctx = continuous_filter_context(controller, source);
             let mut total = 0i32;
@@ -2599,7 +2601,10 @@ fn resolve_value_with_context(
                 if !player_filter.matches_player(player.id, &filter_ctx) {
                     continue;
                 }
-                total += ctx.game.turn_history.creatures_died_under_controller(player.id) as i32;
+                total += ctx
+                    .game
+                    .turn_history
+                    .creatures_died_under_controller(player.id) as i32;
             }
             total
         }

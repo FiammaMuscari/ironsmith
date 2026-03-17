@@ -90,7 +90,9 @@ fn evaluate_condition_shared_core(
             ctx.filter_source,
         )),
         Condition::YourTurn => Some(game.turn.active_player == ctx.controller),
-        Condition::CreatureDiedThisTurn => Some(game.turn_history.total_creatures_died_this_turn() > 0),
+        Condition::CreatureDiedThisTurn => {
+            Some(game.turn_history.total_creatures_died_this_turn() > 0)
+        }
         Condition::CastSpellThisTurn => Some(game.turn_history.any_spell_was_cast_this_turn()),
         Condition::AttackedThisTurn => Some(
             game.turn_history

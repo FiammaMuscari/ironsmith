@@ -2266,7 +2266,6 @@ pub(super) fn apply_sacrifice_target_response(
                         &mut pending.tagged_objects,
                         decision_maker,
                     )?;
-
                 }
                 ActivationCardCostChoice::ReturnToHand {
                     cost,
@@ -2541,7 +2540,6 @@ pub(super) fn apply_card_cost_choice_response(
                         &mut pending.tagged_objects,
                         decision_maker,
                     )?;
-
                 }
                 ActivationCardCostChoice::ReturnToHand {
                     cost,

@@ -8320,7 +8320,8 @@ mod tests {
             .card_types(vec![CardType::Creature])
             .power_toughness(PowerToughness::fixed(1, 1))
             .build();
-        let departed_id = game.create_object_from_card(&departed_creature, alice, Zone::Battlefield);
+        let departed_id =
+            game.create_object_from_card(&departed_creature, alice, Zone::Battlefield);
         game.move_object(departed_id, Zone::Graveyard);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
@@ -8568,12 +8569,7 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
 
-        stage_noncombat_damage_to_player_for_test(
-            &mut game,
-            ObjectId::from_raw(4701),
-            bob,
-            6,
-        );
+        stage_noncombat_damage_to_player_for_test(&mut game, ObjectId::from_raw(4701), bob, 6);
 
         let spell_card = CardBuilder::new(CardId::from_raw(47), "Damage Discount Variant")
             .card_types(vec![CardType::Creature])

@@ -3,8 +3,8 @@
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact};
-use crate::events::SearchLibraryEvent;
 use crate::effects::helpers::{resolve_player_filter, resolve_player_filter_to_list};
+use crate::events::SearchLibraryEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::{ObjectFilter, PlayerFilter};
 use crate::game_state::GameState;
@@ -499,10 +499,7 @@ pub(crate) fn run_choose_objects(
         return Ok(EffectOutcome::prevented());
     }
     let search_event = (effect.is_search && search_zones.contains(&Zone::Library)).then(|| {
-        TriggerEvent::new_with_provenance(
-            SearchLibraryEvent::new(chooser_id, None),
-            ctx.provenance,
-        )
+        TriggerEvent::new_with_provenance(SearchLibraryEvent::new(chooser_id, None), ctx.provenance)
     });
 
     let candidates = collect_candidates(effect, game, ctx, chooser_id)?;

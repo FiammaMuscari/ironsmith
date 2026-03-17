@@ -33,6 +33,7 @@ struct Args {
     audits_out: Option<String>,
     cluster_csv_out: Option<String>,
     parse_errors_csv_out: Option<String>,
+    parse_error_summary_csv_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +149,18 @@ struct JsonFailureEntry {
     compiled_lines: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+struct ParseFailureClusterRef<'a> {
+    signature: &'a str,
+    entries: &'a [CardAudit],
+    size: usize,
+    parse_failures: usize,
+    semantic_mismatches: usize,
+    semantic_false_positives: usize,
+    parse_failure_rate: f32,
+    semantic_mismatch_rate: f32,
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut cards_path = "cards.json".to_string();
     let mut limit = None;
@@ -167,6 +180,7 @@ fn parse_args() -> Result<Args, String> {
     let mut audits_out = None;
     let mut cluster_csv_out = None;
     let mut parse_errors_csv_out = None;
+    let mut parse_error_summary_csv_out = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -283,9 +297,15 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--parse-errors-csv-out requires a path".to_string())?,
                 );
             }
+            "--parse-error-summary-csv-out" => {
+                parse_error_summary_csv_out =
+                    Some(iter.next().ok_or_else(|| {
+                        "--parse-error-summary-csv-out requires a path".to_string()
+                    })?);
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path> --audits-out <path> --cluster-csv-out <path> --parse-errors-csv-out <path>"
+                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path> --audits-out <path> --cluster-csv-out <path> --parse-errors-csv-out <path> --parse-error-summary-csv-out <path>"
                 ));
             }
         }
@@ -310,6 +330,7 @@ fn parse_args() -> Result<Args, String> {
         audits_out,
         cluster_csv_out,
         parse_errors_csv_out,
+        parse_error_summary_csv_out,
     })
 }
 
@@ -5450,11 +5471,56 @@ fn example_oracle_summary(entries: &[CardAudit], limit: usize) -> String {
         .join(" | ")
 }
 
+fn parse_failure_cluster_refs<'a>(
+    ranked: &'a [(String, Vec<CardAudit>)],
+) -> Vec<ParseFailureClusterRef<'a>> {
+    let mut clusters = ranked
+        .iter()
+        .filter_map(|(signature, entries)| {
+            let size = entries.len();
+            let parse_failures = entries
+                .iter()
+                .filter(|entry| entry.parse_error.is_some())
+                .count();
+            if parse_failures == 0 {
+                return None;
+            }
+            let semantic_mismatches = entries
+                .iter()
+                .filter(|entry| entry.parse_error.is_none() && entry.semantic_mismatch)
+                .count();
+            let semantic_false_positives = entries
+                .iter()
+                .filter(|entry| entry.parse_error.is_none() && entry.semantic_false_positive)
+                .count();
+            Some(ParseFailureClusterRef {
+                signature,
+                entries,
+                size,
+                parse_failures,
+                semantic_mismatches,
+                semantic_false_positives,
+                parse_failure_rate: parse_failures as f32 / size.max(1) as f32,
+                semantic_mismatch_rate: semantic_mismatches as f32 / size.max(1) as f32,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    clusters.sort_by(|a, b| {
+        b.parse_failures
+            .cmp(&a.parse_failures)
+            .then_with(|| b.size.cmp(&a.size))
+            .then_with(|| a.signature.cmp(b.signature))
+    });
+    clusters
+}
+
 fn write_cluster_csv(
     path: &str,
     ranked: &[(String, Vec<CardAudit>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_parent_dir(path)?;
+    let clusters = parse_failure_cluster_refs(ranked);
 
     let mut out = String::new();
     csv_push_row(
@@ -5474,37 +5540,22 @@ fn write_cluster_csv(
         ],
     );
 
-    for (index, (signature, entries)) in ranked.iter().enumerate() {
-        let mut sorted_entries = entries.clone();
+    for (index, cluster) in clusters.iter().enumerate() {
+        let mut sorted_entries = cluster.entries.to_vec();
         sorted_entries.sort_by(compare_cluster_entries);
-        let size = sorted_entries.len();
-        let parse_failures_count = sorted_entries
-            .iter()
-            .filter(|entry| entry.parse_error.is_some())
-            .count();
-        let semantic_mismatch_count = sorted_entries
-            .iter()
-            .filter(|entry| entry.parse_error.is_none() && entry.semantic_mismatch)
-            .count();
-        let semantic_false_positive_count = sorted_entries
-            .iter()
-            .filter(|entry| entry.parse_error.is_none() && entry.semantic_false_positive)
-            .count();
-        let parse_failure_rate = parse_failures_count as f32 / size.max(1) as f32;
-        let semantic_mismatch_rate = semantic_mismatch_count as f32 / size.max(1) as f32;
         let error_counts_vec = cluster_error_counts(&sorted_entries);
 
         csv_push_row(
             &mut out,
             vec![
                 (index + 1).to_string(),
-                signature.clone(),
-                size.to_string(),
-                parse_failures_count.to_string(),
-                parse_failure_rate.to_string(),
-                semantic_mismatch_count.to_string(),
-                semantic_mismatch_rate.to_string(),
-                semantic_false_positive_count.to_string(),
+                cluster.signature.to_string(),
+                cluster.size.to_string(),
+                cluster.parse_failures.to_string(),
+                cluster.parse_failure_rate.to_string(),
+                cluster.semantic_mismatches.to_string(),
+                cluster.semantic_mismatch_rate.to_string(),
+                cluster.semantic_false_positives.to_string(),
                 top_errors_summary(&error_counts_vec, 5),
                 example_names_summary(&sorted_entries, 5),
                 example_oracle_summary(&sorted_entries, 3),
@@ -5513,7 +5564,10 @@ fn write_cluster_csv(
     }
 
     fs::write(path, out)?;
-    println!("Wrote cluster CSV to {path} ({} clusters)", ranked.len());
+    println!(
+        "Wrote cluster CSV to {path} ({} parse-failure clusters)",
+        clusters.len()
+    );
     Ok(())
 }
 
@@ -5522,6 +5576,7 @@ fn write_parse_errors_csv(
     ranked: &[(String, Vec<CardAudit>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     ensure_parent_dir(path)?;
+    let clusters = parse_failure_cluster_refs(ranked);
 
     let mut out = String::new();
     csv_push_row(
@@ -5543,23 +5598,9 @@ fn write_parse_errors_csv(
         ],
     );
 
-    for (index, (signature, entries)) in ranked.iter().enumerate() {
-        let mut sorted_entries = entries.clone();
+    for (index, cluster) in clusters.iter().enumerate() {
+        let mut sorted_entries = cluster.entries.to_vec();
         sorted_entries.sort_by(compare_cluster_entries);
-        let size = sorted_entries.len();
-        let parse_failures_count = sorted_entries
-            .iter()
-            .filter(|entry| entry.parse_error.is_some())
-            .count();
-        if parse_failures_count == 0 {
-            continue;
-        }
-        let semantic_mismatch_count = sorted_entries
-            .iter()
-            .filter(|entry| entry.parse_error.is_none() && entry.semantic_mismatch)
-            .count();
-        let parse_failure_rate = parse_failures_count as f32 / size.max(1) as f32;
-        let semantic_mismatch_rate = semantic_mismatch_count as f32 / size.max(1) as f32;
 
         let mut per_error_counts: HashMap<String, usize> = HashMap::new();
         for entry in &sorted_entries {
@@ -5585,12 +5626,12 @@ fn write_parse_errors_csv(
                 &mut out,
                 vec![
                     (index + 1).to_string(),
-                    signature.clone(),
-                    size.to_string(),
-                    parse_failures_count.to_string(),
-                    parse_failure_rate.to_string(),
-                    semantic_mismatch_count.to_string(),
-                    semantic_mismatch_rate.to_string(),
+                    cluster.signature.to_string(),
+                    cluster.size.to_string(),
+                    cluster.parse_failures.to_string(),
+                    cluster.parse_failure_rate.to_string(),
+                    cluster.semantic_mismatches.to_string(),
+                    cluster.semantic_mismatch_rate.to_string(),
                     cluster_error_count.to_string(),
                     entry.name.clone(),
                     normalized_error,
@@ -5604,6 +5645,102 @@ fn write_parse_errors_csv(
 
     fs::write(path, out)?;
     println!("Wrote parse-errors CSV to {path}");
+    Ok(())
+}
+
+fn write_parse_error_summary_csv(
+    path: &str,
+    ranked: &[(String, Vec<CardAudit>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[derive(Default)]
+    struct ErrorSummary {
+        count: usize,
+        unique_card_names: HashSet<String>,
+        unique_cluster_signatures: HashSet<String>,
+        example_card_names: Vec<String>,
+        example_cluster_signatures: Vec<String>,
+        example_raw_errors: Vec<String>,
+    }
+
+    fn push_unique_sample(samples: &mut Vec<String>, value: String, limit: usize) {
+        if samples.len() >= limit || samples.iter().any(|existing| existing == &value) {
+            return;
+        }
+        samples.push(value);
+    }
+
+    ensure_parent_dir(path)?;
+
+    let mut summaries: HashMap<String, ErrorSummary> = HashMap::new();
+    for cluster in parse_failure_cluster_refs(ranked) {
+        for entry in cluster
+            .entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_some())
+        {
+            let raw_error = entry.parse_error.clone().unwrap_or_default();
+            let normalized_error = normalize_parse_error(&raw_error);
+            let summary = summaries.entry(normalized_error).or_default();
+            summary.count += 1;
+            summary.unique_card_names.insert(entry.name.clone());
+            summary
+                .unique_cluster_signatures
+                .insert(cluster.signature.to_string());
+            push_unique_sample(&mut summary.example_card_names, entry.name.clone(), 5);
+            push_unique_sample(
+                &mut summary.example_cluster_signatures,
+                cluster.signature.to_string(),
+                3,
+            );
+            push_unique_sample(&mut summary.example_raw_errors, raw_error, 3);
+        }
+    }
+
+    let mut rows = summaries.into_iter().collect::<Vec<_>>();
+    rows.sort_by(|(a_error, a_summary), (b_error, b_summary)| {
+        b_summary
+            .count
+            .cmp(&a_summary.count)
+            .then_with(|| {
+                b_summary
+                    .unique_card_names
+                    .len()
+                    .cmp(&a_summary.unique_card_names.len())
+            })
+            .then_with(|| a_error.cmp(b_error))
+    });
+
+    let mut out = String::new();
+    csv_push_row(
+        &mut out,
+        vec![
+            "normalized_parse_error".to_string(),
+            "occurrences".to_string(),
+            "unique_card_names".to_string(),
+            "unique_cluster_signatures".to_string(),
+            "example_card_names".to_string(),
+            "example_cluster_signatures".to_string(),
+            "example_raw_errors".to_string(),
+        ],
+    );
+
+    for (error, summary) in rows {
+        csv_push_row(
+            &mut out,
+            vec![
+                error,
+                summary.count.to_string(),
+                summary.unique_card_names.len().to_string(),
+                summary.unique_cluster_signatures.len().to_string(),
+                summary.example_card_names.join(" | "),
+                summary.example_cluster_signatures.join(" | "),
+                summary.example_raw_errors.join(" | "),
+            ],
+        );
+    }
+
+    fs::write(path, out)?;
+    println!("Wrote parse-error summary CSV to {path}");
     Ok(())
 }
 
@@ -6167,6 +6304,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(path) = args.parse_errors_csv_out.as_ref() {
         write_parse_errors_csv(path, &ranked)?;
+    }
+
+    if let Some(path) = args.parse_error_summary_csv_out.as_ref() {
+        write_parse_error_summary_csv(path, &ranked)?;
     }
 
     let clusters_total = ranked.len();
