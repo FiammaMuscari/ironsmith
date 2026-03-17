@@ -17613,3 +17613,86 @@ fn parse_choose_color_then_add_devotion_to_that_color() {
         "expected choose-color plus devotion-to-chosen-color mana sequence, got {debug}"
     );
 }
+
+#[test]
+fn parse_jackal_familiar_attack_or_block_alone_uses_alone_restriction() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Jackal Familiar")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't attack or block alone.")
+        .expect("jackal familiar restriction should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    assert!(
+        abilities_debug.contains("AttackOrBlockAlone"),
+        "expected attack-or-block-alone restriction, got {abilities_debug}"
+    );
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("can't attack or block alone")
+            || rendered.contains("cant attack or block alone"),
+        "expected alone restriction text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_bonded_horncrest_attack_or_block_alone_uses_alone_restriction() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Bonded Horncrest")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't attack or block alone.")
+        .expect("bonded horncrest restriction should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    assert!(
+        abilities_debug.contains("AttackOrBlockAlone"),
+        "expected attack-or-block-alone restriction, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_coercion_choose_card_from_it_uses_tagged_hand_choice() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Coercion")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Target opponent reveals their hand. You choose a card from it. That player discards that card.")
+        .expect("coercion hand-choice chain should parse");
+
+    let effects = def.spell_effect.as_ref().expect("spell effects");
+    let debug = format!("{effects:?}");
+    assert!(
+        debug.contains("LookAtHandEffect"),
+        "expected reveal-hand setup, got {debug}"
+    );
+    assert!(
+        debug.contains("ChooseObjectsEffect")
+            && debug.contains("zone: Some(Hand)")
+            && debug.contains("chooser: You"),
+        "expected a non-targeted hand choice for you, got {debug}"
+    );
+    assert!(
+        debug.contains("IsTaggedObject"),
+        "expected chosen card filter to stay linked to the revealed hand, got {debug}"
+    );
+    assert!(
+        debug.contains("Discard"),
+        "expected follow-up discard effect, got {debug}"
+    );
+}
+
+#[test]
+fn parse_choose_an_opponent_then_that_player_cant_cast_spells() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Xanathar Restriction Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When this creature enters, choose an opponent. That player can't cast spells this turn.")
+        .expect("choose-opponent then cant-cast should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    assert!(
+        abilities_debug.contains("ChoosePlayerEffect") && abilities_debug.contains("filter: Opponent"),
+        "expected choose-opponent effect, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("CastSpellsMatching(TaggedPlayer")
+            || abilities_debug.contains("CastSpellsMatching(IteratedPlayer"),
+        "expected that-player cant-cast restriction to lower through existing player filters, got {abilities_debug}"
+    );
+}
