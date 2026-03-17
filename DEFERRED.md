@@ -44,3 +44,13 @@ These parser-wave changes intentionally stay within existing lowering and runtim
 - Player-subject restriction clauses with leading condition/duration prefixes, including representative failures like `Island Sanctuary`, `Teferi's Protection`, and `Grand Abolisher`, remain deferred.
 
 - Any new mechanic/effect work beyond existing `ObjectFilter` / `TargetAst` / restriction lowering support remains deferred.
+
+- Per-player untap caps such as `Players can't untap more than one creature during their untap steps` remain deferred. These need a new restriction/tracker model instead of the existing binary `can't untap` restriction.
+
+- Mana-retention clauses such as `You don't lose this mana as steps and phases end` remain deferred. These need explicit mana-pool lifetime semantics, not just parsing.
+
+- Cast restrictions on a specific named card or card subset gated by a condition, such as `You can't cast Rakdos unless an opponent lost life this turn`, remain deferred. These need a way to restrict casting a specific object/card identity, not just broad player/spell filters.
+
+- Clauses that stop players from both casting spells and activating abilities when the ability stop must include mana abilities, such as `That player can't cast spells or activate abilities`, remain deferred. Existing player-based restriction support only covers non-mana activated abilities.
+
+- Modal headers like `Choose any number —` on cards such as `Rankle, Master of Pranks` remain deferred. Existing choose-mode execution is already present, but the remaining parser work for that header shape lives outside the owned files for this task.
