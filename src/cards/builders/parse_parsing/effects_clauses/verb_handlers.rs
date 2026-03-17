@@ -261,9 +261,10 @@ pub(crate) fn parse_look(
         let target = match player {
             PlayerAst::You => TargetAst::Player(PlayerFilter::You, None),
             PlayerAst::Opponent => TargetAst::Player(PlayerFilter::Opponent, None),
-            PlayerAst::Target => {
-                TargetAst::Player(PlayerFilter::target_player(), span_from_tokens(&hand_tokens))
-            }
+            PlayerAst::Target => TargetAst::Player(
+                PlayerFilter::target_player(),
+                span_from_tokens(&hand_tokens),
+            ),
             PlayerAst::TargetOpponent => TargetAst::Player(
                 PlayerFilter::target_opponent(),
                 span_from_tokens(&hand_tokens),
@@ -447,8 +448,7 @@ pub(crate) fn parse_shuffle(
     fn is_supported_shuffle_source_tail(words: &[&str]) -> bool {
         matches!(
             words,
-            []
-                | ["from", "graveyard"]
+            [] | ["from", "graveyard"]
                 | ["from", "your", "graveyard"]
                 | ["from", "their", "graveyard"]
                 | ["from", "that", "player", "graveyard"]

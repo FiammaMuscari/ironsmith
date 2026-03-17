@@ -17933,7 +17933,8 @@ fn parse_choose_an_opponent_then_that_player_cant_cast_spells() {
 
     let abilities_debug = format!("{:?}", def.abilities);
     assert!(
-        abilities_debug.contains("ChoosePlayerEffect") && abilities_debug.contains("filter: Opponent"),
+        abilities_debug.contains("ChoosePlayerEffect")
+            && abilities_debug.contains("filter: Opponent"),
         "expected choose-opponent effect, got {abilities_debug}"
     );
     assert!(

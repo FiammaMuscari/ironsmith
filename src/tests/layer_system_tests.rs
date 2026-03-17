@@ -220,6 +220,89 @@ fn test_urborg_style_effect_includes_itself_and_grants_black_mana() {
 }
 
 #[test]
+fn test_blood_moon_turns_off_urborg_dependency_even_if_urborg_is_newer() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    game.turn.priority_player = Some(alice);
+
+    let blood_moon_id = game.create_object_from_definition(&blood_moon(), alice, Zone::Battlefield);
+
+    let urborg_def = CardDefinitionBuilder::new(CardId::new(), "Urborg Variant")
+        .card_types(vec![CardType::Land])
+        .parse_text("Each land is a Swamp in addition to its other land types.")
+        .expect("Urborg-style text should parse");
+    let urborg_id = game.create_object_from_definition(&urborg_def, alice, Zone::Battlefield);
+
+    let other_land_def = CardDefinitionBuilder::new(CardId::new(), "Weird Nonbasic")
+        .card_types(vec![CardType::Land])
+        .subtypes(vec![Subtype::Urzas])
+        .build();
+    let other_land_id =
+        game.create_object_from_definition(&other_land_def, alice, Zone::Battlefield);
+
+    assert!(
+        game.continuous_effects
+            .get_entry_timestamp(blood_moon_id)
+            .expect("Blood Moon should have an entry timestamp")
+            < game
+                .continuous_effects
+                .get_entry_timestamp(urborg_id)
+                .expect("Urborg should have an entry timestamp"),
+        "test setup should give Urborg the later timestamp"
+    );
+
+    let urborg_subtypes = game.calculated_subtypes(urborg_id);
+    assert!(
+        urborg_subtypes.contains(&Subtype::Mountain),
+        "Blood Moon should still turn Urborg into a Mountain"
+    );
+    assert!(
+        !urborg_subtypes.contains(&Subtype::Swamp),
+        "Urborg should not remain a Swamp once Blood Moon turns off its static ability"
+    );
+
+    let other_subtypes = game.calculated_subtypes(other_land_id);
+    assert!(
+        other_subtypes.contains(&Subtype::Mountain),
+        "other nonbasic lands should become Mountains"
+    );
+    assert!(
+        !other_subtypes.contains(&Subtype::Swamp),
+        "Urborg should not keep making lands Swamps after Blood Moon applies"
+    );
+
+    let potential = crate::decision::compute_potential_mana(&game, alice);
+    assert_eq!(
+        potential.black, 0,
+        "Urborg should not contribute black mana"
+    );
+    assert_eq!(
+        potential.red, 2,
+        "both nonbasic lands should only contribute red mana"
+    );
+
+    let mut dm = crate::decision::SelectFirstDecisionMaker;
+    let red_ability_index = mana_ability_index(&game, urborg_id, ManaSymbol::Red);
+    crate::special_actions::perform_activate_mana_ability(
+        &mut game,
+        alice,
+        urborg_id,
+        red_ability_index,
+        &mut dm,
+    )
+    .expect("Urborg under Blood Moon should tap for red");
+
+    assert_eq!(
+        game.player(alice)
+            .expect("player should exist")
+            .mana_pool
+            .red,
+        1,
+        "activating Urborg should add red mana, not black"
+    );
+}
+
+#[test]
 fn test_blood_moon_replaces_nonbasic_land_mana_abilities_with_red() {
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);

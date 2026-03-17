@@ -10738,11 +10738,21 @@ mod tests {
         wasm.game.turn.phase = Phase::FirstMain;
         wasm.game.turn.step = None;
 
-        wasm.add_card_to_zone(0, "Omniscience".to_string(), "battlefield".to_string(), true)
-            .expect("should add Omniscience to battlefield");
+        wasm.add_card_to_zone(
+            0,
+            "Omniscience".to_string(),
+            "battlefield".to_string(),
+            true,
+        )
+        .expect("should add Omniscience to battlefield");
         for _ in 0..3 {
-            wasm.add_card_to_zone(0, "Ornithopter".to_string(), "battlefield".to_string(), true)
-                .expect("should add Ornithopter to battlefield");
+            wasm.add_card_to_zone(
+                0,
+                "Ornithopter".to_string(),
+                "battlefield".to_string(),
+                true,
+            )
+            .expect("should add Ornithopter to battlefield");
         }
 
         let blasphemous_act_id = ObjectId::from_raw(
@@ -10771,7 +10781,9 @@ mod tests {
                     )
                 })
                 .expect("expected cast Blasphemous Act action"),
-            other => panic!("expected priority decision before casting Blasphemous Act, got {other:?}"),
+            other => {
+                panic!("expected priority decision before casting Blasphemous Act, got {other:?}")
+            }
         };
 
         wasm.dispatch(
@@ -11753,13 +11765,10 @@ mod tests {
         dispatch_select_objects(&mut wasm, &[exile_card.0]);
 
         assert!(
-            wasm.game
-                .exile
-                .iter()
-                .any(|id| wasm
-                    .game
-                    .object(*id)
-                    .is_some_and(|object| object.name == "Ornithopter")),
+            wasm.game.exile.iter().any(|id| wasm
+                .game
+                .object(*id)
+                .is_some_and(|object| object.name == "Ornithopter")),
             "the chosen card should be exiled"
         );
         match wasm.pending_decision.as_ref() {

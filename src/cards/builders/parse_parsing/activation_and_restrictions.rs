@@ -10466,8 +10466,14 @@ mod tests {
                 .any(|constraint| constraint.tag.as_str() == IT_TAG),
             "expected hand choice to stay tied to the prior revealed hand, got {filter:?}"
         );
-        assert!(filter.controller.is_none(), "expected no controller pin, got {filter:?}");
-        assert!(filter.owner.is_none(), "expected no owner pin, got {filter:?}");
+        assert!(
+            filter.controller.is_none(),
+            "expected no controller pin, got {filter:?}"
+        );
+        assert!(
+            filter.owner.is_none(),
+            "expected no owner pin, got {filter:?}"
+        );
     }
 
     #[test]

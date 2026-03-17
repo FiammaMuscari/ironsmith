@@ -71,6 +71,11 @@ pub fn generate_continuous_effects_from_static_abilities(
                     if let Some(ts) = game.continuous_effects.get_entry_timestamp(object_id) {
                         for effect in &mut ability_effects {
                             effect.timestamp = ts;
+                            effect.originating_static_ability = Some(static_ability.clone());
+                        }
+                    } else {
+                        for effect in &mut ability_effects {
+                            effect.originating_static_ability = Some(static_ability.clone());
                         }
                     }
                     effects.extend(ability_effects);

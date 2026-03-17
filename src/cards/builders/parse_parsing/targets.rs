@@ -439,9 +439,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
             target_count,
         ));
     }
-    if other
-        && matches!(remaining_words.as_slice(), ["target"] | ["targets"])
-    {
+    if other && matches!(remaining_words.as_slice(), ["target"] | ["targets"]) {
         return Ok(wrap_target_count(
             TargetAst::AnyOtherTarget(span),
             target_count,

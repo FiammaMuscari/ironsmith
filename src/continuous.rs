@@ -178,6 +178,12 @@ pub struct ContinuousEffect {
     /// How this effect was created - affects target locking behavior.
     /// Per Rule 611.2c, resolution effects lock targets; per 611.3a, static effects don't.
     pub source_type: EffectSourceType,
+
+    /// The originating static ability for effects generated from a static ability.
+    ///
+    /// This lets dependency resolution detect when another effect would cause
+    /// the source to lose the specific static ability that created this effect.
+    pub originating_static_ability: Option<StaticAbility>,
 }
 
 /// Unique identifier for a continuous effect.
@@ -676,6 +682,7 @@ impl ContinuousEffect {
             duration: Until::Forever,
             condition: None,
             source_type: EffectSourceType::default(),
+            originating_static_ability: None,
         }
     }
 
@@ -694,6 +701,12 @@ impl ContinuousEffect {
     /// Set the source type.
     pub fn with_source_type(mut self, source_type: EffectSourceType) -> Self {
         self.source_type = source_type;
+        self
+    }
+
+    /// Record which static ability generated this effect.
+    pub fn with_originating_static_ability(mut self, ability: StaticAbility) -> Self {
+        self.originating_static_ability = Some(ability);
         self
     }
 
@@ -1046,6 +1059,9 @@ fn calculate_with_layers_direct_internal(
             None => continue,
         };
 
+        let mut source_state =
+            build_layer_baseline(objects, effects, battlefield, commanders, game, layer, None);
+
         // Apply dependency-aware sorting within this layer
         let sorted_effects = match sort_mode {
             DependencySortMode::Heuristic => sort_layer_effects(layer_effects),
@@ -1069,6 +1085,23 @@ fn calculate_with_layers_direct_internal(
 
         // Apply effects in dependency order
         for effect in sorted_effects {
+            let effect_active = effect_source_is_active(effect, &source_state);
+
+            if effect_active {
+                advance_layer_source_state(
+                    &mut source_state,
+                    effect,
+                    objects,
+                    battlefield,
+                    commanders,
+                    game,
+                );
+            }
+
+            if !effect_active {
+                continue;
+            }
+
             if !effect_applies_to_direct(
                 effect,
                 object,
@@ -1794,6 +1827,16 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
             None => continue,
         };
 
+        let mut source_state = build_layer_baseline(
+            ctx.objects,
+            all_effects.get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect()),
+            ctx.battlefield,
+            &ctx.game.commanders,
+            ctx.game,
+            layer,
+            None,
+        );
+
         // Apply dependency-aware sorting within this layer
         // This handles Rule 613.8 - effects that depend on each other
         let sorted_effects = {
@@ -1817,6 +1860,23 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
 
         // Apply effects in dependency order
         for effect in sorted_effects {
+            let effect_active = effect_source_is_active(effect, &source_state);
+
+            if effect_active {
+                advance_layer_source_state(
+                    &mut source_state,
+                    effect,
+                    ctx.objects,
+                    ctx.battlefield,
+                    &ctx.game.commanders,
+                    ctx.game,
+                );
+            }
+
+            if !effect_active {
+                continue;
+            }
+
             // Check if this effect applies to our object
             if !effect_applies_to(effect, object, &chars, ctx) {
                 continue;
@@ -2778,6 +2838,54 @@ fn build_layer_baseline(
     }
 
     baseline
+}
+
+fn effect_source_is_active(
+    effect: &ContinuousEffect,
+    source_state: &HashMap<ObjectId, CalculatedCharacteristics>,
+) -> bool {
+    let Some(originating_static_ability) = &effect.originating_static_ability else {
+        return true;
+    };
+
+    source_state
+        .get(&effect.source)
+        .is_some_and(|chars| chars.static_abilities.contains(originating_static_ability))
+}
+
+fn advance_layer_source_state(
+    source_state: &mut HashMap<ObjectId, CalculatedCharacteristics>,
+    effect: &ContinuousEffect,
+    objects: &HashMap<ObjectId, Object>,
+    battlefield: &[ObjectId],
+    commanders: &HashSet<ObjectId>,
+    game: &crate::game_state::GameState,
+) {
+    for (&id, object) in objects {
+        let Some(chars) = source_state.get(&id).cloned() else {
+            continue;
+        };
+
+        if !effect_applies_to_direct(
+            effect,
+            object,
+            &chars,
+            objects,
+            battlefield,
+            commanders,
+            game,
+        ) {
+            continue;
+        }
+
+        let mut updated = chars;
+        crate::dependency::apply_modification_to_chars_for_dependency(
+            &effect.modification,
+            &mut updated,
+            object,
+        );
+        source_state.insert(id, updated);
+    }
 }
 
 /// Add abilities from ability-granting counters (deathtouch counter, flying counter, etc.).

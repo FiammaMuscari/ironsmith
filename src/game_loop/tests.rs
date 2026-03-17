@@ -7803,11 +7803,12 @@ fn test_backdraft_cast_from_hand_uses_blasphemous_act_damage_history() {
     game.create_object_from_definition(&omniscience, alice, Zone::Battlefield);
 
     for idx in 0..3 {
-        let ornithopter = CardBuilder::new(CardId::from_raw(9101 + idx), format!("Ornithopter {idx}"))
-            .card_types(vec![CardType::Artifact, CardType::Creature])
-            .mana_cost(ManaCost::from_symbols(vec![]))
-            .power_toughness(PowerToughness::fixed(0, 2))
-            .build();
+        let ornithopter =
+            CardBuilder::new(CardId::from_raw(9101 + idx), format!("Ornithopter {idx}"))
+                .card_types(vec![CardType::Artifact, CardType::Creature])
+                .mana_cost(ManaCost::from_symbols(vec![]))
+                .power_toughness(PowerToughness::fixed(0, 2))
+                .build();
         game.create_object_from_card(&ornithopter, alice, Zone::Battlefield);
     }
 

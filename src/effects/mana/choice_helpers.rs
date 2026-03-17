@@ -181,9 +181,14 @@ pub(crate) fn choose_mana_symbols(
 
     let mut chosen = Vec::new();
     if same_symbol {
-        let selected =
-            ask_choose_one(game, &mut ctx.decision_maker, player_id, ctx.source, &choices)
-                .unwrap_or(default_symbol);
+        let selected = ask_choose_one(
+            game,
+            &mut ctx.decision_maker,
+            player_id,
+            ctx.source,
+            &choices,
+        )
+        .unwrap_or(default_symbol);
         let fallback = if available_symbols.contains(&selected) {
             selected
         } else {
@@ -192,9 +197,14 @@ pub(crate) fn choose_mana_symbols(
         chosen.resize(count as usize, fallback);
     } else {
         for _ in 0..count {
-            let selected =
-                ask_choose_one(game, &mut ctx.decision_maker, player_id, ctx.source, &choices)
-                    .unwrap_or(default_symbol);
+            let selected = ask_choose_one(
+                game,
+                &mut ctx.decision_maker,
+                player_id,
+                ctx.source,
+                &choices,
+            )
+            .unwrap_or(default_symbol);
             chosen.push(if available_symbols.contains(&selected) {
                 selected
             } else {

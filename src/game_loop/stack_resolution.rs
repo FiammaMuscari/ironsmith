@@ -816,11 +816,13 @@ mod tests {
         resolve_stack_entry_with_dm_and_triggers(&mut game, &mut dm, &mut trigger_queue)
             .expect("Backdraft should resolve far enough to ask for a spell-history choice");
 
-        let captured = dm
-            .captured
-            .expect("Backdraft should prompt for one of Alice's sorcery spells after choosing Alice");
+        let captured = dm.captured.expect(
+            "Backdraft should prompt for one of Alice's sorcery spells after choosing Alice",
+        );
         assert!(
-            captured.iter().any(|option| option.contains("Blasphemous Act")),
+            captured
+                .iter()
+                .any(|option| option.contains("Blasphemous Act")),
             "expected Blasphemous Act to be a legal Backdraft history option, got {captured:?}"
         );
         assert!(
@@ -875,8 +877,9 @@ mod tests {
         game.push_to_stack(StackEntry::new(backdraft_id, alice));
 
         let mut dm = MatchingOptionDecisionMaker::new("Alice");
-        let result = crate::game_loop::run_priority_loop_with(&mut game, &mut trigger_queue, &mut dm)
-            .expect("priority loop should resolve Backdraft after choosing Alice");
+        let result =
+            crate::game_loop::run_priority_loop_with(&mut game, &mut trigger_queue, &mut dm)
+                .expect("priority loop should resolve Backdraft after choosing Alice");
 
         assert!(
             matches!(result, crate::decision::GameProgress::Continue),

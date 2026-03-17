@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::ability::Ability;
 use crate::continuous::{
     CalculatedCharacteristics, ContinuousEffect, EffectSourceType, EffectTarget, Layer,
     Modification, PtSublayer,
@@ -68,6 +69,12 @@ fn effect_depends_on_with_baseline(
     objects: &HashMap<ObjectId, crate::object::Object>,
     game: &GameState,
 ) -> bool {
+    // Static ability effects depend on any effect that would remove the
+    // originating static ability from their source.
+    if source_ability_presence_changed(a, b, baseline, objects, game) {
+        return true;
+    }
+
     // First, check if applying B would change what A applies to.
     if effect_applicability_changed(a, b, baseline, objects, game) {
         return true;
@@ -312,6 +319,43 @@ fn effect_applicability_changed(
     }
 
     false
+}
+
+fn source_ability_presence_changed(
+    a: &ContinuousEffect,
+    b: &ContinuousEffect,
+    baseline: &HashMap<ObjectId, CalculatedCharacteristics>,
+    objects: &HashMap<ObjectId, crate::object::Object>,
+    game: &GameState,
+) -> bool {
+    let Some(originating_static_ability) = &a.originating_static_ability else {
+        return false;
+    };
+    let Some(source_obj) = objects.get(&a.source) else {
+        return false;
+    };
+    let Some(source_chars_before) = baseline.get(&a.source) else {
+        return false;
+    };
+
+    let has_before = source_chars_before
+        .static_abilities
+        .contains(originating_static_ability);
+
+    let mut source_chars_after = source_chars_before.clone();
+    if effect_applies_with_chars(b, source_obj, source_chars_before, game) {
+        apply_modification_to_chars_for_dependency(
+            &b.modification,
+            &mut source_chars_after,
+            source_obj,
+        );
+    }
+
+    let has_after = source_chars_after
+        .static_abilities
+        .contains(originating_static_ability);
+
+    has_before != has_after
 }
 
 fn effect_output_changed(
@@ -876,7 +920,7 @@ fn apply_effect_to_baseline(
     after
 }
 
-fn apply_modification_to_chars_for_dependency(
+pub(crate) fn apply_modification_to_chars_for_dependency(
     modification: &Modification,
     chars: &mut CalculatedCharacteristics,
     _object: &crate::object::Object,
@@ -910,7 +954,33 @@ fn apply_modification_to_chars_for_dependency(
             chars.subtypes.retain(|t| !types.contains(t));
         }
         Modification::SetSubtypes(types) => {
-            chars.subtypes = types.clone();
+            let non_land_subtypes: Vec<_> = chars
+                .subtypes
+                .iter()
+                .filter(|subtype| !subtype.is_land_subtype())
+                .cloned()
+                .collect();
+            chars.subtypes = non_land_subtypes;
+            chars.subtypes.extend(types.iter().copied());
+
+            // Setting a land's subtype to basic land types also replaces its
+            // abilities with the corresponding intrinsic mana abilities. We
+            // model that consequence here so dependency checks can see effects
+            // like Blood Moon shutting off Urborg's static ability in layer 4.
+            if chars.card_types.contains(&crate::types::CardType::Land)
+                && !types.is_empty()
+                && types.iter().all(|subtype| subtype.is_basic_land_type())
+            {
+                chars.abilities.clear();
+                chars.static_abilities.clear();
+                for subtype in types {
+                    if let Some(ability) = Ability::basic_land_mana(*subtype)
+                        && !chars.abilities.contains(&ability)
+                    {
+                        chars.abilities.push(ability);
+                    }
+                }
+            }
         }
         Modification::AddSupertypes(types) => {
             for t in types {
@@ -969,15 +1039,32 @@ fn apply_modification_to_chars_for_dependency(
             }
         }
         Modification::AddAbility(ability) => {
-            chars
-                .abilities
-                .push(crate::ability::Ability::static_ability(ability.clone()));
+            let static_ability = crate::ability::Ability::static_ability(ability.clone());
+            chars.abilities.push(static_ability);
+            if !chars.static_abilities.contains(ability) {
+                chars.static_abilities.push(ability.clone());
+            }
         }
         Modification::AddAbilityGeneric(ability) => {
             chars.abilities.push(ability.clone());
+            if let crate::ability::AbilityKind::Static(static_ability) = &ability.kind
+                && !chars.static_abilities.contains(static_ability)
+            {
+                chars.static_abilities.push(static_ability.clone());
+            }
         }
         Modification::SetAbilities(abilities) => {
             chars.abilities = abilities.clone();
+            chars.static_abilities = abilities
+                .iter()
+                .filter_map(|ability| {
+                    if let crate::ability::AbilityKind::Static(static_ability) = &ability.kind {
+                        Some(static_ability.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
         }
         Modification::CopyActivatedAbilities { .. } => {}
         Modification::AddCombatDamageDrawAbility => {
@@ -994,12 +1081,15 @@ fn apply_modification_to_chars_for_dependency(
                     true
                 }
             });
+            chars.static_abilities.retain(|sa| sa != ability);
         }
         Modification::RemoveAllAbilities => {
             chars.abilities.clear();
+            chars.static_abilities.clear();
         }
         Modification::RemoveAllAbilitiesExceptMana => {
             chars.abilities.retain(|ability| ability.is_mana_ability());
+            chars.static_abilities.clear();
         }
         Modification::ModifyPower(delta) => {
             if let Some(ref mut p) = chars.power {
@@ -1579,6 +1669,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         }
     }
 
@@ -1686,6 +1777,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         let b = ContinuousEffect {
@@ -1698,6 +1790,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         let card = CardBuilder::new(CardId(1), "Test Artifact")
@@ -1785,6 +1878,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         let granted_ability = Ability::activated(
@@ -1803,6 +1897,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         assert!(effect_depends_on_with_baseline(
@@ -1882,6 +1977,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         let remove_effect = ContinuousEffect {
@@ -1894,6 +1990,7 @@ mod tests {
             duration: crate::effect::Until::Forever,
             condition: None,
             source_type: EffectSourceType::StaticAbility,
+            originating_static_ability: None,
         };
 
         assert!(effect_depends_on_with_baseline(

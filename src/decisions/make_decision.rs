@@ -721,5 +721,4 @@ mod tests {
         let result: Vec<usize> = make_decision(&game, &mut dm, player, Some(source), spec);
         assert!(result.is_empty());
     }
-
 }

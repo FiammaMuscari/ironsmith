@@ -230,7 +230,9 @@ pub(crate) fn parse_discard(
         tokens
     };
     let count_offset = tokens.len().saturating_sub(count_tokens.len());
-    let uses_all_count = count_tokens.first().is_some_and(|token| token.is_word("all"));
+    let uses_all_count = count_tokens
+        .first()
+        .is_some_and(|token| token.is_word("all"));
     let (mut count, used) = if uses_all_count {
         (Value::Fixed(0), count_offset + 1)
     } else {
@@ -369,7 +371,9 @@ pub(crate) fn parse_discard_color_qualifier_filter(tokens: &[Token]) -> Option<O
     Some(filter)
 }
 
-pub(crate) fn parse_discard_chosen_color_qualifier_filter(tokens: &[Token]) -> Option<ObjectFilter> {
+pub(crate) fn parse_discard_chosen_color_qualifier_filter(
+    tokens: &[Token],
+) -> Option<ObjectFilter> {
     let qualifier_words: Vec<&str> = words(tokens)
         .into_iter()
         .filter(|word| !is_article(word))
@@ -3292,7 +3296,9 @@ pub(crate) fn exile_subject_owner_filter(subject: Option<SubjectAst>) -> Option<
 pub(crate) fn discard_subject_owner_filter(subject: Option<SubjectAst>) -> Option<PlayerFilter> {
     match subject {
         Some(SubjectAst::Player(PlayerAst::Target)) => Some(PlayerFilter::target_player()),
-        Some(SubjectAst::Player(PlayerAst::TargetOpponent)) => Some(PlayerFilter::target_opponent()),
+        Some(SubjectAst::Player(PlayerAst::TargetOpponent)) => {
+            Some(PlayerFilter::target_opponent())
+        }
         Some(SubjectAst::Player(PlayerAst::That)) => Some(PlayerFilter::IteratedPlayer),
         Some(SubjectAst::Player(PlayerAst::You)) => Some(PlayerFilter::You),
         _ => None,

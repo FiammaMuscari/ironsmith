@@ -330,11 +330,7 @@ mod tests {
             self.prompted.get()
         }
 
-        fn decide_options(
-            &mut self,
-            _game: &GameState,
-            _ctx: &SelectOptionsContext,
-        ) -> Vec<usize> {
+        fn decide_options(&mut self, _game: &GameState, _ctx: &SelectOptionsContext) -> Vec<usize> {
             self.prompted.set(true);
             Vec::new()
         }

@@ -1001,8 +1001,8 @@ fn parse_shuffle_it_into_their_library_uses_tagged_move_then_shuffle() {
 #[test]
 fn parse_put_named_card_onto_battlefield_from_command_zone_sets_source_zone() {
     let tokens = tokenize_line("this card onto the battlefield from the command zone", 0);
-    let effect = parse_put_into_hand(&tokens, None)
-        .expect("parse battlefield move from command zone");
+    let effect =
+        parse_put_into_hand(&tokens, None).expect("parse battlefield move from command zone");
 
     let EffectAst::MoveToZone { target, zone, .. } = effect else {
         panic!("expected move-to-zone effect");
