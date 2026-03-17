@@ -1937,6 +1937,12 @@ pub(crate) enum EffectAst {
         random: bool,
         exclude_previous_choices: usize,
     },
+    ChooseSpellCastHistory {
+        chooser: PlayerAst,
+        cast_by: PlayerAst,
+        filter: ObjectFilter,
+        tag: TagKey,
+    },
     ChooseColor {
         player: PlayerAst,
     },
@@ -11571,6 +11577,48 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             message.contains("unsupported combat-history player subject"),
             "expected strict combat-history subject error, got {message}"
+        );
+    }
+
+    #[test]
+    fn parse_backdraft_tracks_historical_spell_damage_choice() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Backdraft")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text(
+                "Choose a player who cast one or more sorcery spells this turn. Backdraft deals damage to that player equal to half the damage dealt by one of those sorcery spells this turn, rounded down.",
+            )
+            .expect("Backdraft should parse");
+
+        let effects = def.spell_effect.expect("spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("ChoosePlayerEffect"),
+            "expected qualifying-player choice, got {debug}"
+        );
+        assert!(
+            debug.contains("ChooseSpellCastHistoryEffect"),
+            "expected historical spell-choice effect, got {debug}"
+        );
+        assert!(
+            debug.contains("DamageDealtThisTurnByTaggedSpellCast"),
+            "expected spell-damage history value, got {debug}"
+        );
+        assert!(
+            debug.contains("HalfRoundedDown"),
+            "expected rounded-down half-damage value, got {debug}"
+        );
+
+        let damage = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<crate::effects::DealDamageEffect>())
+            .expect("expected lowered damage effect");
+        assert!(
+            matches!(
+                damage.target,
+                crate::target::ChooseSpec::Player(crate::target::PlayerFilter::TaggedPlayer(_))
+            ),
+            "expected Backdraft damage target to remain the chosen player, got {:?}",
+            damage.target
         );
     }
 

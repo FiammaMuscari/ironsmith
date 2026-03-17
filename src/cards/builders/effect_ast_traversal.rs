@@ -210,6 +210,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ChooseObjects { .. } => {}
         EffectAst::ChooseObjectsAcrossZones { .. } => {}
         EffectAst::ChoosePlayer { .. } => {}
+        EffectAst::ChooseSpellCastHistory { .. } => {}
         EffectAst::Sacrifice { .. } => {}
         EffectAst::SacrificeAll { .. } => {}
         EffectAst::DiscardHand { .. } => {}

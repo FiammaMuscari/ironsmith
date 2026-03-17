@@ -660,6 +660,24 @@ pub fn resolve_value(
             Ok(count)
         }
 
+        Value::DamageDealtThisTurnByTaggedSpellCast(tag) => {
+            let snapshot = ctx.get_tagged(tag.as_str()).ok_or_else(|| {
+                ExecutionError::UnresolvableValue(format!(
+                    "DamageDealtThisTurnByTaggedSpellCast requires tagged spell snapshot '{tag}'"
+                ))
+            })?;
+            let cast_order = snapshot.cast_order_this_turn.ok_or_else(|| {
+                ExecutionError::UnresolvableValue(format!(
+                    "tagged snapshot '{tag}' is missing cast-order history"
+                ))
+            })?;
+            Ok(game
+                .damage_dealt_by_spell_cast_this_turn
+                .get(&cast_order)
+                .copied()
+                .unwrap_or(0) as i32)
+        }
+
         Value::CardTypesInGraveyard(player_spec) => {
             use crate::types::CardType;
 
@@ -727,6 +745,11 @@ pub fn resolve_value(
                 .get_outcome(*effect_id)
                 .ok_or(ExecutionError::EffectNotFound(*effect_id))?;
             Ok(outcome.count_or_zero() + *offset)
+        }
+
+        Value::HalfRoundedDown(value) => {
+            let resolved = resolve_value(game, value, ctx)?;
+            Ok(resolved.div_euclid(2))
         }
 
         Value::EventValue(EventValueSpec::Amount)
@@ -1121,11 +1144,18 @@ pub fn resolve_player_filter(
         PlayerFilter::Defending => ctx.defending_player.ok_or_else(|| {
             ExecutionError::UnresolvableValue("DefendingPlayer not set".to_string())
         }),
-        PlayerFilter::IteratedPlayer => ctx.iterated_player.ok_or_else(|| {
-            ExecutionError::UnresolvableValue(
-                "IteratedPlayer not set (must be inside ForEachOpponent/ForEachPlayer)".to_string(),
-            )
-        }),
+        PlayerFilter::IteratedPlayer => ctx
+            .iterated_player
+            .or_else(|| {
+                ctx.get_tagged_players("__it__")
+                    .and_then(|players| players.first().copied())
+            })
+            .ok_or_else(|| {
+                ExecutionError::UnresolvableValue(
+                    "IteratedPlayer not set (must be inside ForEachOpponent/ForEachPlayer)"
+                        .to_string(),
+                )
+            }),
     }
 }
 
@@ -2079,8 +2109,13 @@ pub(crate) fn resolve_player_filter_to_list(
     match filter {
         PlayerFilter::You => Ok(vec![ctx.controller]),
         PlayerFilter::EffectController => Ok(vec![ctx.controller]),
-        PlayerFilter::Any | PlayerFilter::Target(_) => {
-            // For Any/Target, check targets first
+        PlayerFilter::Any => Ok(game
+            .players
+            .iter()
+            .filter(|player| player.is_in_game())
+            .map(|player| player.id)
+            .collect()),
+        PlayerFilter::Target(_) => {
             for target in &ctx.targets {
                 if let ResolvedTarget::Player(id) = target {
                     return Ok(vec![*id]);
@@ -2135,22 +2170,22 @@ pub(crate) fn resolve_player_filter_to_list(
             })
             .map(|player| player.id)
             .collect()),
-        PlayerFilter::ChosenPlayer => game.chosen_player(ctx.source).map(|id| vec![id]).ok_or_else(
-            || {
+        PlayerFilter::ChosenPlayer => game
+            .chosen_player(ctx.source)
+            .map(|id| vec![id])
+            .ok_or_else(|| {
                 ExecutionError::UnresolvableValue(
                     "ChosenPlayer requires a previously chosen player".to_string(),
                 )
-            },
-        ),
-        PlayerFilter::TaggedPlayer(tag) => {
-            ctx.get_tagged_players(tag.as_str())
-                .cloned()
-                .ok_or_else(|| {
-                    ExecutionError::UnresolvableValue(format!(
-                        "TaggedPlayer requires a tagged player for '{tag}'"
-                    ))
-                })
-        }
+            }),
+        PlayerFilter::TaggedPlayer(tag) => ctx
+            .get_tagged_players(tag.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                ExecutionError::UnresolvableValue(format!(
+                    "TaggedPlayer requires a tagged player for '{tag}'"
+                ))
+            }),
         PlayerFilter::Active => Ok(vec![game.turn.active_player]),
         PlayerFilter::Defending => ctx.defending_player.map(|id| vec![id]).ok_or_else(|| {
             ExecutionError::UnresolvableValue("DefendingPlayer not set".to_string())
@@ -2179,6 +2214,10 @@ pub(crate) fn resolve_player_filter_to_list(
         PlayerFilter::IteratedPlayer => ctx
             .iterated_player
             .or(_filter_ctx.iterated_player)
+            .or_else(|| {
+                ctx.get_tagged_players("__it__")
+                    .and_then(|players| players.first().copied())
+            })
             .map(|id| vec![id])
             .ok_or_else(|| ExecutionError::UnresolvableValue("IteratedPlayer not set".to_string())),
         PlayerFilter::TargetPlayerOrControllerOfTarget => Ok(vec![resolve_player_filter(

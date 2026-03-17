@@ -77,13 +77,14 @@ pub use combat::{
 };
 pub use composition::{
     AdaptEffect, BackupEffect, BeholdEffect, BolsterEffect, CastEncodedCardCopyEffect,
-    ChooseModeEffect, ChooseObjectsEffect, CipherEffect, ConditionalEffect, CounterAbilityEffect,
-    DevourEffect, EmitKeywordActionEffect, ExploreEffect, ForEachControllerOfTaggedEffect,
-    ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect, ForPlayersEffect, IfEffect,
-    ManifestDreadEffect, MayEffect, OpenAttractionEffect, ReflexiveTriggerEffect,
-    RepeatProcessEffect, SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
-    TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect,
-    UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
+    ChooseModeEffect, ChooseObjectsEffect, ChooseSpellCastHistoryEffect, CipherEffect,
+    ConditionalEffect, CounterAbilityEffect, DevourEffect, EmitKeywordActionEffect, ExploreEffect,
+    ForEachControllerOfTaggedEffect, ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
+    ForPlayersEffect, IfEffect, ManifestDreadEffect, MayEffect, OpenAttractionEffect,
+    ReflexiveTriggerEffect, RepeatProcessEffect, SequenceEffect, SupportEffect, TagAllEffect,
+    TagAttachedToSourceEffect, TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect,
+    TaggedEffect, TargetOnlyEffect, UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption,
+    WithIdEffect,
 };
 pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};
@@ -120,14 +121,13 @@ pub use permanents::{
 pub use player::{
     AdditionalLandPlaysEffect, BecomeMonarchEffect, CascadeEffect, CastSourceEffect,
     CastTaggedEffect, ChooseCardNameEffect, ChooseColorEffect, ChoosePlayerEffect,
-    ControlPlayerEffect,
-    CreateEmblemEffect, DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
-    ExileUntilMatchCastEffect, ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect,
-    ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantBySpecEffect, GrantEffect,
-    GrantPlayTaggedDuration, GrantPlayTaggedEffect, GrantTaggedSpellFreeCastUntilEndOfTurnEffect,
-    GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect, PayEnergyEffect,
-    PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
-    SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
+    ControlPlayerEffect, CreateEmblemEffect, DiscoverEffect, EnergyCountersEffect,
+    ExileInsteadOfGraveyardEffect, ExileUntilMatchCastEffect, ExileUntilMatchGrantPlayEffect,
+    ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantBySpecEffect,
+    GrantEffect, GrantPlayTaggedDuration, GrantPlayTaggedEffect,
+    GrantTaggedSpellFreeCastUntilEndOfTurnEffect, GrantTaggedSpellLifeCostByManaValueEffect,
+    LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect,
+    SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;

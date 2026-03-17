@@ -5,7 +5,7 @@
 
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_value;
+use crate::effects::helpers::{resolve_player_from_spec, resolve_value};
 use crate::event_processor::process_damage_assignments_with_event_with_source_snapshot;
 use crate::events::DamageEvent;
 use crate::events::LifeLossEvent;
@@ -261,6 +261,26 @@ impl EffectExecutor for DealDamageEffect {
                 ctx.source,
                 ctx.source_snapshot.as_ref(),
                 DamageTarget::Player(controller),
+                amount,
+                self.source_is_combat,
+                ctx.provenance,
+            ));
+        }
+
+        if matches!(
+            self.target,
+            ChooseSpec::Player(_)
+                | ChooseSpec::PlayerOrPlaneswalker(_)
+                | ChooseSpec::SourceOwner
+                | ChooseSpec::SpecificPlayer(_)
+                | ChooseSpec::EachPlayer(_)
+        ) && let Ok(player_id) = resolve_player_from_spec(game, &self.target, ctx)
+        {
+            return Ok(apply_processed_damage_outcome(
+                game,
+                ctx.source,
+                ctx.source_snapshot.as_ref(),
+                DamageTarget::Player(player_id),
                 amount,
                 self.source_is_combat,
                 ctx.provenance,

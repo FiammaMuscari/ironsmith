@@ -797,6 +797,9 @@ pub enum Value {
     /// An arbitrary value multiplied by a factor.
     Scaled(Box<Value>, i32),
 
+    /// Half of an arbitrary value, rounded down.
+    HalfRoundedDown(Box<Value>),
+
     /// The number of objects matching a filter
     Count(ObjectFilter),
 
@@ -920,6 +923,9 @@ pub enum Value {
         filter: ObjectFilter,
         exclude_source: bool,
     },
+
+    /// Damage dealt this turn by the spell-cast snapshot currently stored under `tag`.
+    DamageDealtThisTurnByTaggedSpellCast(TagKey),
 
     /// Number of distinct card types among cards in a player's graveyard
     CardTypesInGraveyard(PlayerFilter),
@@ -3606,6 +3612,22 @@ impl Effect {
     ) -> Self {
         use crate::effects::ChooseObjectsEffect;
         Self::new(ChooseObjectsEffect::new(filter, count, chooser, tag.into()))
+    }
+
+    /// Choose one spell cast this turn matching a historical filter and tag its snapshot.
+    pub fn choose_spell_cast_history(
+        chooser: PlayerFilter,
+        cast_by: PlayerFilter,
+        filter: ObjectFilter,
+        tag: impl Into<TagKey>,
+    ) -> Self {
+        use crate::effects::ChooseSpellCastHistoryEffect;
+        Self::new(ChooseSpellCastHistoryEffect::new(
+            chooser,
+            cast_by,
+            filter,
+            tag.into(),
+        ))
     }
 
     /// Choose a card name and tag it for later same-name references.

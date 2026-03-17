@@ -1461,6 +1461,10 @@ pub(crate) fn parse_object_filter(
     if all_words.len() >= 3 {
         for window in all_words.windows(3) {
             match window {
+                ["chosen", "player", "graveyard"] | ["chosen", "players", "graveyard"] => {
+                    filter.owner = Some(PlayerFilter::ChosenPlayer);
+                    filter.zone = Some(Zone::Graveyard);
+                }
                 ["your", "team", "control"] | ["your", "team", "controls"] => {
                     filter.controller = Some(PlayerFilter::You);
                 }
@@ -1518,6 +1522,11 @@ pub(crate) fn parse_object_filter(
                 || window[1..] == ["your", "team", "controls"]
             {
                 filter.controller = Some(PlayerFilter::You);
+            } else if window == ["the", "chosen", "player", "graveyard"]
+                || window == ["the", "chosen", "players", "graveyard"]
+            {
+                filter.owner = Some(PlayerFilter::ChosenPlayer);
+                filter.zone = Some(Zone::Graveyard);
             } else if window[1..] == ["your", "team", "own"]
                 || window[1..] == ["your", "team", "owns"]
             {

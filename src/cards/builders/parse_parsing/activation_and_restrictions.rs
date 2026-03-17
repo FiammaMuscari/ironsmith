@@ -8863,6 +8863,10 @@ pub(crate) fn parse_possessive_clause_player_filter(words: &[&str]) -> PlayerFil
 pub(crate) fn parse_subject_clause_player_filter(words: &[&str]) -> PlayerFilter {
     if contains_your_team_words(words) || words.contains(&"you") {
         PlayerFilter::You
+    } else if contains_word_sequence(words, &["chosen", "player"])
+        || contains_word_sequence(words, &["chosen", "players"])
+    {
+        PlayerFilter::ChosenPlayer
     } else if contains_opponent_word(words) {
         PlayerFilter::Opponent
     } else {
@@ -8884,6 +8888,9 @@ pub(crate) fn contains_your_team_words(words: &[&str]) -> bool {
 pub(crate) fn parse_trigger_subject_player_filter(subject: &[&str]) -> Option<PlayerFilter> {
     if subject == ["you"] {
         return Some(PlayerFilter::You);
+    }
+    if subject == ["the", "chosen", "player"] || subject == ["chosen", "player"] {
+        return Some(PlayerFilter::ChosenPlayer);
     }
     if subject.starts_with(&["the", "player", "who", "cast"])
         || subject.starts_with(&["player", "who", "cast"])
@@ -10187,17 +10194,25 @@ pub(crate) fn parse_you_choose_player_clause(
     }
 
     let mut exclude_previous_choices = 0usize;
-    if matches!(player_words.first().copied(), Some("a" | "an")) {
-        player_words = player_words[1..].to_vec();
-    } else if player_words.first() == Some(&"another") {
-        exclude_previous_choices = 1;
-        player_words = player_words[1..].to_vec();
-    } else if player_words.first() == Some(&"second") {
-        exclude_previous_choices = 1;
-        player_words = player_words[1..].to_vec();
-    } else if player_words.first() == Some(&"third") {
-        exclude_previous_choices = 2;
-        player_words = player_words[1..].to_vec();
+    while let Some(word) = player_words.first().copied() {
+        match word {
+            "a" | "an" => {
+                player_words = player_words[1..].to_vec();
+            }
+            "another" => {
+                exclude_previous_choices = exclude_previous_choices.max(1);
+                player_words = player_words[1..].to_vec();
+            }
+            "second" => {
+                exclude_previous_choices = exclude_previous_choices.max(1);
+                player_words = player_words[1..].to_vec();
+            }
+            "third" => {
+                exclude_previous_choices = exclude_previous_choices.max(2);
+                player_words = player_words[1..].to_vec();
+            }
+            _ => break,
+        }
     }
 
     if player_words.first() != Some(&"player") {
@@ -10213,21 +10228,42 @@ pub(crate) fn parse_you_choose_player_clause(
 
     let filter = match player_words.as_slice() {
         [] => PlayerFilter::Any,
-        ["with", "the", "most", "life", "or", "tied", "for", "most", "life"] => {
-            PlayerFilter::MostLifeTied
-        }
-        ["who", "cast", "one", "or", "more", "sorcery", "spells", "this", "turn"] => {
-            PlayerFilter::CastCardTypeThisTurn(CardType::Sorcery)
-        }
+        [
+            "with",
+            "the",
+            "most",
+            "life",
+            "or",
+            "tied",
+            "for",
+            "most",
+            "life",
+        ] => PlayerFilter::MostLifeTied,
+        [
+            "who",
+            "cast",
+            "one",
+            "or",
+            "more",
+            "sorcery",
+            "spells",
+            "this",
+            "turn",
+        ] => PlayerFilter::CastCardTypeThisTurn(CardType::Sorcery),
         _ => {
             return Err(CardTextError::ParseError(format!(
                 "unsupported chosen player filter in choose clause (clause: '{}')",
                 clause_words.join(" ")
-            )))
+            )));
         }
     };
 
-    Ok(Some((PlayerAst::You, filter, random, exclude_previous_choices)))
+    Ok(Some((
+        PlayerAst::You,
+        filter,
+        random,
+        exclude_previous_choices,
+    )))
 }
 
 pub(crate) fn parse_target_player_chooses_then_other_cant_block(

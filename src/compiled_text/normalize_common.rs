@@ -34,7 +34,9 @@ pub(super) fn describe_player_filter(filter: &PlayerFilter) -> String {
             }
         }
         PlayerFilter::Specific(_) => "that player".to_string(),
-        PlayerFilter::MostLifeTied => "a player with the most life or tied for most life".to_string(),
+        PlayerFilter::MostLifeTied => {
+            "a player with the most life or tied for most life".to_string()
+        }
         PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
             "a player who cast one or more {} spells this turn",
             card_type.to_string().to_ascii_lowercase()
@@ -5726,6 +5728,9 @@ pub(crate) fn describe_value(value: &Value) -> String {
                 format!("{factor} times {}", describe_value(value))
             }
         }
+        Value::HalfRoundedDown(value) => {
+            format!("half {}, rounded down", describe_value(value))
+        }
         Value::X => "X".to_string(),
         Value::XTimes(factor) => {
             if *factor == 1 {
@@ -5936,6 +5941,9 @@ pub(crate) fn describe_value(value: &Value) -> String {
                 out.push_str(" other than this spell");
             }
             out
+        }
+        Value::DamageDealtThisTurnByTaggedSpellCast(_) => {
+            "the damage dealt this turn by the chosen spell".to_string()
         }
         Value::CardTypesInGraveyard(filter) => format!(
             "the number of distinct card types in {} graveyard",

@@ -85,6 +85,7 @@ impl ChooseCardNameEffect {
             aura_attach_filter: None,
             max_saga_chapter: None,
             x_value: None,
+            cast_order_this_turn: None,
             counters: std::collections::HashMap::new(),
             is_token: false,
             tapped: false,

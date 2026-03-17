@@ -6,7 +6,8 @@ use super::{
     ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ChooseCreatureTypeAsEntersSpec,
     ChoosePlayerAsEntersSpec, ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec,
     EnterAsCopyAsEntersSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
-    ThisSpellCastRestrictionKind, text_utils::{capitalize_first, join_with_and, number_word_u32},
+    ThisSpellCastRestrictionKind,
+    text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
 use crate::color::Color;

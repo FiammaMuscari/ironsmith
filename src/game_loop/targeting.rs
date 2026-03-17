@@ -65,29 +65,39 @@ pub(super) fn queue_triggers_from_event(
     event: TriggerEvent,
     include_delayed: bool,
 ) {
-    if let Some(damage_event) = event.downcast::<DamageEvent>()
-        && let EventDamageTarget::Player(player_id) = damage_event.target
-    {
-        *game
-            .damage_to_players_this_turn
-            .entry(player_id)
-            .or_insert(0) += damage_event.amount;
-        if !damage_event.is_combat {
-            *game
-                .noncombat_damage_to_players_this_turn
-                .entry(player_id)
-                .or_insert(0) += damage_event.amount;
-        }
-
-        if game
-            .object(damage_event.source)
-            .map(|o| o.is_creature())
-            .unwrap_or(false)
+    if let Some(damage_event) = event.downcast::<DamageEvent>() {
+        if let Some(cast_order) = game
+            .spell_cast_order_this_turn
+            .get(&damage_event.source)
+            .copied()
         {
             *game
-                .creature_damage_to_players_this_turn
+                .damage_dealt_by_spell_cast_this_turn
+                .entry(cast_order)
+                .or_insert(0) += damage_event.amount;
+        }
+        if let EventDamageTarget::Player(player_id) = damage_event.target {
+            *game
+                .damage_to_players_this_turn
                 .entry(player_id)
                 .or_insert(0) += damage_event.amount;
+            if !damage_event.is_combat {
+                *game
+                    .noncombat_damage_to_players_this_turn
+                    .entry(player_id)
+                    .or_insert(0) += damage_event.amount;
+            }
+
+            if game
+                .object(damage_event.source)
+                .map(|o| o.is_creature())
+                .unwrap_or(false)
+            {
+                *game
+                    .creature_damage_to_players_this_turn
+                    .entry(player_id)
+                    .or_insert(0) += damage_event.amount;
+            }
         }
     }
     if let Some(life_gain_event) = event.downcast::<LifeGainEvent>() {

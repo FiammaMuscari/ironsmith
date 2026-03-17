@@ -835,10 +835,11 @@ pub fn player_filter_matches_with_context(
                 game.player(player)
                     .is_some_and(|candidate| candidate.is_in_game() && candidate.life == max_life)
             }),
-        PlayerFilter::CastCardTypeThisTurn(card_type) => game
-            .spells_cast_this_turn_snapshots
-            .iter()
-            .any(|snapshot| snapshot.controller == player && snapshot.card_types.contains(card_type)),
+        PlayerFilter::CastCardTypeThisTurn(card_type) => {
+            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+                snapshot.controller == player && snapshot.card_types.contains(card_type)
+            })
+        }
         PlayerFilter::ChosenPlayer => false,
         PlayerFilter::TaggedPlayer(_) => false,
         PlayerFilter::Teammate => false,

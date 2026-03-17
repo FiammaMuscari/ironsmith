@@ -342,10 +342,9 @@ fn protection_prevents_blocking_with_view(
         }
         ProtectionFrom::Everything => true,
         ProtectionFrom::Colorless => blocker_colors.is_empty(),
-        ProtectionFrom::ChosenPlayer => {
-            game.chosen_player(attacker.id)
-                .is_some_and(|chosen| blocker.controller == chosen)
-        }
+        ProtectionFrom::ChosenPlayer => game
+            .chosen_player(attacker.id)
+            .is_some_and(|chosen| blocker.controller == chosen),
     }
 }
 

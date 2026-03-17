@@ -891,7 +891,9 @@ impl PlayerFilter {
             PlayerFilter::DamagedPlayer => "that player".to_string(),
             PlayerFilter::EffectController => "the player who cast this spell".to_string(),
             PlayerFilter::Specific(_) => "that player".to_string(),
-            PlayerFilter::MostLifeTied => "a player with the most life or tied for most life".to_string(),
+            PlayerFilter::MostLifeTied => {
+                "a player with the most life or tied for most life".to_string()
+            }
             PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
                 "a player who cast one or more {} spells this turn",
                 card_type.to_string().to_ascii_lowercase()

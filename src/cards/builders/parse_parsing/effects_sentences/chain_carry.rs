@@ -870,6 +870,9 @@ pub(crate) fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryConte
     {
         return Some(CarryContext::Player(player));
     }
+    if matches!(effect, EffectAst::ChoosePlayer { .. }) {
+        return Some(CarryContext::Player(PlayerAst::That));
+    }
 
     let player = match effect {
         EffectAst::Draw { player, .. }
@@ -885,7 +888,20 @@ pub(crate) fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryConte
         | EffectAst::EnergyCounters { player, .. }
         | EffectAst::RevealTop { player }
         | EffectAst::RevealHand { player }
-        | EffectAst::PutIntoHand { player, .. } => *player,
+        | EffectAst::PutIntoHand { player, .. }
+        | EffectAst::PayMana { player, .. }
+        | EffectAst::PayEnergy { player, .. }
+        | EffectAst::AddMana { player, .. }
+        | EffectAst::AddManaScaled { player, .. }
+        | EffectAst::AddManaAnyColor { player, .. }
+        | EffectAst::AddManaAnyOneColor { player, .. }
+        | EffectAst::AddManaChosenColor { player, .. }
+        | EffectAst::AddManaFromLandCouldProduce { player, .. }
+        | EffectAst::AddManaCommanderIdentity { player, .. }
+        | EffectAst::CreateToken { player, .. }
+        | EffectAst::CreateTokenCopy { player, .. }
+        | EffectAst::CreateTokenCopyFromSource { player, .. }
+        | EffectAst::CreateTokenWithMods { player, .. } => *player,
         _ => return None,
     };
 
@@ -911,7 +927,22 @@ pub(crate) fn effect_uses_implicit_player(effect: &EffectAst) -> bool {
         | EffectAst::EnergyCounters { player, .. }
         | EffectAst::RevealTop { player }
         | EffectAst::RevealHand { player }
-        | EffectAst::PutIntoHand { player, .. } => matches!(*player, PlayerAst::Implicit),
+        | EffectAst::PutIntoHand { player, .. }
+        | EffectAst::PayMana { player, .. }
+        | EffectAst::PayEnergy { player, .. }
+        | EffectAst::AddMana { player, .. }
+        | EffectAst::AddManaScaled { player, .. }
+        | EffectAst::AddManaAnyColor { player, .. }
+        | EffectAst::AddManaAnyOneColor { player, .. }
+        | EffectAst::AddManaChosenColor { player, .. }
+        | EffectAst::AddManaFromLandCouldProduce { player, .. }
+        | EffectAst::AddManaCommanderIdentity { player, .. }
+        | EffectAst::CreateToken { player, .. }
+        | EffectAst::CreateTokenCopy { player, .. }
+        | EffectAst::CreateTokenCopyFromSource { player, .. }
+        | EffectAst::CreateTokenWithMods { player, .. } => {
+            matches!(*player, PlayerAst::Implicit)
+        }
         _ => false,
     }
 }
@@ -940,7 +971,20 @@ pub(crate) fn maybe_apply_carried_player(effect: &mut EffectAst, carried_context
                 | EffectAst::EnergyCounters { player, .. }
                 | EffectAst::RevealTop { player }
                 | EffectAst::RevealHand { player }
-                | EffectAst::PutIntoHand { player, .. } => {
+                | EffectAst::PutIntoHand { player, .. }
+                | EffectAst::PayMana { player, .. }
+                | EffectAst::PayEnergy { player, .. }
+                | EffectAst::AddMana { player, .. }
+                | EffectAst::AddManaScaled { player, .. }
+                | EffectAst::AddManaAnyColor { player, .. }
+                | EffectAst::AddManaAnyOneColor { player, .. }
+                | EffectAst::AddManaChosenColor { player, .. }
+                | EffectAst::AddManaFromLandCouldProduce { player, .. }
+                | EffectAst::AddManaCommanderIdentity { player, .. }
+                | EffectAst::CreateToken { player, .. }
+                | EffectAst::CreateTokenCopy { player, .. }
+                | EffectAst::CreateTokenCopyFromSource { player, .. }
+                | EffectAst::CreateTokenWithMods { player, .. } => {
                     if matches!(*player, PlayerAst::Implicit) {
                         *player = carried_player;
                     }

@@ -4666,6 +4666,31 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         };
         return format!("{chooser} {choose_verb} {selection} name");
     }
+    if let Some(choose_player) = effect.downcast_ref::<crate::effects::ChoosePlayerEffect>() {
+        let chooser = describe_player_filter(&choose_player.chooser);
+        let choose_verb = if choose_player.random {
+            player_verb(&chooser, "chooses at random", "chooses at random")
+        } else {
+            player_verb(&chooser, "choose", "chooses")
+        };
+        let filtered = describe_player_filter(&choose_player.filter);
+        return format!(
+            "{chooser} {choose_verb} {}",
+            with_indefinite_article(strip_leading_article(&filtered))
+        );
+    }
+    if let Some(choose_spell) =
+        effect.downcast_ref::<crate::effects::ChooseSpellCastHistoryEffect>()
+    {
+        let chooser = describe_player_filter(&choose_spell.chooser);
+        let choose_verb = player_verb(&chooser, "choose", "chooses");
+        let filter_text = choose_spell.filter.description();
+        let cast_by = describe_player_filter(&choose_spell.cast_by);
+        return format!(
+            "{chooser} {choose_verb} one of {} cast this turn by {cast_by}",
+            pluralize_noun_phrase(strip_leading_article(&filter_text))
+        );
+    }
     if let Some(choose_color) = effect.downcast_ref::<crate::effects::ChooseColorEffect>() {
         let chooser = describe_player_filter(&choose_color.chooser);
         let choose_verb = player_verb(&chooser, "choose", "chooses");

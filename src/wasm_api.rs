@@ -7676,7 +7676,9 @@ mod tests {
     }
 
     fn dispatch_pass_priority(wasm: &mut WasmGame) {
-        dispatch_matching_priority_action(wasm, |action| matches!(action, LegalAction::PassPriority));
+        dispatch_matching_priority_action(wasm, |action| {
+            matches!(action, LegalAction::PassPriority)
+        });
     }
 
     #[test]
@@ -10856,8 +10858,13 @@ mod tests {
         wasm.game.turn.phase = Phase::FirstMain;
         wasm.game.turn.step = None;
 
-        wasm.add_card_to_zone(0, "Omniscience".to_string(), "battlefield".to_string(), true)
-            .expect("Omniscience should be added to the battlefield");
+        wasm.add_card_to_zone(
+            0,
+            "Omniscience".to_string(),
+            "battlefield".to_string(),
+            true,
+        )
+        .expect("Omniscience should be added to the battlefield");
 
         let original_speaker_id = ObjectId::from_raw(
             wasm.add_card_to_zone(
@@ -10872,7 +10879,9 @@ mod tests {
         match wasm.pending_decision.as_ref() {
             Some(DecisionContext::Boolean(ctx)) => {
                 assert!(
-                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    ctx.description
+                        .to_ascii_lowercase()
+                        .contains("discard a card"),
                     "expected Formidable Speaker may prompt, got {:?}",
                     ctx.description
                 );
@@ -10893,9 +10902,10 @@ mod tests {
             compute_legal_actions(&wasm.game, alice),
         )));
 
-        dispatch_matching_priority_action(&mut wasm, |action| {
-            matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == saw_id)
-        });
+        dispatch_matching_priority_action(
+            &mut wasm,
+            |action| matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == saw_id),
+        );
 
         match wasm.pending_decision.as_ref() {
             Some(DecisionContext::Targets(ctx)) => {
@@ -10934,7 +10944,9 @@ mod tests {
 
         let order_ctx = match wasm.pending_decision.as_ref() {
             Some(DecisionContext::Order(ctx)) => ctx,
-            other => panic!("expected trigger ordering prompt after Saw in Half resolves, got {other:?}"),
+            other => {
+                panic!("expected trigger ordering prompt after Saw in Half resolves, got {other:?}")
+            }
         };
         assert_eq!(
             order_ctx.items.len(),
@@ -10954,7 +10966,9 @@ mod tests {
         let first_boolean_source = match wasm.pending_decision.as_ref() {
             Some(DecisionContext::Boolean(ctx)) => {
                 assert!(
-                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    ctx.description
+                        .to_ascii_lowercase()
+                        .contains("discard a card"),
                     "expected first resolving Formidable Speaker prompt, got {:?}",
                     ctx.description
                 );
@@ -10965,21 +10979,21 @@ mod tests {
 
         dispatch_select_options(&mut wasm, &[0]);
 
-        let next_ctx = wasm
-            .pending_decision
-            .as_ref()
-            .unwrap_or_else(|| panic!("expected another decision after declining the first trigger"));
+        let next_ctx = wasm.pending_decision.as_ref().unwrap_or_else(|| {
+            panic!("expected another decision after declining the first trigger")
+        });
 
         match next_ctx {
             DecisionContext::Boolean(ctx) => {
                 assert!(
-                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    ctx.description
+                        .to_ascii_lowercase()
+                        .contains("discard a card"),
                     "expected the second Formidable Speaker prompt after declining the first, got {:?}",
                     ctx.description
                 );
                 assert_ne!(
-                    ctx.source,
-                    first_boolean_source,
+                    ctx.source, first_boolean_source,
                     "declining the first trigger should advance to the second trigger, not reissue the same source"
                 );
             }

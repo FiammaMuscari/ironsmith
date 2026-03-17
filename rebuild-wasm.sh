@@ -5,6 +5,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$ROOT_DIR/pkg"
 DEMO_PKG_DIR="$ROOT_DIR/web/wasm_demo/pkg"
 DEFAULT_FRONTEND_SCORES_FILE="$ROOT_DIR/web/ui/public/ironsmith_semantic_scores.json"
+DEFAULT_CLUSTER_CSV_FILE="$ROOT_DIR/reports/ironsmith_parse_failure_clusters.csv"
+DEFAULT_PARSE_ERRORS_CSV_FILE="$ROOT_DIR/reports/ironsmith_parse_errors.csv"
 
 DIMS="${IRONSMITH_WASM_SEMANTIC_DIMS:-384}"
 FEATURES="wasm,generated-registry"
@@ -14,6 +16,8 @@ FRONTEND_SCORES_FILE="${IRONSMITH_FRONTEND_SEMANTIC_SCORES_FILE:-$DEFAULT_FRONTE
 FRONTEND_SCORES_FILE_EXPLICIT=0
 SCORES_FILE="${IRONSMITH_GENERATED_REGISTRY_SCORES_FILE:-}"
 SCORES_FILE_EXPLICIT=0
+CLUSTER_CSV_FILE="${IRONSMITH_CLUSTER_CSV_FILE:-$DEFAULT_CLUSTER_CSV_FILE}"
+PARSE_ERRORS_CSV_FILE="${IRONSMITH_PARSE_ERRORS_CSV_FILE:-$DEFAULT_PARSE_ERRORS_CSV_FILE}"
 
 ROOT_FALSE_POSITIVES_FILE="$ROOT_DIR/semantic_false_positives.txt"
 LEGACY_FALSE_POSITIVES_FILE="$ROOT_DIR/scripts/semantic_false_positives.txt"
@@ -31,7 +35,7 @@ require_cmd() {
 
 usage() {
   cat <<USAGE
-Usage: ./rebuild-wasm.sh [--dev|--release] [--threshold <float>] [--dims <int>] [--features <csv>] [--scores-file <path>] [--frontend-scores-file <path>]
+Usage: ./rebuild-wasm.sh [--dev|--release] [--threshold <float>] [--dims <int>] [--features <csv>] [--scores-file <path>] [--frontend-scores-file <path>] [--cluster-csv-file <path>] [--parse-errors-csv-file <path>]
 
 Examples:
   ./rebuild-wasm.sh --dev
@@ -39,10 +43,13 @@ Examples:
   ./rebuild-wasm.sh --dims 384
   ./rebuild-wasm.sh --scores-file /tmp/ironsmith_semantic_scores.json
   ./rebuild-wasm.sh --frontend-scores-file web/ui/public/ironsmith_semantic_scores.json
+  ./rebuild-wasm.sh --cluster-csv-file reports/ironsmith_parse_failure_clusters.csv
+  ./rebuild-wasm.sh --parse-errors-csv-file reports/ironsmith_parse_errors.csv
 
 Notes:
   - Per-card semantic scores are loaded from --scores-file (default: --frontend-scores-file).
   - Frontend cache file defaults to $DEFAULT_FRONTEND_SCORES_FILE.
+  - Cluster and parse-error CSVs are refreshed only when --threshold is provided.
   - The script recomputes scores only when --threshold is provided.
   - If --threshold is omitted and the scores file is missing, the build fails.
   - Default features are "wasm,generated-registry".
@@ -86,6 +93,16 @@ while [[ $# -gt 0 ]]; do
       FRONTEND_SCORES_FILE_EXPLICIT=1
       shift 2
       ;;
+    --cluster-csv-file)
+      [[ $# -ge 2 ]] || { echo "missing value for --cluster-csv-file" >&2; exit 1; }
+      CLUSTER_CSV_FILE="$2"
+      shift 2
+      ;;
+    --parse-errors-csv-file)
+      [[ $# -ge 2 ]] || { echo "missing value for --parse-errors-csv-file" >&2; exit 1; }
+      PARSE_ERRORS_CSV_FILE="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -112,6 +129,8 @@ fi
 
 if [[ -n "$THRESHOLD" ]]; then
   mkdir -p "$(dirname "$SCORES_FILE")"
+  mkdir -p "$(dirname "$CLUSTER_CSV_FILE")"
+  mkdir -p "$(dirname "$PARSE_ERRORS_CSV_FILE")"
   echo "[INFO] computing semantic audits report (dims=${DIMS}, threshold=${THRESHOLD})..."
   AUDIT_CMD=(
     cargo run --quiet --release -p ironsmith-tools --bin audit_oracle_clusters --
@@ -123,6 +142,8 @@ if [[ -n "$THRESHOLD" ]]; then
     --top-clusters 0
     --examples 1
     --audits-out "$SCORES_FILE"
+    --cluster-csv-out "$CLUSTER_CSV_FILE"
+    --parse-errors-csv-out "$PARSE_ERRORS_CSV_FILE"
   )
   if [[ -f "$FALSE_POSITIVES_FILE" ]]; then
     AUDIT_CMD+=(--false-positive-names "$FALSE_POSITIVES_FILE")

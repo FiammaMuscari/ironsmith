@@ -56,7 +56,9 @@ impl ChoosePlayerEffect {
                     .filter(|player| !players.contains(player))
                     .collect::<Vec<_>>();
                 if !filtered.is_empty() {
-                    filter_ctx.tagged_players.insert(excluded_tag.clone(), filtered);
+                    filter_ctx
+                        .tagged_players
+                        .insert(excluded_tag.clone(), filtered);
                 }
             }
         }
@@ -108,6 +110,11 @@ impl EffectExecutor for ChoosePlayerEffect {
         };
 
         ctx.set_tagged_players(self.tag.clone(), vec![chosen]);
+        if self.tag.as_str() != "__it__" {
+            // Mirror the most recent chosen player onto the conventional follow-up
+            // tag so clauses like "that player ..." resolve against the new choice.
+            ctx.set_tagged_players(crate::tag::TagKey::from("__it__"), vec![chosen]);
+        }
         Ok(EffectOutcome::count(1))
     }
 }

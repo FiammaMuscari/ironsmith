@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use ironsmith::cards::{CardDefinitionBuilder, generated_definition_has_unimplemented_content};
@@ -30,6 +31,8 @@ struct Args {
     false_positive_names: Option<String>,
     failures_out: Option<String>,
     audits_out: Option<String>,
+    cluster_csv_out: Option<String>,
+    parse_errors_csv_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +165,8 @@ fn parse_args() -> Result<Args, String> {
     let mut false_positive_names = None;
     let mut failures_out = None;
     let mut audits_out = None;
+    let mut cluster_csv_out = None;
+    let mut parse_errors_csv_out = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -266,9 +271,21 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--audits-out requires a path".to_string())?,
                 );
             }
+            "--cluster-csv-out" => {
+                cluster_csv_out = Some(
+                    iter.next()
+                        .ok_or_else(|| "--cluster-csv-out requires a path".to_string())?,
+                );
+            }
+            "--parse-errors-csv-out" => {
+                parse_errors_csv_out = Some(
+                    iter.next()
+                        .ok_or_else(|| "--parse-errors-csv-out requires a path".to_string())?,
+                );
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path> --audits-out <path>"
+                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path> --audits-out <path> --cluster-csv-out <path> --parse-errors-csv-out <path>"
                 ));
             }
         }
@@ -291,6 +308,8 @@ fn parse_args() -> Result<Args, String> {
         false_positive_names,
         failures_out,
         audits_out,
+        cluster_csv_out,
+        parse_errors_csv_out,
     })
 }
 
@@ -5329,6 +5348,265 @@ fn json_encode_failure_report(report: &JsonFailureReport) -> String {
     out
 }
 
+fn ensure_parent_dir(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(parent) = Path::new(path).parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    fs::create_dir_all(parent)?;
+    Ok(())
+}
+
+fn csv_push_field(out: &mut String, value: &str) {
+    let needs_quotes = value.contains([',', '"', '\n', '\r']);
+    if needs_quotes {
+        out.push('"');
+        for ch in value.chars() {
+            if ch == '"' {
+                out.push('"');
+            }
+            out.push(ch);
+        }
+        out.push('"');
+    } else {
+        out.push_str(value);
+    }
+}
+
+fn csv_push_row<I>(out: &mut String, values: I)
+where
+    I: IntoIterator<Item = String>,
+{
+    for (idx, value) in values.into_iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        csv_push_field(out, &value);
+    }
+    out.push('\n');
+}
+
+fn compare_cluster_entries(a: &CardAudit, b: &CardAudit) -> Ordering {
+    let a_key = (
+        a.parse_error.is_none(),
+        a.oracle_coverage.min(a.compiled_coverage),
+        -(a.line_delta.abs()),
+    );
+    let b_key = (
+        b.parse_error.is_none(),
+        b.oracle_coverage.min(b.compiled_coverage),
+        -(b.line_delta.abs()),
+    );
+    a_key
+        .0
+        .cmp(&b_key.0)
+        .then_with(|| a_key.1.partial_cmp(&b_key.1).unwrap_or(Ordering::Equal))
+        .then_with(|| a_key.2.cmp(&b_key.2))
+        .then_with(|| a.name.cmp(&b.name))
+}
+
+fn cluster_error_counts(entries: &[CardAudit]) -> Vec<(String, usize)> {
+    let mut error_counts: HashMap<String, usize> = HashMap::new();
+    for entry in entries {
+        if let Some(error) = entry.parse_error.as_ref() {
+            *error_counts
+                .entry(normalize_parse_error(error))
+                .or_insert(0usize) += 1;
+        }
+    }
+    let mut error_counts_vec: Vec<(String, usize)> = error_counts.into_iter().collect();
+    error_counts_vec.sort_by(|(a_error, a_count), (b_error, b_count)| {
+        b_count.cmp(a_count).then_with(|| a_error.cmp(b_error))
+    });
+    error_counts_vec
+}
+
+fn top_errors_summary(error_counts: &[(String, usize)], limit: usize) -> String {
+    error_counts
+        .iter()
+        .take(limit)
+        .map(|(error, count)| format!("{count}x {error}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn example_names_summary(entries: &[CardAudit], limit: usize) -> String {
+    entries
+        .iter()
+        .take(limit)
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn example_oracle_summary(entries: &[CardAudit], limit: usize) -> String {
+    entries
+        .iter()
+        .take(limit)
+        .map(|entry| first_oracle_excerpt(&entry.oracle_text))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn write_cluster_csv(
+    path: &str,
+    ranked: &[(String, Vec<CardAudit>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_parent_dir(path)?;
+
+    let mut out = String::new();
+    csv_push_row(
+        &mut out,
+        vec![
+            "cluster_rank".to_string(),
+            "cluster_signature".to_string(),
+            "cluster_size".to_string(),
+            "parse_failures".to_string(),
+            "parse_failure_rate".to_string(),
+            "semantic_mismatches".to_string(),
+            "semantic_mismatch_rate".to_string(),
+            "semantic_false_positives".to_string(),
+            "top_parse_errors".to_string(),
+            "example_names".to_string(),
+            "example_oracle_excerpts".to_string(),
+        ],
+    );
+
+    for (index, (signature, entries)) in ranked.iter().enumerate() {
+        let mut sorted_entries = entries.clone();
+        sorted_entries.sort_by(compare_cluster_entries);
+        let size = sorted_entries.len();
+        let parse_failures_count = sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_some())
+            .count();
+        let semantic_mismatch_count = sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_none() && entry.semantic_mismatch)
+            .count();
+        let semantic_false_positive_count = sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_none() && entry.semantic_false_positive)
+            .count();
+        let parse_failure_rate = parse_failures_count as f32 / size.max(1) as f32;
+        let semantic_mismatch_rate = semantic_mismatch_count as f32 / size.max(1) as f32;
+        let error_counts_vec = cluster_error_counts(&sorted_entries);
+
+        csv_push_row(
+            &mut out,
+            vec![
+                (index + 1).to_string(),
+                signature.clone(),
+                size.to_string(),
+                parse_failures_count.to_string(),
+                parse_failure_rate.to_string(),
+                semantic_mismatch_count.to_string(),
+                semantic_mismatch_rate.to_string(),
+                semantic_false_positive_count.to_string(),
+                top_errors_summary(&error_counts_vec, 5),
+                example_names_summary(&sorted_entries, 5),
+                example_oracle_summary(&sorted_entries, 3),
+            ],
+        );
+    }
+
+    fs::write(path, out)?;
+    println!("Wrote cluster CSV to {path} ({} clusters)", ranked.len());
+    Ok(())
+}
+
+fn write_parse_errors_csv(
+    path: &str,
+    ranked: &[(String, Vec<CardAudit>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_parent_dir(path)?;
+
+    let mut out = String::new();
+    csv_push_row(
+        &mut out,
+        vec![
+            "cluster_rank".to_string(),
+            "cluster_signature".to_string(),
+            "cluster_size".to_string(),
+            "cluster_parse_failures".to_string(),
+            "cluster_parse_failure_rate".to_string(),
+            "cluster_semantic_mismatches".to_string(),
+            "cluster_semantic_mismatch_rate".to_string(),
+            "cluster_error_count".to_string(),
+            "card_name".to_string(),
+            "normalized_parse_error".to_string(),
+            "raw_parse_error".to_string(),
+            "oracle_excerpt".to_string(),
+            "oracle_text".to_string(),
+        ],
+    );
+
+    for (index, (signature, entries)) in ranked.iter().enumerate() {
+        let mut sorted_entries = entries.clone();
+        sorted_entries.sort_by(compare_cluster_entries);
+        let size = sorted_entries.len();
+        let parse_failures_count = sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_some())
+            .count();
+        if parse_failures_count == 0 {
+            continue;
+        }
+        let semantic_mismatch_count = sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_none() && entry.semantic_mismatch)
+            .count();
+        let parse_failure_rate = parse_failures_count as f32 / size.max(1) as f32;
+        let semantic_mismatch_rate = semantic_mismatch_count as f32 / size.max(1) as f32;
+
+        let mut per_error_counts: HashMap<String, usize> = HashMap::new();
+        for entry in &sorted_entries {
+            if let Some(error) = entry.parse_error.as_ref() {
+                *per_error_counts
+                    .entry(normalize_parse_error(error))
+                    .or_insert(0usize) += 1;
+            }
+        }
+
+        for entry in sorted_entries
+            .iter()
+            .filter(|entry| entry.parse_error.is_some())
+        {
+            let raw_error = entry.parse_error.clone().unwrap_or_default();
+            let normalized_error = normalize_parse_error(&raw_error);
+            let cluster_error_count = per_error_counts
+                .get(&normalized_error)
+                .copied()
+                .unwrap_or(0usize);
+
+            csv_push_row(
+                &mut out,
+                vec![
+                    (index + 1).to_string(),
+                    signature.clone(),
+                    size.to_string(),
+                    parse_failures_count.to_string(),
+                    parse_failure_rate.to_string(),
+                    semantic_mismatch_count.to_string(),
+                    semantic_mismatch_rate.to_string(),
+                    cluster_error_count.to_string(),
+                    entry.name.clone(),
+                    normalized_error,
+                    raw_error,
+                    first_oracle_excerpt(&entry.oracle_text),
+                    entry.oracle_text.clone(),
+                ],
+            );
+        }
+    }
+
+    fs::write(path, out)?;
+    println!("Wrote parse-errors CSV to {path}");
+    Ok(())
+}
+
 fn json_encode_audits_report(report: &JsonAuditsReport) -> String {
     let mut out = String::new();
     out.push('{');
@@ -5883,29 +6161,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    if let Some(path) = args.cluster_csv_out.as_ref() {
+        write_cluster_csv(path, &ranked)?;
+    }
+
+    if let Some(path) = args.parse_errors_csv_out.as_ref() {
+        write_parse_errors_csv(path, &ranked)?;
+    }
+
     let clusters_total = ranked.len();
     let mut json_clusters = Vec::new();
 
     for (index, (signature, mut entries)) in ranked.into_iter().take(args.top_clusters).enumerate()
     {
-        entries.sort_by(|a, b| {
-            let a_key = (
-                a.parse_error.is_none(),
-                a.oracle_coverage.min(a.compiled_coverage),
-                -(a.line_delta.abs()),
-            );
-            let b_key = (
-                b.parse_error.is_none(),
-                b.oracle_coverage.min(b.compiled_coverage),
-                -(b.line_delta.abs()),
-            );
-            a_key
-                .0
-                .cmp(&b_key.0)
-                .then_with(|| a_key.1.partial_cmp(&b_key.1).unwrap_or(Ordering::Equal))
-                .then_with(|| a_key.2.cmp(&b_key.2))
-                .then_with(|| a.name.cmp(&b.name))
-        });
+        entries.sort_by(compare_cluster_entries);
 
         let size = entries.len();
         let parse_failures_count = entries
@@ -5923,18 +6192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let parse_failure_rate = parse_failures_count as f32 / size.max(1) as f32;
         let semantic_mismatch_rate = semantic_mismatch_count as f32 / size.max(1) as f32;
 
-        let mut error_counts: HashMap<String, usize> = HashMap::new();
-        for entry in &entries {
-            if let Some(error) = entry.parse_error.as_ref() {
-                *error_counts
-                    .entry(normalize_parse_error(error))
-                    .or_insert(0usize) += 1;
-            }
-        }
-        let mut error_counts_vec: Vec<(String, usize)> = error_counts.into_iter().collect();
-        error_counts_vec.sort_by(|(a_error, a_count), (b_error, b_count)| {
-            b_count.cmp(a_count).then_with(|| a_error.cmp(b_error))
-        });
+        let error_counts_vec = cluster_error_counts(&entries);
 
         println!(
             "[{}] size={} parse_failures={} ({:.1}%) semantic_mismatches={} ({:.1}%)",
@@ -7604,6 +7862,24 @@ At the beginning of your first main phase, sacrifice this enchantment unless you
         assert!(
             similarity_score >= 0.99,
             "urza-saga mana-cost normalization should meet strict 0.99 threshold (score={similarity_score})"
+        );
+    }
+
+    #[test]
+    fn test_csv_push_row_escapes_special_characters() {
+        let mut out = String::new();
+        csv_push_row(
+            &mut out,
+            vec![
+                "plain".to_string(),
+                "has,comma".to_string(),
+                "has\"quote".to_string(),
+                "has\nnewline".to_string(),
+            ],
+        );
+        assert_eq!(
+            out,
+            "plain,\"has,comma\",\"has\"\"quote\",\"has\nnewline\"\n"
         );
     }
 }

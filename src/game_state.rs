@@ -1343,6 +1343,11 @@ pub struct GameState {
     /// Cleared at the start of each turn.
     pub spell_cast_order_this_turn: HashMap<ObjectId, u32>,
 
+    /// Damage dealt this turn by each spell-cast instance, keyed by 1-based cast index.
+    ///
+    /// Cleared at the start of each turn.
+    pub damage_dealt_by_spell_cast_this_turn: HashMap<u32, u32>,
+
     /// Players who attacked with at least one creature this turn.
     /// Reset at the start of each turn.
     pub players_attacked_this_turn: HashSet<PlayerId>,
@@ -1591,6 +1596,7 @@ impl GameState {
             spells_cast_this_turn_total: 0,
             spells_cast_this_turn_snapshots: Vec::new(),
             spell_cast_order_this_turn: HashMap::new(),
+            damage_dealt_by_spell_cast_this_turn: HashMap::new(),
             players_attacked_this_turn: HashSet::new(),
             players_tapped_land_for_mana_this_turn: HashSet::new(),
             creatures_attacked_this_turn: HashSet::new(),
@@ -3773,6 +3779,7 @@ impl GameState {
         self.spells_cast_this_turn_total = 0;
         self.spells_cast_this_turn_snapshots.clear();
         self.spell_cast_order_this_turn.clear();
+        self.damage_dealt_by_spell_cast_this_turn.clear();
         self.players_attacked_this_turn.clear();
         self.players_tapped_land_for_mana_this_turn.clear();
         self.creatures_attacked_this_turn.clear();

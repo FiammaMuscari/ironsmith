@@ -92,6 +92,9 @@ pub struct ObjectSnapshot {
     pub max_saga_chapter: Option<u32>,
     /// X value chosen when this object was cast (if any).
     pub x_value: Option<u32>,
+    /// 1-based cast index for this spell cast during the current turn, if this snapshot
+    /// represents a spell that was cast this turn.
+    pub cast_order_this_turn: Option<u32>,
 
     // === Non-copiable state ===
     /// Counters on the object.
@@ -156,6 +159,7 @@ impl ObjectSnapshot {
             aura_attach_filter: obj.aura_attach_filter.clone(),
             max_saga_chapter: obj.max_saga_chapter,
             x_value: obj.x_value,
+            cast_order_this_turn: game.spell_cast_order_this_turn.get(&obj.id).copied(),
 
             // Non-copiable state (from game state extension maps)
             counters: obj.counters.clone(),
@@ -444,6 +448,7 @@ impl ObjectSnapshot {
             aura_attach_filter: None,
             max_saga_chapter: None,
             x_value: None,
+            cast_order_this_turn: None,
             counters: HashMap::new(),
             is_token: false,
             tapped: false,

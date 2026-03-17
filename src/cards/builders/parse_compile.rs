@@ -1462,6 +1462,7 @@ pub(crate) fn value_references_tag(value: &Value, tag: &str) -> bool {
             value_references_tag(left, tag) || value_references_tag(right, tag)
         }
         Value::Scaled(value, _) => value_references_tag(value, tag),
+        Value::HalfRoundedDown(value) => value_references_tag(value, tag),
         Value::Count(filter) | Value::CountScaled(filter, _) => filter
             .tagged_constraints
             .iter()
@@ -1478,6 +1479,7 @@ pub(crate) fn value_references_tag(value: &Value, tag: &str) -> bool {
         Value::PowerOf(spec) | Value::ToughnessOf(spec) => choose_spec_references_tag(spec, tag),
         Value::ManaValueOf(spec) => choose_spec_references_tag(spec, tag),
         Value::CountersOn(spec, _) => choose_spec_references_tag(spec, tag),
+        Value::DamageDealtThisTurnByTaggedSpellCast(t) => t.as_str() == tag,
         _ => false,
     }
 }
@@ -7678,7 +7680,7 @@ fn try_compile_object_zone_and_exchange_effect(
                 resolved_filter,
                 resolved_tag.clone(),
             )
-                    .excluding_tags(excluded_tags);
+            .excluding_tags(excluded_tags);
             if *random {
                 choose_effect = choose_effect.at_random();
             }
@@ -7691,6 +7693,34 @@ fn try_compile_object_zone_and_exchange_effect(
             ctx.last_player_filter = Some(PlayerFilter::TaggedPlayer(resolved_tag.clone()));
             ctx.recent_player_choice_tags
                 .push(resolved_tag.as_str().to_string());
+            (effects, choices)
+        }
+        EffectAst::ChooseSpellCastHistory {
+            chooser,
+            cast_by,
+            filter,
+            tag,
+        } => {
+            let (chooser_filter, choices) =
+                resolve_effect_player_filter(*chooser, ctx, true, true, false)?;
+            let cast_by_filter =
+                resolve_non_target_player_filter(*cast_by, &current_reference_env(ctx))?;
+            let effect = Effect::new(
+                crate::effects::ChooseSpellCastHistoryEffect::new(
+                    chooser_filter,
+                    cast_by_filter,
+                    filter.clone(),
+                    tag.clone(),
+                )
+                .with_description("Choose one of those sorcery spells"),
+            );
+            let mut effects: Vec<Effect> = choices
+                .iter()
+                .cloned()
+                .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+                .collect();
+            effects.push(effect);
+            ctx.last_object_tag = Some(tag.as_str().to_string());
             (effects, choices)
         }
         EffectAst::ChooseCardName {

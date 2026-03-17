@@ -65,6 +65,8 @@ use crate::turn::{PriorityResult, PriorityTracker, TurnError, pass_priority, res
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
+#[cfg(all(test, feature = "engine-integration-tests"))]
+mod choose_player_tests;
 mod combat_damage;
 mod combat_decisions;
 mod priority_apply;

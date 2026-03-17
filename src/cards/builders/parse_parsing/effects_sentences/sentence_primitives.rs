@@ -33,8 +33,8 @@ use crate::cards::builders::parse_parsing::{
     parse_pt_modifier_values, parse_put_counters, parse_sentence_put_multiple_counters_on_target,
     parse_sentence_target_player_chooses_then_puts_on_top_of_library,
     parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield, parse_transform,
-    parse_where_x_value_clause, parser_trace, parser_trace_enabled, split_on_and, split_on_comma,
-    split_on_period,
+    parse_where_x_value_clause, parse_you_choose_player_clause, parser_trace, parser_trace_enabled,
+    split_on_and, split_on_comma, split_on_period,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -75,7 +75,7 @@ fn sentence_primitive_head_hints(name: &'static str) -> Vec<&'static str> {
         "if" | "you" | "target" | "each" | "for" | "return" | "destroy" | "exile" | "counter"
         | "draw" | "put" | "gets" | "sacrifice" | "take" | "earthbend" | "enchant" | "cant"
         | "prevent" | "gain" | "search" | "shuffle" | "look" | "play" | "vote" | "after"
-        | "reveal" | "damage" | "unless" | "monstrosity" => {
+        | "reveal" | "damage" | "unless" | "monstrosity" | "choose" => {
             vec![first]
         }
         _ => Vec::new(),
@@ -233,6 +233,107 @@ pub(crate) fn parse_sentence_you_and_target_player_each_draw(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     parse_you_and_target_player_each_draw_sentence(tokens)
+}
+
+pub(crate) fn parse_sentence_choose_player_to_effect(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let mut stripped = trim_commas(tokens);
+    while stripped
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        stripped.remove(0);
+    }
+    if stripped.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(to_idx) = stripped.iter().position(|token| token.is_word("to")) else {
+        return Ok(None);
+    };
+    if to_idx == 0 || to_idx + 1 >= stripped.len() {
+        return Ok(None);
+    }
+
+    let choose_tokens = trim_commas(&stripped[..to_idx]);
+    let tail_tokens = trim_commas(&stripped[to_idx + 1..]);
+    let Some((chooser, filter, random, exclude_previous_choices)) =
+        parse_you_choose_player_clause(&choose_tokens)?
+    else {
+        return Ok(None);
+    };
+
+    let mut tail_effects = parse_effect_chain(&tail_tokens)?;
+    for effect in &mut tail_effects {
+        bind_implicit_player_context(effect, PlayerAst::That);
+    }
+
+    let mut effects = vec![EffectAst::ChoosePlayer {
+        chooser,
+        filter,
+        tag: TagKey::from(IT_TAG),
+        random,
+        exclude_previous_choices,
+    }];
+    effects.extend(tail_effects);
+    Ok(Some(effects))
+}
+
+pub(crate) fn parse_sentence_damage_to_that_player_half_damage_of_those_spells(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let mut stripped = trim_commas(tokens);
+    while stripped
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        stripped.remove(0);
+    }
+    if stripped.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(deals_idx) = stripped
+        .iter()
+        .position(|token| token.is_word("deal") || token.is_word("deals"))
+    else {
+        return Ok(None);
+    };
+    let tail_words = words(&stripped[deals_idx + 1..]);
+    if tail_words.len() != 20 {
+        return Ok(None);
+    }
+    if tail_words[..14]
+        != [
+            "damage", "to", "that", "player", "equal", "to", "half", "the", "damage", "dealt",
+            "by", "one", "of", "those",
+        ]
+        || tail_words[15..] != ["spells", "this", "turn", "rounded", "down"]
+    {
+        return Ok(None);
+    }
+
+    let card_type = parse_card_type(tail_words[14]).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported spell type in historical half-damage sentence (clause: '{}')",
+            words(tokens).join(" ")
+        ))
+    })?;
+    Ok(Some(vec![
+        EffectAst::ChooseSpellCastHistory {
+            chooser: PlayerAst::You,
+            cast_by: PlayerAst::That,
+            filter: ObjectFilter::default().with_type(card_type),
+            tag: TagKey::from(IT_TAG),
+        },
+        EffectAst::DealDamage {
+            amount: Value::HalfRoundedDown(Box::new(Value::DamageDealtThisTurnByTaggedSpellCast(
+                TagKey::from(IT_TAG),
+            ))),
+            target: TargetAst::Player(PlayerFilter::target_player(), None),
+        },
+    ]))
 }
 
 pub(crate) fn parse_draw_for_each_card_exiled_from_hand_this_way_sentence(
@@ -4555,6 +4656,10 @@ pub(crate) const PRE_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
         parser: parse_sentence_you_and_target_player_each_draw,
     },
     SentencePrimitive {
+        name: "choose-player-to-effect",
+        parser: parse_sentence_choose_player_to_effect,
+    },
+    SentencePrimitive {
         name: "you-and-attacking-player-each-draw-and-lose",
         parser: parse_sentence_you_and_attacking_player_each_draw_and_lose,
     },
@@ -4892,6 +4997,10 @@ pub(crate) const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "damage-to-that-player-unless-enchanted-attacked",
         parser: parse_sentence_damage_to_that_player_unless_enchanted_attacked,
+    },
+    SentencePrimitive {
+        name: "damage-to-that-player-half-damage-of-those-spells",
+        parser: parse_sentence_damage_to_that_player_half_damage_of_those_spells,
     },
     SentencePrimitive {
         name: "unless-pays",

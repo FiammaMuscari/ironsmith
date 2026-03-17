@@ -72,6 +72,7 @@ impl TriggerMatcher for SpellCastTrigger {
             PlayerFilter::Any => true,
             PlayerFilter::Active => e.caster == ctx.game.turn.active_player,
             PlayerFilter::Specific(id) => e.caster == *id,
+            PlayerFilter::ChosenPlayer => ctx.game.chosen_player(ctx.source_id) == Some(e.caster),
             _ => true,
         };
 

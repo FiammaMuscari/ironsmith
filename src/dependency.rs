@@ -559,6 +559,9 @@ fn evaluate_source_scalar_value(
             evaluate_source_scalar_value(left, source_power, source_toughness)?
                 + evaluate_source_scalar_value(right, source_power, source_toughness)?,
         ),
+        Value::HalfRoundedDown(value) => {
+            Some(evaluate_source_scalar_value(value, source_power, source_toughness)?.div_euclid(2))
+        }
         Value::SourcePower => source_power,
         Value::SourceToughness => source_toughness,
         _ => None,
@@ -1054,6 +1057,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::GreatestToughness(_) => true,
         Value::Add(left, right) => value_references_pt(left) || value_references_pt(right),
         Value::Scaled(value, _) => value_references_pt(value),
+        Value::HalfRoundedDown(value) => value_references_pt(value),
 
         // EffectValue could reference P/T from a prior effect
         Value::EffectValue(_) | Value::EffectValueOffset(_, _) => true,
@@ -1092,6 +1096,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::SpellsCastThisTurn(_)
         | Value::SpellsCastBeforeThisTurn(_)
         | Value::SpellsCastThisTurnMatching { .. }
+        | Value::DamageDealtThisTurnByTaggedSpellCast(_)
         | Value::CardTypesInGraveyard(_)
         | Value::WasKicked
         | Value::WasBoughtBack
@@ -1355,6 +1360,7 @@ fn value_is_independent_count_or_fixed(value: &Value) -> bool {
         Value::Add(left, right) => {
             value_is_independent_count_or_fixed(left) && value_is_independent_count_or_fixed(right)
         }
+        Value::HalfRoundedDown(value) => value_is_independent_count_or_fixed(value),
         _ => false,
     }
 }

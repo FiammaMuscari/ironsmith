@@ -2513,6 +2513,9 @@ fn resolve_value_with_context(
         Value::Scaled(value, multiplier) => {
             resolve_value_with_context(value, ctx, source, controller) * *multiplier
         }
+        Value::HalfRoundedDown(value) => {
+            resolve_value_with_context(value, ctx, source, controller).div_euclid(2)
+        }
 
         Value::X => 0, // X is 0 unless specified (resolved at cast time, not layer time)
 
@@ -2712,6 +2715,7 @@ fn resolve_value_with_context(
         | Value::SpellsCastThisTurn(_)
         | Value::SpellsCastBeforeThisTurn(_)
         | Value::SpellsCastThisTurnMatching { .. }
+        | Value::DamageDealtThisTurnByTaggedSpellCast(_)
         | Value::CardTypesInGraveyard(_)
         | Value::EffectValue(_)
         | Value::EffectValueOffset(_, _)
