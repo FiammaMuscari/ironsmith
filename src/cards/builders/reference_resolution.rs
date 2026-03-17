@@ -509,6 +509,11 @@ fn advance_reference_frame_for_effect(
             }
             frame.last_object_tag = Some(tag.as_str().to_string());
         }
+        EffectAst::ChoosePlayer { chooser, tag, .. } => {
+            track_effect_player(*chooser, frame, true, true)?;
+            frame.last_player_filter = Some(PlayerFilter::TaggedPlayer(tag.clone()));
+            frame.recent_player_choice_tags.push(tag.as_str().to_string());
+        }
         EffectAst::ChooseCardName { player, tag, .. } => {
             track_effect_player(*player, frame, true, true)?;
             frame.last_object_tag = Some(tag.as_str().to_string());
@@ -1486,6 +1491,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_filter(filter, seed_tag)
                 + bind_unresolved_it_in_tag(tag, seed_tag)
         }
+        EffectAst::ChoosePlayer { .. } => 0,
         EffectAst::ChooseCardName { tag, .. } => bind_unresolved_it_in_tag(tag, seed_tag),
         EffectAst::ChooseColor { .. } => 0,
         EffectAst::Sacrifice { filter, .. }

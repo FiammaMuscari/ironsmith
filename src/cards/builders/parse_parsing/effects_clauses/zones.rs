@@ -827,6 +827,7 @@ fn player_filter_for_set_life_total_reference(player: PlayerAst) -> Option<Playe
         PlayerAst::Target => Some(PlayerFilter::target_player()),
         PlayerAst::TargetOpponent => Some(PlayerFilter::target_opponent()),
         PlayerAst::That => Some(PlayerFilter::IteratedPlayer),
+        PlayerAst::Chosen => Some(PlayerFilter::ChosenPlayer),
         PlayerAst::Defending => Some(PlayerFilter::Defending),
         PlayerAst::Attacking => Some(PlayerFilter::Attacking),
         PlayerAst::ThatPlayerOrTargetController
@@ -1816,6 +1817,29 @@ pub(crate) fn parse_add_mana(
         }
 
         let tail_words = words(tail_tokens);
+        let chosen_by_player_tail = matches!(
+            tail_words.as_slice(),
+            ["they", "choose"]
+                | ["that", "player", "chooses"]
+                | ["they", "choose", "to", "their", "mana", "pool"]
+                | ["that", "player", "chooses", "to", "their", "mana", "pool"]
+        );
+        if chosen_by_player_tail {
+            if any_type {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported any-type mana clause without producer filter (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            if any_one {
+                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
+            }
+            return Ok(EffectAst::AddManaAnyColor {
+                amount,
+                player,
+                available_colors: None,
+            });
+        }
         if tail_words.starts_with(&["for", "each"])
             && tail_words.ends_with(&["removed", "this", "way"])
             && let Some(dynamic_amount) = parse_dynamic_cost_modifier_value(tail_tokens)?

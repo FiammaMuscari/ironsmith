@@ -209,6 +209,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::Conditional { .. } => {}
         EffectAst::ChooseObjects { .. } => {}
         EffectAst::ChooseObjectsAcrossZones { .. } => {}
+        EffectAst::ChoosePlayer { .. } => {}
         EffectAst::Sacrifice { .. } => {}
         EffectAst::SacrificeAll { .. } => {}
         EffectAst::DiscardHand { .. } => {}

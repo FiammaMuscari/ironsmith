@@ -1886,6 +1886,14 @@ pub(crate) fn parse_subject(tokens: &[Token]) -> SubjectAst {
         return SubjectAst::Player(PlayerAst::That);
     }
 
+    if slice.starts_with(&["the", "chosen", "player"])
+        || slice.starts_with(&["chosen", "player"])
+        || slice.starts_with(&["the", "chosen", "players"])
+        || slice.starts_with(&["chosen", "players"])
+    {
+        return SubjectAst::Player(PlayerAst::Chosen);
+    }
+
     if is_that_player_or_that_objects_controller_phrase(slice) {
         return SubjectAst::Player(PlayerAst::ThatPlayerOrTargetController);
     }

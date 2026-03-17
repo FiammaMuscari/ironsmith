@@ -128,6 +128,9 @@ pub(crate) fn static_ability_for_keyword_action(action: KeywordAction) -> Option
         KeywordAction::ProtectionFromEverything => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::Everything,
         )),
+        KeywordAction::ProtectionFromChosenPlayer => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::ChosenPlayer,
+        )),
         KeywordAction::ProtectionFromCardType(card_type) => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::CardType(card_type),
         )),

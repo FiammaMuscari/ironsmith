@@ -7648,6 +7648,51 @@ fn try_compile_object_zone_and_exchange_effect(
             ctx.last_player_filter = Some(followup_player);
             (effects, choices)
         }
+        EffectAst::ChoosePlayer {
+            chooser,
+            filter,
+            tag,
+            random,
+            exclude_previous_choices,
+        } => {
+            let (chooser_filter, choices) =
+                resolve_effect_player_filter(*chooser, ctx, true, true, false)?;
+            let resolved_filter = filter.clone();
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.next_tag("chosen_player").as_str())
+            } else {
+                tag.clone()
+            };
+            let excluded_tags = if *exclude_previous_choices == 0 {
+                Vec::new()
+            } else {
+                let len = ctx.recent_player_choice_tags.len();
+                ctx.recent_player_choice_tags[len.saturating_sub(*exclude_previous_choices)..]
+                    .iter()
+                    .cloned()
+                    .map(TagKey::from)
+                    .collect::<Vec<_>>()
+            };
+            let mut choose_effect = crate::effects::ChoosePlayerEffect::new(
+                chooser_filter,
+                resolved_filter,
+                resolved_tag.clone(),
+            )
+                    .excluding_tags(excluded_tags);
+            if *random {
+                choose_effect = choose_effect.at_random();
+            }
+            let mut effects: Vec<Effect> = choices
+                .iter()
+                .cloned()
+                .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+                .collect();
+            effects.push(Effect::new(choose_effect));
+            ctx.last_player_filter = Some(PlayerFilter::TaggedPlayer(resolved_tag.clone()));
+            ctx.recent_player_choice_tags
+                .push(resolved_tag.as_str().to_string());
+            (effects, choices)
+        }
         EffectAst::ChooseCardName {
             player,
             filter,

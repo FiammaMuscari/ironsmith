@@ -254,6 +254,15 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
                 PlayerFilter::Opponent => "an opponent".to_string(),
                 PlayerFilter::Any => "a player".to_string(),
                 PlayerFilter::Specific(_) => "that player".to_string(),
+                PlayerFilter::MostLifeTied => {
+                    "a player with the most life or tied for most life".to_string()
+                }
+                PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+                    "a player who cast one or more {} spells this turn",
+                    card_type.to_string().to_ascii_lowercase()
+                ),
+                PlayerFilter::ChosenPlayer => "the chosen player".to_string(),
+                PlayerFilter::TaggedPlayer(_) => "that player".to_string(),
                 PlayerFilter::Teammate => "a teammate".to_string(),
                 PlayerFilter::Active => "the active player".to_string(),
                 PlayerFilter::Defending => "the defending player".to_string(),

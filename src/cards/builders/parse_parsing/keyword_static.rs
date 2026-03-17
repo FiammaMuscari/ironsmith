@@ -222,6 +222,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_pregame_begin_on_battlefield_line),
         single_static_ability_ast_rule!(parse_choose_basic_land_type_as_enters_line),
         single_static_ability_ast_rule!(parse_choose_creature_type_as_enters_line),
+        single_static_ability_ast_rule!(parse_choose_player_as_enters_line),
         single_static_ability_ast_rule!(parse_enchanted_land_is_chosen_type_line),
         single_static_ability_ast_infallible_rule!(parse_static_text_marker_line),
         multi_static_ability_ast_rule!(parse_enters_tapped_with_choose_color_line),
@@ -1573,6 +1574,74 @@ pub(crate) fn parse_choose_color_as_enters_line(
     Ok(Some(StaticAbility::choose_color_as_enters(
         excluded, display,
     )))
+}
+
+pub(crate) fn parse_choose_player_as_enters_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.len() < 6 || words[0] != "as" {
+        return Ok(None);
+    }
+
+    let mut idx = 1;
+    let subject = if words.get(idx) == Some(&"this") {
+        idx += 1;
+        if words.get(idx).is_some_and(|word| {
+            matches!(
+                *word,
+                "land" | "creature" | "artifact" | "enchantment" | "aura" | "permanent"
+            )
+        }) {
+            let kind = words[idx];
+            idx += 1;
+            match kind {
+                "land" => "this land",
+                "creature" => "this creature",
+                "artifact" => "this artifact",
+                "enchantment" => "this enchantment",
+                "aura" => "this aura",
+                _ => "this permanent",
+            }
+        } else {
+            "this"
+        }
+    } else if words.get(idx) == Some(&"it") {
+        idx += 1;
+        "it"
+    } else {
+        return Ok(None);
+    };
+
+    if words.get(idx) != Some(&"enters") {
+        return Ok(None);
+    }
+    idx += 1;
+
+    if words.get(idx) == Some(&"the") && words.get(idx + 1) == Some(&"battlefield") {
+        idx += 2;
+    }
+
+    if words.get(idx) != Some(&"choose") {
+        return Ok(None);
+    }
+    idx += 1;
+    if words.get(idx) == Some(&"a") {
+        idx += 1;
+    }
+    if words.get(idx) != Some(&"player") {
+        return Ok(None);
+    }
+    idx += 1;
+
+    if idx != words.len() {
+        return Ok(None);
+    }
+
+    let display_subject = if subject == "it" { "it" } else { subject };
+    Ok(Some(StaticAbility::choose_player_as_enters(format!(
+        "As {display_subject} enters, choose a player."
+    ))))
 }
 
 pub(crate) fn parse_damage_redirect_to_source_line(

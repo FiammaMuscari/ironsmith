@@ -4,9 +4,9 @@
 
 use super::{
     ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ChooseCreatureTypeAsEntersSpec,
-    ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec, EnterAsCopyAsEntersSpec,
-    GraveyardCountMetric, StaticAbilityId, StaticAbilityKind, ThisSpellCastRestrictionKind,
-    text_utils::{capitalize_first, join_with_and, number_word_u32},
+    ChoosePlayerAsEntersSpec, ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec,
+    EnterAsCopyAsEntersSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
+    ThisSpellCastRestrictionKind, text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
 use crate::color::Color;
@@ -1105,6 +1105,32 @@ impl StaticAbilityKind for ChooseColorAsEnters {
         Some(ChooseColorAsEntersSpec {
             excluded: self.excluded,
         })
+    }
+}
+
+/// "As this enters, choose a player."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChoosePlayerAsEnters {
+    pub display: String,
+}
+
+impl ChoosePlayerAsEnters {
+    pub fn new(display: String) -> Self {
+        Self { display }
+    }
+}
+
+impl StaticAbilityKind for ChoosePlayerAsEnters {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ChoosePlayerAsEnters
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn player_choice_as_enters(&self) -> Option<ChoosePlayerAsEntersSpec> {
+        Some(ChoosePlayerAsEntersSpec)
     }
 }
 

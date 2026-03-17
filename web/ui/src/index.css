@@ -5992,7 +5992,7 @@ textarea,
 .stack-timeline-entry-surface.stack-timeline-circuit {
   border: 1px solid rgba(128, 107, 78, 0.42) !important;
   background:
-    linear-gradient(180deg, rgba(60, 52, 45, 0.96), rgba(22, 19, 18, 0.98)) !important;
+    linear-gradient(180deg, rgba(82, 70, 58, 0.96), rgba(33, 28, 24, 0.98)) !important;
   color: #eadfc4 !important;
 }
 

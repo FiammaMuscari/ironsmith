@@ -712,7 +712,8 @@ impl<'a> ExecutionContext<'a> {
             .with_iterated_player(self.iterated_player)
             .with_target_players(target_players)
             .with_target_objects(target_objects)
-            .with_tagged_objects(&tagged_objects);
+            .with_tagged_objects(&tagged_objects)
+            .with_tagged_players(&self.tagged_players);
         if self.defending_player.is_some() {
             filter_ctx.defending_player = self.defending_player;
         }

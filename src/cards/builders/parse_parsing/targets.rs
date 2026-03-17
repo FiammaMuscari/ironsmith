@@ -430,6 +430,14 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
             target_count,
         ));
     }
+    if remaining_words.as_slice() == ["chosen", "player"]
+        || remaining_words.as_slice() == ["chosen", "players"]
+    {
+        return Ok(wrap_target_count(
+            TargetAst::Player(PlayerFilter::ChosenPlayer, target_span),
+            target_count,
+        ));
+    }
     if remaining_words.as_slice() == ["that", "opponent"] {
         return Ok(wrap_target_count(
             TargetAst::Player(PlayerFilter::target_opponent(), target_span),

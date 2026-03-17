@@ -251,6 +251,9 @@ pub enum ProtectionFrom {
     /// Protection from permanents matching a filter
     Permanents(ObjectFilter),
 
+    /// Protection from the player chosen for this source.
+    ChosenPlayer,
+
     /// Protection from everything
     Everything,
 }

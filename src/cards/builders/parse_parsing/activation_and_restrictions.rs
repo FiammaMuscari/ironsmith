@@ -5006,6 +5006,18 @@ pub(crate) fn parse_negated_object_restriction_clause(
         ["block", "this", "turn"] => Restriction::block(filter),
         ["be", "blocked"] => Restriction::be_blocked(filter),
         ["be", "blocked", "this", "turn"] => Restriction::be_blocked(filter),
+        _ if remainder_words.starts_with(&["be", "blocked", "by"]) && remainder_words.len() > 3 => {
+            let blocker_tokens = trim_commas(&remainder_tokens[3..]);
+            let blocker_filter = parse_subject_object_filter(&blocker_tokens)?
+                .or_else(|| parse_object_filter(&blocker_tokens, false).ok())
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported negated restriction tail (clause: '{}')",
+                        words(tokens).join(" ")
+                    ))
+                })?;
+            Restriction::block_specific_attacker(blocker_filter, filter)
+        }
         ["be", "destroyed"] => Restriction::be_destroyed(filter),
         ["be", "regenerated"] => Restriction::be_regenerated(filter),
         ["be", "regenerated", "this", "turn"] => Restriction::be_regenerated(filter),
@@ -10136,6 +10148,86 @@ pub(crate) fn parse_you_choose_objects_clause(
     }
 
     Ok(Some((PlayerAst::You, choose_filter, count)))
+}
+
+pub(crate) fn parse_you_choose_player_clause(
+    tokens: &[Token],
+) -> Result<Option<(PlayerAst, PlayerFilter, bool, usize)>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Ok(None);
+    }
+
+    let choose_word_idx = if clause_words.first().copied() == Some("you") {
+        1usize
+    } else {
+        0usize
+    };
+    if !matches!(
+        clause_words.get(choose_word_idx).copied(),
+        Some("choose" | "chooses")
+    ) {
+        return Ok(None);
+    }
+
+    let choose_word_token_idx =
+        token_index_for_word_index(tokens, choose_word_idx).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing choose keyword in choose-player clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+    let player_tokens = trim_commas(&tokens[choose_word_token_idx + 1..]);
+    let mut player_words = words(&player_tokens);
+    if player_words.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing chosen player in choose-player clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let mut exclude_previous_choices = 0usize;
+    if matches!(player_words.first().copied(), Some("a" | "an")) {
+        player_words = player_words[1..].to_vec();
+    } else if player_words.first() == Some(&"another") {
+        exclude_previous_choices = 1;
+        player_words = player_words[1..].to_vec();
+    } else if player_words.first() == Some(&"second") {
+        exclude_previous_choices = 1;
+        player_words = player_words[1..].to_vec();
+    } else if player_words.first() == Some(&"third") {
+        exclude_previous_choices = 2;
+        player_words = player_words[1..].to_vec();
+    }
+
+    if player_words.first() != Some(&"player") {
+        return Ok(None);
+    }
+    player_words = player_words[1..].to_vec();
+
+    let mut random = false;
+    if player_words.starts_with(&["at", "random"]) {
+        random = true;
+        player_words = player_words[2..].to_vec();
+    }
+
+    let filter = match player_words.as_slice() {
+        [] => PlayerFilter::Any,
+        ["with", "the", "most", "life", "or", "tied", "for", "most", "life"] => {
+            PlayerFilter::MostLifeTied
+        }
+        ["who", "cast", "one", "or", "more", "sorcery", "spells", "this", "turn"] => {
+            PlayerFilter::CastCardTypeThisTurn(CardType::Sorcery)
+        }
+        _ => {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported chosen player filter in choose clause (clause: '{}')",
+                clause_words.join(" ")
+            )))
+        }
+    };
+
+    Ok(Some((PlayerAst::You, filter, random, exclude_previous_choices)))
 }
 
 pub(crate) fn parse_target_player_chooses_then_other_cant_block(

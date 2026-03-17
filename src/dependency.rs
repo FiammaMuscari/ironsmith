@@ -462,9 +462,11 @@ fn evaluate_value(
                 attacking_player: None,
                 your_commanders: Vec::new(),
                 iterated_player: None,
+                chosen_player: None,
                 target_players: Vec::new(),
                 target_objects: Vec::new(),
                 tagged_objects: std::collections::HashMap::new(),
+                tagged_players: std::collections::HashMap::new(),
             };
             let mut total = 0i32;
             for player in game.players.iter().filter(|p| p.is_in_game()) {
@@ -690,12 +692,16 @@ fn object_matches_filter_with_chars(
             // Dependency-layer matching doesn't have enough context to resolve
             // these controller-relative player filters safely. Fail closed.
             PlayerFilter::NotYou
+            | PlayerFilter::MostLifeTied
+            | PlayerFilter::CastCardTypeThisTurn(_)
             | PlayerFilter::Teammate
             | PlayerFilter::Active
             | PlayerFilter::Defending
             | PlayerFilter::Attacking
             | PlayerFilter::DamagedPlayer
             | PlayerFilter::EffectController
+            | PlayerFilter::ChosenPlayer
+            | PlayerFilter::TaggedPlayer(_)
             | PlayerFilter::IteratedPlayer
             | PlayerFilter::TargetPlayerOrControllerOfTarget
             | PlayerFilter::Target(_)

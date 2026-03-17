@@ -2385,9 +2385,11 @@ fn continuous_filter_context(
         attacking_player: None,
         your_commanders: Vec::new(),
         iterated_player: None,
+        chosen_player: None,
         target_players: Vec::new(),
         target_objects: Vec::new(),
         tagged_objects: std::collections::HashMap::new(),
+        tagged_players: std::collections::HashMap::new(),
     }
 }
 

@@ -816,6 +816,23 @@ pub fn player_matches_filter_with_combat(
         PlayerFilter::DamagedPlayer => false,
         PlayerFilter::EffectController => player_id == controller,
         PlayerFilter::Specific(id) => player_id == *id,
+        PlayerFilter::MostLifeTied => game
+            .players
+            .iter()
+            .filter(|player| player.is_in_game())
+            .map(|player| player.life)
+            .max()
+            .is_some_and(|max_life| {
+                game.player(player_id)
+                    .is_some_and(|player| player.is_in_game() && player.life == max_life)
+            }),
+        PlayerFilter::CastCardTypeThisTurn(card_type) => {
+            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+                snapshot.controller == player_id && snapshot.card_types.contains(card_type)
+            })
+        }
+        PlayerFilter::ChosenPlayer => false,
+        PlayerFilter::TaggedPlayer(_) => false,
         PlayerFilter::IteratedPlayer => {
             // IteratedPlayer is resolved at runtime during iteration, not here
             false

@@ -1023,6 +1023,7 @@ function ViewedCardsStrip({
   selectedObjectId = null,
   onCardHoverStart,
   onCardHoverEnd,
+  compact = false,
 }) {
   const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
     onScrollStart: onCardHoverEnd,
@@ -1030,70 +1031,93 @@ function ViewedCardsStrip({
 
   const normalizedSourceName = String(sourceName || "").trim();
   const normalizedDescription = String(description || "").trim();
+  const metadata = (
+    <>
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-[#d9c18b]">
+          {label}
+        </div>
+        {normalizedSourceName && (
+          <div className="min-w-0 truncate text-[11px] text-[#d8cdb6]">
+            <SymbolText text={normalizeDecisionText(normalizedSourceName)} />
+          </div>
+        )}
+      </div>
+      {normalizedDescription && (
+        <div className={cn(
+          "text-[12px] leading-snug text-[#c7baa1]",
+          compact && "truncate"
+        )}>
+          <SymbolText text={normalizeDecisionText(normalizedDescription)} />
+        </div>
+      )}
+    </>
+  );
+  const cardScroller = (
+    <div
+      ref={attachScrollableRef}
+      className={cn(
+        "action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden",
+        compact && "flex-1 self-stretch"
+      )}
+    >
+      <div className="flex w-max min-w-full items-center gap-1.5 pb-0.5">
+        {cards.length > 0 ? cards.map((card) => (
+          <button
+            key={card.id}
+            type="button"
+            className={cn(
+              "action-strip-pill action-strip-view-card inline-flex max-w-[220px] items-center px-2 py-1 text-[12px] transition-all",
+              String(hoveredObjectId) === String(card.id) || String(selectedObjectId) === String(card.id)
+                ? "is-linked-active text-[#fff5de]"
+                : "is-interactive text-[#decfae]"
+            )}
+            onMouseEnter={() => {
+              if (hoverSuppressed) return;
+              onCardHoverStart?.(card);
+            }}
+            onMouseLeave={() => onCardHoverEnd?.()}
+          >
+            <span className="truncate">
+              <HighlightedDecisionText
+                text={normalizeDecisionText(card.name)}
+                highlightText={normalizeDecisionText(card.name)}
+                highlightColor={
+                  resolveObjectAccent(
+                    players,
+                    perspective,
+                    objectControllerById,
+                    card.id,
+                    card.controller
+                  )?.hex || null
+                }
+              />
+            </span>
+          </button>
+        )) : (
+          <div className="text-[12px] italic text-[#bda983]">
+            No cards visible.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="viewed-cards-strip min-w-0 flex-1 overflow-hidden px-1 py-1">
-      <div className="flex flex-col gap-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-[#d9c18b]">
-            {label}
+      {compact ? (
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="min-w-[200px] max-w-[360px] shrink-0">
+            {metadata}
           </div>
-          {normalizedSourceName && (
-            <div className="min-w-0 truncate text-[11px] text-[#d8cdb6]">
-              <SymbolText text={normalizeDecisionText(normalizedSourceName)} />
-            </div>
-          )}
+          {cardScroller}
         </div>
-        {normalizedDescription && (
-          <div className="text-[12px] leading-snug text-[#c7baa1]">
-            <SymbolText text={normalizeDecisionText(normalizedDescription)} />
-          </div>
-        )}
-        <div
-          ref={attachScrollableRef}
-          className="action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden"
-        >
-          <div className="flex w-max min-w-full items-center gap-1.5 pb-0.5">
-            {cards.length > 0 ? cards.map((card) => (
-              <button
-                key={card.id}
-                type="button"
-                className={cn(
-                  "action-strip-pill action-strip-view-card inline-flex max-w-[220px] items-center px-2 py-1 text-[12px] transition-all",
-                  String(hoveredObjectId) === String(card.id) || String(selectedObjectId) === String(card.id)
-                    ? "is-linked-active text-[#fff5de]"
-                    : "is-interactive text-[#decfae]"
-                )}
-                onMouseEnter={() => {
-                  if (hoverSuppressed) return;
-                  onCardHoverStart?.(card);
-                }}
-                onMouseLeave={() => onCardHoverEnd?.()}
-              >
-                <span className="truncate">
-                  <HighlightedDecisionText
-                    text={normalizeDecisionText(card.name)}
-                    highlightText={normalizeDecisionText(card.name)}
-                    highlightColor={
-                      resolveObjectAccent(
-                        players,
-                        perspective,
-                        objectControllerById,
-                        card.id,
-                        card.controller
-                      )?.hex || null
-                    }
-                  />
-                </span>
-              </button>
-            )) : (
-              <div className="text-[12px] italic text-[#bda983]">
-                No cards visible.
-              </div>
-            )}
-          </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {metadata}
+          {cardScroller}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1199,7 +1223,16 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     () => buildObjectControllerById(state),
     [state]
   );
-  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}|${decision?.context_text || ""}|${decision?.consequence_text || ""}`;
+  const decisionIdentity = [
+    decision?.kind || "",
+    decision?.player ?? "",
+    decision?.source_id ?? "",
+    decision?.source_name || "",
+    decision?.reason || "",
+    decision?.description || "",
+    decision?.context_text || "",
+    decision?.consequence_text || "",
+  ].join("|");
   const viewedCards = state?.viewed_cards || null;
   const viewedCardsLabel = viewedCards?.visibility === "public" ? "Revealed" : "Look";
   const viewedCardsIdentity = useMemo(
@@ -1326,10 +1359,11 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
       label: "Submit Order",
       disabled: !canAct,
       onSubmit: () => {
+        clearHover();
         dispatch({ type: "select_options", option_indices: order }, "Order submitted");
       },
     };
-  }, [canAct, decision, dispatch, triggerOrderingDecision, triggerOrderingState]);
+  }, [canAct, clearHover, decision, dispatch, triggerOrderingDecision, triggerOrderingState]);
   const effectiveSubmitAction = triggerOrderingSubmitAction || submitAction;
   const canSubmitFocused = canAct
     && !!effectiveSubmitAction
@@ -1442,6 +1476,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                   selectedObjectId={selectedObjectId}
                   onCardHoverStart={handleViewedCardHoverStart}
                   onCardHoverEnd={handleViewedCardHoverEnd}
+                  compact
                 />
               </div>
             ) : (
@@ -1579,6 +1614,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                       selectedObjectId={selectedObjectId}
                       onCardHoverStart={handleViewedCardHoverStart}
                       onCardHoverEnd={handleViewedCardHoverEnd}
+                      compact
                     />
                   ) : (!triggerOrderingDecision && (
                     <DecisionRouter
@@ -1728,7 +1764,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
           )}
         </div>
       </div>
-      <div className={cn("action-strip-body-shell flex-1 border-b px-2 py-1.5", !isPriorityDecision && ACTION_STRIP_BODY_CLASS)}>
+      <div className={cn("action-strip-body-shell pointer-events-auto flex-1 border-b px-2 py-1.5", !isPriorityDecision && ACTION_STRIP_BODY_CLASS)}>
         {isPriorityDecision ? (
           showViewedCardsStep ? (
             <ViewedCardsStrip
@@ -1743,6 +1779,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               selectedObjectId={selectedObjectId}
               onCardHoverStart={handleViewedCardHoverStart}
               onCardHoverEnd={handleViewedCardHoverEnd}
+              compact
             />
           ) : (
             <div className="flex min-h-[46px] items-stretch gap-2">
@@ -1786,6 +1823,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 selectedObjectId={selectedObjectId}
                 onCardHoverStart={handleViewedCardHoverStart}
                 onCardHoverEnd={handleViewedCardHoverEnd}
+                compact
               />
             ) : (!triggerOrderingDecision && (
               <DecisionRouter

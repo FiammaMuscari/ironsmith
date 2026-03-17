@@ -74,6 +74,11 @@ pub(crate) fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordActi
     let parse_from_target = |words: &[&str], idx: usize| -> Option<KeywordAction> {
         let value = *words.get(idx + 1)?;
         match value {
+            "the" if words.get(idx + 2).copied() == Some("chosen")
+                && words.get(idx + 3).copied() == Some("player") =>
+            {
+                Some(KeywordAction::ProtectionFromChosenPlayer)
+            }
             "colorless" => Some(KeywordAction::ProtectionFromColorless),
             "everything" => Some(KeywordAction::ProtectionFromEverything),
             "all" if matches!(words.get(idx + 2).copied(), Some("color") | Some("colors")) => {

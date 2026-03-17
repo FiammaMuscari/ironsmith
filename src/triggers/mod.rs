@@ -95,6 +95,10 @@ pub(crate) fn describe_player_filter_subject(filter: &PlayerFilter) -> String {
         PlayerFilter::DamagedPlayer
         | PlayerFilter::EffectController
         | PlayerFilter::Specific(_)
+        | PlayerFilter::MostLifeTied
+        | PlayerFilter::CastCardTypeThisTurn(_)
+        | PlayerFilter::ChosenPlayer
+        | PlayerFilter::TaggedPlayer(_)
         | PlayerFilter::IteratedPlayer
         | PlayerFilter::Target(_)
         | PlayerFilter::Excluding { .. } => "that player".to_string(),
@@ -122,6 +126,10 @@ pub(crate) fn describe_player_filter_possessive(filter: &PlayerFilter) -> String
         PlayerFilter::DamagedPlayer
         | PlayerFilter::EffectController
         | PlayerFilter::Specific(_)
+        | PlayerFilter::MostLifeTied
+        | PlayerFilter::CastCardTypeThisTurn(_)
+        | PlayerFilter::ChosenPlayer
+        | PlayerFilter::TaggedPlayer(_)
         | PlayerFilter::IteratedPlayer
         | PlayerFilter::Target(_)
         | PlayerFilter::Excluding { .. } => "that player's".to_string(),

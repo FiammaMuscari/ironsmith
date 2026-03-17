@@ -12,10 +12,10 @@ use crate::cards::builders::{
     parse_pt_modifier, parse_pt_modifier_values, parse_put_counters, parse_restriction_duration,
     parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subject,
     parse_subtype_word, parse_target_phrase, parse_target_player_choose_objects_clause,
-    parse_value, parse_you_choose_objects_clause, parser_trace, parser_trace_stack,
-    remove_first_word, remove_through_first_word, run_clause_primitives, span_from_tokens,
-    starts_with_until_end_of_turn, strip_leading_instead_prefix, token_index_for_word_index,
-    trim_commas, words,
+    parse_value, parse_you_choose_objects_clause, parse_you_choose_player_clause, parser_trace,
+    parser_trace_stack, remove_first_word, remove_through_first_word, run_clause_primitives,
+    span_from_tokens, starts_with_until_end_of_turn, strip_leading_instead_prefix,
+    token_index_for_word_index, trim_commas, words,
 };
 use crate::{ChooseSpec, ObjectFilter, Subtype, TagKey, Until, Value};
 
@@ -84,6 +84,18 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     ) {
         return Ok(EffectAst::ChooseColor {
             player: crate::cards::builders::PlayerAst::Implicit,
+        });
+    }
+
+    if let Some((chooser, choose_filter, random, exclude_previous_choices)) =
+        parse_you_choose_player_clause(tokens)?
+    {
+        return Ok(EffectAst::ChoosePlayer {
+            chooser,
+            filter: choose_filter,
+            tag: TagKey::from(IT_TAG),
+            random,
+            exclude_previous_choices,
         });
     }
 

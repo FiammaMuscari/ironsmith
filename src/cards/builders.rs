@@ -536,6 +536,7 @@ pub(crate) enum KeywordAction {
     ProtectionFromAllColors,
     ProtectionFromColorless,
     ProtectionFromEverything,
+    ProtectionFromChosenPlayer,
     ProtectionFromCardType(CardType),
     ProtectionFromSubtype(Subtype),
     Unblockable,
@@ -633,6 +634,7 @@ impl KeywordAction {
                 | Self::ProtectionFromAllColors
                 | Self::ProtectionFromColorless
                 | Self::ProtectionFromEverything
+                | Self::ProtectionFromChosenPlayer
                 | Self::ProtectionFromCardType(_)
                 | Self::ProtectionFromSubtype(_)
                 | Self::Unblockable
@@ -784,6 +786,7 @@ impl KeywordAction {
             Self::ProtectionFromAllColors => "Protection from all colors".to_string(),
             Self::ProtectionFromColorless => "Protection from colorless".to_string(),
             Self::ProtectionFromEverything => "Protection from everything".to_string(),
+            Self::ProtectionFromChosenPlayer => "Protection from the chosen player".to_string(),
             Self::ProtectionFromCardType(card_type) => format!(
                 "Protection from {}",
                 card_type.to_string().to_ascii_lowercase()
@@ -1165,6 +1168,7 @@ pub(crate) enum DamageBySpec {
 pub(crate) enum PlayerAst {
     You,
     Any,
+    Chosen,
     Defending,
     Attacking,
     Target,
@@ -1925,6 +1929,13 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
         filter: Option<ObjectFilter>,
         tag: TagKey,
+    },
+    ChoosePlayer {
+        chooser: PlayerAst,
+        filter: PlayerFilter,
+        tag: TagKey,
+        random: bool,
+        exclude_previous_choices: usize,
     },
     ChooseColor {
         player: PlayerAst,
@@ -2687,6 +2698,11 @@ impl CardDefinitionBuilder {
             KeywordAction::ProtectionFromEverything => self.with_ability(Ability::static_ability(
                 StaticAbility::protection(crate::ability::ProtectionFrom::Everything),
             )),
+            KeywordAction::ProtectionFromChosenPlayer => {
+                self.with_ability(Ability::static_ability(StaticAbility::protection(
+                    crate::ability::ProtectionFrom::ChosenPlayer,
+                )))
+            }
             KeywordAction::ProtectionFromCardType(card_type) => {
                 self.protection_from_card_type(card_type)
             }

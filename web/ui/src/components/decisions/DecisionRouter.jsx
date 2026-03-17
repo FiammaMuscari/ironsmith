@@ -9,7 +9,16 @@ import NumberDecision from "./NumberDecision";
 /** Derive a stable key so React remounts stateful decision components when the
  *  underlying decision changes (e.g. "discard a card" → "search library"). */
 function decisionKey(decision) {
-  const metaKey = `|${decision.description || ""}|${decision.context_text || ""}|${decision.consequence_text || ""}`;
+  const metaKey = [
+    decision.kind || "",
+    decision.player ?? "",
+    decision.source_id ?? "",
+    decision.source_name || "",
+    decision.reason || "",
+    decision.description || "",
+    decision.context_text || "",
+    decision.consequence_text || "",
+  ].join("|");
   if (decision.attacker_options) {
     return decision.attacker_options
       .map((opt) => {
@@ -18,7 +27,7 @@ function decisionKey(decision) {
           .join("+");
         return `${Number(opt.creature)}:${opt.must_attack ? 1 : 0}:${targets}`;
       })
-      .join("|") + metaKey;
+      .join("|") + `|${metaKey}`;
   }
   if (decision.blocker_options) {
     return decision.blocker_options
@@ -28,13 +37,13 @@ function decisionKey(decision) {
           .join("+");
         return `${Number(opt.attacker)}:${opt.min_blockers || 0}:${blockers}`;
       })
-      .join("|") + metaKey;
+      .join("|") + `|${metaKey}`;
   }
   if (decision.candidates) {
-    return decision.candidates.map((c) => c.id).join(",") + metaKey;
+    return decision.candidates.map((c) => c.id).join(",") + `|${metaKey}`;
   }
   if (decision.options) {
-    return decision.options.map((o) => `${o.index}:${o.description}`).join(",") + metaKey;
+    return decision.options.map((o) => `${o.index}:${o.description}`).join(",") + `|${metaKey}`;
   }
   if (decision.requirements) {
     return decision.requirements
@@ -43,9 +52,9 @@ function decisionKey(decision) {
           .map((t) => (t.kind === "player" ? `p${t.player}` : `o${t.object}`))
           .join("+")
       )
-      .join(",") + metaKey;
+      .join(",") + `|${metaKey}`;
   }
-  return metaKey;
+  return `|${metaKey}`;
 }
 
 export default function DecisionRouter({

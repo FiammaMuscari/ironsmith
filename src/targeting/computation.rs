@@ -147,9 +147,16 @@ pub(crate) fn has_protection_from_source_with_view(
     for ability in target_abilities {
         if ability.has_protection()
             && let Some(protection_from) = ability.protection_from()
-            && source_matches_protection_with_view(source, protection_from, game, view)
         {
-            return true;
+            let matches = match protection_from {
+                crate::ability::ProtectionFrom::ChosenPlayer => game
+                    .chosen_player(target_id)
+                    .is_some_and(|chosen| source.controller == chosen),
+                _ => source_matches_protection_with_view(source, protection_from, game, view),
+            };
+            if matches {
+                return true;
+            }
         }
     }
 
@@ -194,6 +201,8 @@ pub(crate) fn source_matches_protection_with_view(
         ProtectionFrom::AllColors => !source_colors.is_empty(),
         // Protection from creatures
         ProtectionFrom::Creatures => source_types.contains(&CardType::Creature),
+        // Protection from the chosen player is target-specific and handled by the caller.
+        ProtectionFrom::ChosenPlayer => false,
         // Protection from a card type
         ProtectionFrom::CardType(card_type) => source_types.contains(card_type),
         // Protection from permanents matching a filter

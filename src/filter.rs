@@ -384,6 +384,9 @@ pub struct FilterContext {
     /// The current iterated player (for ForEachOpponent/ForEachPlayer effects)
     pub iterated_player: Option<PlayerId>,
 
+    /// The player chosen for the source permanent or spell, if any.
+    pub chosen_player: Option<PlayerId>,
+
     /// Resolved player targets from the current execution context.
     pub target_players: Vec<PlayerId>,
 
@@ -396,6 +399,9 @@ pub struct FilterContext {
     /// Tagged objects from prior effects in the same spell/ability.
     /// Used by tag-aware object filter constraints.
     pub tagged_objects: std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+
+    /// Tagged players from prior effects in the same spell/ability.
+    pub tagged_players: std::collections::HashMap<TagKey, Vec<PlayerId>>,
 }
 
 impl FilterContext {
@@ -443,6 +449,12 @@ impl FilterContext {
         self
     }
 
+    /// Set the chosen player for the source, if any.
+    pub fn with_chosen_player(mut self, player: Option<PlayerId>) -> Self {
+        self.chosen_player = player;
+        self
+    }
+
     /// Set resolved player targets from the execution context.
     pub fn with_target_players(mut self, players: Vec<PlayerId>) -> Self {
         self.target_players = players;
@@ -461,6 +473,15 @@ impl FilterContext {
         tagged: &std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
     ) -> Self {
         self.tagged_objects.extend(tagged.clone());
+        self
+    }
+
+    /// Set tagged players from the execution context.
+    pub fn with_tagged_players(
+        mut self,
+        tagged: &std::collections::HashMap<TagKey, Vec<PlayerId>>,
+    ) -> Self {
+        self.tagged_players.extend(tagged.clone());
         self
     }
 }
@@ -662,6 +683,18 @@ pub enum PlayerFilter {
     /// A specific player
     Specific(PlayerId),
 
+    /// A player with the most life, or tied for most life.
+    MostLifeTied,
+
+    /// A player who cast one or more spells of the given card type this turn.
+    CastCardTypeThisTurn(CardType),
+
+    /// The player chosen for the source permanent or spell.
+    ChosenPlayer,
+
+    /// A player tagged by a previous effect in the same resolution.
+    TaggedPlayer(TagKey),
+
     /// The current player in a ForEachPlayer iteration
     IteratedPlayer,
 
@@ -762,6 +795,10 @@ impl PlayerFilter {
             | PlayerFilter::DamagedPlayer
             | PlayerFilter::EffectController
             | PlayerFilter::Specific(_)
+            | PlayerFilter::MostLifeTied
+            | PlayerFilter::CastCardTypeThisTurn(_)
+            | PlayerFilter::ChosenPlayer
+            | PlayerFilter::TaggedPlayer(_)
             | PlayerFilter::TargetPlayerOrControllerOfTarget
             | PlayerFilter::ControllerOf(_)
             | PlayerFilter::OwnerOf(_)
@@ -798,6 +835,13 @@ impl PlayerFilter {
             PlayerFilter::EffectController => false,
 
             PlayerFilter::Specific(id) => player == *id,
+            PlayerFilter::MostLifeTied => false,
+            PlayerFilter::CastCardTypeThisTurn(_) => false,
+            PlayerFilter::ChosenPlayer => ctx.chosen_player.is_some_and(|chosen| chosen == player),
+            PlayerFilter::TaggedPlayer(tag) => ctx
+                .tagged_players
+                .get(tag)
+                .is_some_and(|players| players.contains(&player)),
 
             // These are resolved at runtime during effect execution
             PlayerFilter::IteratedPlayer => ctx.iterated_player.is_some_and(|p| p == player),
@@ -847,6 +891,13 @@ impl PlayerFilter {
             PlayerFilter::DamagedPlayer => "that player".to_string(),
             PlayerFilter::EffectController => "the player who cast this spell".to_string(),
             PlayerFilter::Specific(_) => "that player".to_string(),
+            PlayerFilter::MostLifeTied => "a player with the most life or tied for most life".to_string(),
+            PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+                "a player who cast one or more {} spells this turn",
+                card_type.to_string().to_ascii_lowercase()
+            ),
+            PlayerFilter::ChosenPlayer => "the chosen player".to_string(),
+            PlayerFilter::TaggedPlayer(_) => "that player".to_string(),
             PlayerFilter::IteratedPlayer => "that player".to_string(),
             PlayerFilter::TargetPlayerOrControllerOfTarget => {
                 "that player or that object's controller".to_string()
@@ -3078,6 +3129,15 @@ impl ObjectFilter {
                     parts.push("the player who cast this spell's".to_string())
                 }
                 PlayerFilter::Specific(_) => parts.push("a specific player's".to_string()),
+                PlayerFilter::MostLifeTied => {
+                    parts.push("the player with the most life's".to_string())
+                }
+                PlayerFilter::CastCardTypeThisTurn(card_type) => parts.push(format!(
+                    "a player who cast one or more {} spells this turn's",
+                    card_type.to_string().to_ascii_lowercase()
+                )),
+                PlayerFilter::ChosenPlayer => parts.push("the chosen player's".to_string()),
+                PlayerFilter::TaggedPlayer(_) => parts.push("that player's".to_string()),
                 PlayerFilter::Teammate => parts.push("a teammate's".to_string()),
                 PlayerFilter::Defending => parts.push("the defending player's".to_string()),
                 PlayerFilter::Attacking => parts.push("an attacking player's".to_string()),
@@ -3133,6 +3193,15 @@ impl ObjectFilter {
                 PlayerFilter::Active => "the active player owns".to_string(),
                 PlayerFilter::EffectController => "the player who cast this spell owns".to_string(),
                 PlayerFilter::Specific(_) => "that player owns".to_string(),
+                PlayerFilter::MostLifeTied => {
+                    "the player with the most life or tied for most life owns".to_string()
+                }
+                PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+                    "a player who cast one or more {} spells this turn owns",
+                    card_type.to_string().to_ascii_lowercase()
+                ),
+                PlayerFilter::ChosenPlayer => "the chosen player owns".to_string(),
+                PlayerFilter::TaggedPlayer(_) => "that player owns".to_string(),
                 PlayerFilter::Teammate => "a teammate owns".to_string(),
                 PlayerFilter::Defending => "the defending player owns".to_string(),
                 PlayerFilter::Attacking => "an attacking player owns".to_string(),
@@ -4070,6 +4139,13 @@ fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
         PlayerFilter::DamagedPlayer => "the damaged player's".to_string(),
         PlayerFilter::EffectController => "the player who cast this spell's".to_string(),
         PlayerFilter::Specific(_) => "that player's".to_string(),
+        PlayerFilter::MostLifeTied => "the chosen player's".to_string(),
+        PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+            "a player who cast one or more {} spells this turn's",
+            card_type.to_string().to_ascii_lowercase()
+        ),
+        PlayerFilter::ChosenPlayer => "the chosen player's".to_string(),
+        PlayerFilter::TaggedPlayer(_) => "that player's".to_string(),
         PlayerFilter::IteratedPlayer => "that player's".to_string(),
         PlayerFilter::TargetPlayerOrControllerOfTarget => {
             "that player or that object's controller's".to_string()
@@ -4107,6 +4183,13 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
         PlayerFilter::DamagedPlayer => "damaged player".to_string(),
         PlayerFilter::EffectController => "the player who cast this spell".to_string(),
         PlayerFilter::Specific(_) => "player".to_string(),
+        PlayerFilter::MostLifeTied => "player with the most life or tied for most life".to_string(),
+        PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+            "player who cast one or more {} spells this turn",
+            card_type.to_string().to_ascii_lowercase()
+        ),
+        PlayerFilter::ChosenPlayer => "chosen player".to_string(),
+        PlayerFilter::TaggedPlayer(_) => "that player".to_string(),
         PlayerFilter::IteratedPlayer => "that player".to_string(),
         PlayerFilter::TargetPlayerOrControllerOfTarget => {
             "that player or that object's controller".to_string()

@@ -3,14 +3,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const DEFAULT_IDLE_MS = 140;
 
 export function useHoverSuppressedWhileScrolling({ onScrollStart, idleMs = DEFAULT_IDLE_MS } = {}) {
-  const cleanupRef = useRef(null);
+  const nodeRef = useRef(null);
+  const attachedNodeRef = useRef(null);
   const timeoutRef = useRef(null);
+  const idleMsRef = useRef(idleMs);
   const onScrollStartRef = useRef(onScrollStart);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
 
   useEffect(() => {
     onScrollStartRef.current = onScrollStart;
   }, [onScrollStart]);
+
+  useEffect(() => {
+    idleMsRef.current = idleMs;
+  }, [idleMs]);
 
   const markScrollingActive = useCallback(() => {
     setHoverSuppressed((wasSuppressed) => {
@@ -26,36 +32,48 @@ export function useHoverSuppressedWhileScrolling({ onScrollStart, idleMs = DEFAU
     timeoutRef.current = window.setTimeout(() => {
       timeoutRef.current = null;
       setHoverSuppressed(false);
-    }, idleMs);
-  }, [idleMs]);
+    }, idleMsRef.current);
+  }, []);
+
+  const detachListeners = useCallback((node) => {
+    if (!node) return;
+    node.removeEventListener("scroll", markScrollingActive);
+    node.removeEventListener("wheel", markScrollingActive);
+    node.removeEventListener("touchmove", markScrollingActive);
+  }, [markScrollingActive]);
 
   const attachScrollableRef = useCallback((node) => {
-    cleanupRef.current?.();
-    cleanupRef.current = null;
+    nodeRef.current = node;
+  }, []);
 
-    if (!node) return;
+  useEffect(() => {
+    const nextNode = nodeRef.current;
+    const attachedNode = attachedNodeRef.current;
 
-    node.addEventListener("scroll", markScrollingActive, { passive: true });
-    node.addEventListener("wheel", markScrollingActive, { passive: true });
-    node.addEventListener("touchmove", markScrollingActive, { passive: true });
+    if (attachedNode === nextNode) return;
 
-    cleanupRef.current = () => {
-      node.removeEventListener("scroll", markScrollingActive);
-      node.removeEventListener("wheel", markScrollingActive);
-      node.removeEventListener("touchmove", markScrollingActive);
-    };
-  }, [markScrollingActive]);
+    detachListeners(attachedNode);
+    attachedNodeRef.current = null;
+
+    if (!nextNode) return;
+
+    nextNode.addEventListener("scroll", markScrollingActive, { passive: true });
+    nextNode.addEventListener("wheel", markScrollingActive, { passive: true });
+    nextNode.addEventListener("touchmove", markScrollingActive, { passive: true });
+    attachedNodeRef.current = nextNode;
+  });
 
   useEffect(
     () => () => {
-      cleanupRef.current?.();
-      cleanupRef.current = null;
+      detachListeners(attachedNodeRef.current);
+      attachedNodeRef.current = null;
+      nodeRef.current = null;
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
     },
-    []
+    [detachListeners]
   );
 
   return {

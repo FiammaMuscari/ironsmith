@@ -1935,6 +1935,7 @@ struct LivePriorityContinuation {
     checkpoint: ReplayCheckpoint,
     root: PendingPriorityContinuation,
     answers: Vec<ReplayDecisionAnswer>,
+    speculative_progress: Option<GameProgress>,
 }
 
 #[derive(Debug, Clone)]
@@ -3281,6 +3282,23 @@ impl WasmGame {
                     self.sync_active_resolving_stack_object_for_prompt(Some(&live_checkpoint));
                     if should_track_action_checkpoint {
                         self.pending_action_checkpoint = Some(replay.checkpoint.clone());
+                    }
+                    if self.decision_requires_root_reexecution(&next_ctx) {
+                        self.priority_state.pending_continuation = None;
+                        self.pending_live_continuation = Some(LivePriorityContinuation {
+                            checkpoint: live_checkpoint,
+                            root: PendingPriorityContinuation::ApplyResponse(response),
+                            answers: Vec::new(),
+                            speculative_progress: match (&next_ctx, &result) {
+                                (DecisionContext::Boolean(_), Ok(progress)) => {
+                                    Some(progress.clone())
+                                }
+                                _ => None,
+                            },
+                        });
+                        self.pending_decision = Some(next_ctx);
+                        self.pending_replay_action = None;
+                        return self.snapshot();
                     }
                     self.pending_decision = Some(next_ctx);
                     self.pending_replay_action = Some(replay);
@@ -5442,6 +5460,7 @@ impl WasmGame {
                         checkpoint: self.capture_replay_checkpoint_tagged("finish_live_dispatch"),
                         root: PendingPriorityContinuation::ApplyDecisionContext(next_ctx.clone()),
                         answers: Vec::new(),
+                        speculative_progress: None,
                     });
                 } else if self.decision_uses_live_priority_response(&next_ctx) {
                     self.priority_state.pending_continuation = None;
@@ -5453,6 +5472,7 @@ impl WasmGame {
                         checkpoint: self.capture_replay_checkpoint_tagged("finish_live_dispatch"),
                         root: PendingPriorityContinuation::ApplyDecisionContext(next_ctx.clone()),
                         answers: Vec::new(),
+                        speculative_progress: None,
                     });
                     self.pending_replay_action = None;
                 }
@@ -5542,6 +5562,10 @@ impl WasmGame {
                 checkpoint: step_checkpoint,
                 root: PendingPriorityContinuation::ApplyResponse(response),
                 answers: Vec::new(),
+                speculative_progress: match (&next_ctx, &result) {
+                    (DecisionContext::Boolean(_), Ok(progress)) => Some(progress.clone()),
+                    _ => None,
+                },
             });
             self.pending_decision = Some(next_ctx);
             return self.snapshot();
@@ -5581,6 +5605,22 @@ impl WasmGame {
                 return Err(err);
             }
         };
+        if matches!(pending_ctx, DecisionContext::Boolean(_))
+            && matches!(answer, ReplayDecisionAnswer::Boolean(false))
+            && continuation
+                .speculative_progress
+                .as_ref()
+                .is_some_and(|progress| !matches!(progress, GameProgress::NeedsDecisionCtx(_)))
+        {
+            return self.finish_live_priority_dispatch(
+                continuation
+                    .speculative_progress
+                    .take()
+                    .expect("checked speculative progress above"),
+                None,
+                Some(continuation.checkpoint.clone()),
+            );
+        }
         continuation.answers.push(answer);
 
         // Diagnostic: record whether checkpoint has pending_activation before restore
@@ -5637,6 +5677,10 @@ impl WasmGame {
             self.sync_active_resolving_stack_object_for_prompt(Some(&continuation.checkpoint));
             self.priority_state.pending_continuation = None;
             continuation.checkpoint.diag_tag = "continuation_dm_capture";
+            continuation.speculative_progress = match (&next_ctx, &result) {
+                (DecisionContext::Boolean(_), Ok(progress)) => Some(progress.clone()),
+                _ => None,
+            };
             self.pending_live_continuation = Some(continuation);
             self.pending_decision = Some(next_ctx);
             return self.snapshot();
@@ -7618,6 +7662,21 @@ mod tests {
             .expect("select_objects should serialize"),
         )
         .expect("select_objects should succeed");
+    }
+
+    fn dispatch_select_options(wasm: &mut WasmGame, option_indices: &[usize]) {
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": option_indices,
+            }))
+            .expect("select_options should serialize"),
+        )
+        .expect("select_options should succeed");
+    }
+
+    fn dispatch_pass_priority(wasm: &mut WasmGame) {
+        dispatch_matching_priority_action(wasm, |action| matches!(action, LegalAction::PassPriority));
     }
 
     #[test]
@@ -10784,6 +10843,148 @@ mod tests {
             vec![forest_b],
             "after one land is chosen, the next prompt should go straight to the remaining land"
         );
+    }
+
+    #[test]
+    fn saw_in_half_formidable_speaker_no_advances_resolution_chain() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+
+        wasm.initialize_empty_match(vec!["Alice".to_string(), "Bob".to_string()], 20, 1);
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        wasm.add_card_to_zone(0, "Omniscience".to_string(), "battlefield".to_string(), true)
+            .expect("Omniscience should be added to the battlefield");
+
+        let original_speaker_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                0,
+                "Formidable Speaker".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("Formidable Speaker should enter and trigger"),
+        );
+
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Boolean(ctx)) => {
+                assert!(
+                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    "expected Formidable Speaker may prompt, got {:?}",
+                    ctx.description
+                );
+            }
+            other => panic!("expected Formidable Speaker ETB boolean prompt, got {other:?}"),
+        }
+
+        dispatch_select_options(&mut wasm, &[0]);
+
+        let saw_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(0, "Saw in Half".to_string(), "hand".to_string(), true)
+                .expect("Saw in Half should be added to hand"),
+        );
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        dispatch_matching_priority_action(&mut wasm, |action| {
+            matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == saw_id)
+        });
+
+        match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Targets(ctx)) => {
+                let target_ids: Vec<ObjectId> = ctx
+                    .requirements
+                    .iter()
+                    .flat_map(|req| req.legal_targets.iter())
+                    .filter_map(|target| match target {
+                        Target::Object(object_id) => Some(*object_id),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    target_ids.contains(&original_speaker_id),
+                    "Saw in Half should be able to target the original Formidable Speaker"
+                );
+            }
+            other => panic!("expected Saw in Half target prompt, got {other:?}"),
+        }
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_targets",
+                "targets": [{ "kind": "object", "object": original_speaker_id.0 }],
+            }))
+            .expect("target selection should serialize"),
+        )
+        .expect("targeting Formidable Speaker should succeed");
+
+        for _ in 0..8 {
+            match wasm.pending_decision.as_ref() {
+                Some(DecisionContext::Priority(_)) => dispatch_pass_priority(&mut wasm),
+                _ => break,
+            }
+        }
+
+        let order_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Order(ctx)) => ctx,
+            other => panic!("expected trigger ordering prompt after Saw in Half resolves, got {other:?}"),
+        };
+        assert_eq!(
+            order_ctx.items.len(),
+            2,
+            "Saw in Half should produce exactly two Formidable Speaker ETB triggers"
+        );
+
+        dispatch_select_options(&mut wasm, &[0, 1]);
+
+        for _ in 0..8 {
+            match wasm.pending_decision.as_ref() {
+                Some(DecisionContext::Priority(_)) => dispatch_pass_priority(&mut wasm),
+                _ => break,
+            }
+        }
+
+        let first_boolean_source = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Boolean(ctx)) => {
+                assert!(
+                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    "expected first resolving Formidable Speaker prompt, got {:?}",
+                    ctx.description
+                );
+                ctx.source
+            }
+            other => panic!("expected first resolving boolean prompt, got {other:?}"),
+        };
+
+        dispatch_select_options(&mut wasm, &[0]);
+
+        let next_ctx = wasm
+            .pending_decision
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected another decision after declining the first trigger"));
+
+        match next_ctx {
+            DecisionContext::Boolean(ctx) => {
+                assert!(
+                    ctx.description.to_ascii_lowercase().contains("discard a card"),
+                    "expected the second Formidable Speaker prompt after declining the first, got {:?}",
+                    ctx.description
+                );
+                assert_ne!(
+                    ctx.source,
+                    first_boolean_source,
+                    "declining the first trigger should advance to the second trigger, not reissue the same source"
+                );
+            }
+            other => panic!("expected the second Formidable Speaker boolean prompt, got {other:?}"),
+        }
     }
 
     #[test]

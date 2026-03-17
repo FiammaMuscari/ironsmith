@@ -1563,13 +1563,27 @@ fn resolve_condition_player_simple(
                 None
             }
         }),
+        PlayerFilter::MostLifeTied => {
+            let max_life = game
+                .players
+                .iter()
+                .filter(|player| player.is_in_game())
+                .map(|player| player.life)
+                .max()?;
+            game.players.iter().find_map(|player| {
+                (player.is_in_game() && player.life == max_life).then_some(player.id)
+            })
+        }
         PlayerFilter::Any
+        | PlayerFilter::CastCardTypeThisTurn(_)
         | PlayerFilter::Target(_)
         | PlayerFilter::Teammate
         | PlayerFilter::Attacking
         | PlayerFilter::Defending
         | PlayerFilter::DamagedPlayer
         | PlayerFilter::EffectController
+        | PlayerFilter::ChosenPlayer
+        | PlayerFilter::TaggedPlayer(_)
         | PlayerFilter::IteratedPlayer
         | PlayerFilter::TargetPlayerOrControllerOfTarget
         | PlayerFilter::Excluding { .. }

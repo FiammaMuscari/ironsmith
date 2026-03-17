@@ -23,6 +23,7 @@ import {
   buildObjectNameById,
 } from "@/lib/decision-object-meta";
 import { useHoverSuppressedWhileScrolling } from "@/lib/useHoverSuppressedWhileScrolling";
+import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
 const STRIP_ITEM_BASE_CLASS = "decision-option-row decision-option-row--strip h-auto min-h-8 max-w-[360px] min-w-[120px] shrink-0 justify-start self-stretch overflow-hidden px-2.5 text-left text-[12px] font-semibold whitespace-nowrap";
 const STRIP_ITEM_ACTIVE_CLASS = "is-selected";
@@ -175,9 +176,11 @@ function OptionButton({
   horizontal = false,
 }) {
   const disabled = !canAct || opt.legal === false;
+  const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
 
   return (
     <Button
+      type="button"
       variant="ghost"
       size="sm"
       className={cn(
@@ -195,16 +198,15 @@ function OptionButton({
       )}
       disabled={disabled}
       onPointerDown={(e) => {
-        if (disabled || e.button !== 0) return;
+        if (disabled || !registerPointerDown(e)) return;
         // Trigger as early as possible so option picks are not lost to
         // document-level pointerup handlers used by hand-drag interactions.
         e.preventDefault();
+        e.stopPropagation();
         onClick?.();
       }}
       onClick={(e) => {
-        // Keep keyboard activation working while avoiding double-dispatch
-        // after pointerdown-triggered selection.
-        if (disabled || e.detail !== 0) return;
+        if (disabled || !shouldHandleClick(e)) return;
         onClick?.();
       }}
       onMouseEnter={onMouseEnter}

@@ -1082,6 +1082,27 @@ pub fn resolve_player_filter(
                 .ok_or_else(|| ExecutionError::UnresolvableValue("No matching players".to_string()))
         }
         PlayerFilter::Specific(id) => Ok(*id),
+        PlayerFilter::MostLifeTied | PlayerFilter::CastCardTypeThisTurn(_) => {
+            let filter_ctx = ctx.filter_context(game);
+            let mut players = resolve_player_filter_to_list(game, spec, &filter_ctx, ctx)?;
+            players
+                .drain(..)
+                .next()
+                .ok_or_else(|| ExecutionError::UnresolvableValue("No matching players".to_string()))
+        }
+        PlayerFilter::ChosenPlayer => game.chosen_player(ctx.source).ok_or_else(|| {
+            ExecutionError::UnresolvableValue(
+                "ChosenPlayer requires a previously chosen player".to_string(),
+            )
+        }),
+        PlayerFilter::TaggedPlayer(tag) => ctx
+            .get_tagged_players(tag.as_str())
+            .and_then(|players| players.first().copied())
+            .ok_or_else(|| {
+                ExecutionError::UnresolvableValue(format!(
+                    "TaggedPlayer requires a tagged player for '{tag}'"
+                ))
+            }),
         PlayerFilter::ControllerOf(object_ref) | PlayerFilter::AliasedControllerOf(object_ref) => {
             resolve_controller_of(game, ctx, object_ref)
         }
@@ -2086,6 +2107,50 @@ pub(crate) fn resolve_player_filter_to_list(
             Ok(opponents)
         }
         PlayerFilter::Specific(id) => Ok(vec![*id]),
+        PlayerFilter::MostLifeTied => {
+            let max_life = game
+                .players
+                .iter()
+                .filter(|player| player.is_in_game())
+                .map(|player| player.life)
+                .max()
+                .ok_or_else(|| {
+                    ExecutionError::UnresolvableValue("No players are in the game".to_string())
+                })?;
+            Ok(game
+                .players
+                .iter()
+                .filter(|player| player.is_in_game() && player.life == max_life)
+                .map(|player| player.id)
+                .collect())
+        }
+        PlayerFilter::CastCardTypeThisTurn(card_type) => Ok(game
+            .players
+            .iter()
+            .filter(|player| player.is_in_game())
+            .filter(|player| {
+                game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+                    snapshot.controller == player.id && snapshot.card_types.contains(card_type)
+                })
+            })
+            .map(|player| player.id)
+            .collect()),
+        PlayerFilter::ChosenPlayer => game.chosen_player(ctx.source).map(|id| vec![id]).ok_or_else(
+            || {
+                ExecutionError::UnresolvableValue(
+                    "ChosenPlayer requires a previously chosen player".to_string(),
+                )
+            },
+        ),
+        PlayerFilter::TaggedPlayer(tag) => {
+            ctx.get_tagged_players(tag.as_str())
+                .cloned()
+                .ok_or_else(|| {
+                    ExecutionError::UnresolvableValue(format!(
+                        "TaggedPlayer requires a tagged player for '{tag}'"
+                    ))
+                })
+        }
         PlayerFilter::Active => Ok(vec![game.turn.active_player]),
         PlayerFilter::Defending => ctx.defending_player.map(|id| vec![id]).ok_or_else(|| {
             ExecutionError::UnresolvableValue("DefendingPlayer not set".to_string())

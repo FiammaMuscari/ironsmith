@@ -1461,6 +1461,9 @@ pub struct GameState {
     /// Chosen creature types for permanents ("as this enters, choose a creature type").
     pub chosen_creature_types: HashMap<ObjectId, crate::types::Subtype>,
 
+    /// Chosen players for permanents ("as this enters, choose a player").
+    pub chosen_players: HashMap<ObjectId, PlayerId>,
+
     /// Regeneration shields on permanents (expires at end of turn).
     pub regeneration_shields: HashMap<ObjectId, u32>,
 
@@ -1618,6 +1621,7 @@ impl GameState {
             chosen_colors: HashMap::new(),
             chosen_basic_land_types: HashMap::new(),
             chosen_creature_types: HashMap::new(),
+            chosen_players: HashMap::new(),
             regeneration_shields: HashMap::new(),
             monstrous: HashSet::new(),
             renowned: HashSet::new(),
@@ -2445,6 +2449,41 @@ impl GameState {
                         let chosen_idx =
                             chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
                         self.set_chosen_creature_type(new_id, options[chosen_idx]);
+                    }
+                    if static_ability.player_choice_as_enters().is_some() {
+                        let options = self
+                            .players
+                            .iter()
+                            .filter(|player| player.is_in_game())
+                            .map(|player| player.id)
+                            .collect::<Vec<_>>();
+                        if options.is_empty() {
+                            continue;
+                        }
+                        let display_options = options
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(idx, player_id)| {
+                                self.player(*player_id).map(|player| {
+                                    crate::decisions::spec::DisplayOption::new(
+                                        idx,
+                                        player.name.clone(),
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        let choice_spec =
+                            crate::decisions::specs::ChoiceSpec::single(new_id, display_options);
+                        let mut chosen = crate::decisions::make_decision(
+                            self,
+                            decision_maker,
+                            controller,
+                            Some(new_id),
+                            choice_spec,
+                        );
+                        let chosen_idx =
+                            chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
+                        self.set_chosen_player(new_id, options[chosen_idx]);
                     }
                 }
             }
@@ -4239,9 +4278,11 @@ impl GameState {
             attacking_player: None,
             your_commanders,
             iterated_player: None,
+            chosen_player: source.and_then(|source_id| self.chosen_player(source_id)),
             target_players: Vec::new(),
             target_objects: Vec::new(),
             tagged_objects,
+            tagged_players: std::collections::HashMap::new(),
         }
     }
 
@@ -4584,6 +4625,7 @@ impl GameState {
         self.chosen_colors.remove(&id);
         self.chosen_basic_land_types.remove(&id);
         self.chosen_creature_types.remove(&id);
+        self.chosen_players.remove(&id);
         self.chosen_modes_by_ability
             .retain(|(source, _), _| *source != id);
         self.chosen_modes_by_ability_this_turn
@@ -4694,6 +4736,18 @@ impl GameState {
     /// Get a chosen creature type for a permanent, if any.
     pub fn chosen_creature_type(&self, permanent_id: ObjectId) -> Option<crate::types::Subtype> {
         self.chosen_creature_types.get(&permanent_id).copied()
+    }
+
+    // === Chosen player helpers ===
+
+    /// Record a chosen player for a permanent.
+    pub fn set_chosen_player(&mut self, permanent_id: ObjectId, player: PlayerId) {
+        self.chosen_players.insert(permanent_id, player);
+    }
+
+    /// Get a chosen player for a permanent, if any.
+    pub fn chosen_player(&self, permanent_id: ObjectId) -> Option<PlayerId> {
+        self.chosen_players.get(&permanent_id).copied()
     }
 
     // === Imprint helpers ===

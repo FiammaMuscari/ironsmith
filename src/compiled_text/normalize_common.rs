@@ -34,6 +34,13 @@ pub(super) fn describe_player_filter(filter: &PlayerFilter) -> String {
             }
         }
         PlayerFilter::Specific(_) => "that player".to_string(),
+        PlayerFilter::MostLifeTied => "a player with the most life or tied for most life".to_string(),
+        PlayerFilter::CastCardTypeThisTurn(card_type) => format!(
+            "a player who cast one or more {} spells this turn",
+            card_type.to_string().to_ascii_lowercase()
+        ),
+        PlayerFilter::ChosenPlayer => "the chosen player".to_string(),
+        PlayerFilter::TaggedPlayer(_) => "that player".to_string(),
         PlayerFilter::Active => "that player".to_string(),
         PlayerFilter::Defending => "the defending player".to_string(),
         PlayerFilter::Attacking => "the attacking player".to_string(),

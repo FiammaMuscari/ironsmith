@@ -42,6 +42,7 @@ pub(crate) fn resolve_non_target_player_filter(
     match player {
         PlayerAst::You => Ok(PlayerFilter::You),
         PlayerAst::Any => Ok(PlayerFilter::Any),
+        PlayerAst::Chosen => Ok(PlayerFilter::ChosenPlayer),
         PlayerAst::Defending => Ok(PlayerFilter::Defending),
         PlayerAst::Attacking => Ok(PlayerFilter::Attacking),
         PlayerAst::Target | PlayerAst::TargetOpponent => Err(CardTextError::ParseError(

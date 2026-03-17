@@ -174,11 +174,11 @@ function HorizontalStackEntry({
       <button
         type="button"
         className={cn(
-          "stack-timeline-entry-surface stack-timeline-circuit relative grid h-full w-full grid-cols-[24px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0 overflow-hidden border border-[rgba(128,107,78,0.42)] bg-[linear-gradient(180deg,rgba(60,52,45,0.96),rgba(22,19,18,0.98))] px-2 py-[5px] text-left transition-[background,box-shadow,transform] duration-150",
+          "stack-timeline-entry-surface stack-timeline-circuit relative grid h-full w-full grid-cols-[24px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0 overflow-hidden border border-[rgba(178,147,96,0.52)] bg-[linear-gradient(180deg,rgba(86,73,58,0.96),rgba(34,29,24,0.98))] px-2 py-[5px] text-left transition-[background,box-shadow,transform] duration-150",
           reorderControls && "pl-8 pr-8",
           !isActive && "hover:shadow-none",
           isActive && "stack-timeline-item-active",
-          isActive && "border-[rgba(201,171,114,0.68)] bg-[linear-gradient(180deg,rgba(84,68,47,0.98),rgba(34,27,20,0.98))]"
+          isActive && "border-[rgba(224,191,127,0.78)] bg-[linear-gradient(180deg,rgba(108,88,59,0.98),rgba(48,38,27,0.98))]"
         )}
         style={{ minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT}px`, ...accentStyle }}
         onClick={() => onClick?.(stackInspectObjectId(entry), {
@@ -197,12 +197,12 @@ function HorizontalStackEntry({
           className="pointer-events-none absolute right-2 top-1/2 z-[3] -translate-y-1/2"
         />
         <span
-          className="stack-entry-badge pointer-events-none absolute left-2 z-[2] rounded bg-[rgba(31,25,21,0.9)] px-1 py-[1px] text-[8px] font-bold uppercase leading-none tracking-[0.12em] text-[#d8c18c]"
+          className="stack-entry-badge pointer-events-none absolute left-2 z-[2] rounded bg-[rgba(54,43,33,0.9)] px-1 py-[1px] text-[8px] font-bold uppercase leading-none tracking-[0.12em] text-[#f0d7a2]"
           style={{ top: `${HORIZONTAL_STACK_BADGE_TOP}px` }}
         >
           {positionLabel}
         </span>
-        <div className="relative z-[2] h-6 w-6 shrink-0 overflow-hidden rounded-md bg-[rgba(27,22,19,0.96)]">
+        <div className="relative z-[2] h-6 w-6 shrink-0 overflow-hidden rounded-md bg-[rgba(43,34,27,0.96)]">
           {artUrl && (
             <img
               className="h-full w-full object-cover opacity-90"
@@ -215,7 +215,7 @@ function HorizontalStackEntry({
         </div>
         <div className="relative z-[2] h-6 min-w-0">
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1.5">
-            <div className="stack-entry-title min-w-0 truncate pr-1 text-[13px] font-semibold leading-[1.02] text-[#f0dfb7]">
+            <div className="stack-entry-title min-w-0 truncate pr-1 text-[13px] font-semibold leading-[1.02] text-[#fff0ca]">
               {name}
             </div>
             <div className="flex shrink-0 items-start gap-1 pt-[1px]">
@@ -231,7 +231,7 @@ function HorizontalStackEntry({
               )}
             </div>
           </div>
-          <div className="absolute inset-x-0 bottom-0 truncate text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-[#cdbd9e]">
+          <div className="absolute inset-x-0 bottom-0 truncate text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-[#ead9b6]">
             {subtitle || kindLabel}
           </div>
         </div>

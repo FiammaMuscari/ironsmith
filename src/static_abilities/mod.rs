@@ -605,6 +605,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Returns info for "as this enters, choose a player" abilities.
+    fn player_choice_as_enters(&self) -> Option<ChoosePlayerAsEntersSpec> {
+        None
+    }
+
     /// Returns info for "as this enters, choose a basic land type" abilities.
     fn basic_land_type_choice_as_enters(&self) -> Option<ChooseBasicLandTypeAsEntersSpec> {
         None
@@ -825,6 +830,10 @@ pub struct ChooseColorAsEntersSpec {
     pub excluded: Option<crate::color::Color>,
 }
 
+/// Spec for "as this enters, choose a player" abilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChoosePlayerAsEntersSpec;
+
 /// Spec for "as this enters, choose a basic land type" abilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChooseBasicLandTypeAsEntersSpec;
@@ -876,6 +885,10 @@ impl StaticAbility {
 
     pub fn color_choice_as_enters(&self) -> Option<ChooseColorAsEntersSpec> {
         self.0.color_choice_as_enters()
+    }
+
+    pub fn player_choice_as_enters(&self) -> Option<ChoosePlayerAsEntersSpec> {
+        self.0.player_choice_as_enters()
     }
 
     pub fn basic_land_type_choice_as_enters(&self) -> Option<ChooseBasicLandTypeAsEntersSpec> {
@@ -1900,6 +1913,10 @@ impl StaticAbility {
 
     pub fn choose_color_as_enters(excluded: Option<crate::color::Color>, display: String) -> Self {
         Self::new(ChooseColorAsEnters::new(excluded, display))
+    }
+
+    pub fn choose_player_as_enters(display: String) -> Self {
+        Self::new(ChoosePlayerAsEnters::new(display))
     }
 
     pub fn choose_basic_land_type_as_enters(display: String) -> Self {

@@ -147,6 +147,7 @@ pub enum StaticAbilityId {
 
     // === Other abilities ===
     ChooseColorAsEnters,
+    ChoosePlayerAsEnters,
     ChooseBasicLandTypeAsEnters,
     EnchantedLandIsChosenType,
     RedirectDamageToSource,
@@ -357,6 +358,7 @@ impl StaticAbilityId {
             | PlayersSkipUpkeep
             | DamageNotRemovedDuringCleanup
             | ChooseColorAsEnters
+            | ChoosePlayerAsEnters
             | ChooseBasicLandTypeAsEnters
             | EnchantedLandIsChosenType
             | RedirectDamageToSource

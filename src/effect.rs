@@ -3618,6 +3618,16 @@ impl Effect {
         Self::new(ChooseCardNameEffect::new(chooser, filter, tag))
     }
 
+    /// Choose a player and tag that choice for later reference.
+    pub fn choose_player(
+        chooser: PlayerFilter,
+        filter: PlayerFilter,
+        tag: impl Into<TagKey>,
+    ) -> Self {
+        use crate::effects::ChoosePlayerEffect;
+        Self::new(ChoosePlayerEffect::new(chooser, filter, tag))
+    }
+
     /// Choose a color and store it on the source object for later effects.
     pub fn choose_color(chooser: PlayerFilter) -> Self {
         use crate::effects::ChooseColorEffect;

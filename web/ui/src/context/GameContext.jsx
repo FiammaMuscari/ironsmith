@@ -892,13 +892,36 @@ export function GameProvider({ children }) {
 
       const autoResolved = allowTrivialAutomation
         ? await autoResolveTrivialDecisions(
-          currentGame,
-          st,
-          allowOpponentAutomation ? settlePriorityAutomation : settleNoop
-        )
+            currentGame,
+            st,
+            allowOpponentAutomation ? settlePriorityAutomation : settleNoop
+          )
         : { state: st, resolved: 0 };
       st = autoResolved.state;
       st = applyStickyViewedCards(st, { clear: clearViewedCards });
+      console.debug("[ironsmith] finalize:state", {
+        message,
+        allow_opponent_automation: allowOpponentAutomation,
+        allow_trivial_automation: allowTrivialAutomation,
+        auto_result: {
+          local_auto_passes: autoResult.localAutoPasses,
+          auto_passes: autoResult.autoPasses,
+          auto_declares: autoResult.autoDeclares,
+          phase_advances: autoResult.phaseAdvances,
+          local_hold_reason: autoResult.localHoldReason,
+          hold_reason: autoResult.holdReason,
+        },
+        auto_resolved: autoResolved.resolved,
+        final_decision: summarizeDecision(st?.decision || null),
+        final_stack_size: st?.stack_size ?? null,
+        final_stack_preview: Array.isArray(st?.stack_preview) ? st.stack_preview.slice(0, 4) : null,
+        final_resolving: st?.resolving_stack_object
+          ? {
+              id: st.resolving_stack_object.id,
+              name: st.resolving_stack_object.name,
+            }
+          : null,
+      });
       setState(st);
       stateRef.current = st;
 
@@ -1118,6 +1141,14 @@ export function GameProvider({ children }) {
           command: commandSummary,
           decision_before: decisionBefore,
           decision_after: summarizeDecision(st?.decision || null),
+          stack_size_after: st?.stack_size ?? null,
+          stack_preview_after: Array.isArray(st?.stack_preview) ? st.stack_preview.slice(0, 4) : null,
+          resolving_after: st?.resolving_stack_object
+            ? {
+              id: st.resolving_stack_object.id,
+              name: st.resolving_stack_object.name,
+            }
+            : null,
         });
         await finalizeState(game, st, {
           message: successMessage,
