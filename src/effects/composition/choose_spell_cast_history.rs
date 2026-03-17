@@ -89,13 +89,17 @@ impl EffectExecutor for ChooseSpellCastHistoryEffect {
                 1,
                 1,
             );
-            let chosen_idx = ctx
-                .decision_maker
-                .decide_options(game, &choice_ctx)
+            let selected = ctx.decision_maker.decide_options(game, &choice_ctx);
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(EffectOutcome::count(0));
+            }
+            let Some(chosen_idx) = selected
                 .into_iter()
                 .next()
-                .unwrap_or(0)
-                .min(candidates.len().saturating_sub(1));
+                .filter(|idx| *idx < candidates.len())
+            else {
+                return Ok(EffectOutcome::count(0));
+            };
             candidates[chosen_idx].clone()
         };
 

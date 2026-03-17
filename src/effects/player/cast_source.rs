@@ -85,6 +85,7 @@ impl EffectExecutor for CastSourceEffect {
         let stack_entry = StackEntry {
             object_id: new_id,
             controller: ctx.controller,
+            provenance: ctx.provenance,
             targets: vec![],
             target_assignments: vec![],
             x_value,

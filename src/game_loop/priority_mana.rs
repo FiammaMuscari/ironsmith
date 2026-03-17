@@ -3002,6 +3002,7 @@ pub(super) fn finalize_spell_cast(
 
     // Create stack entry with targets, X value, casting method, optional costs, and chosen modes
     let mut entry = StackEntry::new(new_id, caster)
+        .with_provenance(provenance)
         .with_targets(targets.clone())
         .with_target_assignments(target_assignments)
         .with_casting_method(casting_method)

@@ -136,6 +136,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             let stack_entry = StackEntry {
                 object_id: new_id,
                 controller: owner,
+                provenance: ctx.provenance,
                 targets: vec![],
                 target_assignments: vec![],
                 x_value,

@@ -80,6 +80,7 @@ mod tests {
         game.stack.push(StackEntry {
             object_id: id,
             controller: caster,
+            provenance: crate::provenance::ProvNodeId::default(),
             is_ability: false,
             targets,
             target_assignments: vec![],

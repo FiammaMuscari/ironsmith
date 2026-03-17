@@ -705,6 +705,7 @@ pub(super) fn triggered_to_stack_entry(
         trigger.controller,
         trigger.ability.effects.clone(),
     )
+    .with_provenance(trigger.triggering_event.provenance())
     .with_source_info(trigger.source_stable_id, trigger.source_name.clone())
     .with_triggering_event(trigger.triggering_event.clone());
     if let Some(source_obj) = game.object(trigger.source) {

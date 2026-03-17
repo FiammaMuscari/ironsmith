@@ -266,6 +266,7 @@ mod tests {
         game.push_to_stack(crate::game_state::StackEntry {
             object_id: mox_id,
             controller: alice,
+            provenance: crate::provenance::ProvNodeId::default(),
             targets: vec![],
             target_assignments: vec![],
             x_value: None,
@@ -336,6 +337,7 @@ mod tests {
         game.push_to_stack(crate::game_state::StackEntry {
             object_id: mox_id,
             controller: alice,
+            provenance: crate::provenance::ProvNodeId::default(),
             targets: vec![],
             target_assignments: vec![],
             x_value: None,
@@ -405,6 +407,7 @@ mod tests {
         game.push_to_stack(crate::game_state::StackEntry {
             object_id: mox_id,
             controller: alice,
+            provenance: crate::provenance::ProvNodeId::default(),
             targets: vec![],
             target_assignments: vec![],
             x_value: None,
@@ -467,6 +470,7 @@ mod tests {
         game.push_to_stack(crate::game_state::StackEntry {
             object_id: mox_id,
             controller: alice,
+            provenance: crate::provenance::ProvNodeId::default(),
             targets: vec![],
             target_assignments: vec![],
             x_value: None,

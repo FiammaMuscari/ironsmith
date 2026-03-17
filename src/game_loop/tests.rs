@@ -7710,6 +7710,142 @@ fn test_omniscience_does_not_bypass_sorcery_timing_restrictions() {
 }
 
 #[test]
+fn test_backdraft_cast_from_hand_uses_blasphemous_act_damage_history() {
+    struct ScriptedBackdraftDecisionMaker {
+        cast_blasphemous_act: bool,
+        cast_backdraft: bool,
+    }
+
+    impl DecisionMaker for ScriptedBackdraftDecisionMaker {
+        fn decide_priority(
+            &mut self,
+            game: &GameState,
+            ctx: &crate::decisions::context::PriorityContext,
+        ) -> LegalAction {
+            if !self.cast_blasphemous_act
+                && let Some(action) = ctx.actions.iter().find(|action| {
+                    matches!(
+                        action,
+                        LegalAction::CastSpell { spell_id, .. }
+                            if game
+                                .object(*spell_id)
+                                .is_some_and(|object| object.name == "Blasphemous Act")
+                    )
+                })
+            {
+                self.cast_blasphemous_act = true;
+                return action.clone();
+            }
+
+            if !self.cast_backdraft
+                && game.stack.is_empty()
+                && let Some(action) = ctx.actions.iter().find(|action| {
+                    matches!(
+                        action,
+                        LegalAction::CastSpell { spell_id, .. }
+                            if game
+                                .object(*spell_id)
+                                .is_some_and(|object| object.name == "Backdraft")
+                    )
+                })
+            {
+                self.cast_backdraft = true;
+                return action.clone();
+            }
+
+            ctx.actions
+                .iter()
+                .find(|action| matches!(action, LegalAction::PassPriority))
+                .cloned()
+                .unwrap_or_else(|| {
+                    ctx.actions
+                        .first()
+                        .cloned()
+                        .unwrap_or(LegalAction::PassPriority)
+                })
+        }
+
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            if let Some(option) = ctx
+                .options
+                .iter()
+                .find(|option| option.legal && option.description.contains("Alice"))
+            {
+                return vec![option.index];
+            }
+
+            ctx.options
+                .iter()
+                .filter(|option| option.legal)
+                .map(|option| option.index)
+                .take(ctx.min)
+                .collect()
+        }
+    }
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let mut trigger_queue = TriggerQueue::new();
+
+    game.turn.active_player = alice;
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.priority_player = Some(alice);
+
+    let omniscience = CardDefinitionBuilder::new(CardId::from_raw(9100), "Omniscience Test")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("You may cast spells from your hand without paying their mana costs.")
+        .expect("Omniscience text should parse");
+    game.create_object_from_definition(&omniscience, alice, Zone::Battlefield);
+
+    for idx in 0..3 {
+        let ornithopter = CardBuilder::new(CardId::from_raw(9101 + idx), format!("Ornithopter {idx}"))
+            .card_types(vec![CardType::Artifact, CardType::Creature])
+            .mana_cost(ManaCost::from_symbols(vec![]))
+            .power_toughness(PowerToughness::fixed(0, 2))
+            .build();
+        game.create_object_from_card(&ornithopter, alice, Zone::Battlefield);
+    }
+
+    let blasphemous_act = CardDefinitionBuilder::new(CardId::from_raw(9110), "Blasphemous Act")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("This spell deals 13 damage to each creature.")
+        .expect("Blasphemous Act should parse");
+    let backdraft = CardDefinitionBuilder::new(CardId::from_raw(9111), "Backdraft")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Choose a player who cast one or more sorcery spells this turn. Backdraft deals damage to that player equal to half the damage dealt by one of those sorcery spells this turn, rounded down.",
+        )
+        .expect("Backdraft should parse");
+
+    game.create_object_from_definition(&blasphemous_act, alice, Zone::Hand);
+    game.create_object_from_definition(&backdraft, alice, Zone::Hand);
+
+    let alice_life_before = game.player(alice).expect("alice should exist").life;
+    let mut dm = ScriptedBackdraftDecisionMaker {
+        cast_blasphemous_act: false,
+        cast_backdraft: false,
+    };
+
+    let result = run_priority_loop_with(&mut game, &mut trigger_queue, &mut dm)
+        .expect("priority loop should resolve both spells successfully");
+
+    assert!(
+        matches!(result, GameProgress::Continue),
+        "priority loop should finish after resolving Backdraft, got {result:?}"
+    );
+    assert_eq!(
+        game.player(alice).expect("alice should exist").life,
+        alice_life_before - 19,
+        "Backdraft should deal half of Blasphemous Act's 39 damage when cast through the normal hand-to-stack flow"
+    );
+}
+
+#[test]
 fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile_for_free() {
     use crate::alternative_cast::CastingMethod;
     use crate::decision::{LegalAction, compute_legal_actions};

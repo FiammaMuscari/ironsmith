@@ -98,16 +98,23 @@ impl EffectExecutor for ChoosePlayerEffect {
                         .map(|player| (player.name.clone(), *player_id))
                 })
                 .collect::<Vec<_>>();
-            (!options.is_empty()).then_some(crate::decisions::ask_choose_one(
-                game,
-                &mut ctx.decision_maker,
-                chooser,
-                ctx.source,
-                &options,
-            ))
+            (!options.is_empty())
+                .then(|| {
+                    crate::decisions::ask_choose_one(
+                        game,
+                        &mut ctx.decision_maker,
+                        chooser,
+                        ctx.source,
+                        &options,
+                    )
+                })
+                .flatten()
         }) else {
             return Ok(EffectOutcome::resolved());
         };
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
 
         ctx.set_tagged_players(self.tag.clone(), vec![chosen]);
         if self.tag.as_str() != "__it__" {

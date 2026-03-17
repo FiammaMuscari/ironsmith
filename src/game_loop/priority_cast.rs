@@ -1017,6 +1017,8 @@ pub(super) fn finalize_pending_spell_cast(
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<GameProgress, GameLoopError> {
     let mana_spent_to_cast = pending.mana_spent_to_cast.clone();
+    let spell_cast_provenance =
+        game.alloc_child_event_provenance(pending.provenance, crate::events::EventKind::SpellCast);
     let result = finalize_spell_cast(
         game,
         trigger_queue,
@@ -1036,13 +1038,13 @@ pub(super) fn finalize_pending_spell_cast(
         &mut pending.payment_trace,
         true,
         pending.stack_id,
-        pending.provenance,
+        spell_cast_provenance,
         &mut *decision_maker,
     )?;
 
     let event = TriggerEvent::new_with_provenance(
         SpellCastEvent::new(result.new_id, result.caster, result.from_zone),
-        game.alloc_child_event_provenance(pending.provenance, crate::events::EventKind::SpellCast),
+        spell_cast_provenance,
     );
     queue_triggers_from_event(game, trigger_queue, event, false);
 
@@ -2815,6 +2817,7 @@ pub(super) fn continue_activation(
             // Create ability stack entry with targets
             let mut entry =
                 StackEntry::ability(pending.source, pending.activator, pending.effects.clone())
+                    .with_provenance(pending.provenance)
                     .with_source_info(pending.source_stable_id, pending.source_name.clone())
                     .with_source_snapshot(pending.source_snapshot.clone())
                     .with_tagged_objects(pending.tagged_objects.clone());

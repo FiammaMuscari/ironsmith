@@ -107,6 +107,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
                     let stack_entry = StackEntry {
                         object_id: new_id,
                         controller: caster_id,
+                        provenance: ctx.provenance,
                         targets: vec![],
                         target_assignments: vec![],
                         x_value,

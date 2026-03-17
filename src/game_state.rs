@@ -957,6 +957,7 @@ pub struct TargetAssignment {
 pub struct StackEntry {
     pub object_id: ObjectId,
     pub controller: PlayerId,
+    pub provenance: ProvNodeId,
     pub targets: Vec<Target>,
     pub target_assignments: Vec<TargetAssignment>,
     pub x_value: Option<u32>,
@@ -1026,6 +1027,7 @@ impl StackEntry {
         Self {
             object_id,
             controller,
+            provenance: ProvNodeId::default(),
             targets: Vec::new(),
             target_assignments: Vec::new(),
             x_value: None,
@@ -1057,6 +1059,7 @@ impl StackEntry {
         Self {
             object_id: source_id,
             controller,
+            provenance: ProvNodeId::default(),
             targets: Vec::new(),
             target_assignments: Vec::new(),
             x_value: None,
@@ -1092,6 +1095,11 @@ impl StackEntry {
 
     pub fn with_target_assignments(mut self, target_assignments: Vec<TargetAssignment>) -> Self {
         self.target_assignments = target_assignments;
+        self
+    }
+
+    pub fn with_provenance(mut self, provenance: ProvNodeId) -> Self {
+        self.provenance = provenance;
         self
     }
 

@@ -87,7 +87,8 @@ pub(super) fn resolve_stack_entry_full(
     // Resolution effects use EventCause::from_effect to distinguish from cost effects
     let mut ctx = ExecutionContext::new(entry.object_id, entry.controller, decision_maker)
         .with_optional_costs_paid(entry.optional_costs_paid.clone())
-        .with_cause(EventCause::from_effect(entry.object_id, entry.controller));
+        .with_cause(EventCause::from_effect(entry.object_id, entry.controller))
+        .with_provenance(entry.provenance);
     if let Some(x) = entry.x_value {
         ctx = ctx.with_x(x);
     }
@@ -610,11 +611,78 @@ mod tests {
         }
     }
 
-    fn parse_sorcery_definition(name: &str, oracle_text: &str) -> crate::cards::CardDefinition {
+    #[derive(Default)]
+    struct AnswerThenCaptureDecisionMaker {
+        answers_remaining: usize,
+        captured: Option<Vec<String>>,
+    }
+
+    impl AnswerThenCaptureDecisionMaker {
+        fn new(answers_remaining: usize) -> Self {
+            Self {
+                answers_remaining,
+                captured: None,
+            }
+        }
+    }
+
+    impl crate::decision::DecisionMaker for AnswerThenCaptureDecisionMaker {
+        fn awaiting_choice(&self) -> bool {
+            self.captured.is_some()
+        }
+
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            if self.answers_remaining > 0 {
+                self.answers_remaining -= 1;
+                return ctx
+                    .options
+                    .iter()
+                    .filter(|option| option.legal)
+                    .map(|option| option.index)
+                    .take(ctx.min)
+                    .collect();
+            }
+
+            if self.captured.is_none() {
+                self.captured = Some(
+                    ctx.options
+                        .iter()
+                        .filter(|option| option.legal)
+                        .map(|option| option.description.clone())
+                        .collect(),
+                );
+            }
+
+            ctx.options
+                .iter()
+                .filter(|option| option.legal)
+                .map(|option| option.index)
+                .take(ctx.min)
+                .collect()
+        }
+    }
+
+    fn parse_spell_definition(
+        name: &str,
+        card_types: Vec<CardType>,
+        oracle_text: &str,
+    ) -> crate::cards::CardDefinition {
         CardDefinitionBuilder::new(CardId::new(), name)
-            .card_types(vec![CardType::Sorcery])
+            .card_types(card_types)
             .parse_text(oracle_text)
             .unwrap_or_else(|err| panic!("{name} should parse: {err:?}"))
+    }
+
+    fn parse_sorcery_definition(name: &str, oracle_text: &str) -> crate::cards::CardDefinition {
+        parse_spell_definition(name, vec![CardType::Sorcery], oracle_text)
+    }
+
+    fn parse_instant_definition(name: &str, oracle_text: &str) -> crate::cards::CardDefinition {
+        parse_spell_definition(name, vec![CardType::Instant], oracle_text)
     }
 
     fn create_creature(
@@ -691,6 +759,133 @@ mod tests {
             game.player(bob).expect("bob exists").life,
             bob_life_before - 13,
             "Backdraft should use the creature damage dealt by Blasphemous Act"
+        );
+    }
+
+    #[test]
+    fn backdraft_prompts_for_spell_history_when_the_same_player_cast_both_spells() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        create_creature(&mut game, "Ornithopter 1", alice, 0, 2);
+        create_creature(&mut game, "Ornithopter 2", alice, 0, 2);
+        create_creature(&mut game, "Ornithopter 3", alice, 0, 2);
+
+        let blasphemous_act = parse_sorcery_definition(
+            "Blasphemous Act",
+            "This spell deals 13 damage to each creature.",
+        );
+        let backdraft = parse_sorcery_definition(
+            "Backdraft",
+            "Choose a player who cast one or more sorcery spells this turn. Backdraft deals damage to that player equal to half the damage dealt by one of those sorcery spells this turn, rounded down.",
+        );
+
+        let blasphemous_act_id =
+            game.create_object_from_definition(&blasphemous_act, alice, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, blasphemous_act_id, alice);
+        game.push_to_stack(StackEntry::new(blasphemous_act_id, alice));
+
+        let mut trigger_queue = TriggerQueue::new();
+        let mut auto_dm = crate::decision::SelectFirstDecisionMaker;
+        resolve_stack_entry_with_dm_and_triggers(&mut game, &mut auto_dm, &mut trigger_queue)
+            .expect("Blasphemous Act should resolve");
+
+        assert_eq!(
+            game.turn_history
+                .damage_dealt_by_spell_this_turn(&game.provenance_graph, blasphemous_act_id),
+            39,
+            "Blasphemous Act should record the 39 damage dealt to the three Ornithopters"
+        );
+
+        let history_names = game
+            .turn_history
+            .spell_cast_snapshot_history()
+            .into_iter()
+            .map(|snapshot| snapshot.name)
+            .collect::<Vec<_>>();
+        assert!(
+            history_names.iter().any(|name| name == "Blasphemous Act"),
+            "resolved Blasphemous Act should remain in spell-cast history, got {history_names:?}"
+        );
+
+        let backdraft_id = game.create_object_from_definition(&backdraft, alice, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, backdraft_id, alice);
+        game.push_to_stack(StackEntry::new(backdraft_id, alice));
+
+        let mut dm = AnswerThenCaptureDecisionMaker::new(1);
+        resolve_stack_entry_with_dm_and_triggers(&mut game, &mut dm, &mut trigger_queue)
+            .expect("Backdraft should resolve far enough to ask for a spell-history choice");
+
+        let captured = dm
+            .captured
+            .expect("Backdraft should prompt for one of Alice's sorcery spells after choosing Alice");
+        assert!(
+            captured.iter().any(|option| option.contains("Blasphemous Act")),
+            "expected Blasphemous Act to be a legal Backdraft history option, got {captured:?}"
+        );
+        assert!(
+            captured.iter().any(|option| option.contains("Backdraft")),
+            "expected Backdraft to also remain a legal history option, got {captured:?}"
+        );
+    }
+
+    #[test]
+    fn run_priority_loop_finishes_backdraft_after_the_single_player_prompt() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.turn.phase = crate::game_state::Phase::FirstMain;
+        game.turn.step = None;
+
+        create_creature(&mut game, "Ornithopter 1", alice, 0, 2);
+        create_creature(&mut game, "Ornithopter 2", alice, 0, 2);
+        create_creature(&mut game, "Ornithopter 3", alice, 0, 2);
+
+        let blasphemous_act = parse_sorcery_definition(
+            "Blasphemous Act",
+            "This spell deals 13 damage to each creature.",
+        );
+        let backdraft = parse_instant_definition(
+            "Backdraft",
+            "Choose a player who cast one or more sorcery spells this turn. Backdraft deals damage to that player equal to half the damage dealt by one of those sorcery spells this turn, rounded down.",
+        );
+
+        let blasphemous_act_id =
+            game.create_object_from_definition(&blasphemous_act, alice, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, blasphemous_act_id, alice);
+        game.push_to_stack(StackEntry::new(blasphemous_act_id, alice));
+
+        let mut trigger_queue = TriggerQueue::new();
+        let mut auto_dm = crate::decision::SelectFirstDecisionMaker;
+        resolve_stack_entry_with_dm_and_triggers(&mut game, &mut auto_dm, &mut trigger_queue)
+            .expect("Blasphemous Act should resolve");
+
+        assert_eq!(
+            game.turn_history
+                .damage_dealt_by_spell_this_turn(&game.provenance_graph, blasphemous_act_id),
+            39,
+            "Blasphemous Act should record the 39 damage dealt to the three Ornithopters"
+        );
+
+        let alice_life_before = game.player(alice).expect("alice exists").life;
+        let backdraft_id = game.create_object_from_definition(&backdraft, alice, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, backdraft_id, alice);
+        game.push_to_stack(StackEntry::new(backdraft_id, alice));
+
+        let mut dm = MatchingOptionDecisionMaker::new("Alice");
+        let result = crate::game_loop::run_priority_loop_with(&mut game, &mut trigger_queue, &mut dm)
+            .expect("priority loop should resolve Backdraft after choosing Alice");
+
+        assert!(
+            matches!(result, crate::decision::GameProgress::Continue),
+            "priority loop should finish cleanly after resolving Backdraft, got {result:?}"
+        );
+        assert_eq!(
+            game.player(alice).expect("alice exists").life,
+            alice_life_before - 19,
+            "Backdraft should still deal half of Blasphemous Act's 39 damage after the player choice"
         );
     }
 }

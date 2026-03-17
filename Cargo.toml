@@ -47,6 +47,7 @@ wasm = [
 [[bin]]
 name = "export_cedh_support_report"
 path = "src/bin/export_cedh_support_report.rs"
+required-features = ["tooling"]
 
 [[test]]
 name = "undo_action_chain"

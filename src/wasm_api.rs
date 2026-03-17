@@ -22,6 +22,7 @@ use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
     ActivationStage, CastStage, PendingPriorityContinuation, PriorityLoopState, PriorityResponse,
     advance_priority_with_dm, apply_decision_context_with_dm, apply_priority_response_with_dm,
+    run_priority_loop_with,
 };
 use crate::game_state::{GameState, Target};
 use crate::ids::{
@@ -5806,8 +5807,17 @@ impl WasmGame {
             )
             .map_err(|e| format!("{e}")),
             ReplayRoot::Advance => {
-                advance_priority_with_dm(&mut self.game, &mut self.trigger_queue, &mut replay_dm)
+                if nested_answers.is_empty() {
+                    advance_priority_with_dm(
+                        &mut self.game,
+                        &mut self.trigger_queue,
+                        &mut replay_dm,
+                    )
                     .map_err(|e| format!("{e}"))
+                } else {
+                    run_priority_loop_with(&mut self.game, &mut self.trigger_queue, &mut replay_dm)
+                        .map_err(|e| format!("{e}"))
+                }
             }
         };
 
@@ -7310,6 +7320,7 @@ fn replay_decision_requires_root_reexecution(ctx: &DecisionContext) -> bool {
     matches!(
         ctx,
         DecisionContext::Boolean(_)
+            | DecisionContext::SelectOptions(_)
             | DecisionContext::Order(_)
             | DecisionContext::Distribute(_)
             | DecisionContext::Colors(_)
@@ -10671,8 +10682,8 @@ mod tests {
             "resolution-time object prompts should replay from the original root response"
         );
         assert!(
-            !wasm.decision_requires_root_reexecution(&select_options),
-            "generic select-options prompts do not require full root reexecution"
+            wasm.decision_requires_root_reexecution(&select_options),
+            "generic select-options prompts should replay from the original root response"
         );
         assert!(
             !wasm.decision_uses_live_priority_response(&select_options),
@@ -10710,6 +10721,214 @@ mod tests {
         assert!(
             wasm.decision_uses_live_priority_response(&select_options),
             "cost-selection select-options prompts should stay on the live priority responder"
+        );
+    }
+
+    #[test]
+    fn backdraft_wasm_flow_offers_resolved_sorcery_history_choice() {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(vec!["Alice".to_string(), "Bob".to_string()], 20, 1);
+
+        let alice = PlayerId::from_index(0);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        wasm.add_card_to_zone(0, "Omniscience".to_string(), "battlefield".to_string(), true)
+            .expect("should add Omniscience to battlefield");
+        for _ in 0..3 {
+            wasm.add_card_to_zone(0, "Ornithopter".to_string(), "battlefield".to_string(), true)
+                .expect("should add Ornithopter to battlefield");
+        }
+
+        let blasphemous_act_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(0, "Blasphemous Act".to_string(), "hand".to_string(), true)
+                .expect("should add Blasphemous Act to hand"),
+        );
+        let backdraft_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(0, "Backdraft".to_string(), "hand".to_string(), true)
+                .expect("should add Backdraft to hand"),
+        );
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let cast_blasphemous_act_index = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx
+                .actions
+                .iter()
+                .position(|action| {
+                    matches!(
+                        action,
+                        LegalAction::CastSpell { spell_id, .. } if *spell_id == blasphemous_act_id
+                    )
+                })
+                .expect("expected cast Blasphemous Act action"),
+            other => panic!("expected priority decision before casting Blasphemous Act, got {other:?}"),
+        };
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": cast_blasphemous_act_index,
+            }))
+            .expect("cast Blasphemous Act command should serialize"),
+        )
+        .expect("casting Blasphemous Act should succeed");
+
+        for _ in 0..4 {
+            let Some(DecisionContext::Priority(ctx)) = wasm.pending_decision.as_ref() else {
+                break;
+            };
+            let pass_index = ctx
+                .actions
+                .iter()
+                .position(|action| matches!(action, LegalAction::PassPriority))
+                .expect("priority prompt should include pass");
+            wasm.dispatch(
+                serde_wasm_bindgen::to_value(&json!({
+                    "type": "priority_action",
+                    "action_index": pass_index,
+                }))
+                .expect("priority pass command should serialize"),
+            )
+            .expect("passing priority during Blasphemous Act should succeed");
+            if wasm.game.stack.is_empty() {
+                break;
+            }
+        }
+
+        assert!(
+            wasm.game.stack.is_empty(),
+            "Blasphemous Act should be resolved before casting Backdraft"
+        );
+        let history_after_blasphemous = wasm.game.turn_history.spell_cast_snapshot_history();
+        let blasphemous_snapshots = history_after_blasphemous
+            .iter()
+            .filter(|snapshot| snapshot.name == "Blasphemous Act")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            blasphemous_snapshots.len(),
+            1,
+            "expected Blasphemous Act cast history to persist after resolution, got {:?}",
+            history_after_blasphemous
+                .iter()
+                .map(|snapshot| (
+                    snapshot.name.clone(),
+                    snapshot.zone,
+                    snapshot.card_types.clone(),
+                    snapshot.cast_order_this_turn
+                ))
+                .collect::<Vec<_>>()
+        );
+        let blasphemous_cast_id = blasphemous_snapshots[0].object_id;
+        assert_eq!(
+            wasm.game
+                .turn_history
+                .damage_dealt_by_spell_this_turn(&wasm.game.provenance_graph, blasphemous_cast_id),
+            39,
+            "Blasphemous Act should record 39 total damage from the three Ornithopters"
+        );
+
+        let cast_backdraft_index = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx
+                .actions
+                .iter()
+                .position(|action| {
+                    matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == backdraft_id)
+                })
+                .expect("expected cast Backdraft action"),
+            other => panic!("expected priority decision before casting Backdraft, got {other:?}"),
+        };
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": cast_backdraft_index,
+            }))
+            .expect("cast Backdraft command should serialize"),
+        )
+        .expect("casting Backdraft should succeed");
+
+        for _ in 0..4 {
+            let Some(DecisionContext::Priority(ctx)) = wasm.pending_decision.as_ref() else {
+                break;
+            };
+            let pass_index = ctx
+                .actions
+                .iter()
+                .position(|action| matches!(action, LegalAction::PassPriority))
+                .expect("priority prompt should include pass");
+            wasm.dispatch(
+                serde_wasm_bindgen::to_value(&json!({
+                    "type": "priority_action",
+                    "action_index": pass_index,
+                }))
+                .expect("priority pass command should serialize"),
+            )
+            .expect("passing priority during Backdraft should succeed");
+            if !matches!(wasm.pending_decision, Some(DecisionContext::Priority(_))) {
+                break;
+            }
+        }
+
+        let first_choice = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected Backdraft to stop for a player choice, got {other:?}"),
+        };
+        let first_legal = first_choice
+            .options
+            .iter()
+            .filter(|option| option.legal)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first_legal.len(),
+            1,
+            "expected only Alice to qualify for Backdraft's player choice, got {:?}",
+            first_choice
+                .options
+                .iter()
+                .map(|option| (option.index, option.description.clone(), option.legal))
+                .collect::<Vec<_>>()
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [first_legal[0].index],
+            }))
+            .expect("single-player choice command should serialize"),
+        )
+        .expect("choosing the only qualifying Backdraft player should succeed");
+
+        let spell_choice = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected Backdraft to prompt for the historical spell, got {other:?}"),
+        };
+        let legal_spell_descriptions = spell_choice
+            .options
+            .iter()
+            .filter(|option| option.legal)
+            .map(|option| option.description.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            legal_spell_descriptions
+                .iter()
+                .any(|description| description.contains("Blasphemous Act")),
+            "expected Blasphemous Act to remain a legal Backdraft history choice, got {:?}",
+            legal_spell_descriptions
+        );
+        assert!(
+            legal_spell_descriptions
+                .iter()
+                .any(|description| description.contains("Backdraft")),
+            "expected Backdraft to also be present in the history choice, got {:?}",
+            legal_spell_descriptions
         );
     }
 
@@ -11418,11 +11637,7 @@ mod tests {
             "Serum Powder should redraw the same hand size"
         );
         assert_eq!(
-            wasm.game
-                .player(alice)
-                .expect("alice should exist")
-                .exile
-                .len(),
+            wasm.game.exile.len(),
             7,
             "Serum Powder should exile the original opening hand"
         );
@@ -11537,8 +11752,6 @@ mod tests {
 
         assert!(
             wasm.game
-                .player(bob)
-                .expect("bob should exist")
                 .exile
                 .iter()
                 .any(|id| wasm

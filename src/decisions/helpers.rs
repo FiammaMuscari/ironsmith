@@ -1,7 +1,7 @@
 //! Reusable helper functions for common PlayerDecision patterns.
 //!
 //! These helpers reduce boilerplate in effect executors and card definitions
-//! by centralizing decision-making logic and fallback behavior.
+//! by centralizing decision-making logic and validation.
 //!
 //! These helpers use the spec-based decision system and typed decision primitives.
 
@@ -182,8 +182,7 @@ pub fn ask_mana_color(
 ///
 /// # Returns
 ///
-/// The value associated with the chosen option. Returns the first option's value
-/// if no decision maker is present or if an invalid choice is made.
+/// The value associated with the chosen option when a valid selection is made.
 ///
 /// # Panics
 ///
@@ -213,7 +212,7 @@ pub fn ask_choose_one<T: Clone>(
     player: PlayerId,
     source: ObjectId,
     options: &[(String, T)],
-) -> T {
+) -> Option<T> {
     assert!(
         !options.is_empty(),
         "ask_choose_one requires at least one option"
@@ -228,14 +227,10 @@ pub fn ask_choose_one<T: Clone>(
     let spec = ChoiceSpec::single(source, display_options);
     let choices: Vec<usize> = make_decision(game, dm, player, Some(source), spec);
 
-    if let Some(&choice) = choices.first()
-        && choice < options.len()
-    {
-        return options[choice].1.clone();
-    }
-
-    // Default to first option
-    options[0].1.clone()
+    choices
+        .first()
+        .and_then(|&choice| options.get(choice))
+        .map(|(_, value)| value.clone())
 }
 
 /// Ask a player to choose multiple options from a list of choices.
@@ -255,8 +250,7 @@ pub fn ask_choose_one<T: Clone>(
 ///
 /// # Returns
 ///
-/// A vector of the values associated with the chosen options. Returns the first
-/// `min` options if no decision maker is present.
+/// A vector of the values associated with the chosen options.
 ///
 /// # Panics
 ///
@@ -305,17 +299,63 @@ pub fn ask_choose_multiple<T: Clone>(
     let spec = ChoiceSpec::new(source, display_options, min, max);
     let choices: Vec<usize> = make_decision(game, dm, player, Some(source), spec);
 
-    let valid_choices: Vec<T> = choices
+    choices
         .iter()
         .filter(|&&c| c < options.len())
         .map(|&c| options[c].1.clone())
-        .collect();
+        .collect()
+}
 
-    // Validate the number of choices
-    if valid_choices.len() >= min && valid_choices.len() <= max {
-        return valid_choices;
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::decisions::context::SelectOptionsContext;
+
+    struct PromptingDecisionMaker {
+        prompted: Cell<bool>,
     }
 
-    // Default: return first `min` options
-    options.iter().take(min).map(|(_, v)| v.clone()).collect()
+    impl PromptingDecisionMaker {
+        fn new() -> Self {
+            Self {
+                prompted: Cell::new(false),
+            }
+        }
+    }
+
+    impl DecisionMaker for PromptingDecisionMaker {
+        fn awaiting_choice(&self) -> bool {
+            self.prompted.get()
+        }
+
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            _ctx: &SelectOptionsContext,
+        ) -> Vec<usize> {
+            self.prompted.set(true);
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn ask_choose_one_returns_none_while_waiting_for_a_choice() {
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1);
+        let mut dm = PromptingDecisionMaker::new();
+
+        let chosen = ask_choose_one(
+            &game,
+            &mut dm,
+            alice,
+            source,
+            &[("first".to_string(), 1u32), ("second".to_string(), 2u32)],
+        );
+
+        assert_eq!(chosen, None);
+        assert!(dm.awaiting_choice());
+    }
 }

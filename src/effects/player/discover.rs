@@ -121,6 +121,7 @@ impl EffectExecutor for DiscoverEffect {
                     let stack_entry = StackEntry {
                         object_id: new_id,
                         controller: player_id,
+                        provenance: ctx.provenance,
                         targets: vec![],
                         target_assignments: vec![],
                         x_value,
