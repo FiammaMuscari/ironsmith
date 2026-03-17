@@ -2183,13 +2183,13 @@ impl ObjectFilter {
                 return false;
             }
             let Some(entry_controller) = game
-                .objects_entered_battlefield_this_turn
-                .get(&object.stable_id)
+                .turn_history
+                .object_entered_battlefield_controller_this_turn(object.stable_id)
             else {
                 return false;
             };
             if let Some(filter) = &self.entered_battlefield_controller
-                && !filter.matches_player(*entry_controller, ctx)
+                && !filter.matches_player(entry_controller, ctx)
             {
                 return false;
             }
@@ -2197,9 +2197,9 @@ impl ObjectFilter {
 
         if self.entered_graveyard_from_battlefield_this_turn
             && (object.zone != Zone::Graveyard
-                || !game
-                    .objects_put_into_graveyard_from_battlefield_this_turn
-                    .contains(&object.stable_id))
+                || !game.turn_history.object_was_put_into_graveyard_from_battlefield_this_turn(
+                    object.stable_id,
+                ))
         {
             return false;
         }
@@ -2207,8 +2207,8 @@ impl ObjectFilter {
         if self.entered_graveyard_this_turn
             && (object.zone != Zone::Graveyard
                 || !game
-                    .objects_put_into_graveyard_this_turn
-                    .contains(&object.stable_id))
+                    .turn_history
+                    .object_was_put_into_graveyard_this_turn(object.stable_id))
         {
             return false;
         }
@@ -2243,7 +2243,7 @@ impl ObjectFilter {
             if object.zone == Zone::Stack {
                 // For stack spells, non-stack zone filters mean
                 // "cast from <zone>" (e.g. "target spell cast from a graveyard").
-                if !game.spell_cast_order_this_turn.contains_key(&object.id) {
+                if game.turn_history.spell_cast_order(object.id).is_none() {
                     return false;
                 }
                 let Some(entry) = stack_entry else {
@@ -4638,7 +4638,11 @@ mod tests {
                 },
             ),
         );
-        game.spell_cast_order_this_turn.insert(stack_id, 1);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(stack_id, alice, Zone::Graveyard),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
 
         let filter = ObjectFilter::spell().in_zone(Zone::Graveyard);
         let ctx = FilterContext::new(alice);
@@ -4679,7 +4683,11 @@ mod tests {
             crate::game_state::StackEntry::new(stack_id, alice)
                 .with_casting_method(CastingMethod::Alternative(0)),
         );
-        game.spell_cast_order_this_turn.insert(stack_id, 1);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(stack_id, alice, Zone::Graveyard),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
 
         let filter = ObjectFilter::spell().in_zone(Zone::Graveyard);
         let ctx = FilterContext::new(alice);
@@ -4754,7 +4762,11 @@ mod tests {
         game.push_to_stack(
             StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::Normal),
         );
-        game.spell_cast_order_this_turn.insert(stack_id, 1);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(stack_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
 
         let filter = ObjectFilter::spell().cast_by_you();
         let object = game.object(stack_id).expect("stack spell should exist");

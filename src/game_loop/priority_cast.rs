@@ -1044,10 +1044,7 @@ pub(super) fn finalize_pending_spell_cast(
         SpellCastEvent::new(result.new_id, result.caster, result.from_zone),
         game.alloc_child_event_provenance(pending.provenance, crate::events::EventKind::SpellCast),
     );
-    let triggers = check_triggers(game, &event);
-    for trigger in triggers {
-        trigger_queue.add(trigger);
-    }
+    queue_triggers_from_event(game, trigger_queue, event, false);
 
     state.clear_checkpoint();
     reset_priority(game, &mut state.tracker);

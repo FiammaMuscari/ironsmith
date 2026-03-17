@@ -42,6 +42,7 @@ pub(crate) fn apply_token_battlefield_entry(
 ) -> Result<(), ExecutionError> {
     if token_is_creature {
         *game
+            .turn_history
             .creatures_entered_this_turn
             .entry(controller_id)
             .or_insert(0) += 1;
@@ -55,7 +56,8 @@ pub(crate) fn apply_token_battlefield_entry(
     if let Some(obj) = game.object(token_id)
         && obj.zone == Zone::Battlefield
     {
-        game.objects_entered_battlefield_this_turn
+        game.turn_history
+            .objects_entered_battlefield_this_turn
             .insert(obj.stable_id, controller_id);
     }
 
@@ -333,7 +335,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.creatures_entered_this_turn.get(&alice), Some(&1));
+        assert_eq!(
+            game.turn_history.creatures_entered_this_turn.get(&alice),
+            Some(&1)
+        );
         assert!(game.is_tapped(token_id));
         assert!(game.is_summoning_sick(token_id));
         assert_eq!(events.len(), 1);

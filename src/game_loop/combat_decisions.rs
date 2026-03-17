@@ -274,7 +274,8 @@ pub fn apply_attacker_declarations(
     // Clear any existing attackers
     combat.attackers.clear();
     if !declarations.is_empty() {
-        game.players_attacked_this_turn
+        game.turn_history
+            .players_attacked_this_turn
             .insert(game.turn.active_player);
     }
 
@@ -315,11 +316,7 @@ pub fn apply_attacker_declarations(
             ),
             event_provenance,
         );
-        let event = game.ensure_trigger_event_provenance(event);
-        let triggers = check_triggers(game, &event);
-        for trigger in triggers {
-            trigger_queue.add(trigger);
-        }
+        queue_triggers_from_event(game, trigger_queue, event, false);
     }
 
     Ok(())
@@ -418,11 +415,7 @@ pub fn apply_blocker_declarations(
             CreatureBlockedEvent::new(*blocker, *attacker),
             event_provenance,
         );
-        let event = game.ensure_trigger_event_provenance(event);
-        let triggers = check_triggers(game, &event);
-        for trigger in triggers {
-            trigger_queue.add(trigger);
-        }
+        queue_triggers_from_event(game, trigger_queue, event, false);
     }
 
     if declarations.len() == 1 && !game.can_block_alone(declarations[0].blocker) {
@@ -457,11 +450,7 @@ pub fn apply_blocker_declarations(
                 },
                 event_provenance,
             );
-            let event = game.ensure_trigger_event_provenance(event);
-            let triggers = check_triggers(game, &event);
-            for trigger in triggers {
-                trigger_queue.add(trigger);
-            }
+            queue_triggers_from_event(game, trigger_queue, event, false);
         }
     }
 
@@ -487,11 +476,7 @@ pub fn apply_blocker_declarations(
             CreatureAttackedAndUnblockedEvent::new(info.creature, attack_target),
             event_provenance,
         );
-        let event = game.ensure_trigger_event_provenance(event);
-        let triggers = check_triggers(game, &event);
-        for trigger in triggers {
-            trigger_queue.add(trigger);
-        }
+        queue_triggers_from_event(game, trigger_queue, event, false);
     }
 
     for (attacker_id, blockers) in &combat.blockers {

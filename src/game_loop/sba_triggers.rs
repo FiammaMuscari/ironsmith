@@ -435,11 +435,7 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
     }
 
     for event in all_events {
-        let event = game.ensure_trigger_event_provenance(event);
-        let triggers = check_triggers(game, &event);
-        for trigger in triggers {
-            trigger_queue.add(trigger);
-        }
+        queue_triggers_from_event(game, trigger_queue, event, false);
     }
     drain_pending_trigger_events(game, trigger_queue);
 
@@ -740,13 +736,13 @@ pub(super) fn triggered_to_stack_entry(
         entry.keyword_payment_contributions = obj.keyword_payment_contributions_to_cast.clone();
     }
 
-    if let Some(crewers) = game.crewed_this_turn.get(&trigger.source)
+    if let Some(crewers) = game.turn_history.crewed_this_turn.get(&trigger.source)
         && !crewers.is_empty()
     {
         entry.crew_contributors = crewers.clone();
     }
 
-    if let Some(saddlers) = game.saddled_this_turn.get(&trigger.source)
+    if let Some(saddlers) = game.turn_history.saddled_this_turn.get(&trigger.source)
         && !saddlers.is_empty()
     {
         entry.saddle_contributors = saddlers.clone();

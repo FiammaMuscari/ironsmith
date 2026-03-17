@@ -9555,8 +9555,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             game.object(prior_id).expect("prior spell should exist"),
             &game,
         );
-        game.spells_cast_this_turn.insert(alice, 1);
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(prior_snapshot.object_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
 
         let spell = game.object(spell_id).expect("spell should exist");
         assert!(

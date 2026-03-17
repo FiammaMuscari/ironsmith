@@ -21,6 +21,7 @@ use crate::replacement::{ReplacementEffectId, ReplacementEffectManager};
 use crate::static_abilities::StaticAbility;
 use crate::target::ChooseSpec;
 use crate::triggers::TriggerIdentity;
+use crate::turn_history::TurnHistory;
 use crate::types::Subtype;
 use crate::zone::Zone;
 
@@ -1230,22 +1231,9 @@ pub struct GameState {
     /// Current monarch designation holder, if any.
     pub monarch: Option<PlayerId>,
 
-    /// Tracks activated abilities that have been used this turn.
-    /// Used for OncePerTurn timing restrictions.
-    /// Key is (source ObjectId, ability index within that object).
-    pub activated_abilities_this_turn: HashSet<(ObjectId, usize)>,
-
     /// Tracks modal choices that were already selected for an activated ability.
     /// Key is (source ObjectId, ability index), value is the set of chosen mode indices.
     pub chosen_modes_by_ability: HashMap<(ObjectId, usize), HashSet<usize>>,
-
-    /// Tracks per-turn modal choices for abilities with "that hasn't been chosen this turn".
-    pub chosen_modes_by_ability_this_turn: HashMap<(ObjectId, usize), HashSet<usize>>,
-
-    /// Tracks how many cards each player has drawn this turn.
-    /// Used for "first card drawn this turn" triggers and replacement effects.
-    /// Reset at the start of each turn.
-    pub cards_drawn_this_turn: HashMap<PlayerId, u32>,
 
     /// Pending replacement effect choice when multiple effects could apply.
     /// When set, advance_priority returns a ChooseReplacementEffect decision
@@ -1275,123 +1263,17 @@ pub struct GameState {
     /// Timestamp counter for player-control effects.
     pub player_control_timestamp: u64,
 
-    /// Number of creatures that have died this turn.
-    /// Reset at the start of each turn.
-    pub creatures_died_this_turn: u32,
-
-    /// Number of creatures that died this turn per controller (at the time they died).
-    /// Reset at the start of each turn.
-    pub creatures_died_under_controller_this_turn: HashMap<PlayerId, u32>,
-    /// Number of creatures that left the battlefield this turn per controller.
-    /// Reset at the start of each turn.
-    pub creatures_left_battlefield_under_controller_this_turn: HashMap<PlayerId, u32>,
-    /// Number of permanents that left the battlefield this turn per controller.
-    /// Reset at the start of each turn.
-    pub permanents_left_battlefield_under_controller_this_turn: HashMap<PlayerId, u32>,
-
-    /// Cards/tokens that were put into a graveyard from anywhere this turn.
-    ///
-    /// Tracked by stable ID so zone changes (Rule 400.7) don't lose identity.
-    /// Reset at the start of each turn.
-    pub objects_put_into_graveyard_this_turn: HashSet<StableId>,
-
-    /// Cards/tokens that were put into a graveyard from the battlefield this turn.
-    ///
-    /// Tracked by stable ID so zone changes (Rule 400.7) don't lose identity.
-    /// Reset at the start of each turn.
-    pub objects_put_into_graveyard_from_battlefield_this_turn: HashSet<StableId>,
-
-    /// Number of times each (source stable id, trigger identity) has fired this turn.
-    pub triggers_fired_this_turn: HashMap<(ObjectId, TriggerIdentity), u32>,
-
-    /// Extensible per-turn counters for event kinds and custom metrics.
-    pub turn_counters: TurnCounterTracker,
-
-    /// Number of spells cast this turn per player.
-    /// Reset at the start of each turn.
-    pub spells_cast_this_turn: HashMap<PlayerId, u32>,
-    /// Players who have taken the foretell special action this turn.
-    /// Reset at the start of each turn.
-    pub foretell_actions_this_turn: HashSet<PlayerId>,
-    /// Number of crimes committed this turn per player.
-    /// Reset at the start of each turn.
-    pub crimes_committed_this_turn: HashMap<PlayerId, u32>,
-    /// Number of artifacts sacrificed this turn per player.
-    /// Reset at the start of each turn.
-    pub artifacts_sacrificed_this_turn: HashMap<PlayerId, u32>,
-
-    /// Total mana spent to cast spells this turn per player.
-    ///
-    /// Used by the Expend mechanic: "You expend N as you spend your Nth total mana to cast spells during a turn."
-    ///
-    /// Reset at the start of each turn.
-    pub mana_spent_to_cast_spells_this_turn: HashMap<PlayerId, u32>,
-
-    /// Total number of spells cast this turn.
-    /// Reset at the start of each turn.
-    pub spells_cast_this_turn_total: u32,
-
-    /// Snapshots of spells cast this turn, captured at cast time.
-    ///
-    /// This supports "spells you've cast this turn" counts that need to persist
-    /// even after spells resolve or change zones.
-    ///
-    /// Cleared at the start of each turn.
-    pub spells_cast_this_turn_snapshots: Vec<crate::snapshot::ObjectSnapshot>,
-
-    /// Cast order for spells cast this turn (object id -> 1-based cast index).
-    /// Cleared at the start of each turn.
-    pub spell_cast_order_this_turn: HashMap<ObjectId, u32>,
-
-    /// Damage dealt this turn by each spell-cast instance, keyed by 1-based cast index.
-    ///
-    /// Cleared at the start of each turn.
-    pub damage_dealt_by_spell_cast_this_turn: HashMap<u32, u32>,
-
-    /// Players who attacked with at least one creature this turn.
-    /// Reset at the start of each turn.
-    pub players_attacked_this_turn: HashSet<PlayerId>,
-
-    /// Players who tapped a land for mana this turn.
-    /// Reset at the start of each turn.
-    pub players_tapped_land_for_mana_this_turn: HashSet<PlayerId>,
-
-    /// Creatures that attacked this turn.
-    /// Used for activated ability restrictions like "Activate only if this creature attacked this turn".
-    pub creatures_attacked_this_turn: HashSet<ObjectId>,
+    /// Unified owner for per-turn event and action history.
+    pub turn_history: TurnHistory,
 
     /// Total number of spells cast during the immediately previous turn.
     /// Updated when turn advances.
     pub spells_cast_last_turn_total: u32,
 
-    /// Players who searched their library this turn.
-    /// Used for trap conditions like Archive Trap.
-    pub library_searches_this_turn: HashSet<PlayerId>,
-
-    /// Number of creatures that entered the battlefield this turn, per controller.
-    /// Used for trap conditions like Balustrade Spy.
-    pub creatures_entered_this_turn: HashMap<PlayerId, u32>,
-
-    /// Objects that entered the battlefield this turn, keyed by stable ID with entry controller.
-    /// Reset at the start of each turn.
-    pub objects_entered_battlefield_this_turn: HashMap<StableId, PlayerId>,
-
-    /// Creatures that crewed a Vehicle this turn, keyed by Vehicle object id.
-    ///
-    /// Used for references like "each creature that crewed it this turn".
-    /// Cleared at the start of each turn.
-    pub crewed_this_turn: HashMap<ObjectId, Vec<ObjectId>>,
-
     /// Mounts that are saddled until end of turn.
     ///
     /// Cleared at the start of each turn.
     pub saddled_until_end_of_turn: HashSet<ObjectId>,
-
-    /// Creatures that saddled a Mount this turn, keyed by Mount object id.
-    ///
-    /// Used for references like "each creature that saddled it this turn".
-    /// Cleared at the start of each turn.
-    pub saddled_this_turn: HashMap<ObjectId, Vec<ObjectId>>,
 
     /// Soulbond pairings (stored bidirectionally: A -> B and B -> A).
     pub soulbond_pairs: HashMap<ObjectId, ObjectId>,
@@ -1402,29 +1284,6 @@ pub struct GameState {
     /// Multiple entries per source are stored in activation order so nested
     /// activations can resolve LIFO.
     pub ninjutsu_attack_targets: HashMap<ObjectId, Vec<crate::combat_state::AttackTarget>>,
-
-    /// Damage dealt to each player by creatures this turn.
-    /// Used for trap conditions like Summoning Trap.
-    pub creature_damage_to_players_this_turn: HashMap<PlayerId, u32>,
-
-    /// Damage dealt to each player this turn (from any source).
-    /// Used for mechanics like Bloodthirst.
-    pub damage_to_players_this_turn: HashMap<PlayerId, u32>,
-
-    /// Noncombat damage dealt to each player this turn.
-    pub noncombat_damage_to_players_this_turn: HashMap<PlayerId, u32>,
-
-    /// Life lost by each player this turn.
-    pub life_lost_this_turn: HashMap<PlayerId, u32>,
-
-    /// Life gained by each player this turn.
-    pub life_gained_this_turn: HashMap<PlayerId, u32>,
-
-    /// Creatures that have been dealt damage this turn, keyed by the damaged creature.
-    ///
-    /// Value is the set of object IDs that dealt damage to that creature this turn.
-    /// Cleared at the start of each turn.
-    pub creatures_damaged_by_this_turn: HashMap<ObjectId, HashSet<ObjectId>>,
 
     /// Combat-damage-to-player hits already processed in the current trigger batch.
     /// Used for "one or more ... deal combat damage to a player" trigger matching.
@@ -1568,10 +1427,8 @@ impl GameState {
             combat: None,
             is_night: false,
             monarch: None,
-            activated_abilities_this_turn: HashSet::new(),
             chosen_modes_by_ability: HashMap::new(),
-            chosen_modes_by_ability_this_turn: HashMap::new(),
-            cards_drawn_this_turn: HashMap::new(),
+            turn_history: TurnHistory::default(),
             pending_replacement_choice: None,
             grant_registry: crate::grant_registry::GrantRegistry::new(),
             extra_turns: Vec::new(),
@@ -1580,41 +1437,10 @@ impl GameState {
             skip_next_combat_phases: HashSet::new(),
             player_control_effects: Vec::new(),
             player_control_timestamp: 0,
-            creatures_died_this_turn: 0,
-            creatures_died_under_controller_this_turn: HashMap::new(),
-            creatures_left_battlefield_under_controller_this_turn: HashMap::new(),
-            permanents_left_battlefield_under_controller_this_turn: HashMap::new(),
-            objects_put_into_graveyard_this_turn: HashSet::new(),
-            objects_put_into_graveyard_from_battlefield_this_turn: HashSet::new(),
-            triggers_fired_this_turn: HashMap::new(),
-            turn_counters: TurnCounterTracker::default(),
-            spells_cast_this_turn: HashMap::new(),
-            foretell_actions_this_turn: HashSet::new(),
-            crimes_committed_this_turn: HashMap::new(),
-            artifacts_sacrificed_this_turn: HashMap::new(),
-            mana_spent_to_cast_spells_this_turn: HashMap::new(),
-            spells_cast_this_turn_total: 0,
-            spells_cast_this_turn_snapshots: Vec::new(),
-            spell_cast_order_this_turn: HashMap::new(),
-            damage_dealt_by_spell_cast_this_turn: HashMap::new(),
-            players_attacked_this_turn: HashSet::new(),
-            players_tapped_land_for_mana_this_turn: HashSet::new(),
-            creatures_attacked_this_turn: HashSet::new(),
             spells_cast_last_turn_total: 0,
-            library_searches_this_turn: HashSet::new(),
-            creatures_entered_this_turn: HashMap::new(),
-            objects_entered_battlefield_this_turn: HashMap::new(),
-            crewed_this_turn: HashMap::new(),
             saddled_until_end_of_turn: HashSet::new(),
-            saddled_this_turn: HashMap::new(),
             soulbond_pairs: HashMap::new(),
             ninjutsu_attack_targets: HashMap::new(),
-            creature_damage_to_players_this_turn: HashMap::new(),
-            damage_to_players_this_turn: HashMap::new(),
-            noncombat_damage_to_players_this_turn: HashMap::new(),
-            life_lost_this_turn: HashMap::new(),
-            life_gained_this_turn: HashMap::new(),
-            creatures_damaged_by_this_turn: HashMap::new(),
             combat_damage_player_batch_hits: Vec::new(),
             granted_mana_abilities: Vec::new(),
             restriction_effects: Vec::new(),
@@ -2174,8 +2000,9 @@ impl GameState {
             && new_zone == Zone::Graveyard
             && old_object.is_creature();
         if is_creature_dying {
-            self.creatures_died_this_turn += 1;
+            self.turn_history.creatures_died_this_turn += 1;
             *self
+                .turn_history
                 .creatures_died_under_controller_this_turn
                 .entry(controller)
                 .or_insert(0) += 1;
@@ -2185,26 +2012,21 @@ impl GameState {
             && old_object.is_creature()
         {
             *self
+                .turn_history
                 .creatures_left_battlefield_under_controller_this_turn
                 .entry(controller)
                 .or_insert(0) += 1;
         }
         if old_zone == Zone::Battlefield && new_zone != Zone::Battlefield {
             *self
+                .turn_history
                 .permanents_left_battlefield_under_controller_this_turn
                 .entry(controller)
                 .or_insert(0) += 1;
         }
-        if new_zone == Zone::Graveyard {
-            self.objects_put_into_graveyard_this_turn
-                .insert(old_object.stable_id);
-        }
-        if old_zone == Zone::Battlefield && new_zone == Zone::Graveyard {
-            self.objects_put_into_graveyard_from_battlefield_this_turn
-                .insert(old_object.stable_id);
-        }
         if new_zone == Zone::Battlefield {
-            self.objects_entered_battlefield_this_turn
+            self.turn_history
+                .objects_entered_battlefield_this_turn
                 .insert(old_object.stable_id, controller);
         }
 
@@ -3755,46 +3577,9 @@ impl GameState {
         self.turn.step = Some(Step::Untap);
 
         // Clear turn-based tracking
-        self.clear_activated_abilities_tracking();
-        self.chosen_modes_by_ability_this_turn.clear();
-        self.cards_drawn_this_turn.clear();
-        self.creatures_died_this_turn = 0;
-        self.creatures_died_under_controller_this_turn.clear();
-        self.creatures_left_battlefield_under_controller_this_turn
-            .clear();
-        self.permanents_left_battlefield_under_controller_this_turn
-            .clear();
-        self.objects_put_into_graveyard_this_turn.clear();
-        self.objects_put_into_graveyard_from_battlefield_this_turn
-            .clear();
-        self.objects_entered_battlefield_this_turn.clear();
-        self.triggers_fired_this_turn.clear();
-        self.turn_counters.clear();
-        self.spells_cast_last_turn_total = self.spells_cast_this_turn_total;
-        self.spells_cast_this_turn.clear();
-        self.foretell_actions_this_turn.clear();
-        self.crimes_committed_this_turn.clear();
-        self.artifacts_sacrificed_this_turn.clear();
-        self.mana_spent_to_cast_spells_this_turn.clear();
-        self.spells_cast_this_turn_total = 0;
-        self.spells_cast_this_turn_snapshots.clear();
-        self.spell_cast_order_this_turn.clear();
-        self.damage_dealt_by_spell_cast_this_turn.clear();
-        self.players_attacked_this_turn.clear();
-        self.players_tapped_land_for_mana_this_turn.clear();
-        self.creatures_attacked_this_turn.clear();
-        self.library_searches_this_turn.clear();
-        self.creatures_entered_this_turn.clear();
-        self.crewed_this_turn.clear();
+        self.spells_cast_last_turn_total = self.turn_history.clear_for_new_turn();
         self.saddled_until_end_of_turn.clear();
-        self.saddled_this_turn.clear();
         self.ninjutsu_attack_targets.clear();
-        self.creature_damage_to_players_this_turn.clear();
-        self.damage_to_players_this_turn.clear();
-        self.noncombat_damage_to_players_this_turn.clear();
-        self.life_lost_this_turn.clear();
-        self.life_gained_this_turn.clear();
-        self.creatures_damaged_by_this_turn.clear();
         self.combat_damage_player_batch_hits.clear();
 
         // Activate any pending player-control effects for the new active player.
@@ -3933,17 +3718,21 @@ impl GameState {
     /// Clears the tracking for OncePerTurn activated abilities.
     /// Called at the beginning of each turn.
     pub fn clear_activated_abilities_tracking(&mut self) {
-        self.activated_abilities_this_turn.clear();
+        self.turn_history.activated_abilities_this_turn.clear();
     }
 
     /// Record that a creature has attacked this turn.
     pub fn mark_creature_attacked_this_turn(&mut self, creature: ObjectId) {
-        self.creatures_attacked_this_turn.insert(creature);
+        self.turn_history
+            .creatures_attacked_this_turn
+            .insert(creature);
     }
 
     /// Check whether a creature has attacked this turn.
     pub fn creature_attacked_this_turn(&self, creature: ObjectId) -> bool {
-        self.creatures_attacked_this_turn.contains(&creature)
+        self.turn_history
+            .creatures_attacked_this_turn
+            .contains(&creature)
     }
 
     /// Record that a specific trigger fired this turn.
@@ -3953,10 +3742,13 @@ impl GameState {
         trigger_id: TriggerIdentity,
     ) {
         *self
+            .turn_history
             .triggers_fired_this_turn
             .entry((source_object_id, trigger_id))
             .or_insert(0) += 1;
-        self.turn_counters.increment_trigger_identity(trigger_id);
+        self.turn_history
+            .turn_counters
+            .increment_trigger_identity(trigger_id);
     }
 
     /// Get how many times this trigger fired this turn.
@@ -3965,7 +3757,8 @@ impl GameState {
         source_object_id: ObjectId,
         trigger_id: TriggerIdentity,
     ) -> u32 {
-        self.triggers_fired_this_turn
+        self.turn_history
+            .triggers_fired_this_turn
             .get(&(source_object_id, trigger_id))
             .copied()
             .unwrap_or(0)
@@ -3973,12 +3766,15 @@ impl GameState {
 
     /// Record an event kind occurrence this turn.
     pub fn record_trigger_event_kind(&mut self, event_kind: EventKind) {
-        self.turn_counters.increment_event_kind(event_kind);
+        self.turn_history
+            .turn_counters
+            .increment_event_kind(event_kind);
     }
 
     /// Get event kind occurrence count this turn.
     pub fn trigger_event_kind_count_this_turn(&self, event_kind: EventKind) -> u32 {
-        self.turn_counters
+        self.turn_history
+            .turn_counters
             .get(&TurnCounterKey::EventKind(event_kind))
     }
 
@@ -3999,27 +3795,31 @@ impl GameState {
 
     /// Increment an arbitrary named turn counter.
     pub fn increment_named_turn_counter(&mut self, name: impl Into<String>) {
-        self.turn_counters.increment_named(name);
+        self.turn_history.turn_counters.increment_named(name);
     }
 
     /// Get an arbitrary named turn counter value.
     pub fn named_turn_counter(&self, name: &str) -> u32 {
-        self.turn_counters
+        self.turn_history
+            .turn_counters
             .get(&TurnCounterKey::Named(name.to_string()))
     }
 
     /// Records that an activated ability was used.
     /// Used for OncePerTurn timing restrictions.
     pub fn record_ability_activation(&mut self, source: ObjectId, ability_index: usize) {
-        self.activated_abilities_this_turn
+        self.turn_history
+            .activated_abilities_this_turn
             .insert((source, ability_index));
-        self.turn_counters
+        self.turn_history
+            .turn_counters
             .increment_named(activated_ability_turn_counter_name(source, ability_index));
     }
 
     /// Check if an activated ability has been used this turn.
     pub fn ability_activated_this_turn(&self, source: ObjectId, ability_index: usize) -> bool {
-        self.activated_abilities_this_turn
+        self.turn_history
+            .activated_abilities_this_turn
             .contains(&(source, ability_index))
     }
 
@@ -4041,7 +3841,7 @@ impl GameState {
         this_turn: bool,
     ) {
         let target_map = if this_turn {
-            &mut self.chosen_modes_by_ability_this_turn
+            &mut self.turn_history.chosen_modes_by_ability_this_turn
         } else {
             &mut self.chosen_modes_by_ability
         };
@@ -4060,7 +3860,7 @@ impl GameState {
         this_turn: bool,
     ) -> bool {
         let target_map = if this_turn {
-            &self.chosen_modes_by_ability_this_turn
+            &self.turn_history.chosen_modes_by_ability_this_turn
         } else {
             &self.chosen_modes_by_ability
         };
@@ -4081,7 +3881,7 @@ impl GameState {
             return false;
         }
         let target_map = if this_turn {
-            &self.chosen_modes_by_ability_this_turn
+            &self.turn_history.chosen_modes_by_ability_this_turn
         } else {
             &self.chosen_modes_by_ability
         };
@@ -4393,7 +4193,8 @@ impl GameState {
 
     /// Record that a creature was dealt damage by a given source this turn.
     pub fn record_creature_damaged_by_this_turn(&mut self, creature: ObjectId, source: ObjectId) {
-        self.creatures_damaged_by_this_turn
+        self.turn_history
+            .creatures_damaged_by_this_turn
             .entry(creature)
             .or_default()
             .insert(source);
@@ -4405,16 +4206,13 @@ impl GameState {
         creature: ObjectId,
         source: ObjectId,
     ) -> bool {
-        self.creatures_damaged_by_this_turn
-            .get(&creature)
-            .is_some_and(|sources| sources.contains(&source))
+        self.turn_history
+            .creature_was_damaged_by_source_this_turn(creature, source)
     }
 
     /// Returns true if `creature` was dealt damage by any source this turn.
     pub fn creature_was_damaged_this_turn(&self, creature: ObjectId) -> bool {
-        self.creatures_damaged_by_this_turn
-            .get(&creature)
-            .is_some_and(|sources| !sources.is_empty())
+        self.turn_history.creature_was_damaged_this_turn(creature)
     }
 
     /// Clear damage from an object.
@@ -4578,12 +4376,14 @@ impl GameState {
 
     /// Track that a player has taken the foretell special action this turn.
     pub fn record_foretell_action(&mut self, player: PlayerId) {
-        self.foretell_actions_this_turn.insert(player);
+        self.turn_history.foretell_actions_this_turn.insert(player);
     }
 
     /// Check whether the player has already taken the foretell special action this turn.
     pub fn has_foretold_this_turn(&self, player: PlayerId) -> bool {
-        self.foretell_actions_this_turn.contains(&player)
+        self.turn_history
+            .foretell_actions_this_turn
+            .contains(&player)
     }
 
     /// Check if a saga's final chapter has resolved.
@@ -4635,7 +4435,8 @@ impl GameState {
         self.chosen_players.remove(&id);
         self.chosen_modes_by_ability
             .retain(|(source, _), _| *source != id);
-        self.chosen_modes_by_ability_this_turn
+        self.turn_history
+            .chosen_modes_by_ability_this_turn
             .retain(|(source, _), _| *source != id);
         // Note: saga_final_chapter_resolved and commanders persist across zone changes
     }
@@ -4845,6 +4646,38 @@ impl GameState {
     ///
     /// `parent` is the causal provenance node for this emitted event. If the
     /// event already has a valid provenance, it is preserved.
+    fn projected_turn_event_snapshots(
+        &self,
+        event: &crate::triggers::TriggerEvent,
+    ) -> (
+        Option<crate::snapshot::ObjectSnapshot>,
+        Option<crate::snapshot::ObjectSnapshot>,
+    ) {
+        let object_snapshot = event.snapshot().cloned().or_else(|| {
+            event.object_id().and_then(|id| {
+                self.object(id)
+                    .map(|obj| crate::snapshot::ObjectSnapshot::from_object(obj, self))
+            })
+        });
+        let source_snapshot = event.inner().source_object().and_then(|id| {
+            self.object(id)
+                .map(|obj| crate::snapshot::ObjectSnapshot::from_object(obj, self))
+        });
+        (object_snapshot, source_snapshot)
+    }
+
+    pub(crate) fn stage_turn_history_event(&mut self, event: &crate::triggers::TriggerEvent) {
+        let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(event);
+        self.turn_history
+            .stage_event(event, object_snapshot, source_snapshot);
+    }
+
+    pub(crate) fn record_turn_history_event(&mut self, event: &crate::triggers::TriggerEvent) {
+        let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(event);
+        self.turn_history
+            .record_event(event, object_snapshot, source_snapshot);
+    }
+
     pub fn queue_trigger_event(
         &mut self,
         parent: ProvNodeId,
@@ -4903,8 +4736,10 @@ impl GameState {
             }
         }
 
-        let provenance = event.provenance();
-        if provenance == ProvNodeId::default() || self.provenance_graph.node(provenance).is_none() {
+        let initial_provenance = event.provenance();
+        if initial_provenance == ProvNodeId::default()
+            || self.provenance_graph.node(initial_provenance).is_none()
+        {
             let event_provenance = if parent == ProvNodeId::default()
                 || self.provenance_graph.node(parent).is_none()
             {
@@ -4919,6 +4754,8 @@ impl GameState {
             .provenance_graph
             .alloc_child(event.provenance(), ProvenanceNodeKind::TriggerQueued);
         event.set_provenance(queued);
+        self.turn_history.remove_staged_event(initial_provenance);
+        self.stage_turn_history_event(&event);
         self.pending_trigger_events.push(event);
     }
 

@@ -1320,14 +1320,11 @@ fn spells_cast_this_turn_matching_filter(
     spell_filter: &crate::target::ObjectFilter,
 ) -> u32 {
     if spell_filter == &crate::target::ObjectFilter::default() {
-        return game
-            .spells_cast_this_turn
-            .get(&player)
-            .copied()
-            .unwrap_or(0);
+        return game.turn_history.spells_cast_by_player(player);
     }
 
-    game.spells_cast_this_turn_snapshots
+    game.turn_history
+        .spell_cast_snapshot_history()
         .iter()
         .filter(|snapshot| {
             snapshot.controller == player
@@ -2260,31 +2257,25 @@ fn is_trap_condition_met(
             // Check if any opponent cast N or more spells this turn
             opponents
                 .iter()
-                .any(|&opp| game.spells_cast_this_turn.get(&opp).copied().unwrap_or(0) >= *count)
+                .any(|&opp| game.turn_history.spells_cast_by_player(opp) >= *count)
         }
         TrapCondition::OpponentSearchedLibrary => {
             // Check if any opponent searched their library this turn
             opponents
                 .iter()
-                .any(|opp| game.library_searches_this_turn.contains(opp))
+                .any(|opp| game.turn_history.player_searched_library_this_turn(*opp))
         }
         TrapCondition::OpponentCreatureEntered => {
             // Check if any opponent had a creature enter the battlefield this turn
             opponents.iter().any(|&opp| {
-                game.creatures_entered_this_turn
-                    .get(&opp)
-                    .copied()
-                    .unwrap_or(0)
-                    > 0
+                game.turn_history
+                    .player_had_creature_enter_battlefield_this_turn(opp)
             })
         }
         TrapCondition::CreatureDealtDamageToYou => {
             // Check if any creature dealt damage to the player this turn
-            game.creature_damage_to_players_this_turn
-                .get(&player)
-                .copied()
-                .unwrap_or(0)
-                > 0
+            game.turn_history
+                .player_was_dealt_damage_by_creature_this_turn(player)
         }
     }
 }
@@ -7219,6 +7210,92 @@ mod tests {
         crate::tests::test_helpers::setup_two_player_game()
     }
 
+    fn stage_spell_cast_for_test(
+        game: &mut GameState,
+        spell_id: ObjectId,
+        caster: PlayerId,
+        from_zone: Zone,
+    ) {
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(spell_id, caster, from_zone),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_cards_drawn_for_test(game: &mut GameState, player: PlayerId, count: u32) {
+        let cards = (0..count).map(|_| game.new_object_id()).collect();
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::other::CardsDrawnEvent::new(player, cards, count > 0),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_commit_crime_for_test(game: &mut GameState, player: PlayerId) {
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::other::KeywordActionEvent::new(
+                crate::events::other::KeywordActionKind::CommitCrime,
+                player,
+                ObjectId::from_raw(0),
+                1,
+            ),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_life_gain_for_test(game: &mut GameState, player: PlayerId, amount: u32) {
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::LifeGainEvent::new(player, amount),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_life_loss_for_test(game: &mut GameState, player: PlayerId, amount: u32) {
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::LifeLossEvent::from_effect(player, amount),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_noncombat_damage_to_player_for_test(
+        game: &mut GameState,
+        source: ObjectId,
+        player: PlayerId,
+        amount: u32,
+    ) {
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::DamageEvent::new(
+                source,
+                crate::game_event::DamageTarget::Player(player),
+                amount,
+                false,
+            ),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    fn stage_artifact_sacrifice_for_test(game: &mut GameState, player: PlayerId) {
+        let artifact = CardBuilder::new(CardId::new(), "Sacrificed Artifact")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let artifact_id = game.create_object_from_card(&artifact, player, Zone::Battlefield);
+        let snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(artifact_id).expect("artifact exists"),
+            game,
+        );
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::permanents::SacrificeEvent::new(artifact_id, None)
+                .with_snapshot(Some(snapshot), Some(player)),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
     #[test]
     fn test_compute_legal_actions_basic() {
         let game = setup_game();
@@ -7385,8 +7462,7 @@ mod tests {
             game.object(prior_id).expect("prior creature exists"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
 
         game.refresh_continuous_state();
         let options = compute_legal_attackers(&game, &CombatState::default());
@@ -7828,14 +7904,15 @@ mod tests {
             .push(Ability::static_ability(ability));
 
         // Condition not met.
-        game.cards_drawn_this_turn.insert(bob, 3);
+        stage_cards_drawn_for_test(&mut game, bob, 3);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{3}{U}{U}{U}");
 
         // Condition met.
-        game.cards_drawn_this_turn.insert(bob, 4);
+        game.turn_history.clear_for_new_turn();
+        stage_cards_drawn_for_test(&mut game, bob, 4);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
@@ -7871,14 +7948,16 @@ mod tests {
             .push(Ability::static_ability(ability));
 
         // Condition not met.
-        game.spells_cast_this_turn.insert(bob, 1);
+        stage_spell_cast_for_test(&mut game, ObjectId::from_raw(3201), bob, Zone::Hand);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{2}{U}");
 
         // Condition met.
-        game.spells_cast_this_turn.insert(bob, 2);
+        game.turn_history.clear_for_new_turn();
+        stage_spell_cast_for_test(&mut game, ObjectId::from_raw(3201), bob, Zone::Hand);
+        stage_spell_cast_for_test(&mut game, ObjectId::from_raw(3202), bob, Zone::Hand);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
@@ -8030,8 +8109,7 @@ mod tests {
             game.object(prior_id).expect("prior instant exists"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
 
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
@@ -8202,7 +8280,7 @@ mod tests {
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{5}{R}");
 
-        game.artifacts_sacrificed_this_turn.insert(alice, 1);
+        stage_artifact_sacrifice_for_test(&mut game, alice);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
@@ -8238,7 +8316,8 @@ mod tests {
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{4}{G}");
 
-        game.creatures_left_battlefield_under_controller_this_turn
+        game.turn_history
+            .creatures_left_battlefield_under_controller_this_turn
             .insert(alice, 1);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
@@ -8274,7 +8353,7 @@ mod tests {
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{3}{U}");
 
-        game.crimes_committed_this_turn.insert(alice, 1);
+        stage_commit_crime_for_test(&mut game, alice);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
@@ -8455,7 +8534,7 @@ mod tests {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
 
-        game.life_gained_this_turn.insert(alice, 5);
+        stage_life_gain_for_test(&mut game, alice, 5);
 
         let spell_card = CardBuilder::new(CardId::from_raw(46), "Life Discount Variant")
             .card_types(vec![CardType::Creature])
@@ -8486,7 +8565,12 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
 
-        game.noncombat_damage_to_players_this_turn.insert(bob, 6);
+        stage_noncombat_damage_to_player_for_test(
+            &mut game,
+            ObjectId::from_raw(4701),
+            bob,
+            6,
+        );
 
         let spell_card = CardBuilder::new(CardId::from_raw(47), "Damage Discount Variant")
             .card_types(vec![CardType::Creature])
@@ -8619,7 +8703,7 @@ mod tests {
 
         game.cant_effects
             .add_cast_limit_filter(alice, crate::target::ObjectFilter::default());
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, ObjectId::from_raw(7801), alice, Zone::Hand);
 
         assert!(
             !can_cast_spell(&game, alice, &instant_obj, &CastingMethod::Normal),
@@ -8651,8 +8735,7 @@ mod tests {
                 .expect("prior noncreature must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_type(CardType::Creature),
@@ -8693,8 +8776,7 @@ mod tests {
                 .expect("prior noncreature must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_type(CardType::Creature),
@@ -8731,8 +8813,7 @@ mod tests {
                 .expect("prior nonartifact must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_type(CardType::Artifact),
@@ -8772,8 +8853,7 @@ mod tests {
                 .expect("prior nonartifact must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_type(CardType::Artifact),
@@ -8814,8 +8894,7 @@ mod tests {
                 .expect("prior non-Phyrexian must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_subtype(Subtype::Phyrexian),
@@ -8864,8 +8943,7 @@ mod tests {
                 .expect("prior non-Phyrexian must exist"),
             &game,
         );
-        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
-        game.spells_cast_this_turn.insert(alice, 1);
+        stage_spell_cast_for_test(&mut game, prior_snapshot.object_id, alice, Zone::Hand);
         game.cant_effects.add_cast_limit_filter(
             alice,
             crate::target::ObjectFilter::default().without_subtype(Subtype::Phyrexian),
@@ -10215,7 +10293,7 @@ mod tests {
             "spectacle alternative should not be available before an opponent loses life"
         );
 
-        game.life_lost_this_turn.insert(bob, 1);
+        stage_life_loss_for_test(&mut game, bob, 1);
         let card = game
             .object(card_id)
             .expect("spectacle card should still exist");

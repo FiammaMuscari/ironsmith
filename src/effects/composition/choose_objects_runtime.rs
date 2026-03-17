@@ -3,12 +3,14 @@
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::effect::{ChoiceCount, EffectOutcome, ExecutionFact};
+use crate::events::SearchLibraryEvent;
 use crate::effects::helpers::{resolve_player_filter, resolve_player_filter_to_list};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::{ObjectFilter, PlayerFilter};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 use super::choose_objects::ChooseObjectsEffect;
@@ -496,13 +498,21 @@ pub(crate) fn run_choose_objects(
     {
         return Ok(EffectOutcome::prevented());
     }
-    if effect.is_search && search_zones.contains(&Zone::Library) {
-        game.library_searches_this_turn.insert(chooser_id);
-    }
+    let search_event = (effect.is_search && search_zones.contains(&Zone::Library)).then(|| {
+        TriggerEvent::new_with_provenance(
+            SearchLibraryEvent::new(chooser_id, None),
+            ctx.provenance,
+        )
+    });
 
     let candidates = collect_candidates(effect, game, ctx, chooser_id)?;
     if candidates.is_empty() {
-        return Ok(EffectOutcome::count(0));
+        let outcome = EffectOutcome::count(0);
+        return Ok(if let Some(search_event) = search_event.clone() {
+            outcome.with_event(search_event)
+        } else {
+            outcome
+        });
     }
 
     let (min, max) = if effect.count.dynamic_x {
@@ -526,7 +536,12 @@ pub(crate) fn run_choose_objects(
         compute_choice_bounds(effect.count, candidates.len())
     };
     if max == 0 {
-        return Ok(EffectOutcome::count(0));
+        let outcome = EffectOutcome::count(0);
+        return Ok(if let Some(search_event) = search_event.clone() {
+            outcome.with_event(search_event)
+        } else {
+            outcome
+        });
     }
 
     let description = if effect.description == "Choose" {
@@ -555,7 +570,12 @@ pub(crate) fn run_choose_objects(
     };
     if ctx.decision_maker.awaiting_choice() {
         ctx.clear_object_tag(effect.tag.as_str());
-        return Ok(EffectOutcome::count(0));
+        let outcome = EffectOutcome::count(0);
+        return Ok(if let Some(search_event) = search_event {
+            outcome.with_event(search_event)
+        } else {
+            outcome
+        });
     }
     let chosen = normalize_chosen_objects(chosen, &candidates, min, max);
     let chosen =
@@ -572,8 +592,13 @@ pub(crate) fn run_choose_objects(
         ctx.clear_object_tag(effect.tag.as_str());
     }
 
-    Ok(EffectOutcome::with_objects(chosen.clone())
-        .with_execution_fact(ExecutionFact::ChosenObjects(chosen)))
+    let outcome = EffectOutcome::with_objects(chosen.clone())
+        .with_execution_fact(ExecutionFact::ChosenObjects(chosen));
+    Ok(if let Some(search_event) = search_event {
+        outcome.with_event(search_event)
+    } else {
+        outcome
+    })
 }
 
 #[cfg(test)]

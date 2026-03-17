@@ -28,8 +28,6 @@ pub mod grant_registry;
 pub mod ids;
 pub mod mana;
 pub mod marker;
-#[cfg(feature = "net")]
-pub mod net;
 pub mod object;
 pub(crate) mod object_query;
 pub mod player;
@@ -49,6 +47,7 @@ pub mod targeting;
 pub(crate) mod trigger_identity;
 pub mod triggers;
 pub mod turn;
+pub mod turn_history;
 pub mod turn_runner;
 pub mod types;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -172,6 +171,7 @@ pub use turn::{
     is_no_priority_step, is_sorcery_timing, next_phase, next_step, pass_priority, priority_holder,
     reset_priority,
 };
+pub use turn_history::{TurnEventRecord, TurnHistory};
 pub use turn_runner::{TurnAction, TurnRunner, TurnState as TurnRunnerState};
 
 // Trait-based events module re-exports
@@ -203,6 +203,7 @@ pub use events::{
     ReplacementMatcher,
     ReplacementPriority as NewReplacementPriority,
     SacrificeEvent,
+    SearchLibraryEvent,
     TapEvent,
     ThisWouldBeDestroyedMatcher,
     ThisWouldDieMatcher,

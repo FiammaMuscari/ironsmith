@@ -52,8 +52,8 @@ impl EffectExecutor for ChooseSpellCastHistoryEffect {
         let caster_ids =
             resolve_player_filter_to_list(game, &self.cast_by, &ctx.filter_context(game), ctx)?;
         let filter_ctx = ctx.filter_context(game);
-        let candidates = game
-            .spells_cast_this_turn_snapshots
+        let history = game.turn_history.spell_cast_snapshot_history();
+        let candidates = history
             .iter()
             .filter(|snapshot| {
                 snapshot.cast_order_this_turn.is_some()

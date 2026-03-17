@@ -954,136 +954,39 @@ pub(super) fn pip_mana_color_restriction(
     }
 }
 
-#[cfg(feature = "net")]
 pub(super) fn record_pip_payment_action(trace: &mut Vec<CostStep>, action: &ManaPipPaymentAction) {
-    match action {
-        ManaPipPaymentAction::UseFromPool(symbol) => {
-            trace.push(CostStep::Mana(ManaSymbolSpec::from(*symbol)));
-        }
-        ManaPipPaymentAction::PayLife(amount) => {
-            let capped = (*amount).min(u8::MAX as u32) as u8;
-            trace.push(CostStep::Mana(ManaSymbolSpec {
-                symbol: ManaSymbolCode::Life,
-                value: capped,
-            }));
-        }
-        ManaPipPaymentAction::ActivateManaAbility {
-            source_id,
-            ability_index,
-        } => {
-            trace.push(CostStep::Payment(CostPayment::ActivateManaAbility {
-                source: GameObjectId(source_id.0),
-                ability_index: (*ability_index).min(u32::MAX as usize) as u32,
-            }));
-        }
-        ManaPipPaymentAction::PayViaAlternative { permanent_id, .. } => {
-            trace.push(CostStep::Payment(CostPayment::Tap {
-                objects: vec![GameObjectId(permanent_id.0)],
-            }));
-        }
-    }
+    let _ = trace;
+    let _ = action;
 }
 
-#[cfg(not(feature = "net"))]
-pub(super) fn record_pip_payment_action(
-    _trace: &mut Vec<CostStep>,
-    _action: &ManaPipPaymentAction,
-) {
-}
-
-#[cfg(feature = "net")]
 pub(super) fn record_immediate_cost_payment(
     trace: &mut Vec<CostStep>,
     cost: &crate::costs::Cost,
     source: ObjectId,
 ) {
-    let source_id = GameObjectId(source.0);
-
-    if cost.requires_tap() {
-        trace.push(CostStep::Payment(CostPayment::Tap {
-            objects: vec![source_id],
-        }));
-        return;
-    }
-
-    if cost.requires_untap() {
-        trace.push(CostStep::Payment(CostPayment::Untap {
-            objects: vec![source_id],
-        }));
-        return;
-    }
-
-    if cost.is_life_cost() {
-        if let Some(amount) = cost.life_amount() {
-            trace.push(CostStep::Payment(CostPayment::Life { amount }));
-            return;
-        }
-    }
-
-    if cost.is_sacrifice_self() {
-        trace.push(CostStep::Payment(CostPayment::Sacrifice {
-            objects: vec![source_id],
-        }));
-        return;
-    }
-
-    // Fallback: preserve order with an opaque payment tag.
-    trace.push(CostStep::Payment(CostPayment::Other {
-        tag: 0,
-        data: cost.display().into_bytes(),
-    }));
+    let _ = trace;
+    let _ = cost;
+    let _ = source;
 }
 
-#[cfg(not(feature = "net"))]
-pub(super) fn record_immediate_cost_payment(
-    _trace: &mut Vec<CostStep>,
-    _cost: &crate::costs::Cost,
-    _source: ObjectId,
-) {
-}
-
-#[cfg(feature = "net")]
 pub(super) fn record_cast_mana_ability_payment(
     pending: &mut PendingCast,
     source: ObjectId,
     ability_index: usize,
 ) {
-    pending
-        .payment_trace
-        .push(CostStep::Payment(CostPayment::ActivateManaAbility {
-            source: GameObjectId(source.0),
-            ability_index: ability_index.min(u32::MAX as usize) as u32,
-        }));
+    let _ = pending;
+    let _ = source;
+    let _ = ability_index;
 }
 
-#[cfg(not(feature = "net"))]
-pub(super) fn record_cast_mana_ability_payment(
-    _pending: &mut PendingCast,
-    _source: ObjectId,
-    _ability_index: usize,
-) {
-}
-
-#[cfg(feature = "net")]
 pub(super) fn record_activation_mana_ability_payment(
     pending: &mut PendingActivation,
     source: ObjectId,
     ability_index: usize,
 ) {
-    pending
-        .payment_trace
-        .push(CostStep::Payment(CostPayment::ActivateManaAbility {
-            source: GameObjectId(source.0),
-            ability_index: ability_index.min(u32::MAX as usize) as u32,
-        }));
-}
-
-#[cfg(not(feature = "net"))]
-pub(super) fn record_activation_mana_ability_payment(
-    _pending: &mut PendingActivation,
-    _source: ObjectId,
-    _ability_index: usize,
-) {
+    let _ = pending;
+    let _ = source;
+    let _ = ability_index;
 }
 
 /// Execute a pip payment action.
@@ -2200,14 +2103,6 @@ pub(super) fn apply_sacrifice_target_response(
                 decision_maker,
             )?;
 
-            #[cfg(feature = "net")]
-            {
-                pending
-                    .payment_trace
-                    .push(CostStep::Payment(CostPayment::Sacrifice {
-                        objects: vec![GameObjectId(target_id.0)],
-                    }));
-            }
             drain_pending_trigger_events(game, trigger_queue);
 
             pending.remaining_cost_steps.remove(0);
@@ -2255,14 +2150,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Discard {
-                                objects: vec![GameObjectId(target_id.0)],
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileFromHand {
@@ -2292,15 +2179,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(target_id.0)],
-                                from_zone: ZoneCode::Hand,
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileFromGraveyard {
@@ -2326,15 +2204,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(target_id.0)],
-                                from_zone: ZoneCode::Graveyard,
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileChosenObject {
@@ -2369,15 +2238,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(target_id.0)],
-                                from_zone: zone.into(),
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::RevealFromHand {
@@ -2407,14 +2267,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Reveal {
-                                objects: vec![GameObjectId(target_id.0)],
-                            }));
-                    }
                 }
                 ActivationCardCostChoice::ReturnToHand {
                     cost,
@@ -2447,14 +2299,6 @@ pub(super) fn apply_sacrifice_target_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::ReturnToHand {
-                                objects: vec![GameObjectId(target_id.0)],
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
             }
@@ -2525,14 +2369,6 @@ pub(super) fn apply_card_cost_choice_response(
                 decision_maker,
             )?;
 
-            #[cfg(feature = "net")]
-            {
-                pending
-                    .payment_trace
-                    .push(CostStep::Payment(CostPayment::Sacrifice {
-                        objects: vec![GameObjectId(chosen_id.0)],
-                    }));
-            }
             drain_pending_trigger_events(game, trigger_queue);
 
             pending.remaining_cost_steps.remove(0);
@@ -2587,14 +2423,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Discard {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileFromHand {
@@ -2625,15 +2453,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                                from_zone: ZoneCode::Hand,
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileFromGraveyard {
@@ -2660,15 +2479,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                                from_zone: ZoneCode::Graveyard,
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::ExileChosenObject {
@@ -2703,15 +2513,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Exile {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                                from_zone: zone.into(),
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
                 ActivationCardCostChoice::RevealFromHand {
@@ -2741,14 +2542,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::Reveal {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                            }));
-                    }
                 }
                 ActivationCardCostChoice::ReturnToHand {
                     cost,
@@ -2781,14 +2574,6 @@ pub(super) fn apply_card_cost_choice_response(
                         decision_maker,
                     )?;
 
-                    #[cfg(feature = "net")]
-                    {
-                        pending
-                            .payment_trace
-                            .push(CostStep::Payment(CostPayment::ReturnToHand {
-                                objects: vec![GameObjectId(chosen_id.0)],
-                            }));
-                    }
                     drain_pending_trigger_events(game, trigger_queue);
                 }
             }
@@ -3059,7 +2844,6 @@ pub(super) fn finalize_spell_cast(
     _decision_maker: &mut impl DecisionMaker,
 ) -> Result<SpellCastResult, GameLoopError> {
     use crate::decision::calculate_effective_mana_cost_with_chosen_targets;
-    #[cfg(not(feature = "net"))]
     let _ = payment_trace;
 
     // Get the mana cost, alternative additional cost, and exile count based on casting method.
@@ -3156,16 +2940,6 @@ pub(super) fn finalize_spell_cast(
             Vec::new()
         };
 
-        #[cfg(feature = "net")]
-        {
-            if !cards_to_exile.is_empty() {
-                payment_trace.push(CostStep::Payment(CostPayment::Exile {
-                    objects: cards_to_exile.iter().map(|id| GameObjectId(id.0)).collect(),
-                    from_zone: ZoneCode::Graveyard,
-                }));
-            }
-        }
-
         // Move to exile (move_object handles removal from old zone)
         for card_id in cards_to_exile {
             game.move_object(card_id, Zone::Exile);
@@ -3214,16 +2988,6 @@ pub(super) fn finalize_spell_cast(
             ));
         }
 
-        #[cfg(feature = "net")]
-        {
-            if !cards_to_exile.is_empty() {
-                payment_trace.push(CostStep::Payment(CostPayment::Exile {
-                    objects: cards_to_exile.iter().map(|id| GameObjectId(id.0)).collect(),
-                    from_zone: ZoneCode::Graveyard,
-                }));
-            }
-        }
-
         // Move to exile (move_object handles removal from old zone)
         for card_id in cards_to_exile {
             game.move_object(card_id, Zone::Exile);
@@ -3264,28 +3028,21 @@ pub(super) fn finalize_spell_cast(
         provenance,
     );
 
-    // Track that a spell was cast this turn (per-caster)
-    *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
     if from_zone == Zone::Command {
         game.record_commander_cast_from_command_zone(new_id);
-    }
-    game.spells_cast_this_turn_total = game.spells_cast_this_turn_total.saturating_add(1);
-    game.spell_cast_order_this_turn
-        .insert(new_id, game.spells_cast_this_turn_total);
-    if let Some(obj) = game.object(new_id) {
-        game.spells_cast_this_turn_snapshots
-            .push(ObjectSnapshot::from_object(obj, game));
     }
 
     // Expend: "You expend N as you spend your Nth total mana to cast spells during a turn."
     let prev_mana_spent = game
+        .turn_history
         .mana_spent_to_cast_spells_this_turn
         .get(&caster)
         .copied()
         .unwrap_or(0);
     if mana_spent_total > 0 {
         let new_mana_spent_total = prev_mana_spent.saturating_add(mana_spent_total);
-        game.mana_spent_to_cast_spells_this_turn
+        game.turn_history
+            .mana_spent_to_cast_spells_this_turn
             .insert(caster, new_mana_spent_total);
 
         for threshold in (prev_mana_spent.saturating_add(1))..=new_mana_spent_total {

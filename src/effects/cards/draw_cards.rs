@@ -66,11 +66,7 @@ impl EffectExecutor for DrawCardsEffect {
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
 
         // Check if this is the first draw this turn
-        let current_draws = game
-            .cards_drawn_this_turn
-            .get(&player_id)
-            .copied()
-            .unwrap_or(0);
+        let current_draws = game.turn_history.cards_drawn_by_player(player_id);
         let is_first = current_draws == 0;
 
         // Check for "can't draw extra cards" restriction (e.g., Narset)
@@ -95,12 +91,6 @@ impl EffectExecutor for DrawCardsEffect {
                     final_count as usize,
                     &mut *ctx.decision_maker,
                 );
-
-                // Track cards drawn this turn
-                let cards_before = *game.cards_drawn_this_turn.entry(player_id).or_insert(0);
-                *game.cards_drawn_this_turn.entry(player_id).or_insert(0) += drawn.len() as u32;
-
-                let is_first = cards_before == 0;
                 let count = drawn.len() as i32;
 
                 // Only emit event if cards were actually drawn
@@ -108,7 +98,6 @@ impl EffectExecutor for DrawCardsEffect {
                     return Ok(EffectOutcome::count(0));
                 }
 
-                // Create a single CardsDrawnEvent with all drawn cards
                 let event = TriggerEvent::new_with_provenance(
                     CardsDrawnEvent::new(player_id, drawn, is_first),
                     ctx.provenance,
@@ -180,21 +169,17 @@ mod tests {
 
         // First draw
         let effect = DrawCardsEffect::you(2);
-        effect.execute(&mut game, &mut ctx).unwrap();
+        crate::executor::execute_effect(&mut game, &crate::effect::Effect::new(effect), &mut ctx)
+            .unwrap();
 
-        assert_eq!(
-            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
-            2
-        );
+        assert_eq!(game.turn_history.cards_drawn_by_player(alice), 2);
 
         // Second draw
         let effect = DrawCardsEffect::you(1);
-        effect.execute(&mut game, &mut ctx).unwrap();
+        crate::executor::execute_effect(&mut game, &crate::effect::Effect::new(effect), &mut ctx)
+            .unwrap();
 
-        assert_eq!(
-            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
-            3
-        );
+        assert_eq!(game.turn_history.cards_drawn_by_player(alice), 3);
     }
 
     #[test]
@@ -320,6 +305,7 @@ mod tests {
         let event = result.events[0].downcast::<CardsDrawnEvent>().unwrap();
         assert!(event.is_first_this_turn);
         assert_eq!(event.cards.len(), 2);
+        game.stage_turn_history_event(&result.events[0]);
 
         // Second draw of turn
         let effect2 = DrawCardsEffect::you(1);

@@ -735,13 +735,7 @@ impl ReplacementMatcher for ThisWouldEnterWithBloodthirstMatcher {
         ctx.game.players.iter().any(|player| {
             player.is_in_game()
                 && player.id != ctx.controller
-                && ctx
-                    .game
-                    .damage_to_players_this_turn
-                    .get(&player.id)
-                    .copied()
-                    .unwrap_or(0)
-                    > 0
+                && ctx.game.turn_history.player_was_dealt_damage_this_turn(player.id)
         })
     }
 
@@ -2973,7 +2967,16 @@ mod tests {
         let source = ObjectId::from_raw(42);
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
-        game.damage_to_players_this_turn.insert(bob, 3);
+        let damage_event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::DamageEvent::new(
+                source,
+                crate::game_event::DamageTarget::Player(bob),
+                3,
+                false,
+            ),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&damage_event);
 
         let ability = Bloodthirst::new(2);
         let replacement = ability
@@ -3020,7 +3023,7 @@ mod tests {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let source = ObjectId::from_raw(52);
         let alice = PlayerId::from_index(0);
-        game.players_attacked_this_turn.insert(alice);
+        game.turn_history.players_attacked_this_turn.insert(alice);
 
         let ability = EntersWithCountersIfCondition::new(
             CounterType::PlusOnePlusOne,
@@ -3076,7 +3079,11 @@ mod tests {
         let source = ObjectId::from_raw(52);
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
-        game.life_lost_this_turn.insert(bob, 2);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::LifeLossEvent::from_effect(bob, 2),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
 
         let ability = EntersWithCountersIfCondition::new(
             CounterType::PlusOnePlusOne,
@@ -3104,7 +3111,8 @@ mod tests {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let source = ObjectId::from_raw(52);
         let alice = PlayerId::from_index(0);
-        game.permanents_left_battlefield_under_controller_this_turn
+        game.turn_history
+            .permanents_left_battlefield_under_controller_this_turn
             .insert(alice, 1);
 
         let ability = EntersWithCountersIfCondition::new(

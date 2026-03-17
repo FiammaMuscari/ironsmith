@@ -21,7 +21,7 @@ fn source_was_cast(
     {
         return etb.from == Zone::Stack;
     }
-    game.spell_cast_order_this_turn.contains_key(&source)
+    game.turn_history.spell_cast_order(source).is_some()
 }
 
 fn player_has_card_in_hand_matching(
@@ -90,26 +90,25 @@ fn evaluate_condition_shared_core(
             ctx.filter_source,
         )),
         Condition::YourTurn => Some(game.turn.active_player == ctx.controller),
-        Condition::CreatureDiedThisTurn => Some(game.creatures_died_this_turn > 0),
-        Condition::CastSpellThisTurn => {
-            Some(game.spells_cast_this_turn.values().any(|&count| count > 0))
-        }
-        Condition::AttackedThisTurn => {
-            Some(game.players_attacked_this_turn.contains(&ctx.controller))
-        }
+        Condition::CreatureDiedThisTurn => Some(game.turn_history.creatures_died_this_turn > 0),
+        Condition::CastSpellThisTurn => Some(game.turn_history.any_spell_was_cast_this_turn()),
+        Condition::AttackedThisTurn => Some(
+            game.turn_history
+                .players_attacked_this_turn
+                .contains(&ctx.controller),
+        ),
         Condition::OpponentLostLifeThisTurn => {
             let filter_ctx = game.filter_context_for(ctx.controller, ctx.filter_source);
             Some(
-                filter_ctx.opponents.iter().any(|opponent| {
-                    game.life_lost_this_turn.get(opponent).copied().unwrap_or(0) > 0
-                }),
+                filter_ctx
+                    .opponents
+                    .iter()
+                    .any(|opponent| game.turn_history.player_lost_life_this_turn(*opponent)),
             )
         }
         Condition::PermanentLeftBattlefieldUnderYourControlThisTurn => Some(
-            game.permanents_left_battlefield_under_controller_this_turn
-                .get(&ctx.controller)
-                .copied()
-                .unwrap_or(0)
+            game.turn_history
+                .permanents_left_battlefield_under_controller(ctx.controller)
                 > 0,
         ),
         Condition::SourceWasCast => Some(source_was_cast(game, ctx.source, ctx.triggering_event)),
@@ -413,7 +412,7 @@ pub fn evaluate_condition_external(
             };
             let cast_count: u32 = players
                 .iter()
-                .map(|pid| game.spells_cast_this_turn.get(pid).copied().unwrap_or(0))
+                .map(|pid| game.turn_history.spells_cast_by_player(*pid))
                 .sum();
             cast_count >= *count
         }
@@ -421,7 +420,8 @@ pub fn evaluate_condition_external(
             let Some(player_id) = resolve_condition_player_external(game, ctx, player) else {
                 return false;
             };
-            game.players_tapped_land_for_mana_this_turn
+            game.turn_history
+                .players_tapped_land_for_mana_this_turn
                 .contains(&player_id)
         }
         Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
@@ -1056,16 +1056,8 @@ fn count_distinct_matching_powers(
 }
 
 fn player_had_land_enter_battlefield_this_turn(game: &GameState, player_id: PlayerId) -> bool {
-    game.objects_entered_battlefield_this_turn
-        .iter()
-        .any(|(stable_id, entry_controller)| {
-            *entry_controller == player_id
-                && game
-                    .find_object_by_stable_id(*stable_id)
-                    .is_some_and(|object_id| {
-                        game.object_has_card_type(object_id, crate::types::CardType::Land)
-                    })
-        })
+    game.turn_history
+        .player_had_land_enter_battlefield_this_turn(game, player_id)
 }
 
 /// Evaluate a condition with minimal context (for cast-time evaluation).
@@ -1448,7 +1440,7 @@ fn evaluate_condition_simple(
             };
             let cast_count: u32 = players
                 .iter()
-                .map(|pid| game.spells_cast_this_turn.get(pid).copied().unwrap_or(0))
+                .map(|pid| game.turn_history.spells_cast_by_player(*pid))
                 .sum();
             cast_count >= *count
         }
@@ -1456,7 +1448,8 @@ fn evaluate_condition_simple(
             let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
                 return false;
             };
-            game.players_tapped_land_for_mana_this_turn
+            game.turn_history
+                .players_tapped_land_for_mana_this_turn
                 .contains(&player_id)
         }
         Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
@@ -1949,13 +1942,14 @@ fn evaluate_condition(
             };
             let cast_count: u32 = player_ids
                 .iter()
-                .map(|pid| game.spells_cast_this_turn.get(pid).copied().unwrap_or(0))
+                .map(|pid| game.turn_history.spells_cast_by_player(*pid))
                 .sum();
             Ok(cast_count >= *count)
         }
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             Ok(game
+                .turn_history
                 .players_tapped_land_for_mana_this_turn
                 .contains(&player_id))
         }
@@ -1987,11 +1981,7 @@ fn evaluate_condition(
         Condition::TargetSpellCastOrderThisTurn(order) => {
             for target in &ctx.targets {
                 if let crate::executor::ResolvedTarget::Object(id) = target {
-                    let actual = game
-                        .spell_cast_order_this_turn
-                        .get(id)
-                        .copied()
-                        .unwrap_or(0);
+                    let actual = game.turn_history.spell_cast_order(*id).unwrap_or(0);
                     return Ok(actual == *order);
                 }
             }
@@ -2231,9 +2221,9 @@ fn evaluate_condition(
                 return Ok(false);
             };
             Ok(tagged.iter().any(|snapshot| {
-                game.objects_entered_battlefield_this_turn
-                    .get(&snapshot.stable_id)
-                    .is_some_and(|entry_controller| *entry_controller == player_id)
+                game.turn_history
+                    .object_entered_battlefield_controller_this_turn(snapshot.stable_id)
+                    .is_some_and(|entry_controller| entry_controller == player_id)
             }))
         }
         Condition::FirstTimeThisTurn | Condition::MaxTimesEachTurn(_) => Ok(true),

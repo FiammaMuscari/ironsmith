@@ -311,7 +311,7 @@ pub fn resolve_value(
             }
             Ok(seen.len() as i32)
         }
-        Value::CreaturesDiedThisTurn => Ok(game.creatures_died_this_turn as i32),
+        Value::CreaturesDiedThisTurn => Ok(game.turn_history.creatures_died_this_turn as i32),
         Value::CreaturesDiedThisTurnControlledBy(player_filter) => {
             let filter_ctx = ctx.filter_context(game);
             let mut total = 0i32;
@@ -320,6 +320,7 @@ pub fn resolve_value(
                     continue;
                 }
                 total += game
+                    .turn_history
                     .creatures_died_under_controller_this_turn
                     .get(&player.id)
                     .copied()
@@ -544,35 +545,21 @@ pub fn resolve_value(
         Value::LifeGainedThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let total: u32 = player_ids
-                .iter()
-                .map(|pid| game.life_gained_this_turn.get(pid).copied().unwrap_or(0))
-                .sum();
+            let total = game.turn_history.total_life_gained_for_players(&player_ids);
             Ok(total as i32)
         }
 
         Value::LifeLostThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let total: u32 = player_ids
-                .iter()
-                .map(|pid| game.life_lost_this_turn.get(pid).copied().unwrap_or(0))
-                .sum();
+            let total = game.turn_history.total_life_lost_for_players(&player_ids);
             Ok(total as i32)
         }
 
         Value::NoncombatDamageDealtToPlayersThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let total: u32 = player_ids
-                .iter()
-                .map(|pid| {
-                    game.noncombat_damage_to_players_this_turn
-                        .get(pid)
-                        .copied()
-                        .unwrap_or(0)
-                })
-                .sum();
+            let total = game.turn_history.total_noncombat_damage_to_players(&player_ids);
             Ok(total as i32)
         }
 
@@ -597,16 +584,12 @@ pub fn resolve_value(
         Value::MaxCardsDrawnThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let mut max_count: Option<i32> = None;
-            for pid in player_ids {
-                let count = game.cards_drawn_this_turn.get(&pid).copied().unwrap_or(0) as i32;
-                max_count = Some(max_count.map_or(count, |prev| prev.max(count)));
-            }
-            Ok(max_count.ok_or_else(|| {
-                ExecutionError::UnresolvableValue(
+            if player_ids.is_empty() {
+                return Err(ExecutionError::UnresolvableValue(
                     "MaxCardsDrawnThisTurn requires a matching player".to_string(),
-                )
-            })?)
+                ));
+            }
+            Ok(game.turn_history.max_cards_drawn_for_players(&player_ids) as i32)
         }
 
         Value::CardsInGraveyard(player_spec) => {
@@ -620,20 +603,13 @@ pub fn resolve_value(
         Value::SpellsCastThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let count: u32 = player_ids
-                .iter()
-                .map(|pid| game.spells_cast_this_turn.get(pid).copied().unwrap_or(0))
-                .sum();
-            Ok(count as i32)
+            Ok(game.turn_history.total_spells_cast_for_players(&player_ids) as i32)
         }
 
         Value::SpellsCastBeforeThisTurn(player_spec) => {
             let player_ids =
                 resolve_player_filter_to_list(game, player_spec, &ctx.filter_context(game), ctx)?;
-            let count: i32 = player_ids
-                .iter()
-                .map(|pid| game.spells_cast_this_turn.get(pid).copied().unwrap_or(0) as i32)
-                .sum();
+            let count = game.turn_history.total_spells_cast_for_players(&player_ids) as i32;
             Ok((count - 1).max(0))
         }
 
@@ -646,14 +622,14 @@ pub fn resolve_value(
                 resolve_player_filter_to_list(game, player, &ctx.filter_context(game), ctx)?;
             let filter_ctx = ctx.filter_context(game);
             let mut count: i32 = 0;
-            for snapshot in &game.spells_cast_this_turn_snapshots {
+            for snapshot in game.turn_history.spell_cast_snapshot_history() {
                 if *exclude_source && snapshot.object_id == ctx.source {
                     continue;
                 }
                 if !player_ids.iter().any(|pid| *pid == snapshot.controller) {
                     continue;
                 }
-                if filter.matches_snapshot(snapshot, &filter_ctx, game) {
+                if filter.matches_snapshot(&snapshot, &filter_ctx, game) {
                     count = count.saturating_add(1);
                 }
             }
@@ -666,16 +642,10 @@ pub fn resolve_value(
                     "DamageDealtThisTurnByTaggedSpellCast requires tagged spell snapshot '{tag}'"
                 ))
             })?;
-            let cast_order = snapshot.cast_order_this_turn.ok_or_else(|| {
-                ExecutionError::UnresolvableValue(format!(
-                    "tagged snapshot '{tag}' is missing cast-order history"
-                ))
-            })?;
             Ok(game
-                .damage_dealt_by_spell_cast_this_turn
-                .get(&cast_order)
-                .copied()
-                .unwrap_or(0) as i32)
+                .turn_history
+                .damage_dealt_by_spell_this_turn(&game.provenance_graph, snapshot.object_id)
+                as i32)
         }
 
         Value::CardTypesInGraveyard(player_spec) => {
@@ -2164,9 +2134,12 @@ pub(crate) fn resolve_player_filter_to_list(
             .iter()
             .filter(|player| player.is_in_game())
             .filter(|player| {
-                game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
-                    snapshot.controller == player.id && snapshot.card_types.contains(card_type)
-                })
+                game.turn_history
+                    .spell_cast_snapshot_history()
+                    .iter()
+                    .any(|snapshot| {
+                        snapshot.controller == player.id && snapshot.card_types.contains(card_type)
+                    })
             })
             .map(|player| player.id)
             .collect()),

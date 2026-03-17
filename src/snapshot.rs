@@ -159,7 +159,7 @@ impl ObjectSnapshot {
             aura_attach_filter: obj.aura_attach_filter.clone(),
             max_saga_chapter: obj.max_saga_chapter,
             x_value: obj.x_value,
-            cast_order_this_turn: game.spell_cast_order_this_turn.get(&obj.id).copied(),
+            cast_order_this_turn: game.turn_history.spell_cast_order(obj.id),
 
             // Non-copiable state (from game state extension maps)
             counters: obj.counters.clone(),

@@ -92,10 +92,12 @@ pub(crate) fn move_to_battlefield_with_options(
         .object(new_id)
         .map(|obj| (obj.stable_id, obj.controller, obj.is_creature()))
     {
-        game.objects_entered_battlefield_this_turn
+        game.turn_history
+            .objects_entered_battlefield_this_turn
             .insert(stable_id, controller);
         if is_creature {
             *game
+                .turn_history
                 .creatures_entered_this_turn
                 .entry(controller)
                 .or_insert(0) += 1;

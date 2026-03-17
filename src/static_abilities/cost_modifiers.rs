@@ -933,24 +933,12 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             .players
             .iter()
             .filter(|player| player.is_in_game() && player.id != controller)
-            .any(|player| {
-                game.spells_cast_this_turn
-                    .get(&player.id)
-                    .copied()
-                    .unwrap_or(0)
-                    >= *n
-            }),
+            .any(|player| game.turn_history.spells_cast_by_player(player.id) >= *n),
         ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(n) => game
             .players
             .iter()
             .filter(|player| player.is_in_game() && player.id != controller)
-            .any(|player| {
-                game.cards_drawn_this_turn
-                    .get(&player.id)
-                    .copied()
-                    .unwrap_or(0)
-                    >= *n
-            }),
+            .any(|player| game.turn_history.cards_drawn_by_player(player.id) >= *n),
         ThisSpellCostCondition::ConditionExpr {
             condition: expr, ..
         } => {
@@ -965,14 +953,11 @@ pub fn this_spell_cost_condition_is_active_for_cast(
         }
         ThisSpellCostCondition::YouCastSpellsThisTurnOrMore { count, card_types } => {
             if card_types.is_empty() {
-                game.spells_cast_this_turn
-                    .get(&controller)
-                    .copied()
-                    .unwrap_or(0)
-                    >= *count
+                game.turn_history.spells_cast_by_player(controller) >= *count
             } else {
                 let matching = game
-                    .spells_cast_this_turn_snapshots
+                    .turn_history
+                    .spell_cast_snapshot_history()
                     .iter()
                     .filter(|snapshot| snapshot.controller == controller)
                     .filter(|snapshot| {
@@ -985,11 +970,7 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             }
         }
         ThisSpellCostCondition::YouGainedLifeThisTurnOrMore(n) => {
-            game.life_gained_this_turn
-                .get(&controller)
-                .copied()
-                .unwrap_or(0)
-                >= *n
+            game.turn_history.total_life_gained_for_players(&[controller]) >= *n
         }
         ThisSpellCostCondition::OpponentHasPoisonCountersOrMore(n) => game
             .players
@@ -1006,24 +987,14 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             .is_some_and(|player| player.life < player.starting_life),
         ThisSpellCostCondition::IsNight => game.is_night,
         ThisSpellCostCondition::YouSacrificedArtifactThisTurn => {
-            game.artifacts_sacrificed_this_turn
-                .get(&controller)
-                .copied()
-                .unwrap_or(0)
-                > 0
+            game.turn_history.player_sacrificed_artifact_this_turn(controller)
         }
         ThisSpellCostCondition::YouCommittedCrimeThisTurn => {
-            game.crimes_committed_this_turn
-                .get(&controller)
-                .copied()
-                .unwrap_or(0)
-                > 0
+            game.turn_history.player_committed_crime_this_turn(controller)
         }
         ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn => {
-            game.creatures_left_battlefield_under_controller_this_turn
-                .get(&controller)
-                .copied()
-                .unwrap_or(0)
+            game.turn_history
+                .creatures_left_battlefield_under_controller(controller)
                 > 0
         }
         ThisSpellCostCondition::DistinctCardTypesInYourGraveyardOrMore(n) => {
@@ -1121,8 +1092,8 @@ pub fn this_spell_cost_condition_is_active_for_cast(
                 game.object(*card_id).is_some_and(|object| {
                     game.object_has_card_type(object.id, CardType::Creature)
                         && game
-                            .objects_put_into_graveyard_this_turn
-                            .contains(&object.stable_id)
+                            .turn_history
+                            .object_was_put_into_graveyard_this_turn(object.stable_id)
                 })
             })
         }

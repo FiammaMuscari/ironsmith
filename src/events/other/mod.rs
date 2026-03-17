@@ -10,6 +10,7 @@ mod markers_changed;
 mod permanent_tapped;
 mod permanent_untapped;
 mod players_finished_voting;
+mod search_library;
 mod transformed;
 mod turned_face_up;
 
@@ -23,5 +24,6 @@ pub use markers_changed::{MarkerChangeType, MarkersChangedEvent};
 pub use permanent_tapped::PermanentTappedEvent;
 pub use permanent_untapped::PermanentUntappedEvent;
 pub use players_finished_voting::{PlayerVote, PlayersFinishedVotingEvent};
+pub use search_library::SearchLibraryEvent;
 pub use transformed::TransformedEvent;
 pub use turned_face_up::TurnedFaceUpEvent;

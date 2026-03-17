@@ -814,6 +814,9 @@ pub fn execute_effect(
                 event.set_provenance(node);
             }
         }
+        for event in &outcome.events {
+            game.stage_turn_history_event(event);
+        }
     }
 
     Ok(outcome)

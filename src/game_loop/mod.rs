@@ -41,9 +41,6 @@ use crate::filter::{FilterContext, ObjectFilter};
 use crate::game_event::DamageTarget as EventDamageTarget;
 use crate::game_state::{GameState, StackEntry, Step, Target};
 use crate::ids::{ObjectId, PlayerId, StableId};
-#[cfg(feature = "net")]
-use crate::net::{CostPayment, CostStep, GameObjectId, ManaSymbolCode, ManaSymbolSpec, ZoneCode};
-#[cfg(not(feature = "net"))]
 type CostStep = ();
 use crate::object::CounterType;
 use crate::player::ManaPool;

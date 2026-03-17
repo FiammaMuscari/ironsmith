@@ -85,6 +85,22 @@ impl ProvenanceGraph {
         }
     }
 
+    pub fn is_descendant_of(&self, node: ProvNodeId, ancestor: ProvNodeId) -> bool {
+        if node == ProvNodeId::default() || ancestor == ProvNodeId::default() {
+            return false;
+        }
+
+        let mut current = Some(node);
+        while let Some(id) = current {
+            if id == ancestor {
+                return true;
+            }
+            current = self.node(id).and_then(|entry| entry.parent);
+        }
+
+        false
+    }
+
     fn alloc_node(&mut self, parent: Option<ProvNodeId>, kind: ProvenanceNodeKind) -> ProvNodeId {
         self.next_id = self
             .next_id

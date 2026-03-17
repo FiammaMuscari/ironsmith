@@ -104,7 +104,7 @@ pub use other::{
     BecameMonstrousEvent, CardDiscardedEvent, CardsDrawnEvent, CounterPlacedEvent,
     KeywordActionEvent, KeywordActionKind, LandPlayedEvent, MarkerChangeType, MarkersChangedEvent,
     PermanentTappedEvent, PermanentUntappedEvent, PlayerVote, PlayersFinishedVotingEvent,
-    TransformedEvent, TurnedFaceUpEvent,
+    SearchLibraryEvent, TransformedEvent, TurnedFaceUpEvent,
 };
 pub use phase::{
     BeginningOfCombatEvent, BeginningOfDrawStepEvent, BeginningOfEndStepEvent,

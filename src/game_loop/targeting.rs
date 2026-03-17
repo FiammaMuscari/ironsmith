@@ -65,91 +65,7 @@ pub(super) fn queue_triggers_from_event(
     event: TriggerEvent,
     include_delayed: bool,
 ) {
-    if let Some(damage_event) = event.downcast::<DamageEvent>() {
-        if let Some(cast_order) = game
-            .spell_cast_order_this_turn
-            .get(&damage_event.source)
-            .copied()
-        {
-            *game
-                .damage_dealt_by_spell_cast_this_turn
-                .entry(cast_order)
-                .or_insert(0) += damage_event.amount;
-        }
-        if let EventDamageTarget::Player(player_id) = damage_event.target {
-            *game
-                .damage_to_players_this_turn
-                .entry(player_id)
-                .or_insert(0) += damage_event.amount;
-            if !damage_event.is_combat {
-                *game
-                    .noncombat_damage_to_players_this_turn
-                    .entry(player_id)
-                    .or_insert(0) += damage_event.amount;
-            }
-
-            if game
-                .object(damage_event.source)
-                .map(|o| o.is_creature())
-                .unwrap_or(false)
-            {
-                *game
-                    .creature_damage_to_players_this_turn
-                    .entry(player_id)
-                    .or_insert(0) += damage_event.amount;
-            }
-        }
-    }
-    if let Some(life_gain_event) = event.downcast::<LifeGainEvent>() {
-        *game
-            .life_gained_this_turn
-            .entry(life_gain_event.player)
-            .or_insert(0) += life_gain_event.amount;
-    }
-    if let Some(life_loss_event) = event.downcast::<LifeLossEvent>() {
-        *game
-            .life_lost_this_turn
-            .entry(life_loss_event.player)
-            .or_insert(0) += life_loss_event.amount;
-    }
-    if let Some(keyword_action_event) = event.downcast::<KeywordActionEvent>()
-        && keyword_action_event.action == KeywordActionKind::CommitCrime
-    {
-        let committed = keyword_action_event.amount.max(1);
-        *game
-            .crimes_committed_this_turn
-            .entry(keyword_action_event.player)
-            .or_insert(0) += committed;
-    }
-    if let Some(sacrifice_event) = event.downcast::<SacrificeEvent>() {
-        let sacrificing_player = sacrifice_event
-            .sacrificing_player
-            .or_else(|| {
-                sacrifice_event
-                    .snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.controller)
-            })
-            .or_else(|| {
-                game.object(sacrifice_event.permanent)
-                    .map(|obj| obj.controller)
-            });
-        let sacrificed_artifact = sacrifice_event
-            .snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.card_types.contains(&CardType::Artifact))
-            || game
-                .object(sacrifice_event.permanent)
-                .is_some_and(|obj| obj.card_types.contains(&CardType::Artifact));
-        if sacrificed_artifact && let Some(player) = sacrificing_player {
-            *game
-                .artifacts_sacrificed_this_turn
-                .entry(player)
-                .or_insert(0) += 1;
-        }
-    }
-
-    game.record_trigger_event_kind(event.kind());
+    game.record_turn_history_event(&event);
     queue_triggers_for_event(game, trigger_queue, event.clone());
 
     if include_delayed {
@@ -280,7 +196,8 @@ pub(super) fn queue_ability_activated_event(
             .or_else(|| snapshot.as_ref().map(|snap| snap.is_land()))
             .unwrap_or(false);
         if is_land_source {
-            game.players_tapped_land_for_mana_this_turn
+            game.turn_history
+                .players_tapped_land_for_mana_this_turn
                 .insert(activator);
         }
     }
@@ -836,11 +753,13 @@ pub fn player_matches_filter_with_combat(
                 game.player(player_id)
                     .is_some_and(|player| player.is_in_game() && player.life == max_life)
             }),
-        PlayerFilter::CastCardTypeThisTurn(card_type) => {
-            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+        PlayerFilter::CastCardTypeThisTurn(card_type) => game
+            .turn_history
+            .spell_cast_snapshot_history()
+            .iter()
+            .any(|snapshot| {
                 snapshot.controller == player_id && snapshot.card_types.contains(card_type)
-            })
-        }
+            }),
         PlayerFilter::ChosenPlayer => false,
         PlayerFilter::TaggedPlayer(_) => false,
         PlayerFilter::IteratedPlayer => {

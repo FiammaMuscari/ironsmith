@@ -48,12 +48,7 @@ impl TriggerMatcher for PlayerDrawsNthCardEachTurnTrigger {
             return false;
         }
 
-        let total_after = ctx
-            .game
-            .cards_drawn_this_turn
-            .get(&e.player)
-            .copied()
-            .unwrap_or(0);
+        let total_after = ctx.game.turn_history.cards_drawn_by_player(e.player);
         let drawn_now = e.amount();
         let total_before = total_after.saturating_sub(drawn_now);
 
@@ -113,11 +108,16 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
 
-        game.cards_drawn_this_turn.insert(alice, 2);
+        let prior_event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::single(alice, ObjectId::from_raw(10), true),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&prior_event);
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
             crate::provenance::ProvNodeId::default(),
         );
+        game.stage_turn_history_event(&event);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);
@@ -130,7 +130,6 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
 
-        game.cards_drawn_this_turn.insert(alice, 2);
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::new(
                 alice,
@@ -139,6 +138,7 @@ mod tests {
             ),
             crate::provenance::ProvNodeId::default(),
         );
+        game.stage_turn_history_event(&event);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);
@@ -151,11 +151,20 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
 
-        game.cards_drawn_this_turn.insert(alice, 3);
+        let prior_event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::new(
+                alice,
+                vec![ObjectId::from_raw(10), ObjectId::from_raw(11)],
+                true,
+            ),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&prior_event);
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
             crate::provenance::ProvNodeId::default(),
         );
+        game.stage_turn_history_event(&event);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);

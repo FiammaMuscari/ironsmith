@@ -49,14 +49,11 @@ fn register_spell_cast_this_turn_for_test(
     spell_id: ObjectId,
     caster: PlayerId,
 ) {
-    *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
-    game.spells_cast_this_turn_total = game.spells_cast_this_turn_total.saturating_add(1);
-    game.spell_cast_order_this_turn
-        .insert(spell_id, game.spells_cast_this_turn_total);
-    if let Some(obj) = game.object(spell_id) {
-        game.spells_cast_this_turn_snapshots
-            .push(crate::snapshot::ObjectSnapshot::from_object(obj, game));
-    }
+    let event = TriggerEvent::new_with_provenance(
+        crate::events::spells::SpellCastEvent::new(spell_id, caster, Zone::Hand),
+        crate::provenance::ProvNodeId::default(),
+    );
+    game.stage_turn_history_event(&event);
 }
 
 fn resolve_spell_definition_with_dm(
@@ -550,17 +547,21 @@ fn choose_player_backdraft_uses_the_selected_sorcerys_damage_history() {
     );
 
     let mut auto_dm = crate::decision::SelectFirstDecisionMaker;
-    resolve_spell_definition_with_dm(&mut game, &big_sorcery, bob, &mut auto_dm);
-    resolve_spell_definition_with_dm(&mut game, &small_sorcery, bob, &mut auto_dm);
+    let big_sorcery_id =
+        resolve_spell_definition_with_dm(&mut game, &big_sorcery, bob, &mut auto_dm);
+    let small_sorcery_id =
+        resolve_spell_definition_with_dm(&mut game, &small_sorcery, bob, &mut auto_dm);
     assert_eq!(
-        game.damage_dealt_by_spell_cast_this_turn.get(&1),
-        Some(&5),
-        "the first sorcery's dealt damage should be tracked by cast instance"
+        game.turn_history
+            .damage_dealt_by_spell_this_turn(&game.provenance_graph, big_sorcery_id),
+        5,
+        "the first sorcery's dealt damage should be queryable from turn history"
     );
     assert_eq!(
-        game.damage_dealt_by_spell_cast_this_turn.get(&2),
-        Some(&2),
-        "the second sorcery's dealt damage should be tracked by cast instance"
+        game.turn_history
+            .damage_dealt_by_spell_this_turn(&game.provenance_graph, small_sorcery_id),
+        2,
+        "the second sorcery's dealt damage should be queryable from turn history"
     );
 
     let bob_life_before = game.player(bob).expect("bob exists").life;

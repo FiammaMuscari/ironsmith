@@ -824,12 +824,7 @@ impl CantAttackUnlessCondition {
                 Some(game.players.iter().any(|player| {
                     player.is_in_game()
                         && player.id != controller
-                        && game
-                            .damage_to_players_this_turn
-                            .get(&player.id)
-                            .copied()
-                            .unwrap_or(0)
-                            > 0
+                        && game.turn_history.player_was_dealt_damage_this_turn(player.id)
                 }))
             }
             CantAttackUnlessConditionSpec::ControllerControlsMoreThanDefendingPlayer(_)
@@ -1393,8 +1388,11 @@ impl StaticAbilityKind for CantAttackUnlessControllerCastCreatureSpellThisTurn {
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
-        let cast_creature_spell_this_turn =
-            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+        let cast_creature_spell_this_turn = game
+            .turn_history
+            .spell_cast_snapshot_history()
+            .iter()
+            .any(|snapshot| {
                 snapshot.controller == controller
                     && snapshot
                         .card_types
@@ -1429,8 +1427,11 @@ impl StaticAbilityKind for CantAttackUnlessControllerCastNonCreatureSpellThisTur
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
-        let cast_noncreature_spell_this_turn =
-            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+        let cast_noncreature_spell_this_turn = game
+            .turn_history
+            .spell_cast_snapshot_history()
+            .iter()
+            .any(|snapshot| {
                 snapshot.controller == controller
                     && !snapshot
                         .card_types

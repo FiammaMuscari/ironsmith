@@ -359,7 +359,10 @@ mod tests {
         effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should have tracked 2 creatures entering
-        assert_eq!(game.creatures_entered_this_turn.get(&alice), Some(&2));
+        assert_eq!(
+            game.turn_history.creatures_entered_this_turn.get(&alice),
+            Some(&2)
+        );
     }
 
     #[test]

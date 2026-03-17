@@ -66,9 +66,8 @@ fn test_generate_damage_triggers_emits_life_loss_for_player_damage() {
         1
     );
     assert_eq!(
-        game.damage_to_players_this_turn
-            .get(&PlayerId::from_index(1)),
-        Some(&3)
+        game.turn_history.total_damage_to_player(PlayerId::from_index(1)),
+        3
     );
 }
 
@@ -198,11 +197,8 @@ fn test_queue_triggers_tracks_noncombat_damage_to_players_this_turn() {
     );
     queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
 
-    assert_eq!(game.damage_to_players_this_turn.get(&bob), Some(&4));
-    assert_eq!(
-        game.noncombat_damage_to_players_this_turn.get(&bob),
-        Some(&4)
-    );
+    assert_eq!(game.turn_history.total_damage_to_player(bob), 4);
+    assert_eq!(game.turn_history.total_noncombat_damage_to_players(&[bob]), 4);
 }
 
 #[test]
@@ -217,7 +213,7 @@ fn test_queue_triggers_tracks_life_gained_this_turn() {
     );
     queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
 
-    assert_eq!(game.life_gained_this_turn.get(&alice), Some(&5));
+    assert_eq!(game.turn_history.total_life_gained_for_players(&[alice]), 5);
 }
 
 #[test]
@@ -232,7 +228,7 @@ fn test_queue_triggers_tracks_life_lost_this_turn() {
     );
     queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
 
-    assert_eq!(game.life_lost_this_turn.get(&bob), Some(&3));
+    assert_eq!(game.turn_history.total_life_lost_for_players(&[bob]), 3);
 }
 
 #[test]
@@ -1116,54 +1112,6 @@ fn test_turn_face_up_action_puts_turned_face_up_trigger_on_stack() {
 }
 
 // === Target Extraction Tests ===
-
-#[cfg(feature = "net")]
-#[test]
-fn test_pip_payment_trace_order() {
-    use crate::mana::ManaSymbol;
-
-    let mut trace = Vec::new();
-    let actions = vec![
-        ManaPipPaymentAction::ActivateManaAbility {
-            source_id: ObjectId::from_raw(5),
-            ability_index: 1,
-        },
-        ManaPipPaymentAction::UseFromPool(ManaSymbol::Blue),
-        ManaPipPaymentAction::PayViaAlternative {
-            permanent_id: ObjectId::from_raw(6),
-            effect: crate::decision::AlternativePaymentEffect::Convoke,
-        },
-        ManaPipPaymentAction::PayLife(2),
-    ];
-
-    for action in &actions {
-        record_pip_payment_action(&mut trace, action);
-    }
-
-    assert_eq!(trace.len(), 4);
-    assert!(matches!(
-        trace[0],
-        CostStep::Payment(CostPayment::ActivateManaAbility { .. })
-    ));
-    assert!(matches!(
-        trace[1],
-        CostStep::Mana(ManaSymbolSpec {
-            symbol: ManaSymbolCode::Blue,
-            ..
-        })
-    ));
-    assert!(matches!(
-        trace[2],
-        CostStep::Payment(CostPayment::Tap { .. })
-    ));
-    assert!(matches!(
-        trace[3],
-        CostStep::Mana(ManaSymbolSpec {
-            symbol: ManaSymbolCode::Life,
-            value: 2,
-        })
-    ));
-}
 
 #[test]
 fn test_extract_target_spec_single_target() {
@@ -2458,7 +2406,8 @@ fn test_fatal_push_with_revolt_destroys_four_mana_target() {
     let target_id = game.create_object_from_card(&four_mana_creature, bob, Zone::Battlefield);
     let fatal_push_id = game.create_object_from_definition(&fatal_push, alice, Zone::Stack);
 
-    game.permanents_left_battlefield_under_controller_this_turn
+    game.turn_history
+        .permanents_left_battlefield_under_controller_this_turn
         .insert(alice, 1);
 
     game.push_to_stack(
@@ -9420,103 +9369,6 @@ fn test_improvise_taps_artifacts_on_cast() {
         tapped_count, 3,
         "All 3 artifacts should be tapped for Improvise"
     );
-}
-
-#[cfg(feature = "net")]
-#[test]
-fn test_direct_finalize_trace_includes_delve_exile() {
-    use crate::cards::CardDefinitionBuilder;
-    use crate::mana::{ManaCost, ManaSymbol};
-
-    let mut game = setup_game();
-    let alice = PlayerId::from_index(0);
-
-    // Build a spell with Delve + Convoke + Improvise and a generic cost.
-    let spell_def = CardDefinitionBuilder::new(CardId::new(), "Trace Spell")
-        .card_types(vec![CardType::Sorcery])
-        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(6)]]))
-        .delve()
-        .convoke()
-        .improvise()
-        .build();
-
-    let spell_id = game.create_object_from_definition(&spell_def, alice, Zone::Hand);
-
-    // Add 2 creatures for Convoke.
-    for i in 0..2 {
-        let creature = CardBuilder::new(CardId::new(), &format!("Convoke {}", i))
-            .card_types(vec![CardType::Creature])
-            .power_toughness(PowerToughness::fixed(1, 1))
-            .build();
-        let id = game.create_object_from_card(&creature, alice, Zone::Battlefield);
-        game.remove_summoning_sickness(id);
-    }
-
-    // Add 2 artifacts for Improvise.
-    for i in 0..2 {
-        let artifact = CardBuilder::new(CardId::new(), &format!("Improvise {}", i))
-            .card_types(vec![CardType::Artifact])
-            .build();
-        game.create_object_from_card(&artifact, alice, Zone::Battlefield);
-    }
-
-    // Add 2 cards to graveyard for Delve.
-    for i in 0..2 {
-        let card = CardBuilder::new(CardId::new(), &format!("Graveyard {}", i))
-            .card_types(vec![CardType::Creature])
-            .power_toughness(PowerToughness::fixed(1, 1))
-            .build();
-        game.create_object_from_card(&card, alice, Zone::Graveyard);
-    }
-
-    let expected_delve: Vec<GameObjectId> = game
-        .player(alice)
-        .unwrap()
-        .graveyard
-        .iter()
-        .map(|id| GameObjectId(id.0))
-        .collect();
-
-    let mut payment_trace = Vec::new();
-    let mut trigger_queue = TriggerQueue::new();
-    let mut dm = AutoPassDecisionMaker;
-    let mut state = PriorityLoopState::new(game.players_in_game());
-
-    finalize_spell_cast(
-        &mut game,
-        &mut trigger_queue,
-        &mut state,
-        spell_id,
-        Zone::Hand,
-        alice,
-        Vec::new(),
-        Vec::new(),
-        None,
-        CastingMethod::Normal,
-        OptionalCostsPaid::default(),
-        None,
-        ManaPool::default(),
-        Vec::new(),
-        std::collections::HashMap::new(),
-        &mut payment_trace,
-        false,
-        spell_id,
-        crate::provenance::ProvNodeId::default(),
-        &mut dm,
-    )
-    .unwrap();
-
-    // finalize_spell_cast no longer applies Convoke/Improvise fallback taps directly.
-    // Those are now represented as pip-payment alternatives before finalize.
-    assert_eq!(payment_trace.len(), 1);
-
-    match &payment_trace[0] {
-        CostStep::Payment(CostPayment::Exile { objects, from_zone }) => {
-            assert_eq!(*from_zone, ZoneCode::Graveyard);
-            assert_eq!(objects, &expected_delve);
-        }
-        other => panic!("Expected delve exile step first, got {:?}", other),
-    }
 }
 
 #[test]

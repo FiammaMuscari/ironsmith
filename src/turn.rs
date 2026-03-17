@@ -366,11 +366,7 @@ pub fn execute_draw_step_with(
     }
 
     // Check if player can draw (the draw step draw is the first draw of the turn)
-    let current_draws = game
-        .cards_drawn_this_turn
-        .get(&active_player)
-        .copied()
-        .unwrap_or(0);
+    let current_draws = game.turn_history.cards_drawn_by_player(active_player);
 
     // Track if this is the first draw of the turn (before drawing)
     let is_first_draw = current_draws == 0;
@@ -389,19 +385,18 @@ pub fn execute_draw_step_with(
     if can_draw {
         let drawn = game.draw_cards_with_dm(active_player, 1, decision_maker);
 
-        // Track cards drawn this turn
-        *game.cards_drawn_this_turn.entry(active_player).or_insert(0) += drawn.len() as u32;
-
         // Create a single CardsDrawnEvent if any cards were drawn
         if !drawn.is_empty() {
             let draw_event_provenance = game
                 .provenance_graph
                 .alloc_root_event(crate::events::EventKind::CardsDrawn);
             let event = CardsDrawnEvent::new(active_player, drawn, is_first_draw);
-            draw_events.push(TriggerEvent::new_with_provenance(
+            let event = TriggerEvent::new_with_provenance(
                 event,
                 draw_event_provenance,
-            ));
+            );
+            game.stage_turn_history_event(&event);
+            draw_events.push(event);
         }
     }
 
@@ -726,10 +721,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(game.objects_in_zone(Zone::Command).len(), 1);
-        assert_eq!(
-            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
-            0
-        );
+        assert_eq!(game.turn_history.cards_drawn_by_player(alice), 0);
     }
 
     #[test]
@@ -755,9 +747,6 @@ mod tests {
             1
         );
         assert!(game.objects_in_zone(Zone::Command).is_empty());
-        assert_eq!(
-            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
-            1
-        );
+        assert_eq!(game.turn_history.cards_drawn_by_player(alice), 1);
     }
 }

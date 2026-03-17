@@ -198,11 +198,7 @@ pub(super) fn resolve_stack_entry_full(
     // Process events from effect outcomes for triggers
     if let Some(ref mut tq) = trigger_queue {
         for event in all_events {
-            let event = game.ensure_trigger_event_provenance(event);
-            let triggers = check_triggers(game, &event);
-            for t in triggers {
-                tq.add(t);
-            }
+            queue_triggers_from_event(game, tq, event, false);
         }
     }
 
@@ -242,6 +238,7 @@ pub(super) fn resolve_stack_entry_full(
                 // Track creature ETBs for trap conditions
                 if obj.is_creature() {
                     *game
+                        .turn_history
                         .creatures_entered_this_turn
                         .entry(entry.controller)
                         .or_insert(0) += 1;
@@ -300,6 +297,7 @@ pub(super) fn resolve_stack_entry_full(
             // Track creature ETBs for trap conditions (before the object moves zones)
             if obj.is_creature() {
                 *game
+                    .turn_history
                     .creatures_entered_this_turn
                     .entry(entry.controller)
                     .or_insert(0) += 1;
@@ -584,4 +582,133 @@ pub(super) fn get_effects_for_stack_entry(
     }
 
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::cards::builders::CardDefinitionBuilder;
+    use crate::ids::CardId;
+    use crate::types::CardType;
+
+    #[derive(Default)]
+    struct MatchingOptionDecisionMaker {
+        needle: Option<String>,
+    }
+
+    impl MatchingOptionDecisionMaker {
+        fn new(needle: &str) -> Self {
+            Self {
+                needle: Some(needle.to_ascii_lowercase()),
+            }
+        }
+    }
+
+    impl crate::decision::DecisionMaker for MatchingOptionDecisionMaker {
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            if let Some(needle) = self.needle.take()
+                && let Some(option) = ctx.options.iter().find(|option| {
+                    option.legal && option.description.to_ascii_lowercase().contains(&needle)
+                })
+            {
+                return vec![option.index];
+            }
+
+            ctx.options
+                .iter()
+                .filter(|option| option.legal)
+                .map(|option| option.index)
+                .take(ctx.min)
+                .collect()
+        }
+    }
+
+    fn parse_sorcery_definition(name: &str, oracle_text: &str) -> crate::cards::CardDefinition {
+        CardDefinitionBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Sorcery])
+            .parse_text(oracle_text)
+            .unwrap_or_else(|err| panic!("{name} should parse: {err:?}"))
+    }
+
+    fn create_creature(
+        game: &mut GameState,
+        name: &str,
+        controller: PlayerId,
+        power: i32,
+        toughness: i32,
+    ) -> ObjectId {
+        let card = CardBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(power, toughness))
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    fn register_spell_cast_this_turn_for_test(
+        game: &mut GameState,
+        spell_id: ObjectId,
+        caster: PlayerId,
+    ) {
+        let event = TriggerEvent::new_with_provenance(
+            crate::events::spells::SpellCastEvent::new(spell_id, caster, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        game.stage_turn_history_event(&event);
+    }
+
+    #[test]
+    fn stack_resolution_tracks_creature_damage_for_backdraft_history() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        create_creature(&mut game, "Goblin 1", bob, 2, 2);
+        create_creature(&mut game, "Goblin 2", bob, 2, 2);
+
+        let blasphemous_act = parse_sorcery_definition(
+            "Blasphemous Act",
+            "This spell deals 13 damage to each creature.",
+        );
+        let backdraft = parse_sorcery_definition(
+            "Backdraft",
+            "Choose a player who cast one or more sorcery spells this turn. Backdraft deals damage to that player equal to half the damage dealt by one of those sorcery spells this turn, rounded down.",
+        );
+
+        let blasphemous_act_id =
+            game.create_object_from_definition(&blasphemous_act, bob, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, blasphemous_act_id, bob);
+        game.push_to_stack(StackEntry::new(blasphemous_act_id, bob));
+
+        let mut trigger_queue = TriggerQueue::new();
+        let mut auto_dm = crate::decision::SelectFirstDecisionMaker;
+        resolve_stack_entry_with_dm_and_triggers(&mut game, &mut auto_dm, &mut trigger_queue)
+            .expect("Blasphemous Act should resolve");
+
+        assert_eq!(
+            game.turn_history
+                .damage_dealt_by_spell_this_turn(&game.provenance_graph, blasphemous_act_id),
+            26,
+            "stack-resolved creature damage should be queryable from turn history"
+        );
+
+        let bob_life_before = game.player(bob).expect("bob exists").life;
+        let backdraft_id = game.create_object_from_definition(&backdraft, alice, Zone::Stack);
+        register_spell_cast_this_turn_for_test(&mut game, backdraft_id, alice);
+        game.push_to_stack(StackEntry::new(backdraft_id, alice));
+
+        let mut dm = MatchingOptionDecisionMaker::new("Bob");
+        resolve_stack_entry_with_dm_and_triggers(&mut game, &mut dm, &mut trigger_queue)
+            .expect("Backdraft should resolve");
+
+        assert_eq!(
+            game.player(bob).expect("bob exists").life,
+            bob_life_before - 13,
+            "Backdraft should use the creature damage dealt by Blasphemous Act"
+        );
+    }
 }

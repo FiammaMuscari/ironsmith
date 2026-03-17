@@ -3,6 +3,7 @@
 use crate::decision::FallbackStrategy;
 use crate::decisions::{SearchSpec, make_decision_with_fallback};
 use crate::effect::EffectOutcome;
+use crate::events::SearchLibraryEvent;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::effects::zones::{
@@ -12,6 +13,7 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::ObjectId;
 use crate::target::{ObjectFilter, PlayerFilter};
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 /// Effect that searches a player's library for a card.
@@ -103,8 +105,10 @@ impl EffectExecutor for SearchLibraryEffect {
             return Ok(EffectOutcome::prevented());
         }
 
-        // Track which player performed the search (for Archive Trap-style checks).
-        game.library_searches_this_turn.insert(chooser_id);
+        let search_event = TriggerEvent::new_with_provenance(
+            SearchLibraryEvent::new(chooser_id, Some(player_id)),
+            ctx.provenance,
+        );
 
         let filter_ctx = ctx.filter_context(game);
 
@@ -156,7 +160,9 @@ impl EffectExecutor for SearchLibraryEffect {
                     if let Some(p) = game.player_mut(player_id) {
                         p.library.push(card_id);
                     }
-                    return Ok(EffectOutcome::with_objects(vec![card_id]));
+                    return Ok(
+                        EffectOutcome::with_objects(vec![card_id]).with_event(search_event.clone())
+                    );
                 }
 
                 // For other destinations, move then shuffle
@@ -177,7 +183,9 @@ impl EffectExecutor for SearchLibraryEffect {
                 if let Some(new_id) = new_id {
                     // Shuffle the library after searching
                     game.shuffle_player_library(player_id);
-                    return Ok(EffectOutcome::with_objects(vec![new_id]));
+                    return Ok(
+                        EffectOutcome::with_objects(vec![new_id]).with_event(search_event.clone())
+                    );
                 }
             }
         }
@@ -185,6 +193,6 @@ impl EffectExecutor for SearchLibraryEffect {
         // No card found or chosen - still shuffle (searching always shuffles)
         game.shuffle_player_library(player_id);
 
-        Ok(EffectOutcome::count(0))
+        Ok(EffectOutcome::count(0).with_event(search_event))
     }
 }

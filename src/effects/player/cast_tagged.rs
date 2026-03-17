@@ -276,9 +276,12 @@ mod tests {
             panic!("expected cast tagged to create a stack object");
         };
         let cast_id = ids[0];
+        for event in &outcome.events {
+            game.stage_turn_history_event(event);
+        }
         assert!(game.stack.iter().any(|entry| entry.object_id == cast_id));
-        assert_eq!(game.spells_cast_this_turn.get(&alice), Some(&1));
-        assert!(game.spell_cast_order_this_turn.contains_key(&cast_id));
+        assert_eq!(game.turn_history.spells_cast_by_player(alice), 1);
+        assert!(game.turn_history.spell_cast_order(cast_id).is_some());
         assert!(
             outcome
                 .events

@@ -602,11 +602,7 @@ impl TurnRunner {
             return RunnerProgress::Complete(Vec::new());
         }
 
-        let current_draws = game
-            .cards_drawn_this_turn
-            .get(&active_player)
-            .copied()
-            .unwrap_or(0);
+        let current_draws = game.turn_history.cards_drawn_by_player(active_player);
         let is_first_draw = current_draws == 0;
         let can_draw = if !game.can_draw_extra_cards(active_player) {
             current_draws == 0
@@ -662,18 +658,18 @@ impl TurnRunner {
             }
         }
 
-        *game.cards_drawn_this_turn.entry(active_player).or_insert(0) += drawn.len() as u32;
-
         let mut draw_events = Vec::new();
         if !drawn.is_empty() {
             let draw_event_provenance = game
                 .provenance_graph
                 .alloc_root_event(crate::events::EventKind::CardsDrawn);
             let event = CardsDrawnEvent::new(active_player, drawn, is_first_draw);
-            draw_events.push(TriggerEvent::new_with_provenance(
+            let event = TriggerEvent::new_with_provenance(
                 event,
                 draw_event_provenance,
-            ));
+            );
+            game.stage_turn_history_event(&event);
+            draw_events.push(event);
         }
 
         game.turn.priority_player = Some(active_player);

@@ -16,18 +16,9 @@ pub(super) fn register_effect_driven_spell_cast(
     from_zone: Zone,
     provenance: crate::provenance::ProvNodeId,
 ) -> TriggerEvent {
-    *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
     if from_zone == Zone::Command {
         game.record_commander_cast_from_command_zone(new_id);
     }
-    game.spells_cast_this_turn_total = game.spells_cast_this_turn_total.saturating_add(1);
-    game.spell_cast_order_this_turn
-        .insert(new_id, game.spells_cast_this_turn_total);
-    if let Some(obj) = game.object(new_id) {
-        game.spells_cast_this_turn_snapshots
-            .push(crate::snapshot::ObjectSnapshot::from_object(obj, game));
-    }
-
     TriggerEvent::new_with_provenance(SpellCastEvent::new(new_id, caster, from_zone), provenance)
 }
 

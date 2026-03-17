@@ -122,7 +122,11 @@ impl EffectExecutor for CrewCostEffect {
         }
 
         // Record crew contributors for "crewed it this turn" references.
-        let entry = game.crewed_this_turn.entry(ctx.source).or_default();
+        let entry = game
+            .turn_history
+            .crewed_this_turn
+            .entry(ctx.source)
+            .or_default();
         for id in chosen {
             if !entry.contains(&id) {
                 entry.push(id);
