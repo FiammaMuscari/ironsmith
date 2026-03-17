@@ -198,6 +198,7 @@ export default function Workspace({
     dispatch,
     refresh,
     setStatus,
+    inspectorDebug,
     multiplayer,
   } = useGame();
   const { updateStackArrows, clearStackArrows } = useCombatArrows();
@@ -915,6 +916,19 @@ export default function Workspace({
               allowTopInlinePlacement
               inlineExpanded={inlineInspectorExpanded}
             />
+            {inspectorDebug && (
+              <RightRail
+                pinnedObjectId={pinnedInspectorObjectId}
+                onInspectObject={handleInspectObject}
+                suppressFallback={suppressFallbackInspector}
+                inline
+                inlineDockPlacement="top"
+                allowTopInlinePlacement
+                dockRole="opposite"
+                inspectorVariant="debug"
+                inlineExpanded={inlineInspectorExpanded}
+              />
+            )}
           </div>
         </div>
       )}
@@ -938,6 +952,21 @@ export default function Workspace({
               allowTopInlinePlacement
               inlineExpanded={inlineInspectorExpanded}
             />
+            {inspectorDebug && (
+              <RightRail
+                pinnedObjectId={pinnedInspectorObjectId}
+                onInspectObject={handleInspectObject}
+                suppressFallback={suppressFallbackInspector}
+                inline
+                inlineDockPlacement="top"
+                inlineHostSide="left"
+                inlineExpandedSide="left"
+                allowTopInlinePlacement
+                dockRole="opposite"
+                inspectorVariant="debug"
+                inlineExpanded={inlineInspectorExpanded}
+              />
+            )}
           </div>
         </div>
       )}
@@ -990,6 +1019,18 @@ export default function Workspace({
             allowTopInlinePlacement={opponentsInspectorDockTop != null}
             inlineExpanded={inlineInspectorExpanded}
           />
+          {inspectorDebug && (
+            <RightRail
+              pinnedObjectId={pinnedInspectorObjectId}
+              onInspectObject={handleInspectObject}
+              suppressFallback={suppressFallbackInspector}
+              inline
+              allowTopInlinePlacement={opponentsInspectorDockTop != null}
+              dockRole="opposite"
+              inspectorVariant="debug"
+              inlineExpanded={inlineInspectorExpanded}
+            />
+          )}
         </div>
       </div>
       {!deckLoadingMode && myZoneHostRect != null && (
@@ -1011,6 +1052,20 @@ export default function Workspace({
               allowTopInlinePlacement={opponentsInspectorDockTop != null}
               inlineExpanded={inlineInspectorExpanded}
             />
+            {inspectorDebug && (
+              <RightRail
+                pinnedObjectId={pinnedInspectorObjectId}
+                onInspectObject={handleInspectObject}
+                suppressFallback={suppressFallbackInspector}
+                inline
+                inlineHostSide="left"
+                inlineExpandedSide="left"
+                allowTopInlinePlacement={opponentsInspectorDockTop != null}
+                dockRole="opposite"
+                inspectorVariant="debug"
+                inlineExpanded={inlineInspectorExpanded}
+              />
+            )}
           </div>
         </div>
       )}

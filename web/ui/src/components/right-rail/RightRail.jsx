@@ -236,6 +236,8 @@ export default function RightRail({
   inlineHostSide = "right",
   inlineExpandedSide = "right",
   allowTopInlinePlacement = false,
+  dockRole = "primary",
+  inspectorVariant = "normal",
 }) {
   const { state } = useGame();
   const [preferredInlineWidth, setPreferredInlineWidth] = useState(null);
@@ -325,6 +327,9 @@ export default function RightRail({
       ? "bottom"
       : preferredPlacement.dock
   );
+  const activeDockPlacement = dockRole === "opposite"
+    ? (resolvedInlineDockPlacement === "top" ? "bottom" : "top")
+    : resolvedInlineDockPlacement;
   const suppressDirectResolvingCastInspector =
     !hasStackEntries
     &&
@@ -339,7 +344,7 @@ export default function RightRail({
   const shouldShowRail = shouldShowInspector && (
     !inline
     || (
-      inlineDockPlacement === resolvedInlineDockPlacement
+      inlineDockPlacement === activeDockPlacement
       && inlineHostSide === preferredPlacement.side
     )
   );
@@ -565,6 +570,7 @@ export default function RightRail({
               <HoverArtOverlay
                 objectId={shouldShowRail ? validSelectedObjectId : null}
                 compact={inline}
+                inspectorVariant={inspectorVariant}
                 onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
                 onInspectorAccentChange={useExpandedInlineInspector ? null : setInspectorAccent}
               />
@@ -590,6 +596,7 @@ export default function RightRail({
                 <HoverArtOverlay
                   objectId={shouldShowRail ? validSelectedObjectId : null}
                   displayMode="inspector"
+                  inspectorVariant={inspectorVariant}
                   availableInspectorWidth={expandedInlineWidth}
                   availableInspectorHeight={expandedInlineHeight}
                   onPreferredInspectorWidthChange={setPreferredExpandedInlineWidth}

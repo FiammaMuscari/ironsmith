@@ -480,6 +480,7 @@ export default function HoverArtOverlay({
   stackTimelineHeight = 0,
   compact = false,
   displayMode = "inspector",
+  inspectorVariant = "normal",
   availableInspectorWidth = null,
   availableInspectorHeight = null,
   onProtectedTopChange = null,
@@ -488,7 +489,8 @@ export default function HoverArtOverlay({
   onPreferredInspectorWidthChange = null,
   onInspectorAccentChange = null,
 }) {
-  const { state, game, inspectorDebug } = useGame();
+  const { state, game } = useGame();
+  const debugInspector = inspectorVariant === "debug";
   const playerNameById = useMemo(() => buildPlayerNameMap(state), [state]);
   const { byId: objectNameById, byStableId: objectNameByStableId } = useMemo(
     () => buildObjectNameMaps(state),
@@ -507,7 +509,6 @@ export default function HoverArtOverlay({
   const [detailsCache, setDetailsCache] = useState({});
   const [failedImageUrl, setFailedImageUrl] = useState(null);
   const [copiedDebug, setCopiedDebug] = useState(false);
-  const [compiledViewObjectKey, setCompiledViewObjectKey] = useState(null);
   const [inspectorScaleSession, setInspectorScaleSession] = useState({ key: null, scale: 1 });
   const [inspectorTitleScaleSession, setInspectorTitleScaleSession] = useState({ key: null, scale: 1 });
   const [measuredPreferredInspectorWidth, setMeasuredPreferredInspectorWidth] = useState({
@@ -614,11 +615,6 @@ export default function HoverArtOverlay({
     const controllerId = details?.controller ?? hoveredStackObject?.controller ?? null;
     return controllerId == null ? null : getPlayerAccent(state?.players || [], controllerId);
   }, [details?.controller, hoveredStackObject?.controller, state?.players]);
-  const headerDetailLines = useMemo(
-    () => [typeLine, zoneLine, ...metadataLines].filter(Boolean),
-    [metadataLines, typeLine, zoneLine]
-  );
-  const metadataText = headerDetailLines.join("\n");
   const artObjectName = stableLinkedObjectName || objectName;
   const imageUrl = artObjectName ? scryfallImageUrl(artObjectName, "art_crop") : "";
   const imageErrored = !!imageUrl && failedImageUrl === imageUrl;
@@ -650,8 +646,7 @@ export default function HoverArtOverlay({
       || hoveredStackEffectText
       || String(oracleText || "")
     );
-  const activeCompiledViewObjectKey = inspectorDebug ? compiledViewObjectKey : null;
-  const showCompiledText = objectIdKey != null && activeCompiledViewObjectKey === objectIdKey;
+  const showCompiledText = debugInspector;
   const oracleRulesLines = useMemo(() => {
     return String(details?.oracle_text || "")
       .split("\n")
@@ -683,23 +678,37 @@ export default function HoverArtOverlay({
     if (shouldPreferStackAbilityRules) {
       return compiledRulesLines;
     }
-    if (showCompiledText && compiledRulesLines.length > 0) {
+    if (debugInspector && compiledRulesLines.length > 0) {
       return compiledRulesLines;
     }
     if (oracleRulesLines.length > 0) {
       return oracleRulesLines;
     }
     return compiledRulesLines;
-  }, [compiledRulesLines, oracleRulesLines, shouldPreferStackAbilityRules, showCompiledText]);
+  }, [compiledRulesLines, debugInspector, oracleRulesLines, shouldPreferStackAbilityRules]);
   const displayRulesText = displayRulesLines.join("\n");
+  const displayObjectName = debugInspector ? null : objectName;
+  const displayTypeLine = debugInspector ? null : typeLine;
+  const displayZoneLine = debugInspector ? null : zoneLine;
+  const displayMetadataLines = useMemo(
+    () => (debugInspector ? [] : metadataLines),
+    [debugInspector, metadataLines]
+  );
+  const displayManaCost = debugInspector ? null : manaCost;
+  const displayStatsText = debugInspector ? null : statsText;
+  const displayHeaderDetailLines = useMemo(
+    () => [displayTypeLine, displayZoneLine, ...displayMetadataLines].filter(Boolean),
+    [displayMetadataLines, displayTypeLine, displayZoneLine]
+  );
+  const metadataText = displayHeaderDetailLines.join("\n");
   const rulesRenderKey = useMemo(
     () => [
       objectIdKey || "none",
-      inspectorDebug ? "debug" : "normal",
+      debugInspector ? "debug" : "normal",
       showCompiledText ? "compiled" : "oracle",
       displayRulesText,
     ].join("|"),
-    [displayRulesText, inspectorDebug, objectIdKey, showCompiledText]
+    [debugInspector, displayRulesText, objectIdKey, showCompiledText]
   );
   const inspectorScaleSessionKey = useMemo(
     () => (
@@ -708,12 +717,12 @@ export default function HoverArtOverlay({
         : [
           objectIdKey || "none",
           displayMode,
-          statsText || "",
+          displayStatsText || "",
           metadataText || "",
           displayRulesText,
         ].join("|")
     ),
-    [compact, displayMode, displayRulesText, metadataText, objectIdKey, statsText]
+    [compact, displayMode, displayRulesText, displayStatsText, metadataText, objectIdKey]
   );
   const inspectorTitleScaleSessionKey = useMemo(
     () => (
@@ -722,11 +731,11 @@ export default function HoverArtOverlay({
         : [
           objectIdKey || "none",
           displayMode,
-          objectName || "",
+          displayObjectName || "",
           groupedCardCount,
         ].join("|")
     ),
-    [compact, displayMode, groupedCardCount, objectIdKey, objectName]
+    [compact, displayMode, displayObjectName, groupedCardCount, objectIdKey]
   );
 
   const preferredInlineWidth = useMemo(() => {
@@ -737,16 +746,16 @@ export default function HoverArtOverlay({
 
     let maxTextWidth = 0;
     context.font = `700 ${compact ? 17 : 22}px ${INSPECTOR_MEASURE_FONT}`;
-    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, objectName || ""));
-    if (groupedCardCount > 1) {
+    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, displayObjectName || ""));
+    if (displayObjectName && groupedCardCount > 1) {
       maxTextWidth += compact ? 18 : 22;
     }
 
     context.font = `700 ${compact ? 15 : 20}px ${INSPECTOR_MEASURE_FONT}`;
-    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, statsText || ""));
+    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, displayStatsText || ""));
 
     context.font = `600 ${compact ? 11 : 13}px ${INSPECTOR_MEASURE_FONT}`;
-    for (const line of headerDetailLines) {
+    for (const line of displayHeaderDetailLines) {
       maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, line));
     }
 
@@ -759,14 +768,22 @@ export default function HoverArtOverlay({
       );
     }
 
-    const manaSymbols = String(manaCost || "").match(/\{[^}]+\}/g);
+    const manaSymbols = String(displayManaCost || "").match(/\{[^}]+\}/g);
     if (manaSymbols && manaSymbols.length > 0) {
       maxTextWidth = Math.max(maxTextWidth, manaSymbols.length * (compact ? 16 : 20));
     }
 
     const horizontalPadding = compact ? 56 : 90;
     return Math.ceil(maxTextWidth + horizontalPadding);
-  }, [compact, displayRulesLines, groupedCardCount, headerDetailLines, manaCost, objectName, statsText]);
+  }, [
+    compact,
+    displayHeaderDetailLines,
+    displayManaCost,
+    displayObjectName,
+    displayRulesLines,
+    displayStatsText,
+    groupedCardCount,
+  ]);
   const preferredInspectorWidth = useMemo(() => {
     if (compact || displayMode !== "inspector" || typeof document === "undefined") return null;
     const canvas = document.createElement("canvas");
@@ -775,20 +792,20 @@ export default function HoverArtOverlay({
 
     let headerWidth = 0;
     context.font = `700 ${INSPECTOR_TITLE_FONT_SIZE}px ${INSPECTOR_MEASURE_FONT}`;
-    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, objectName || ""));
-    if (groupedCardCount > 1) {
+    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, displayObjectName || ""));
+    if (displayObjectName && groupedCardCount > 1) {
       headerWidth += 24;
     }
 
     context.font = `800 ${INSPECTOR_STATS_FONT_SIZE}px ${INSPECTOR_MEASURE_FONT}`;
-    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, statsText || ""));
+    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, displayStatsText || ""));
 
     context.font = `600 ${INSPECTOR_METADATA_FONT_SIZE}px ${INSPECTOR_MEASURE_FONT}`;
-    for (const line of headerDetailLines) {
+    for (const line of displayHeaderDetailLines) {
       headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, line));
     }
 
-    const manaSymbols = String(manaCost || "").match(/\{[^}]+\}/g);
+    const manaSymbols = String(displayManaCost || "").match(/\{[^}]+\}/g);
     if (manaSymbols && manaSymbols.length > 0) {
       headerWidth = Math.max(headerWidth, manaSymbols.length * 21);
     }
@@ -858,11 +875,11 @@ export default function HoverArtOverlay({
     displayMode,
     displayRulesLines,
     groupedCardCount,
-    manaCost,
-    headerDetailLines,
-    objectName,
-    statsText,
-  ]);
+    displayHeaderDetailLines,
+    displayManaCost,
+    displayObjectName,
+    displayStatsText,
+    ]);
   const activeMeasuredPreferredInspectorWidth = (
     measuredPreferredInspectorWidth.key === inspectorScaleSessionKey
       ? measuredPreferredInspectorWidth.width
@@ -964,7 +981,6 @@ export default function HoverArtOverlay({
 
   const copyDebugPayload = useCallback(async () => {
     if (!canCopyDebug) return;
-    setCompiledViewObjectKey(objectIdKey);
     try {
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(debugClipboardText);
@@ -991,7 +1007,7 @@ export default function HoverArtOverlay({
     } catch {
       // ignore
     }
-  }, [canCopyDebug, debugClipboardText, objectIdKey]);
+  }, [canCopyDebug, debugClipboardText]);
 
   useEffect(() => {
     if (!copiedDebug) return;
@@ -999,7 +1015,7 @@ export default function HoverArtOverlay({
     return () => clearTimeout(timer);
   }, [copiedDebug]);
 
-  const copyDebugButton = inspectorDebug ? (
+  const copyDebugButton = debugInspector ? (
     <div className="absolute right-3 top-3 z-20 pointer-events-auto">
       <button
         type="button"
@@ -1017,8 +1033,8 @@ export default function HoverArtOverlay({
     </div>
   ) : null;
 
-  const similarityBadge = inspectorDebug ? (
-    <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
+  const similarityBadge = debugInspector ? (
+    <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
       <div
         className="inspector-chip inspector-chip--meta rounded-none border border-[rgba(181,148,97,0.34)] bg-[rgba(22,17,14,0.88)] px-3 py-1 text-[12px] font-extrabold leading-none tracking-[0.08em] text-[#eadfbe] shadow-[0_10px_28px_rgba(0,0,0,0.5)] backdrop-blur-[8px]"
         style={METADATA_TEXT_STYLE}
@@ -1089,11 +1105,11 @@ export default function HoverArtOverlay({
     metadataText,
     objectIdKey,
     preferredInspectorWidth,
-    statsText,
+    displayStatsText,
   ]);
 
   useLayoutEffect(() => {
-    if (compact || displayMode !== "inspector" || !objectName) return undefined;
+    if (compact || displayMode !== "inspector" || !displayObjectName) return undefined;
 
     const banner = inspectorTitleRef.current;
     const header = topHeaderRef.current;
@@ -1159,7 +1175,7 @@ export default function HoverArtOverlay({
     compact,
     displayMode,
     inspectorTitleScaleSessionKey,
-    objectName,
+    displayObjectName,
   ]);
 
   useLayoutEffect(() => {
@@ -1200,7 +1216,14 @@ export default function HoverArtOverlay({
       window.removeEventListener("resize", publishProtectedTop);
       onProtectedTopChange(null);
     };
-  }, [activeInspectorTextScale, manaCost, metadataText, objectName, onProtectedTopChange, statsText]);
+  }, [
+    activeInspectorTextScale,
+    displayManaCost,
+    displayObjectName,
+    metadataText,
+    onProtectedTopChange,
+    displayStatsText,
+  ]);
 
   useLayoutEffect(() => {
     if (typeof onOracleTextHeightChange !== "function") return undefined;
@@ -1235,7 +1258,7 @@ export default function HoverArtOverlay({
     activeInspectorTextScale,
     metadataText,
     onOracleTextHeightChange,
-    statsText,
+    displayStatsText,
   ]);
 
   useLayoutEffect(() => {
@@ -1361,7 +1384,7 @@ export default function HoverArtOverlay({
     metadataText,
     objectIdKey,
     resolvedPreferredInspectorWidth,
-    statsText,
+    displayStatsText,
   ]);
 
   useLayoutEffect(() => {
@@ -1399,9 +1422,13 @@ export default function HoverArtOverlay({
   const oracleContainerClass = compact
     ? "relative z-10 px-2.5 pb-1.5"
     : "relative z-10 min-h-full flex flex-col justify-end";
-  const compactOraclePaddingTop = 14
-    + (objectName ? 32 : 0)
-    + (headerDetailLines.length * 15);
+  const compactOraclePaddingTop = debugInspector
+    ? 52
+    : (
+      14
+      + (displayObjectName ? 32 : 0)
+      + (displayHeaderDetailLines.length * 15)
+    );
   const topMetadataTextClassName = compact
     ? "text-[11px] leading-snug text-[#d1e2f6] text-left"
     : "leading-snug text-[#d1e2f6] text-left";
@@ -1423,8 +1450,9 @@ export default function HoverArtOverlay({
   const inspectorManaStyle = compact ? undefined : {
     padding: `${4 * inspectorScale}px ${8 * inspectorScale}px`,
   };
+  const inspectorOracleTopPadding = debugInspector ? 52 : INSPECTOR_ORACLE_TOP_PADDING;
   const inspectorOracleContainerStyle = compact ? undefined : {
-    paddingTop: `${INSPECTOR_ORACLE_TOP_PADDING * inspectorScale}px`,
+    paddingTop: `${inspectorOracleTopPadding * inspectorScale}px`,
     paddingBottom: `${INSPECTOR_ORACLE_BOTTOM_PADDING * inspectorScale}px`,
     paddingLeft: `${10 * inspectorScale}px`,
     paddingRight: `${10 * inspectorScale}px`,
@@ -1440,12 +1468,12 @@ export default function HoverArtOverlay({
 
   const showImageBackdrop = !!imageUrl && !imageErrored;
   const hasRenderableContent = Boolean(
-    objectName
-    || typeLine
-    || zoneLine
-    || metadataLines.length > 0
-    || manaCost
-    || statsText
+    displayObjectName
+    || displayTypeLine
+    || displayZoneLine
+    || displayMetadataLines.length > 0
+    || displayManaCost
+    || displayStatsText
     || displayRulesLines.length > 0
   );
 
@@ -1474,63 +1502,65 @@ export default function HoverArtOverlay({
             </div>
           )}
         </div>
-        <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2">
-          <div className="flex max-w-[72%] flex-col items-start gap-1.5">
-            {objectName && (
-              <div
-                className="inspector-chip inspector-chip--title rounded-none border border-[rgba(183,153,104,0.42)] bg-[rgba(25,18,14,0.82)] px-3 py-1.5 text-[13px] font-extrabold leading-none tracking-[0.08em] text-[#f1e4c4] shadow-[0_0_18px_rgba(185,150,93,0.12)] backdrop-blur-[10px]"
-                style={METADATA_TEXT_STYLE}
-              >
-                <span className="inline-flex items-center gap-2">
-                  {groupedCardCount > 1 && (
-                    <span className="inspector-chip-count inline-flex h-5 min-w-5 items-center justify-center rounded-none border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[11px] font-bold leading-none tracking-wide text-[#f5d08b]">
-                      x{groupedCardCount}
-                    </span>
-                  )}
-                  <span className="truncate">{objectName}</span>
-                </span>
-              </div>
-            )}
-            {typeLine && (
-              <div
-                className="inspector-chip inspector-chip--meta max-w-full rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
-                style={METADATA_TEXT_STYLE}
-              >
-                {typeLine}
-              </div>
-            )}
-            {zoneLine && (
-              <div
-                className="inspector-chip inspector-chip--meta max-w-full rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
-                style={METADATA_TEXT_STYLE}
-              >
-                {zoneLine}
+        {!debugInspector && (
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2">
+            <div className="flex max-w-[72%] flex-col items-start gap-1.5">
+              {displayObjectName && (
+                <div
+                  className="inspector-chip inspector-chip--title rounded-none border border-[rgba(183,153,104,0.42)] bg-[rgba(25,18,14,0.82)] px-3 py-1.5 text-[13px] font-extrabold leading-none tracking-[0.08em] text-[#f1e4c4] shadow-[0_0_18px_rgba(185,150,93,0.12)] backdrop-blur-[10px]"
+                  style={METADATA_TEXT_STYLE}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {groupedCardCount > 1 && (
+                      <span className="inspector-chip-count inline-flex h-5 min-w-5 items-center justify-center rounded-none border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[11px] font-bold leading-none tracking-wide text-[#f5d08b]">
+                        x{groupedCardCount}
+                      </span>
+                    )}
+                    <span className="truncate">{displayObjectName}</span>
+                  </span>
+                </div>
+              )}
+              {displayTypeLine && (
+                <div
+                  className="inspector-chip inspector-chip--meta max-w-full rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
+                  style={METADATA_TEXT_STYLE}
+                >
+                  {displayTypeLine}
+                </div>
+              )}
+              {displayZoneLine && (
+                <div
+                  className="inspector-chip inspector-chip--meta max-w-full rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
+                  style={METADATA_TEXT_STYLE}
+                >
+                  {displayZoneLine}
+                </div>
+              )}
+            </div>
+            {(displayMetadataLines.length > 0 || displayManaCost || displayStatsText) && (
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                {displayManaCost && (
+                  <div className="inspector-chip inspector-chip--mana rounded-none border border-[rgba(174,145,98,0.3)] bg-[rgba(24,18,14,0.78)] px-2.5 py-1 shadow-[0_0_16px_rgba(185,150,93,0.1)] backdrop-blur-[10px]">
+                    <ManaCostIcons cost={displayManaCost} size={16} />
+                  </div>
+                )}
+                {displayStatsText && (
+                  <div
+                    className="inspector-chip inspector-chip--stats rounded-none border border-[#f5d08b]/34 bg-[rgba(30,21,13,0.82)] px-2.5 py-1 text-[14px] font-extrabold leading-none tracking-[0.08em] text-[#f8d98e] shadow-[0_0_16px_rgba(245,208,139,0.1)] backdrop-blur-[10px]"
+                    style={METADATA_TEXT_STYLE}
+                  >
+                    {displayStatsText}
+                  </div>
+                )}
+                <InspectorMetadataBlock
+                  lines={displayMetadataLines}
+                  className="inspector-chip inspector-chip--meta max-w-full self-end rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-right text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
+                  style={METADATA_TEXT_STYLE}
+                />
               </div>
             )}
           </div>
-          {(metadataLines.length > 0 || manaCost || statsText) && (
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              {manaCost && (
-                <div className="inspector-chip inspector-chip--mana rounded-none border border-[rgba(174,145,98,0.3)] bg-[rgba(24,18,14,0.78)] px-2.5 py-1 shadow-[0_0_16px_rgba(185,150,93,0.1)] backdrop-blur-[10px]">
-                  <ManaCostIcons cost={manaCost} size={16} />
-                </div>
-              )}
-              {statsText && (
-                <div
-                  className="inspector-chip inspector-chip--stats rounded-none border border-[#f5d08b]/34 bg-[rgba(30,21,13,0.82)] px-2.5 py-1 text-[14px] font-extrabold leading-none tracking-[0.08em] text-[#f8d98e] shadow-[0_0_16px_rgba(245,208,139,0.1)] backdrop-blur-[10px]"
-                  style={METADATA_TEXT_STYLE}
-                >
-                  {statsText}
-                </div>
-              )}
-              <InspectorMetadataBlock
-                lines={metadataLines}
-                className="inspector-chip inspector-chip--meta max-w-full self-end rounded-none border border-[rgba(174,145,98,0.28)] bg-[rgba(24,18,14,0.76)] px-3 py-2 text-right text-[12px] font-semibold leading-tight text-[#e0d1b2] shadow-[0_0_18px_rgba(185,150,93,0.08)] backdrop-blur-[10px]"
-                style={METADATA_TEXT_STYLE}
-              />
-            </div>
-          )}
-        </div>
+        )}
       </div>
     );
   }
@@ -1556,59 +1586,61 @@ export default function HoverArtOverlay({
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.16)_48%,rgba(0,0,0,0.3)_100%)]" />
       <div className="absolute inset-0 overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)]" />
-        <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex max-w-[82%] flex-col items-start gap-1">
-          {objectName && (
-            <div
-              ref={inspectorTitleRef}
-              className={cn(
-                "inspector-banner inspector-banner--title max-w-full overflow-hidden rounded-none bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
-              compact ? "text-[17px]" : "text-[22px]"
-              )}
-              style={inspectorTitleStyle}
-            >
-              <span className="inline-flex max-w-full items-center gap-2 whitespace-nowrap">
-                {groupedCardCount > 1 && (
-                  <span className="inspector-chip-count inline-flex h-5 min-w-5 items-center justify-center rounded-none border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
-                    x{groupedCardCount}
-                  </span>
+        {(displayObjectName || displayTypeLine || displayZoneLine) && (
+          <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex max-w-[82%] flex-col items-start gap-1">
+            {displayObjectName && (
+              <div
+                ref={inspectorTitleRef}
+                className={cn(
+                  "inspector-banner inspector-banner--title max-w-full overflow-hidden rounded-none bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
+                compact ? "text-[17px]" : "text-[22px]"
                 )}
-                <span className="whitespace-nowrap">{objectName}</span>
-              </span>
-            </div>
-          )}
-          {typeLine && (
-            <div
-              className={cn(
-                "inspector-banner inspector-banner--meta rounded-none bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
-                topMetadataTextClassName
-              )}
-              style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
-            >
-              {typeLine}
-            </div>
-          )}
-          {zoneLine && (
-            <div
-              className={cn(
-                "inspector-banner inspector-banner--meta rounded-none bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
-                topMetadataTextClassName
-              )}
-              style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
-            >
-              {zoneLine}
-            </div>
-          )}
-        </div>
-        {(metadataLines.length > 0 || manaCost || statsText) && (
+                style={inspectorTitleStyle}
+              >
+                <span className="inline-flex max-w-full items-center gap-2 whitespace-nowrap">
+                  {groupedCardCount > 1 && (
+                    <span className="inspector-chip-count inline-flex h-5 min-w-5 items-center justify-center rounded-none border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
+                      x{groupedCardCount}
+                    </span>
+                  )}
+                  <span className="whitespace-nowrap">{displayObjectName}</span>
+                </span>
+              </div>
+            )}
+            {displayTypeLine && (
+              <div
+                className={cn(
+                  "inspector-banner inspector-banner--meta rounded-none bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
+                  topMetadataTextClassName
+                )}
+                style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
+              >
+                {displayTypeLine}
+              </div>
+            )}
+            {displayZoneLine && (
+              <div
+                className={cn(
+                  "inspector-banner inspector-banner--meta rounded-none bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
+                  topMetadataTextClassName
+                )}
+                style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
+              >
+                {displayZoneLine}
+              </div>
+            )}
+          </div>
+        )}
+        {(displayMetadataLines.length > 0 || displayManaCost || displayStatsText) && (
           <div ref={topMetadataRef} className="absolute top-0 right-0 z-10 flex max-w-[78%] flex-col items-end gap-0">
-            {(manaCost || statsText) && (
+            {(displayManaCost || displayStatsText) && (
               <div className="flex items-center justify-end gap-1.5">
-                {manaCost && (
+                {displayManaCost && (
                   <div className="inspector-banner inspector-banner--mana rounded-none bg-[rgba(0,0,0,0.52)] px-2 py-1 backdrop-blur-[1.8px]" style={inspectorManaStyle}>
-                    <ManaCostIcons cost={manaCost} size={compact ? 14 : Math.max(13, Math.round(18 * inspectorScale))} />
+                    <ManaCostIcons cost={displayManaCost} size={compact ? 14 : Math.max(13, Math.round(18 * inspectorScale))} />
                   </div>
                 )}
-                {statsText && (
+                {displayStatsText && (
                   <div
                     className={cn(
                       "inspector-banner inspector-banner--stats rounded-none bg-[rgba(0,0,0,0.52)] px-2.5 py-1 text-[#f8d98e] tracking-wide text-right backdrop-blur-[1.8px]",
@@ -1616,13 +1648,13 @@ export default function HoverArtOverlay({
                     )}
                     style={{ ...METADATA_TEXT_STYLE, ...inspectorStatsStyle }}
                   >
-                    {statsText}
+                    {displayStatsText}
                   </div>
                 )}
               </div>
             )}
             <InspectorMetadataBlock
-              lines={metadataLines}
+              lines={displayMetadataLines}
               className={cn(
                 "inspector-banner inspector-banner--meta self-end rounded-none bg-[rgba(0,0,0,0.48)] px-2.5 py-1 text-right backdrop-blur-[1.8px]",
                 topMetadataTextClassName
