@@ -72,8 +72,13 @@ impl EffectExecutor for ForEachCounterKindPutOrRemoveEffect {
                     .decision_maker
                     .decide_options(game, &choice_ctx)
                     .into_iter()
-                    .next()
-                    .unwrap_or(0);
+                    .next();
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(EffectOutcome::count(0));
+                }
+                let Some(choice) = choice.filter(|idx| *idx <= 1) else {
+                    return Ok(EffectOutcome::count(0));
+                };
 
                 let spec = ChooseSpec::SpecificObject(target_id);
                 let outcome = if choice == 1 {

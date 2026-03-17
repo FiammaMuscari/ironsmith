@@ -84,6 +84,9 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
         }
         DecisionContext::SelectOptions(ctx) => {
             let result = dm.decide_options(game, &ctx);
+            if dm.awaiting_choice() {
+                return R::pending_response(fallback);
+            }
             let descriptions: Vec<String> =
                 ctx.options.iter().map(|o| o.description.clone()).collect();
             R::from_options_with_descriptions(result, &descriptions, fallback)
@@ -156,6 +159,9 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
             )
             .into_options();
             let result = dm.decide_options(game, &select_ctx);
+            if dm.awaiting_choice() {
+                return R::pending_response(fallback);
+            }
             R::from_options(result, fallback)
         }
         DecisionContext::HybridChoice(ctx) => {
@@ -182,6 +188,9 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
             )
             .into_options();
             let result = dm.decide_options(game, &select_ctx);
+            if dm.awaiting_choice() {
+                return R::pending_response(fallback);
+            }
             R::from_options(result, fallback)
         }
     }
@@ -215,6 +224,15 @@ where
 /// different response types for different specs.
 /// Default implementations return the provided fallback response.
 pub trait FromPrimitiveResponse: Sized {
+    /// Convert a surfaced prompt into a neutral "pending" response.
+    ///
+    /// Callers that care about interactive pauses should still check
+    /// `DecisionMaker::awaiting_choice()`, but this avoids committing a fake
+    /// fallback choice while a prompt is outstanding.
+    fn pending_response(fallback: Self) -> Self {
+        fallback
+    }
+
     /// Convert from a boolean result.
     fn from_bool(result: bool, fallback: Self) -> Self {
         let _ = result;
@@ -316,6 +334,10 @@ pub trait FromPrimitiveResponse: Sized {
 
 // Implement for bool (MayChoice, Boolean primitives)
 impl FromPrimitiveResponse for bool {
+    fn pending_response(_fallback: Self) -> Self {
+        false
+    }
+
     fn from_bool(result: bool, _fallback: Self) -> Self {
         result
     }
@@ -344,6 +366,10 @@ impl FromPrimitiveResponse for Option<ObjectId> {
 
 // Implement for Vec<ObjectId> (multiple object selection)
 impl FromPrimitiveResponse for Vec<ObjectId> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_objects(result: Vec<ObjectId>, _fallback: Self) -> Self {
         result
     }
@@ -359,6 +385,10 @@ impl FromPrimitiveResponse for Vec<ObjectId> {
 
 // Implement for Vec<usize> (option index selection)
 impl FromPrimitiveResponse for Vec<usize> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_options(result: Vec<usize>, _fallback: Self) -> Self {
         result
     }
@@ -380,6 +410,10 @@ impl FromPrimitiveResponse for LegalAction {
 
 // Implement for Vec<Target> (target selection)
 impl FromPrimitiveResponse for Vec<Target> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_targets(result: Vec<Target>, _fallback: Self) -> Self {
         result
     }
@@ -387,6 +421,10 @@ impl FromPrimitiveResponse for Vec<Target> {
 
 // Implement for Vec<Color> (mana color selection)
 impl FromPrimitiveResponse for Vec<Color> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_colors(result: Vec<Color>, _fallback: Self) -> Self {
         result
     }
@@ -419,6 +457,10 @@ impl FromPrimitiveResponse for Zone {
 
 // Implement for Vec<AttackerDeclaration> (declare attackers)
 impl FromPrimitiveResponse for Vec<AttackerDeclaration> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_attackers(result: Vec<AttackerDeclaration>, _fallback: Self) -> Self {
         result
     }
@@ -426,6 +468,10 @@ impl FromPrimitiveResponse for Vec<AttackerDeclaration> {
 
 // Implement for Vec<BlockerDeclaration> (declare blockers)
 impl FromPrimitiveResponse for Vec<BlockerDeclaration> {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_blockers(result: Vec<BlockerDeclaration>, _fallback: Self) -> Self {
         result
     }
@@ -433,6 +479,10 @@ impl FromPrimitiveResponse for Vec<BlockerDeclaration> {
 
 // Implement for DistributeResponse
 impl FromPrimitiveResponse for DistributeResponse {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_distribute(result: Vec<(Target, u32)>, _fallback: Self) -> Self {
         result
     }
@@ -440,6 +490,10 @@ impl FromPrimitiveResponse for DistributeResponse {
 
 // Implement for CounterRemovalResponse
 impl FromPrimitiveResponse for CounterRemovalResponse {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_counters(result: Vec<(crate::object::CounterType, u32)>, _fallback: Self) -> Self {
         result
     }
@@ -447,6 +501,10 @@ impl FromPrimitiveResponse for CounterRemovalResponse {
 
 // Implement for OptionalCostsResponse
 impl FromPrimitiveResponse for OptionalCostsResponse {
+    fn pending_response(_fallback: Self) -> Self {
+        Vec::new()
+    }
+
     fn from_options(result: Vec<usize>, _fallback: Self) -> Self {
         result.into_iter().map(|idx| (idx, 1)).collect()
     }
@@ -454,6 +512,10 @@ impl FromPrimitiveResponse for OptionalCostsResponse {
 
 // Implement for ProliferateResponse
 impl FromPrimitiveResponse for crate::decisions::specs::ProliferateResponse {
+    fn pending_response(_fallback: Self) -> Self {
+        Self::default()
+    }
+
     fn from_proliferate(
         result: crate::decisions::specs::ProliferateResponse,
         _fallback: Self,
@@ -628,4 +690,36 @@ mod tests {
         );
         assert_eq!(result, 5);
     }
+
+    #[test]
+    fn test_make_decision_returns_empty_option_selection_while_waiting() {
+        let game = setup_game();
+        let player = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1);
+
+        struct PromptingOptionsDm;
+        impl DecisionMaker for PromptingOptionsDm {
+            fn decide_options(
+                &mut self,
+                _game: &GameState,
+                _ctx: &crate::decisions::context::SelectOptionsContext,
+            ) -> Vec<usize> {
+                Vec::new()
+            }
+
+            fn awaiting_choice(&self) -> bool {
+                true
+            }
+        }
+
+        let spec = crate::decisions::specs::ChoiceSpec::single(
+            source,
+            vec![crate::decisions::DisplayOption::new(0, "Alpha")],
+        );
+        let mut dm = PromptingOptionsDm;
+
+        let result: Vec<usize> = make_decision(&game, &mut dm, player, Some(source), spec);
+        assert!(result.is_empty());
+    }
+
 }

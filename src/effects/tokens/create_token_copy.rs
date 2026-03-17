@@ -293,9 +293,9 @@ impl CreateTokenCopyEffect {
         ctx: &mut ExecutionContext,
         player_id: PlayerId,
         targets: &[AttackTarget],
-    ) -> AttackTarget {
+    ) -> Option<AttackTarget> {
         if targets.len() == 1 {
-            return targets[0].clone();
+            return Some(targets[0].clone());
         }
 
         let player_name = game
@@ -328,12 +328,15 @@ impl CreateTokenCopyEffect {
             1,
         );
         let chosen = ctx.decision_maker.decide_options(game, &choice_ctx);
-        let index = chosen
+        if ctx.decision_maker.awaiting_choice() {
+            return None;
+        }
+        chosen
             .first()
             .copied()
             .filter(|selected| *selected < targets.len())
-            .unwrap_or(0);
-        targets[index].clone()
+            .and_then(|index| targets.get(index))
+            .cloned()
     }
 }
 
@@ -495,13 +498,15 @@ impl EffectExecutor for CreateTokenCopyEffect {
                 if let Some(attack_player) = configured_attack_player {
                     let targets = Self::attack_targets_for_player(game, attack_player);
                     if !targets.is_empty() {
-                        let chosen_target =
-                            Self::choose_attack_target(game, ctx, attack_player, &targets);
-                        if let Some(combat) = game.combat.as_mut() {
-                            combat.attackers.push(AttackerInfo {
-                                creature: entered_id,
-                                target: chosen_target,
-                            });
+                        if let Some(chosen_target) =
+                            Self::choose_attack_target(game, ctx, attack_player, &targets)
+                        {
+                            if let Some(combat) = game.combat.as_mut() {
+                                combat.attackers.push(AttackerInfo {
+                                    creature: entered_id,
+                                    target: chosen_target,
+                                });
+                            }
                         }
                     }
                 }

@@ -30,20 +30,6 @@ mod tests {
     use crate::triggers::TriggerQueue;
     use crate::zone::Zone;
 
-    fn read_replay_inputs(path: &str) -> Vec<String> {
-        use std::fs::File;
-        use std::io::{BufRead, BufReader};
-
-        let file = File::open(path).expect("Failed to open replay file");
-        let reader = BufReader::new(file);
-
-        reader
-            .lines()
-            .filter_map(|l| l.ok())
-            .filter(|l| !l.trim().starts_with('#'))
-            .collect()
-    }
-
     /// Replay: cast Command the Mind, then cast Tivit so the controlled player votes.
     /// Alice's inputs should be used for Bob's vote while control is active.
     #[test]
@@ -77,7 +63,12 @@ mod tests {
         game.turn.active_player = alice;
         game.turn.priority_player = Some(alice);
 
-        let inputs = read_replay_inputs("tests/scenarios/control_player_during_own_turn.txt");
+        let inputs = vec![
+            "1", "0", "0", "", "1", "0", "0", "0", "0", "1", "0", "1", "1", "",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
         let alice_dm = NumericInputDecisionMaker::new(inputs);
         // If Bob were not controlled, he'd vote "evidence" (index 0).
         let bob_dm = NumericInputDecisionMaker::from_strs(&["0"]);

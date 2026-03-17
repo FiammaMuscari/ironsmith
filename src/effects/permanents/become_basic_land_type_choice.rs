@@ -97,10 +97,15 @@ impl EffectExecutor for BecomeBasicLandTypeChoiceEffect {
                 .decision_maker
                 .decide_options(game, &choice_ctx)
                 .into_iter()
-                .next()
-                .unwrap_or(0);
+                .next();
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(EffectOutcome::count(0));
+            }
+            let Some(chosen) = chosen.filter(|idx| *idx < Self::subtype_options().len()) else {
+                return Ok(EffectOutcome::count(0));
+            };
 
-            Self::subtype_options()[chosen.min(4)]
+            Self::subtype_options()[chosen]
         };
         let mana_ability = Self::mana_ability_for(subtype);
 

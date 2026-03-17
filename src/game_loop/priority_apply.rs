@@ -981,10 +981,11 @@ pub(super) fn apply_replacement_choice_response(
         .applicable_effects
         .get(chosen_index)
         .copied()
-        .unwrap_or_else(|| {
-            // Default to first if index is invalid
-            pending.applicable_effects[0]
-        });
+        .ok_or_else(|| {
+            GameLoopError::InvalidState(format!(
+                "replacement effect choice index {chosen_index} is invalid"
+            ))
+        })?;
 
     // Process the event with the chosen replacement effect
     let result = process_event_with_chosen_replacement_trait(game, pending.event, chosen_id);

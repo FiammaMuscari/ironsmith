@@ -445,11 +445,15 @@ impl EffectExecutor for RetargetStackObjectEffect {
                             1,
                         );
                         let choice = ctx.decision_maker.decide_options(game, &select_ctx);
-                        let idx = choice.first().copied().unwrap_or(0);
-                        let selected = eligible_indices
-                            .get(idx)
-                            .copied()
-                            .unwrap_or_else(|| eligible_indices[0]);
+                        if ctx.decision_maker.awaiting_choice() {
+                            continue;
+                        }
+                        let Some(idx) = choice.first().copied() else {
+                            continue;
+                        };
+                        let Some(selected) = eligible_indices.get(idx).copied() else {
+                            continue;
+                        };
                         selected
                     };
 

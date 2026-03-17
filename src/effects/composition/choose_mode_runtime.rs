@@ -167,6 +167,9 @@ pub(crate) fn run_choose_mode(
             spec,
         )
     };
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(EffectOutcome::count(0));
+    }
 
     // Filter to valid/legal indices while preserving selection order.
     let mut valid_chosen_indices: Vec<usize> = Vec::new();

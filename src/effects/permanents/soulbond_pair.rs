@@ -81,6 +81,9 @@ impl EffectExecutor for SoulbondPairEffect {
             Some(source),
             spec,
         );
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
         let Some(choice_index) = chosen.first().copied() else {
             return Ok(EffectOutcome::count(0));
         };

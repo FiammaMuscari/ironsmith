@@ -3262,7 +3262,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
             let result = decision_maker.decide_options(game, options_ctx);
 
             if game.pending_replacement_choice.is_some() {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "replacement effect choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_replacement_choice_response(
                     game,
                     trigger_queue,
@@ -3271,7 +3275,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                 );
             }
             if state.pending_method_selection.is_some() {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "casting method choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_casting_method_choice_response(
                     game,
                     trigger_queue,
@@ -3295,7 +3303,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                 );
             }
             if state.pending_mana_ability.is_some() {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "mana payment choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_mana_payment_response_mana_ability(
                     game,
                     trigger_queue,
@@ -3313,7 +3325,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                     .as_ref()
                     .is_some_and(|pending| matches!(pending.stage, CastStage::ChoosingNextCost))
             {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "next cost choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_next_cost_choice_response(
                     game,
                     trigger_queue,
@@ -3327,7 +3343,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                 .as_ref()
                 .is_some_and(|pending| matches!(pending.stage, ActivationStage::PayingMana))
             {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "activation mana pip choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_pip_payment_response_activation(
                     game,
                     trigger_queue,
@@ -3341,7 +3361,11 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                 .as_ref()
                 .is_some_and(|pending| matches!(pending.stage, CastStage::PayingMana))
             {
-                let choice = result.first().copied().unwrap_or(0);
+                let Some(choice) = result.first().copied() else {
+                    return Err(GameLoopError::InvalidState(
+                        "spell mana pip choice requires one selected option".to_string(),
+                    ));
+                };
                 return apply_pip_payment_response_cast(
                     game,
                     trigger_queue,

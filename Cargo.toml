@@ -48,27 +48,3 @@ wasm = [
 name = "export_cedh_support_report"
 path = "src/bin/export_cedh_support_report.rs"
 required-features = ["tooling"]
-
-[[test]]
-name = "undo_action_chain"
-path = "tests/undo_action_chain.rs"
-
-[[test]]
-name = "parser_architecture_guards"
-path = "tests/parser_architecture_guards.rs"
-required-features = ["parser-tests"]
-
-[[test]]
-name = "parser_diagnostics_rule_ids"
-path = "tests/parser_diagnostics_rule_ids.rs"
-required-features = ["parser-tests"]
-
-[[test]]
-name = "parser_smoke"
-path = "tests/parser_smoke.rs"
-required-features = ["parser-tests"]
-
-[[test]]
-name = "semantic_mismatch_regressions"
-path = "tests/semantic_mismatch_regressions.rs"
-required-features = ["parser-tests-full"]

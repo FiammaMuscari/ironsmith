@@ -65,10 +65,15 @@ impl EffectExecutor for BecomeColorChoiceEffect {
             .decision_maker
             .decide_options(game, &choice_ctx)
             .into_iter()
-            .next()
-            .unwrap_or(0);
+            .next();
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
+        let Some(chosen) = chosen.filter(|idx| *idx < Self::color_options().len()) else {
+            return Ok(EffectOutcome::count(0));
+        };
 
-        let (color, _) = Self::color_options()[chosen.min(4)];
+        let (color, _) = Self::color_options()[chosen];
         let apply = crate::effects::ApplyContinuousEffect::with_spec(
             self.target.clone(),
             Modification::SetColors(crate::color::ColorSet::from_color(color)),

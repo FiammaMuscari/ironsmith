@@ -1915,6 +1915,13 @@ fn process_with_dm(
                     let spec = ReplacementSpec::new(options);
                     make_decision(game, dm, player, None, spec)
                 };
+                if dm.awaiting_choice() {
+                    return TraitEventResult::NeedsChoice {
+                        player,
+                        applicable_effects,
+                        event: boxed_event,
+                    };
+                }
 
                 // Apply the chosen effect immediately, then continue processing
                 let chosen_id = applicable_effects

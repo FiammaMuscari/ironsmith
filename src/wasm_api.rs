@@ -6404,7 +6404,9 @@ impl WasmGame {
         option_indices: Vec<usize>,
     ) -> Result<PriorityResponse, JsValue> {
         if self.game.pending_replacement_choice.is_some() {
-            let choice = option_indices.first().copied().unwrap_or(0);
+            let choice = option_indices.first().copied().ok_or_else(|| {
+                JsValue::from_str("replacement effect choice requires one selected option")
+            })?;
             return Ok(PriorityResponse::ReplacementChoice(choice));
         }
         if self.priority_state.pending_method_selection.is_some() {

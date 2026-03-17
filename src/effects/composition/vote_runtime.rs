@@ -71,7 +71,7 @@ fn collect_votes(
     ctx: &mut ExecutionContext,
     players: &[PlayerId],
     display_options: &[DisplayOption],
-) -> (Vec<PlayerVote>, Vec<usize>) {
+) -> Option<(Vec<PlayerVote>, Vec<usize>)> {
     let controller = ctx.controller;
     let mut votes: Vec<PlayerVote> = Vec::new();
     let mut vote_counts: Vec<usize> = vec![0; effect.options.len()];
@@ -104,6 +104,9 @@ fn collect_votes(
                 Some(ctx.source),
                 spec,
             );
+            if ctx.decision_maker.awaiting_choice() {
+                return None;
+            }
 
             if let Some(&vote_index) = chosen.first()
                 && vote_index < vote_counts.len()
@@ -118,7 +121,7 @@ fn collect_votes(
         }
     }
 
-    (votes, vote_counts)
+    Some((votes, vote_counts))
 }
 
 fn build_vote_counts_map(vote_counts: &[usize]) -> HashMap<usize, usize> {
@@ -315,7 +318,10 @@ pub(crate) fn run_vote(
 
     let players = active_players_in_vote_order(game, ctx.controller);
     let display_options = build_display_options(effect);
-    let (votes, vote_counts) = collect_votes(effect, game, ctx, &players, &display_options);
+    let Some((votes, vote_counts)) = collect_votes(effect, game, ctx, &players, &display_options)
+    else {
+        return Ok(EffectOutcome::count(0));
+    };
     let vote_counts = build_vote_counts_map(&vote_counts);
 
     queue_vote_events(effect, game, ctx, &votes, vote_counts);

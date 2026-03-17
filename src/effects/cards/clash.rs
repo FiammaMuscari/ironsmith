@@ -102,11 +102,14 @@ fn choose_opponent(
         Some(ctx.source),
         spec,
     );
-    let index = chosen.first().copied().unwrap_or(0);
-    opponents
-        .get(index)
+    if ctx.decision_maker.awaiting_choice() {
+        return None;
+    }
+
+    chosen
+        .first()
         .copied()
-        .or_else(|| opponents.first().copied())
+        .and_then(|index| opponents.get(index).copied())
 }
 
 fn top_card(game: &GameState, player: PlayerId) -> Option<ObjectId> {

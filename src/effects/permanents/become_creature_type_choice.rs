@@ -268,12 +268,13 @@ impl EffectExecutor for BecomeCreatureTypeChoiceEffect {
             .decision_maker
             .decide_options(game, &choice_ctx)
             .into_iter()
-            .next()
-            .unwrap_or(0);
-        let chosen_subtype = subtype_options
-            .get(chosen)
-            .copied()
-            .unwrap_or(subtype_options[0]);
+            .next();
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
+        let Some(chosen_subtype) = chosen.and_then(|idx| subtype_options.get(idx)).copied() else {
+            return Ok(EffectOutcome::count(0));
+        };
 
         let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
             self.target.clone(),

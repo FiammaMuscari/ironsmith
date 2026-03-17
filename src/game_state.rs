@@ -2195,8 +2195,11 @@ impl GameState {
                             Some(new_id),
                             choice_spec,
                         );
-                        let chosen_color = chosen.pop().unwrap_or(options[0]);
-                        self.set_chosen_color(new_id, chosen_color);
+                        if let Some(chosen_color) =
+                            chosen.pop().filter(|color| options.contains(color))
+                        {
+                            self.set_chosen_color(new_id, chosen_color);
+                        }
                     }
                     if static_ability.basic_land_type_choice_as_enters().is_some() {
                         let options = [
@@ -2222,9 +2225,9 @@ impl GameState {
                             Some(new_id),
                             choice_spec,
                         );
-                        let chosen_idx =
-                            chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
-                        self.set_chosen_basic_land_type(new_id, options[chosen_idx]);
+                        if let Some(chosen_idx) = chosen.pop().filter(|idx| *idx < options.len()) {
+                            self.set_chosen_basic_land_type(new_id, options[chosen_idx]);
+                        }
                     }
                     if static_ability.creature_type_choice_as_enters().is_some() {
                         let options =
@@ -2245,9 +2248,9 @@ impl GameState {
                             Some(new_id),
                             choice_spec,
                         );
-                        let chosen_idx =
-                            chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
-                        self.set_chosen_creature_type(new_id, options[chosen_idx]);
+                        if let Some(chosen_idx) = chosen.pop().filter(|idx| *idx < options.len()) {
+                            self.set_chosen_creature_type(new_id, options[chosen_idx]);
+                        }
                     }
                     if static_ability.player_choice_as_enters().is_some() {
                         let options = self
@@ -2280,9 +2283,9 @@ impl GameState {
                             Some(new_id),
                             choice_spec,
                         );
-                        let chosen_idx =
-                            chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
-                        self.set_chosen_player(new_id, options[chosen_idx]);
+                        if let Some(chosen_idx) = chosen.pop().filter(|idx| *idx < options.len()) {
+                            self.set_chosen_player(new_id, options[chosen_idx]);
+                        }
                     }
                 }
             }

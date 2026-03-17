@@ -80,8 +80,15 @@ impl PayManaEffect {
             let decision_ctx =
                 SelectOptionsContext::mana_payment(player_id, ctx.source, source_name, options);
             let selected = ctx.decision_maker.decide_options(game, &decision_ctx);
-            let selected_idx = selected.first().copied().unwrap_or(0);
-            let choice = choices.get(selected_idx).copied().unwrap_or(choices[0]);
+            if ctx.decision_maker.awaiting_choice() {
+                return false;
+            }
+            let Some(selected_idx) = selected.first().copied() else {
+                return false;
+            };
+            let Some(choice) = choices.get(selected_idx).copied() else {
+                return false;
+            };
 
             match choice {
                 PayManaChoice::PayNow => {

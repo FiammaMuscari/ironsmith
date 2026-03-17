@@ -1346,7 +1346,7 @@ mod tests {
             .p1_deck(vec!["Mountain"])
             .p2_deck(vec!["Forest"]);
 
-        let game = run_replay_test("tests/scenarios/test_lightning_bolt.txt", config);
+        let game = run_replay_test(vec!["1", "1", "1", "0", "", ""], config);
 
         let bob = PlayerId::from_index(1);
 
@@ -1381,10 +1381,7 @@ mod tests {
         );
     }
 
-    /// Tests simple priority passing using a replay input file.
-    ///
-    /// This test reads inputs from tests/scenarios/simple_pass.txt which just
-    /// passes priority repeatedly.
+    /// Tests simple priority passing using inline replay inputs.
     #[test]
     fn test_replay_simple_pass() {
         let config = ReplayTestConfig::new()
@@ -1392,7 +1389,7 @@ mod tests {
             .p1_deck(vec!["Mountain"])
             .p2_deck(vec!["Forest"]);
 
-        let game = run_replay_test("tests/scenarios/simple_pass.txt", config);
+        let game = run_replay_test(vec!["", ""], config);
 
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);

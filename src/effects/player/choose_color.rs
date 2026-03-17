@@ -44,13 +44,18 @@ impl EffectExecutor for ChooseColorEffect {
             .collect();
         let choice_ctx =
             SelectOptionsContext::new(chooser, Some(ctx.source), "Choose a color", options, 1, 1);
-        let chosen = ctx
-            .decision_maker
-            .decide_options(game, &choice_ctx)
+        let selected = ctx.decision_maker.decide_options(game, &choice_ctx);
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
+        let Some(chosen) = selected
             .into_iter()
             .next()
-            .unwrap_or(0);
-        let (color, _) = Self::color_options()[chosen.min(4)];
+            .filter(|idx| *idx < Self::color_options().len())
+        else {
+            return Ok(EffectOutcome::count(0));
+        };
+        let (color, _) = Self::color_options()[chosen];
         game.set_chosen_color(ctx.source, color);
         Ok(EffectOutcome::count(1))
     }

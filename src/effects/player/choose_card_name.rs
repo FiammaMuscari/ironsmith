@@ -130,16 +130,20 @@ impl EffectExecutor for ChooseCardNameEffect {
             1,
             1,
         );
-        let chosen_idx = ctx
-            .decision_maker
-            .decide_options(game, &choice_ctx)
+        let selected = ctx.decision_maker.decide_options(game, &choice_ctx);
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(EffectOutcome::count(0));
+        }
+        let Some(chosen_idx) = selected
             .into_iter()
             .next()
-            .unwrap_or(0)
-            .min(names.len().saturating_sub(1));
+            .filter(|idx| *idx < names.len())
+        else {
+            return Ok(EffectOutcome::count(0));
+        };
 
         let snapshot = Self::synthetic_snapshot(ctx.source, chooser, names[chosen_idx].clone());
         ctx.set_tagged_objects(self.tag.clone(), vec![snapshot]);
-        Ok(EffectOutcome::resolved())
+        Ok(EffectOutcome::count(1))
     }
 }
