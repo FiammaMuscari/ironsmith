@@ -24,7 +24,7 @@ use crate::game_loop::{
     advance_priority_with_dm, apply_decision_context_with_dm, apply_priority_response_with_dm,
     run_priority_loop_with,
 };
-use crate::game_state::{GameState, Target};
+use crate::game_state::{GameState, StackEntry, Target};
 use crate::ids::{
     ObjectId, PlayerId, reset_runtime_id_counters, restore_id_counters, snapshot_id_counters,
 };
@@ -544,6 +544,19 @@ fn build_stack_object_snapshot(
             targets,
         }
     }
+}
+
+fn insert_pending_stack_object_snapshot(
+    snapshot: &mut GameSnapshot,
+    stack_object: StackObjectSnapshot,
+) {
+    let preview_name = match stack_object.ability_kind.as_deref() {
+        Some(kind) => format!("{} ({kind})", stack_object.name),
+        None => stack_object.name.clone(),
+    };
+    snapshot.stack_preview.insert(0, preview_name);
+    snapshot.stack_objects.insert(0, stack_object);
+    snapshot.stack_size += 1;
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2466,6 +2479,52 @@ impl WasmGame {
         None
     }
 
+    fn pending_trigger_stack_object(&self) -> Option<StackObjectSnapshot> {
+        if self.priority_state.pending_cast.is_some()
+            || self.priority_state.pending_activation.is_some()
+        {
+            return None;
+        }
+
+        let crate::decisions::context::DecisionContext::Targets(ctx) =
+            self.pending_decision.as_ref()?
+        else {
+            return None;
+        };
+
+        let trigger = self.trigger_queue.entries.iter().find(|trigger| {
+            trigger.source == ctx.source
+                && trigger.controller == ctx.player
+                && !trigger.ability.choices.is_empty()
+                && trigger.ability.choices.len() == ctx.requirements.len()
+        })?;
+
+        let mut entry = StackEntry::ability(
+            trigger.source,
+            trigger.controller,
+            trigger.ability.effects.clone(),
+        )
+        .with_source_info(trigger.source_stable_id, trigger.source_name.clone())
+        .with_triggering_event(trigger.triggering_event.clone())
+        .with_tagged_objects(trigger.tagged_objects.clone());
+        if let Some(snapshot) = trigger.source_snapshot.clone() {
+            entry = entry.with_source_snapshot(snapshot);
+        }
+        if let Some(x_value) = trigger.x_value {
+            entry.x_value = Some(x_value);
+        }
+        if let Some(intervening_if) = trigger.ability.intervening_if.clone() {
+            entry = entry.with_intervening_if(intervening_if);
+        }
+
+        Some(build_stack_object_snapshot(
+            &self.game,
+            self.perspective,
+            self.active_viewed_cards.as_ref(),
+            &entry,
+        ))
+    }
+
     /// Construct a demo game with two players.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -2606,7 +2665,7 @@ impl WasmGame {
                 },
             })
             .collect();
-        let snap = GameSnapshot::from_game(
+        let mut snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
             self.pending_decision.as_ref(),
@@ -2620,6 +2679,9 @@ impl WasmGame {
             undo_land_stable_id,
             snapshot_id,
         );
+        if let Some(pending_trigger) = self.pending_trigger_stack_object() {
+            insert_pending_stack_object_snapshot(&mut snap, pending_trigger);
+        }
         serde_wasm_bindgen::to_value(&snap)
             .map_err(|e| JsValue::from_str(&format!("snapshot encode failed: {e}")))
     }
@@ -2701,7 +2763,7 @@ impl WasmGame {
                 },
             })
             .collect();
-        let snap = GameSnapshot::from_game(
+        let mut snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
             self.pending_decision.as_ref(),
@@ -2715,6 +2777,9 @@ impl WasmGame {
             undo_land_stable_id,
             snapshot_id,
         );
+        if let Some(pending_trigger) = self.pending_trigger_stack_object() {
+            insert_pending_stack_object_snapshot(&mut snap, pending_trigger);
+        }
         serde_json::to_string_pretty(&snap)
             .map_err(|e| JsValue::from_str(&format!("json encode failed: {e}")))
     }
@@ -10750,6 +10815,94 @@ mod tests {
             wasm.game.stack.len(),
             2,
             "choosing the trigger target should put Emrakul's cast trigger onto the stack"
+        );
+    }
+
+    #[test]
+    fn emrakul_target_prompt_snapshot_shows_pending_triggered_ability() {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+                "Dana".to_string(),
+            ],
+            20,
+            1,
+        );
+
+        let alice = PlayerId::from_index(0);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let emrakul_id = wasm.game.create_object_from_definition(
+            &emrakul_the_promised_end(),
+            alice,
+            Zone::Stack,
+        );
+        let (emrakul_stable_id, emrakul_name) = wasm
+            .game
+            .object(emrakul_id)
+            .map(|object| (object.stable_id, object.name.clone()))
+            .expect("Emrakul spell object should exist");
+        wasm.game.push_to_stack(
+            StackEntry::new(emrakul_id, alice).with_source_info(emrakul_stable_id, emrakul_name),
+        );
+
+        let event = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(emrakul_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        for trigger in check_triggers(&wasm.game, &event) {
+            wasm.trigger_queue.add(trigger);
+        }
+
+        let checkpoint = wasm.capture_replay_checkpoint();
+        let outcome = wasm
+            .execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])
+            .expect("auto-advance should reach Emrakul's trigger decision");
+        let targets_ctx = match outcome {
+            ReplayOutcome::NeedsDecision(DecisionContext::Targets(ctx)) => ctx,
+            other => panic!("expected Emrakul cast trigger target prompt, got {other:?}"),
+        };
+
+        wasm.pending_decision = Some(DecisionContext::Targets(targets_ctx));
+        wasm.pending_replay_action = Some(PendingReplayAction {
+            checkpoint,
+            root: ReplayRoot::Advance,
+            nested_answers: Vec::new(),
+        });
+
+        let snapshot_json = wasm
+            .snapshot_json()
+            .expect("snapshot json should render pending Emrakul trigger");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("snapshot json should parse");
+
+        let stack_objects = snapshot["stack_objects"]
+            .as_array()
+            .expect("snapshot should include stack objects");
+        assert_eq!(
+            stack_objects.len(),
+            2,
+            "snapshot should show spell plus cast trigger"
+        );
+        assert_eq!(stack_objects[0]["name"], "Emrakul, the Promised End");
+        assert_eq!(stack_objects[0]["ability_kind"], "Triggered");
+        assert!(
+            stack_objects[0]["ability_text"]
+                .as_str()
+                .is_some_and(|text| text.to_ascii_lowercase().contains("target opponent")),
+            "pending trigger snapshot should describe Emrakul's cast trigger"
+        );
+        assert_eq!(stack_objects[1]["name"], "Emrakul, the Promised End");
+        assert!(
+            stack_objects[1]["ability_kind"].is_null(),
+            "the second stack object should remain the Emrakul spell"
         );
     }
 

@@ -12,6 +12,7 @@ DEFAULT_PARSE_ERROR_SUMMARY_CSV_FILE="$ROOT_DIR/reports/ironsmith_parse_error_su
 DIMS="${IRONSMITH_WASM_SEMANTIC_DIMS:-384}"
 FEATURES="wasm,generated-registry"
 THRESHOLD="${IRONSMITH_WASM_SEMANTIC_THRESHOLD:-}"
+OPTIMIZE_WASM=0
 FRONTEND_SCORES_FILE="${IRONSMITH_FRONTEND_SEMANTIC_SCORES_FILE:-$DEFAULT_FRONTEND_SCORES_FILE}"
 FRONTEND_SCORES_FILE_EXPLICIT=0
 SCORES_FILE="${IRONSMITH_GENERATED_REGISTRY_SCORES_FILE:-}"
@@ -39,6 +40,8 @@ usage() {
 Usage: ./rebuild-wasm.sh [--threshold <float>] [--dims <int>] [--features <csv>] [--scores-file <path>] [--frontend-scores-file <path>] [--cluster-csv-file <path>] [--parse-errors-csv-file <path>] [--parse-error-summary-csv-file <path>]
 
 Examples:
+  ./rebuild-wasm.sh
+  ./rebuild-wasm.sh --release
   ./rebuild-wasm.sh --threshold 0.99
   ./rebuild-wasm.sh --dims 384
   ./rebuild-wasm.sh --scores-file /tmp/ironsmith_semantic_scores.json
@@ -48,6 +51,8 @@ Examples:
   ./rebuild-wasm.sh --parse-error-summary-csv-file reports/ironsmith_parse_error_summary.csv
 
 Notes:
+  - Cargo always builds the WASM crate in release mode.
+  - wasm-opt is skipped by default for faster iteration; pass --release to enable it.
   - Per-card semantic scores are loaded from --scores-file (default: --frontend-scores-file).
   - Frontend cache file defaults to $DEFAULT_FRONTEND_SCORES_FILE.
   - Cluster and parse-error CSVs are refreshed only when --threshold is provided.
@@ -74,9 +79,13 @@ while [[ $# -gt 0 ]]; do
       THRESHOLD="$2"
       shift 2
       ;;
-    --dev|--release)
-      echo "debug WASM builds are no longer supported; rebuild-wasm.sh always produces a release build" >&2
-      exit 1
+    --dev)
+      OPTIMIZE_WASM=0
+      shift
+      ;;
+    --release)
+      OPTIMIZE_WASM=1
+      shift
       ;;
     --scores-file)
       [[ $# -ge 2 ]] || { echo "missing value for --scores-file" >&2; exit 1; }
@@ -178,8 +187,16 @@ fi
 export IRONSMITH_GENERATED_REGISTRY_SCORES_FILE="$SCORES_FILE"
 echo "[INFO] semantic scores source: $IRONSMITH_GENERATED_REGISTRY_SCORES_FILE"
 echo "[INFO] wasm build profile: release"
+if [[ "$OPTIMIZE_WASM" -eq 1 ]]; then
+  echo "[INFO] wasm-opt: enabled"
+else
+  echo "[INFO] wasm-opt: disabled (--no-opt)"
+fi
 
 WASM_PACK_ARGS=(build --target web --release)
+if [[ "$OPTIMIZE_WASM" -eq 0 ]]; then
+  WASM_PACK_ARGS+=(--no-opt)
+fi
 WASM_PACK_ARGS+=(--features "$FEATURES")
 
 wasm-pack "${WASM_PACK_ARGS[@]}"
