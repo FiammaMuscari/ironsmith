@@ -1058,24 +1058,39 @@ fn calculate_with_layers_direct_internal(
             Some(effects) => effects,
             None => continue,
         };
-
-        let mut source_state =
-            build_layer_baseline(objects, effects, battlefield, commanders, game, layer, None);
+        let needs_source_tracking = layer_needs_source_activity_tracking(layer_effects);
+        let needs_sort_baseline = matches!(sort_mode, DependencySortMode::Baseline)
+            && needs_baseline_dependency_sort(layer_effects);
+        let baseline = needs_sort_baseline.then(|| {
+            build_layer_baseline(objects, effects, battlefield, commanders, game, layer, None)
+        });
+        let tracked_source_ids =
+            needs_source_tracking.then(|| tracked_source_ids_for_layer(layer_effects));
+        let mut source_state = if needs_source_tracking {
+            build_object_baseline_for_ids(
+                objects,
+                effects,
+                battlefield,
+                commanders,
+                game,
+                layer,
+                None,
+                tracked_source_ids
+                    .as_ref()
+                    .expect("tracked sources should exist when source tracking is enabled"),
+            )
+        } else {
+            HashMap::new()
+        };
 
         // Apply dependency-aware sorting within this layer
         let sorted_effects = match sort_mode {
             DependencySortMode::Heuristic => sort_layer_effects(layer_effects),
             DependencySortMode::Baseline => {
-                if needs_baseline_dependency_sort(layer_effects) {
-                    let baseline = build_layer_baseline(
-                        objects,
-                        effects,
-                        battlefield,
-                        commanders,
-                        game,
-                        layer,
-                        None,
-                    );
+                if needs_sort_baseline {
+                    let baseline = baseline
+                        .as_ref()
+                        .expect("baseline should exist when dependency sorting needs it");
                     sort_layer_effects_with_baseline(layer_effects, &baseline, objects, game)
                 } else {
                     sort_layer_effects(layer_effects)
@@ -1085,9 +1100,13 @@ fn calculate_with_layers_direct_internal(
 
         // Apply effects in dependency order
         for effect in sorted_effects {
-            let effect_active = effect_source_is_active(effect, &source_state);
+            let effect_active = if needs_source_tracking {
+                effect_source_is_active(effect, &source_state)
+            } else {
+                true
+            };
 
-            if effect_active {
+            if needs_source_tracking && effect_active {
                 advance_layer_source_state(
                     &mut source_state,
                     effect,
@@ -1826,32 +1845,51 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
             Some(effects) => effects,
             None => continue,
         };
-
-        let mut source_state = build_layer_baseline(
-            ctx.objects,
-            all_effects.get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect()),
-            ctx.battlefield,
-            &ctx.game.commanders,
-            ctx.game,
-            layer,
-            None,
-        );
+        let needs_source_tracking = layer_needs_source_activity_tracking(layer_effects);
+        let needs_sort_baseline = needs_baseline_dependency_sort(layer_effects);
+        let baseline = if needs_sort_baseline {
+            let all_effects =
+                all_effects.get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect());
+            Some(build_layer_baseline(
+                ctx.objects,
+                all_effects,
+                ctx.battlefield,
+                &ctx.game.commanders,
+                ctx.game,
+                layer,
+                None,
+            ))
+        } else {
+            None
+        };
+        let tracked_source_ids =
+            needs_source_tracking.then(|| tracked_source_ids_for_layer(layer_effects));
+        let mut source_state = if needs_source_tracking {
+            let all_effects =
+                all_effects.get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect());
+            build_object_baseline_for_ids(
+                ctx.objects,
+                all_effects,
+                ctx.battlefield,
+                &ctx.game.commanders,
+                ctx.game,
+                layer,
+                None,
+                tracked_source_ids
+                    .as_ref()
+                    .expect("tracked sources should exist when source tracking is enabled"),
+            )
+        } else {
+            HashMap::new()
+        };
 
         // Apply dependency-aware sorting within this layer
         // This handles Rule 613.8 - effects that depend on each other
         let sorted_effects = {
-            if needs_baseline_dependency_sort(layer_effects) {
-                let all_effects = all_effects
-                    .get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect());
-                let baseline = build_layer_baseline(
-                    ctx.objects,
-                    all_effects,
-                    ctx.battlefield,
-                    &ctx.game.commanders,
-                    ctx.game,
-                    layer,
-                    None,
-                );
+            if needs_sort_baseline {
+                let baseline = baseline
+                    .as_ref()
+                    .expect("baseline should exist when dependency sorting needs it");
                 sort_layer_effects_with_baseline(layer_effects, &baseline, ctx.objects, ctx.game)
             } else {
                 sort_layer_effects(layer_effects)
@@ -1860,9 +1898,13 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
 
         // Apply effects in dependency order
         for effect in sorted_effects {
-            let effect_active = effect_source_is_active(effect, &source_state);
+            let effect_active = if needs_source_tracking {
+                effect_source_is_active(effect, &source_state)
+            } else {
+                true
+            };
 
-            if effect_active {
+            if needs_source_tracking && effect_active {
                 advance_layer_source_state(
                     &mut source_state,
                     effect,
@@ -2840,6 +2882,101 @@ fn build_layer_baseline(
     baseline
 }
 
+fn build_object_baseline_for_ids(
+    objects: &HashMap<ObjectId, Object>,
+    effects: &[ContinuousEffect],
+    battlefield: &[ObjectId],
+    commanders: &HashSet<ObjectId>,
+    game: &crate::game_state::GameState,
+    layer: Layer,
+    sublayer: Option<PtSublayer>,
+    ids: &HashSet<ObjectId>,
+) -> HashMap<ObjectId, CalculatedCharacteristics> {
+    let mut filtered: Vec<ContinuousEffect> = Vec::with_capacity(effects.len());
+    for effect in effects {
+        let effect_layer = effect.modification.layer();
+        let include = if effect_layer < layer {
+            true
+        } else if layer == Layer::PowerToughness && effect_layer == Layer::PowerToughness {
+            if let Some(current_sublayer) = sublayer {
+                effect.modification.pt_sublayer() < Some(current_sublayer)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if include {
+            filtered.push(effect.clone());
+        }
+    }
+
+    let mut baseline = HashMap::with_capacity(ids.len());
+    for &id in ids {
+        if !objects.contains_key(&id) {
+            continue;
+        }
+        if let Some(chars) = calculate_characteristics_with_effects_simple(
+            id,
+            objects,
+            &filtered,
+            battlefield,
+            commanders,
+            game,
+        ) {
+            baseline.insert(id, chars);
+        }
+    }
+
+    baseline
+}
+
+fn layer_needs_source_activity_tracking(layer_effects: &[&ContinuousEffect]) -> bool {
+    if layer_effects.len() <= 1 {
+        return false;
+    }
+
+    if !layer_effects
+        .iter()
+        .any(|effect| effect.originating_static_ability.is_some())
+    {
+        return false;
+    }
+
+    layer_effects
+        .iter()
+        .any(|effect| effect_can_disable_source_static_ability_in_layer(effect))
+}
+
+fn effect_can_disable_source_static_ability_in_layer(effect: &ContinuousEffect) -> bool {
+    match &effect.modification {
+        // A basic land type-setting effect can shut off a source static ability
+        // in the same type layer (Blood Moon/Urborg).
+        Modification::SetSubtypes(subtypes) => {
+            !subtypes.is_empty() && subtypes.iter().all(Subtype::is_basic_land_type)
+        }
+        // Ability-removing effects can shut off same-layer static ability effects.
+        Modification::RemoveAbility(_)
+        | Modification::RemoveAllAbilities
+        | Modification::RemoveAllAbilitiesExceptMana
+        | Modification::SetAbilities(_) => true,
+        _ => false,
+    }
+}
+
+fn tracked_source_ids_for_layer(layer_effects: &[&ContinuousEffect]) -> HashSet<ObjectId> {
+    layer_effects
+        .iter()
+        .filter_map(|effect| {
+            effect
+                .originating_static_ability
+                .as_ref()
+                .map(|_| effect.source)
+        })
+        .collect()
+}
+
 fn effect_source_is_active(
     effect: &ContinuousEffect,
     source_state: &HashMap<ObjectId, CalculatedCharacteristics>,
@@ -2861,7 +2998,11 @@ fn advance_layer_source_state(
     commanders: &HashSet<ObjectId>,
     game: &crate::game_state::GameState,
 ) {
-    for (&id, object) in objects {
+    let tracked_ids: Vec<ObjectId> = source_state.keys().copied().collect();
+    for id in tracked_ids {
+        let Some(object) = objects.get(&id) else {
+            continue;
+        };
         let Some(chars) = source_state.get(&id).cloned() else {
             continue;
         };
