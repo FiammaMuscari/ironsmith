@@ -529,7 +529,9 @@ pub(super) fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str)
                 .replace(
                     "exile this permanent",
                     "exile this card from your graveyard",
-                );
+                )
+                .replace("Exile this spell", "Exile this card from your graveyard")
+                .replace("exile this spell", "exile this card from your graveyard");
         }
         if let Some(noun) = exile_from_hand_noun {
             // By this point, normalize_body already replaced "this source"/"this permanent"

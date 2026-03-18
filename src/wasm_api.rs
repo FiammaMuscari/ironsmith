@@ -3603,9 +3603,19 @@ impl WasmGame {
     }
 
     fn decision_requires_root_reexecution(&self, ctx: &DecisionContext) -> bool {
-        replay_decision_requires_root_reexecution(ctx)
-            || matches!(ctx, DecisionContext::SelectObjects(_))
-                && !self.select_objects_uses_live_priority_response()
+        match ctx {
+            // Number/target prompts only have a direct priority response while a
+            // cast or activation is actively staged. Resolution-time prompts are
+            // captured by replay and must rebuild their original execution path.
+            DecisionContext::Number(_) | DecisionContext::Targets(_) => {
+                !self.decision_has_direct_priority_response(ctx)
+            }
+            _ => {
+                replay_decision_requires_root_reexecution(ctx)
+                    || matches!(ctx, DecisionContext::SelectObjects(_))
+                        && !self.select_objects_uses_live_priority_response()
+            }
+        }
     }
 
     fn select_options_uses_live_priority_response(
@@ -3646,14 +3656,28 @@ impl WasmGame {
 
         match ctx {
             DecisionContext::Priority(_)
-            | DecisionContext::Number(_)
             | DecisionContext::Modes(_)
-            | DecisionContext::HybridChoice(_)
-            | DecisionContext::Targets(_) => true,
+            | DecisionContext::HybridChoice(_) => true,
+            DecisionContext::Number(_) | DecisionContext::Targets(_) => {
+                self.decision_has_direct_priority_response(ctx)
+            }
             DecisionContext::SelectOptions(ctx) => {
                 self.select_options_uses_live_priority_response(ctx)
             }
             DecisionContext::SelectObjects(_) => self.select_objects_uses_live_priority_response(),
+            _ => false,
+        }
+    }
+
+    fn decision_has_direct_priority_response(&self, ctx: &DecisionContext) -> bool {
+        match ctx {
+            DecisionContext::Number(_) | DecisionContext::Targets(_) => {
+                self.priority_state.pending_cast.is_some()
+                    || self.priority_state.pending_activation.is_some()
+            }
+            DecisionContext::Priority(_)
+            | DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_) => true,
             _ => false,
         }
     }
@@ -7595,8 +7619,8 @@ mod tests {
     use crate::decision::compute_legal_actions;
     use crate::decision::{GameProgress, LegalAction};
     use crate::decisions::context::{
-        BooleanContext, DecisionContext, PriorityContext, SelectObjectsContext, SelectableObject,
-        SelectableOption, TargetRequirementContext, TargetsContext,
+        BooleanContext, DecisionContext, NumberContext, PriorityContext, SelectObjectsContext,
+        SelectableObject, SelectableOption, TargetRequirementContext, TargetsContext,
     };
     use crate::effect::{Effect, Until};
     use crate::events::spells::SpellCastEvent;
@@ -10650,11 +10674,109 @@ mod tests {
     }
 
     #[test]
+    fn auto_advance_target_prompt_dispatch_reexecutes_replay_root() {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+                "Dana".to_string(),
+            ],
+            20,
+            1,
+        );
+
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let emrakul_id = wasm.game.create_object_from_definition(
+            &emrakul_the_promised_end(),
+            alice,
+            Zone::Stack,
+        );
+        let (emrakul_stable_id, emrakul_name) = wasm
+            .game
+            .object(emrakul_id)
+            .map(|object| (object.stable_id, object.name.clone()))
+            .expect("Emrakul spell object should exist");
+        wasm.game.push_to_stack(
+            StackEntry::new(emrakul_id, alice).with_source_info(emrakul_stable_id, emrakul_name),
+        );
+
+        let event = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(emrakul_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        for trigger in check_triggers(&wasm.game, &event) {
+            wasm.trigger_queue.add(trigger);
+        }
+
+        let checkpoint = wasm.capture_replay_checkpoint();
+        let outcome = wasm
+            .execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])
+            .expect("auto-advance should reach Emrakul's trigger decision");
+        let targets_ctx = match outcome {
+            ReplayOutcome::NeedsDecision(DecisionContext::Targets(ctx)) => ctx,
+            other => panic!("expected Emrakul cast trigger target prompt, got {other:?}"),
+        };
+
+        wasm.pending_decision = Some(DecisionContext::Targets(targets_ctx));
+        wasm.pending_replay_action = Some(PendingReplayAction {
+            checkpoint,
+            root: ReplayRoot::Advance,
+            nested_answers: Vec::new(),
+        });
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_targets",
+                "targets": [{ "kind": "player", "player": bob.0 }],
+            }))
+            .expect("target selection should serialize"),
+        )
+        .expect("dispatching replay-backed targets should succeed");
+
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::Priority(_))),
+            "after choosing Emrakul's target, auto-advance should continue to priority"
+        );
+        assert_eq!(
+            wasm.game.stack.len(),
+            2,
+            "choosing the trigger target should put Emrakul's cast trigger onto the stack"
+        );
+    }
+
+    #[test]
     fn priority_decision_routing_uses_replay_for_generic_modal_choices() {
         let boolean = DecisionContext::Boolean(BooleanContext::new(
             PlayerId::from_index(0),
             None,
             "play an additional land this turn",
+        ));
+        let number = DecisionContext::Number(NumberContext::new(
+            PlayerId::from_index(0),
+            None,
+            0,
+            3,
+            "choose a number",
+        ));
+        let targets = DecisionContext::Targets(TargetsContext::new(
+            PlayerId::from_index(0),
+            ObjectId::from_raw(1),
+            "resolve trigger",
+            vec![TargetRequirementContext {
+                description: "target player".to_string(),
+                legal_targets: vec![Target::Player(PlayerId::from_index(1))],
+                min_targets: 1,
+                max_targets: Some(1),
+            }],
         ));
         let select_objects = DecisionContext::SelectObjects(SelectObjectsContext::new(
             PlayerId::from_index(0),
@@ -10680,6 +10802,14 @@ mod tests {
             "boolean prompts should replay from the original root response"
         );
         assert!(
+            wasm.decision_requires_root_reexecution(&number),
+            "generic number prompts should replay from the original root response"
+        );
+        assert!(
+            wasm.decision_requires_root_reexecution(&targets),
+            "generic target prompts should replay from the original root response"
+        );
+        assert!(
             wasm.decision_requires_root_reexecution(&select_objects),
             "resolution-time object prompts should replay from the original root response"
         );
@@ -10690,6 +10820,14 @@ mod tests {
         assert!(
             !wasm.decision_uses_live_priority_response(&select_options),
             "generic select-options prompts should route through replay continuations, not the live priority responder"
+        );
+        assert!(
+            !wasm.decision_uses_live_priority_response(&number),
+            "generic number prompts should not route through the live priority responder"
+        );
+        assert!(
+            !wasm.decision_uses_live_priority_response(&targets),
+            "generic target prompts should not route through the live priority responder"
         );
     }
 

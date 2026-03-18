@@ -173,6 +173,15 @@ pub(super) fn describe_effect_list(effects: &[Effect]) -> String {
         }
         if idx + 1 < filtered.len()
             && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
+            && let Some(may) = filtered[idx + 1].downcast_ref::<crate::effects::MayEffect>()
+            && let Some(compact) = describe_with_id_then_may_choose_new_targets(with_id, may)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
             && let Some(reflexive) =
                 filtered[idx + 1].downcast_ref::<crate::effects::ReflexiveTriggerEffect>()
             && let Some(compact) = describe_with_id_then_reflexive_trigger(with_id, reflexive)
@@ -3822,6 +3831,39 @@ pub(super) fn describe_with_id_then_choose_new_targets(
     Some(format!("{base}. {choose_phrase}"))
 }
 
+pub(super) fn describe_with_id_then_may_choose_new_targets(
+    with_id: &crate::effects::WithIdEffect,
+    may: &crate::effects::MayEffect,
+) -> Option<String> {
+    let _copy_spell = with_id
+        .effect
+        .downcast_ref::<crate::effects::CopySpellEffect>()?;
+    if may.effects.len() != 1 {
+        return None;
+    }
+    let retarget = may.effects[0].downcast_ref::<crate::effects::RetargetStackObjectEffect>()?;
+    if !matches!(retarget.target, ChooseSpec::Tagged(_))
+        || !matches!(retarget.mode, crate::effects::RetargetMode::All)
+        || retarget.require_change
+    {
+        return None;
+    }
+
+    let base = describe_effect(&with_id.effect);
+    let chooser = may
+        .decider
+        .as_ref()
+        .map(describe_player_filter)
+        .unwrap_or_else(|| describe_player_filter(&retarget.chooser));
+    let choose_phrase = if chooser == "you" {
+        "You may choose new targets for the copy".to_string()
+    } else {
+        format!("{chooser} may choose new targets for the copy")
+    };
+
+    Some(format!("{base}. {choose_phrase}"))
+}
+
 enum SearchDestination {
     Battlefield {
         tapped: bool,
@@ -7045,9 +7087,20 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             }
             return format!("Copy this spell for each {each_filter}");
         }
+        let mut target_text = describe_choose_spec(&copy_spell.target);
+        target_text = target_text.replace(
+            "target instant and sorcery",
+            "target instant or sorcery spell",
+        );
+        if target_text.contains("instant or sorcery") && !target_text.contains(" spell") {
+            target_text = target_text.replacen("instant or sorcery", "instant or sorcery spell", 1);
+        }
+        if matches!(copy_spell.count, Value::Fixed(1)) {
+            return format!("Copy {target_text}");
+        }
         return format!(
             "Copy {} {} time(s)",
-            describe_choose_spec(&copy_spell.target),
+            target_text,
             describe_value(&copy_spell.count)
         );
     }

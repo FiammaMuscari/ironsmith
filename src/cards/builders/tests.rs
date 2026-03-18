@@ -17592,6 +17592,31 @@ fn parse_burst_lightning_kicker_instead_clause() {
 }
 
 #[test]
+fn parse_geistblast_graveyard_copy_activation_renders_cleanly() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Geistblast")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Geistblast deals 2 damage to any target.\n{2}{U}, Exile this card from your graveyard: Copy target instant or sorcery spell you control. You may choose new targets for the copy.",
+        )
+        .expect("Geistblast should parse");
+    let rendered = compiled_lines(&def).join("\n");
+
+    assert!(
+        rendered.contains(
+            "{2}{U}, Exile this card from your graveyard: Copy target instant or sorcery spell you control. You may choose new targets for the copy."
+        ),
+        "expected Geistblast graveyard activation to render in Oracle style, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("Exile this spell")
+            && !rendered.contains("instant and sorcery")
+            && !rendered.contains("time(s)")
+            && !rendered.contains(". you may"),
+        "expected Geistblast rendering to avoid legacy copy-spell artifacts, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_consult_the_star_charts_kicker_count_override() {
     CardDefinitionBuilder::new(CardId::new(), "Consult Variant")
         .card_types(vec![CardType::Instant])
