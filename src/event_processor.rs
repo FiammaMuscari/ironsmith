@@ -303,7 +303,7 @@ fn continue_interactive_replacement(
 fn handle_discard_or_redirect(
     game: &mut GameState,
     response: &InteractiveReplacementResponse,
-    _object_id: crate::ids::ObjectId,
+    object_id: crate::ids::ObjectId,
     controller: crate::ids::PlayerId,
     filter: &crate::target::ObjectFilter,
     redirect_zone: Zone,
@@ -321,7 +321,7 @@ fn handle_discard_or_redirect(
                         game,
                         card_id,
                         controller,
-                        crate::events::cause::EventCause::default(),
+                        crate::events::cause::EventCause::from_effect(object_id, controller),
                         true,
                         provenance,
                         decision_maker,
@@ -491,7 +491,7 @@ pub fn execute_discard(
     game.update_replacement_effects();
 
     // Create a discard event with the cause
-    let discard_event = DiscardEvent::with_cause(card_id, player, cause);
+    let discard_event = DiscardEvent::with_cause(card_id, player, cause.clone());
     let event = Event::new_with_provenance(discard_event, provenance);
 
     // Process through the trait-based replacement effect system
@@ -515,9 +515,15 @@ pub fn execute_discard(
                 }
 
                 let new_id = if destination == Zone::Library {
-                    move_to_top_of_library(game, card_id, player, decision_maker)
+                    move_to_top_of_library(
+                        game,
+                        card_id,
+                        player,
+                        discard.cause.clone(),
+                        decision_maker,
+                    )
                 } else {
-                    game.move_object(card_id, destination)
+                    game.move_object(card_id, destination, discard.cause.clone())
                 };
 
                 // Mark as madness_exiled if card went to exile via Madness
@@ -573,9 +579,9 @@ pub fn execute_discard(
                     };
 
                     let new_id = if chosen_zone == Zone::Library {
-                        move_to_top_of_library(game, card_id, player, decision_maker)
+                        move_to_top_of_library(game, card_id, player, cause.clone(), decision_maker)
                     } else {
-                        game.move_object(card_id, chosen_zone)
+                        game.move_object(card_id, chosen_zone, cause.clone())
                     };
 
                     DiscardResult {
@@ -587,7 +593,7 @@ pub fn execute_discard(
                 }
                 _ => {
                     // Unexpected context type, use default
-                    let new_id = game.move_object(card_id, redirect_zone);
+                    let new_id = game.move_object(card_id, redirect_zone, cause);
                     DiscardResult {
                         new_id,
                         final_zone: redirect_zone,
@@ -612,11 +618,12 @@ fn move_to_top_of_library(
     game: &mut GameState,
     card_id: crate::ids::ObjectId,
     owner: crate::ids::PlayerId,
+    cause: crate::events::cause::EventCause,
     decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> Option<crate::ids::ObjectId> {
     // Get the new ID from the zone change
     let (new_id, final_zone) =
-        game.move_object_with_commander_options(card_id, Zone::Library, decision_maker)?;
+        game.move_object_with_commander_options(card_id, Zone::Library, cause, decision_maker)?;
     if final_zone != Zone::Library {
         return Some(new_id);
     }
@@ -1207,7 +1214,13 @@ fn apply_trait_change_destination(event: &Event, new_zone: Zone) -> Option<Event
             // This happens when a replacement effect redirects the destination (e.g., Mox Diamond
             // going to graveyard instead of battlefield when no lands are discarded)
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(event.rewrap(ZoneChangeEvent::new(etb.object, etb.from, new_zone, None)))
+            Some(event.rewrap(ZoneChangeEvent::with_cause(
+                etb.object,
+                etb.from,
+                new_zone,
+                crate::events::cause::EventCause::effect(),
+                None,
+            )))
         }
         _ => None,
     }
@@ -1660,6 +1673,15 @@ pub fn process_destroy(
 
     // Get the controller before we lose the reference
     let controller = obj.controller;
+    let cause = if let Some(source_id) = source {
+        let source_controller = game
+            .object(source_id)
+            .map(|source_obj| source_obj.controller)
+            .unwrap_or(controller);
+        crate::events::cause::EventCause::from_effect(source_id, source_controller)
+    } else {
+        crate::events::cause::EventCause::from_sba()
+    };
 
     // Create the destroy event using the trait-based system
     let event = Event::destroy(permanent, source);
@@ -1677,6 +1699,7 @@ pub fn process_destroy(
                 permanent,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                cause.clone(),
                 dm, // Reuse the decision maker for zone change choices
             );
 
@@ -1691,7 +1714,7 @@ pub fn process_destroy(
                             stable_id,
                         );
                     }
-                    game.move_object(permanent, final_zone);
+                    game.move_object(permanent, final_zone, cause);
                     EventOutcome::Proceed(final_zone)
                 }
                 EventOutcome::Replaced => EventOutcome::Replaced,
@@ -1745,6 +1768,7 @@ pub fn process_zone_change(
     object: crate::ids::ObjectId,
     from: Zone,
     to: Zone,
+    cause: crate::events::cause::EventCause,
     dm: &mut dyn DecisionMaker,
 ) -> ZoneChangeOutcome {
     use crate::events::{ZoneChangeEvent, downcast_event};
@@ -1770,7 +1794,7 @@ pub fn process_zone_change(
         .object(object)
         .map(|o| crate::snapshot::ObjectSnapshot::from_object(o, game));
 
-    let event = Event::zone_change(object, from, requested_to, snapshot.clone());
+    let event = Event::zone_change(object, from, requested_to, cause, snapshot.clone());
     let result = process_with_dm(game, event.clone(), dm); // dm is already &mut Option
 
     match result {
@@ -2054,9 +2078,10 @@ pub fn process_damage_with_event(
     target: DamageTarget,
     amount: u32,
     is_combat: bool,
+    cause: crate::events::cause::EventCause,
 ) -> (u32, bool) {
     let processed = process_damage_assignments_with_event_with_source_snapshot(
-        game, source, target, amount, is_combat, None,
+        game, source, target, amount, is_combat, cause, None,
     );
     let original_target_damage = processed
         .assignments
@@ -2088,9 +2113,10 @@ pub fn process_damage_assignments_with_event(
     target: DamageTarget,
     amount: u32,
     is_combat: bool,
+    cause: crate::events::cause::EventCause,
 ) -> ProcessedDamageResult {
     process_damage_assignments_with_event_with_source_snapshot(
-        game, source, target, amount, is_combat, None,
+        game, source, target, amount, is_combat, cause, None,
     )
 }
 
@@ -2105,6 +2131,7 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
     target: DamageTarget,
     amount: u32,
     is_combat: bool,
+    cause: crate::events::cause::EventCause,
     source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
 ) -> ProcessedDamageResult {
     use crate::events::{DamageEvent, downcast_event};
@@ -2114,9 +2141,9 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
 
     // Create the event using the new Event type
     let event = if can_prevent {
-        Event::damage(source, target, amount, is_combat)
+        Event::damage(source, target, amount, is_combat, cause.clone())
     } else {
-        Event::unpreventable_damage(source, target, amount, is_combat)
+        Event::unpreventable_damage(source, target, amount, is_combat, cause.clone())
     };
 
     // Process through the trait-based system, retaining event provenance for
@@ -2181,10 +2208,10 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
                     false,
                     "damage replacement processing returned a non-DamageEvent"
                 );
-                DamageEvent::new(source, target, amount, is_combat)
+                DamageEvent::with_cause(source, target, amount, is_combat, cause.clone())
             }
         }
-        _ => DamageEvent::new(source, target, amount, is_combat),
+        _ => DamageEvent::with_cause(source, target, amount, is_combat, cause.clone()),
     };
 
     let mut assignments = Vec::new();
@@ -2213,6 +2240,7 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
             remainder_target,
             remainder_amount,
             replaced.is_combat,
+            replaced.cause.clone(),
             source_snapshot,
         );
         assignments.extend(remainder.assignments);
@@ -2231,6 +2259,7 @@ pub fn process_damage_with_event_with_source_snapshot(
     target: DamageTarget,
     amount: u32,
     is_combat: bool,
+    cause: crate::events::cause::EventCause,
     source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
 ) -> (u32, bool) {
     let processed = process_damage_assignments_with_event_with_source_snapshot(
@@ -2239,6 +2268,7 @@ pub fn process_damage_with_event_with_source_snapshot(
         target,
         amount,
         is_combat,
+        cause,
         source_snapshot,
     );
     let original_target_damage = processed
@@ -2340,7 +2370,13 @@ pub fn process_dies_with_event(
 ) -> Option<Zone> {
     use crate::events::{ZoneChangeEvent, downcast_event};
 
-    let event = Event::zone_change(creature, Zone::Battlefield, Zone::Graveyard, Some(snapshot));
+    let event = Event::zone_change(
+        creature,
+        Zone::Battlefield,
+        Zone::Graveyard,
+        crate::events::cause::EventCause::from_sba(),
+        Some(snapshot),
+    );
     let result = process_trait_event(game, event);
 
     match result {
@@ -2369,10 +2405,11 @@ pub fn process_zone_change_with_event(
     object: crate::ids::ObjectId,
     from: Zone,
     to: Zone,
+    cause: crate::events::cause::EventCause,
 ) -> Option<Zone> {
     use crate::events::{ZoneChangeEvent, downcast_event};
 
-    let event = Event::zone_change(object, from, to, None);
+    let event = Event::zone_change(object, from, to, cause, None);
     let result = process_trait_event(game, event);
 
     match result {
@@ -2396,6 +2433,7 @@ pub fn process_put_counters_with_event(
     target: crate::ids::ObjectId,
     counter_type: CounterType,
     count: u32,
+    cause: crate::events::cause::EventCause,
 ) -> u32 {
     use crate::events::{PutCountersEvent, downcast_event};
 
@@ -2403,7 +2441,7 @@ pub fn process_put_counters_with_event(
         return 0;
     }
 
-    let event = Event::put_counters(target, counter_type, count);
+    let event = Event::put_counters(target, counter_type, count, cause);
     let result = process_trait_event(game, event);
 
     match result {
@@ -2801,6 +2839,7 @@ pub fn process_zone_change_full(
     object: crate::ids::ObjectId,
     from: Zone,
     to: Zone,
+    cause: crate::events::cause::EventCause,
 ) -> ZoneChangeResult {
     use crate::events::{ZoneChangeEvent, downcast_event};
 
@@ -2808,7 +2847,7 @@ pub fn process_zone_change_full(
         .object(object)
         .map(|o| crate::snapshot::ObjectSnapshot::from_object(o, game));
 
-    let event = Event::zone_change(object, from, to, snapshot);
+    let event = Event::zone_change(object, from, to, cause, snapshot);
     let result = process_trait_event(game, event);
 
     match result {

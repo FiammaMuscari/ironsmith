@@ -969,7 +969,7 @@ mod tests {
         );
 
         let moved_id = game
-            .move_object(source, Zone::Graveyard)
+            .move_object_by_effect(source, Zone::Graveyard)
             .expect("source should move to graveyard");
         assert_ne!(
             moved_id, source,

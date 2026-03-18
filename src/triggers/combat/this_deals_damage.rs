@@ -147,7 +147,13 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(source_id, DamageTarget::Player(bob), 3, false),
+            DamageEvent::with_cause(
+                source_id,
+                DamageTarget::Player(bob),
+                3,
+                false,
+                crate::events::cause::EventCause::effect(),
+            ),
             crate::provenance::ProvNodeId::default(),
         );
 

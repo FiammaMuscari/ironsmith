@@ -148,8 +148,14 @@ mod tests {
         );
         effect.execute(&mut game, &mut ctx).unwrap();
 
-        let (final_damage, prevented) =
-            process_damage_with_event(&mut game, source, DamageTarget::Player(bob), 3, false);
+        let (final_damage, prevented) = process_damage_with_event(
+            &mut game,
+            source,
+            DamageTarget::Player(bob),
+            3,
+            false,
+            crate::events::cause::EventCause::from_effect(source, alice),
+        );
         assert_eq!(final_damage, 0);
         assert!(prevented);
     }
@@ -173,14 +179,26 @@ mod tests {
         effect.execute(&mut game, &mut ctx).unwrap();
 
         // Damage to Alice is prevented.
-        let (final_damage, prevented) =
-            process_damage_with_event(&mut game, source, DamageTarget::Player(alice), 3, false);
+        let (final_damage, prevented) = process_damage_with_event(
+            &mut game,
+            source,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            crate::events::cause::EventCause::from_effect(source, alice),
+        );
         assert_eq!(final_damage, 0);
         assert!(prevented);
 
         // Damage to Bob is not prevented (replacement is consumed or doesn't match target).
-        let (final_damage, prevented) =
-            process_damage_with_event(&mut game, source, DamageTarget::Player(bob), 3, false);
+        let (final_damage, prevented) = process_damage_with_event(
+            &mut game,
+            source,
+            DamageTarget::Player(bob),
+            3,
+            false,
+            crate::events::cause::EventCause::from_effect(source, alice),
+        );
         assert_eq!(final_damage, 3);
         assert!(!prevented);
     }
@@ -197,11 +215,12 @@ mod tests {
         );
         let ctx = crate::events::EventContext::for_replacement_effect(alice, source, &game);
 
-        let unpreventable = crate::events::DamageEvent::unpreventable(
+        let unpreventable = crate::events::DamageEvent::unpreventable_with_cause(
             source,
             DamageTarget::Player(alice),
             3,
             false,
+            crate::events::cause::EventCause::effect(),
         );
         assert!(
             !matcher.matches_event(&unpreventable, &ctx),

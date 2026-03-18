@@ -8,10 +8,30 @@ use crate::effect::Value;
 use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};
 
 pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+    let all_words = words(tokens);
+    if matches!(
+        all_words.as_slice(),
+        ["up", "to", _, "target"]
+            | ["up", "to", _, "targets"]
+            | ["each", "of", "up", "to", _, "target"]
+            | ["each", "of", "up", "to", _, "targets"]
+    ) {
+        let number_word = if all_words[0] == "each" {
+            all_words[4]
+        } else {
+            all_words[2]
+        };
+        if let Some(count) = crate::cards::builders::parse_number_word_u32(number_word) {
+            return Ok(TargetAst::WithCount(
+                Box::new(TargetAst::AnyTarget(span_from_tokens(tokens))),
+                ChoiceCount::up_to(count as usize),
+            ));
+        }
+    }
+
     match parse_target_phrase_inner(tokens) {
         Ok(target) => Ok(target),
         Err(err) => {
-            let all_words = words(tokens);
             if matches!(all_words.first().copied(), Some("during" | "if" | "until")) {
                 for word_start in (1..all_words.len()).rev() {
                     let Some(token_start) = token_index_for_word_index(tokens, word_start) else {
@@ -74,6 +94,15 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
     let mut explicit_target = false;
 
     let all_words = words(tokens);
+    if all_words.starts_with(&["up", "to"])
+        && matches!(all_words.last().copied(), Some("target") | Some("targets"))
+        && let Some((value, _)) = parse_number_or_x_value(&tokens[2..])
+    {
+        return Ok(TargetAst::WithCount(
+            Box::new(TargetAst::AnyTarget(span)),
+            choice_count_from_value(&value, true),
+        ));
+    }
     if all_words
         .first()
         .is_some_and(|word| matches!(*word, "it" | "them"))

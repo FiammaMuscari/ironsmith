@@ -95,8 +95,9 @@ pub use counters::{
     RemoveUpToCountersEffect,
 };
 pub use damage::{
-    ClearDamageEffect, DealDamageEffect, PreventNextTimeDamageEffect, PreventNextTimeDamageSource,
-    PreventNextTimeDamageTarget, RedirectNextDamageToTargetEffect, RedirectNextTimeDamageSource,
+    ClearDamageEffect, DealDamageEffect, DealDistributedDamageEffect,
+    PreventNextTimeDamageEffect, PreventNextTimeDamageSource, PreventNextTimeDamageTarget,
+    RedirectNextDamageToTargetEffect, RedirectNextTimeDamageSource,
     RedirectNextTimeDamageToSourceEffect,
 };
 pub use delayed::{

@@ -77,6 +77,7 @@ impl EffectExecutor for ExileUntilEffect {
                 object_id,
                 from_zone,
                 Zone::Exile,
+                ctx.cause.clone(),
                 &mut ctx.decision_maker,
             );
 

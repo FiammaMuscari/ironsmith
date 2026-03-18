@@ -2187,6 +2187,9 @@ fn trap_condition_from_this_spell_cost_condition(
         crate::static_abilities::ThisSpellCostCondition::OpponentCastSpellsThisTurnOrMore(
             count,
         ) => Some(crate::TrapCondition::OpponentCastSpells { count: *count }),
+        crate::static_abilities::ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(
+            _,
+        ) => Some(crate::TrapCondition::CreatureDealtDamageToYou),
         _ => None,
     }
 }

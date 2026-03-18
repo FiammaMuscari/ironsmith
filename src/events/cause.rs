@@ -41,31 +41,39 @@ pub enum CauseType {
 
     /// Combat damage assignment.
     CombatDamage,
+
+    /// A special action such as playing a land, foretelling a card, or suspending a card.
+    SpecialAction,
+
+    /// A zone change specifically caused by applying the legend rule.
+    ///
+    /// This is technically a state-based action, but we track it distinctly so cards and
+    /// tests can tell it apart from generic SBA-driven moves.
+    LegendRule,
     // A replacement effect caused this (the event was transformed).
     // Replacement,
 
     // Mana ability activation.
     // ManaAbility,
-
-    // Special action (e.g., playing a land, turning a face-down creature face up).
-    // SpecialAction,
 }
 
 impl CauseType {
     /// Returns true if this cause type is considered "from an effect" for
     /// replacement purposes like Library of Leng.
     ///
-    /// Per MTG rules, Library of Leng applies to discards from effects only
+    /// This intentionally excludes costs, combat damage, state-based actions,
+    /// special actions, and legend-rule moves.
     pub fn is_effect_like(&self) -> bool {
         match self {
             CauseType::Effect => true,
-            CauseType::GameRule => false, // Cleanup discards are effect-like
+            CauseType::GameRule => false,
             CauseType::CombatDamage => false,
             CauseType::Cost => false,
             CauseType::StateBasedAction => false,
+            CauseType::SpecialAction => false,
+            CauseType::LegendRule => false,
             // Might be needed in the future but not so far, uncomment if required
             // CauseType::ManaAbility => false, // Mana abilities are cost-related
-            // CauseType::SpecialAction => false,
             // CauseType::Replacement => true, // Replacement effects are effect-like
         }
     }
@@ -90,6 +98,15 @@ pub struct EventCause {
 }
 
 impl EventCause {
+    /// Create a cause from an effect when no specific source information is available.
+    pub fn effect() -> Self {
+        Self {
+            cause_type: CauseType::Effect,
+            source: None,
+            source_controller: None,
+        }
+    }
+
     /// Create a cause from paying a cost.
     pub fn from_cost(source: ObjectId, controller: PlayerId) -> Self {
         Self {
@@ -135,6 +152,15 @@ impl EventCause {
         }
     }
 
+    /// Create a combat-damage cause when only the source object is known.
+    pub fn combat_damage(source: ObjectId) -> Self {
+        Self {
+            cause_type: CauseType::CombatDamage,
+            source: Some(source),
+            source_controller: None,
+        }
+    }
+
     // Create a cause from a mana ability.
     // pub fn from_mana_ability(source: ObjectId, controller: PlayerId) -> Self {
     //     Self {
@@ -144,14 +170,23 @@ impl EventCause {
     //     }
     // }
 
-    // Create a cause from a special action.
-    // pub fn from_special_action(source: Option<ObjectId>, controller: PlayerId) -> Self {
-    //     Self {
-    //         cause_type: CauseType::SpecialAction,
-    //         source,
-    //         source_controller: Some(controller),
-    //     }
-    // }
+    /// Create a cause from a special action.
+    pub fn from_special_action(source: Option<ObjectId>, controller: PlayerId) -> Self {
+        Self {
+            cause_type: CauseType::SpecialAction,
+            source,
+            source_controller: Some(controller),
+        }
+    }
+
+    /// Create a cause from the legend rule.
+    pub fn from_legend_rule(controller: PlayerId) -> Self {
+        Self {
+            cause_type: CauseType::LegendRule,
+            source: None,
+            source_controller: Some(controller),
+        }
+    }
 
     // Create a cause from a replacement effect.
     // pub fn from_replacement(source: ObjectId, controller: PlayerId) -> Self {
@@ -161,18 +196,6 @@ impl EventCause {
     //         source_controller: Some(controller),
     //     }
     // }
-}
-
-impl Default for EventCause {
-    /// Default cause is from an effect with no specific source.
-    /// This is a safe default when source data is unavailable.
-    fn default() -> Self {
-        Self {
-            cause_type: CauseType::Effect,
-            source: None,
-            source_controller: None,
-        }
-    }
 }
 
 /// Filter for matching event causes.
@@ -199,8 +222,7 @@ pub enum CauseTypeFilter {
     /// Match a specific cause type.
     Exact(CauseType),
 
-    /// Match any "effect-like" cause (Effect, GameRule, SBA, etc.).
-    /// This is what Library of Leng uses.
+    /// Match any cause considered "effect-like" by [`CauseType::is_effect_like`].
     EffectLike,
 
     /// Match any cause type that is NOT a cost.
@@ -248,9 +270,7 @@ impl CauseFilter {
         }
     }
 
-    /// Create a filter for effect-like causes (for Library of Leng).
-    ///
-    /// This matches Effect, GameRule, SBA, etc. but NOT Cost.
+    /// Create a filter for effect-like causes.
     pub fn effect_like() -> Self {
         Self {
             cause_type: Some(CauseTypeFilter::EffectLike),
@@ -369,9 +389,10 @@ mod tests {
         assert!(!CauseType::StateBasedAction.is_effect_like());
         assert!(!CauseType::CombatDamage.is_effect_like());
         assert!(!CauseType::Cost.is_effect_like());
+        assert!(!CauseType::SpecialAction.is_effect_like());
+        assert!(!CauseType::LegendRule.is_effect_like());
         // assert!(CauseType::Replacement.is_effect_like());
         // assert!(!CauseType::ManaAbility.is_effect_like());
-        // assert!(!CauseType::SpecialAction.is_effect_like());
     }
 
     #[test]
@@ -444,5 +465,15 @@ mod tests {
 
         let rule = EventCause::from_game_rule();
         assert_eq!(rule.cause_type, CauseType::GameRule);
+
+        let special = EventCause::from_special_action(Some(source), player);
+        assert_eq!(special.cause_type, CauseType::SpecialAction);
+        assert_eq!(special.source, Some(source));
+        assert_eq!(special.source_controller, Some(player));
+
+        let legend_rule = EventCause::from_legend_rule(player);
+        assert_eq!(legend_rule.cause_type, CauseType::LegendRule);
+        assert_eq!(legend_rule.source, None);
+        assert_eq!(legend_rule.source_controller, Some(player));
     }
 }

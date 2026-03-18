@@ -255,7 +255,13 @@ mod tests {
 
         // Simulate Tivit entering the battlefield
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
+            ZoneChangeEvent::with_cause(
+                tivit_id,
+                Zone::Hand,
+                Zone::Battlefield,
+                crate::events::cause::EventCause::effect(),
+                None,
+            ),
             crate::provenance::ProvNodeId::default(),
         );
 
@@ -279,11 +285,12 @@ mod tests {
 
         // Simulate Tivit dealing combat damage to Bob
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 tivit_id,
                 DamageTarget::Player(bob),
                 6,
                 true, // is_combat
+                crate::events::cause::EventCause::combat_damage(tivit_id),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -312,11 +319,12 @@ mod tests {
 
         // Simulate non-combat damage from Tivit to Bob
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 tivit_id,
                 DamageTarget::Player(bob),
                 6,
                 false, // not combat
+                crate::events::cause::EventCause::effect(),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -347,11 +355,12 @@ mod tests {
 
         // Simulate combat damage to a creature (not a player)
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 tivit_id,
                 DamageTarget::Object(creature_id),
                 6,
                 true, // is_combat
+                crate::events::cause::EventCause::combat_damage(tivit_id),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -416,7 +425,13 @@ mod tests {
 
         // Simulate Tivit entering the battlefield
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
+            ZoneChangeEvent::with_cause(
+                tivit_id,
+                Zone::Hand,
+                Zone::Battlefield,
+                crate::events::cause::EventCause::effect(),
+                None,
+            ),
             crate::provenance::ProvNodeId::default(),
         );
 

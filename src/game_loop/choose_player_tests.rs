@@ -305,7 +305,13 @@ fn choose_player_stuffy_doll_redirects_damage_to_chosen_player() {
 
     let bob_life_before = game.player(bob).expect("bob exists").life;
     let damage_event = TriggerEvent::new_with_provenance(
-        crate::events::DamageEvent::new(source_id, DamageTarget::Object(doll_id), 3, false),
+        crate::events::DamageEvent::with_cause(
+            source_id,
+            DamageTarget::Object(doll_id),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        ),
         ProvNodeId::default(),
     );
     let mut trigger_queue = TriggerQueue::new();
@@ -433,7 +439,13 @@ fn choose_player_saskia_redirects_combat_damage_to_the_chosen_player() {
 
     let bob_life_before = game.player(bob).expect("bob exists").life;
     let damage_event = TriggerEvent::new_with_provenance(
-        crate::events::DamageEvent::new(attacker_id, DamageTarget::Player(charlie), 4, true),
+        crate::events::DamageEvent::with_cause(
+            attacker_id,
+            DamageTarget::Player(charlie),
+            4,
+            true,
+            crate::events::cause::EventCause::combat_damage(attacker_id),
+        ),
         ProvNodeId::default(),
     );
     let mut trigger_queue = TriggerQueue::new();

@@ -1285,7 +1285,9 @@ fn test_student_of_warfare_base_stats() {
         .add(ManaSymbol::White, 1);
 
     // Cast Student of Warfare
-    let stack_student_id = game.move_object(student_in_hand, Zone::Stack).unwrap();
+    let stack_student_id = game
+        .move_object_by_effect(student_in_hand, Zone::Stack)
+        .unwrap();
     let entry = StackEntry::new(stack_student_id, alice);
     game.push_to_stack(entry);
 
@@ -1378,7 +1380,9 @@ fn test_student_of_warfare_level_2() {
         .mana_pool
         .add(ManaSymbol::White, 1);
 
-    let stack_student_id = game.move_object(student_in_hand, Zone::Stack).unwrap();
+    let stack_student_id = game
+        .move_object_by_effect(student_in_hand, Zone::Stack)
+        .unwrap();
     let entry = StackEntry::new(stack_student_id, alice);
     game.push_to_stack(entry);
     game.player_mut(alice)
@@ -1525,7 +1529,9 @@ fn test_student_of_warfare_level_7() {
         .mana_pool
         .add(ManaSymbol::White, 1);
 
-    let stack_student_id = game.move_object(student_in_hand, Zone::Stack).unwrap();
+    let stack_student_id = game
+        .move_object_by_effect(student_in_hand, Zone::Stack)
+        .unwrap();
     let entry = StackEntry::new(stack_student_id, alice);
     game.push_to_stack(entry);
     game.player_mut(alice)
@@ -1730,7 +1736,7 @@ fn test_humility_removed_student_recovers() {
     // Remove Humility (move to graveyard)
     // Note: Static ability effects are generated dynamically by scanning the battlefield,
     // so when Humility leaves, its effects automatically stop applying
-    game.move_object(humility_id, Zone::Graveyard);
+    game.move_object_by_effect(humility_id, Zone::Graveyard);
 
     // Student should recover its level 7+ stats
     assert_eq!(
@@ -1855,7 +1861,9 @@ fn test_giant_growth_on_leveled_student() {
         .mana_pool
         .add(ManaSymbol::White, 1);
 
-    let stack_student_id = game.move_object(student_in_hand, Zone::Stack).unwrap();
+    let stack_student_id = game
+        .move_object_by_effect(student_in_hand, Zone::Stack)
+        .unwrap();
     let entry = StackEntry::new(stack_student_id, alice);
     game.push_to_stack(entry);
     game.player_mut(alice)
@@ -1907,7 +1915,7 @@ fn test_giant_growth_on_leveled_student() {
         .mana_pool
         .add(ManaSymbol::Green, 1);
 
-    let stack_gg_id = game.move_object(gg_in_hand, Zone::Stack).unwrap();
+    let stack_gg_id = game.move_object_by_effect(gg_in_hand, Zone::Stack).unwrap();
     let entry = StackEntry::new(stack_gg_id, alice)
         .with_targets(vec![crate::game_state::Target::Object(student_id)]);
     game.push_to_stack(entry);
@@ -1981,7 +1989,9 @@ fn test_counters_on_leveled_student() {
         .mana_pool
         .add(ManaSymbol::White, 1);
 
-    let stack_student_id = game.move_object(student_in_hand, Zone::Stack).unwrap();
+    let stack_student_id = game
+        .move_object_by_effect(student_in_hand, Zone::Stack)
+        .unwrap();
     let entry = StackEntry::new(stack_student_id, alice);
     game.push_to_stack(entry);
     game.player_mut(alice)
@@ -2222,7 +2232,7 @@ fn test_undying_creature_returns_with_plus_counter() {
         .add(ManaSymbol::Red, 1);
 
     // Cast Lightning Bolt targeting the Butcher Ghoul
-    let stack_bolt_id = game.move_object(bolt_id, Zone::Stack).unwrap();
+    let stack_bolt_id = game.move_object_by_effect(bolt_id, Zone::Stack).unwrap();
     let entry = StackEntry::new(stack_bolt_id, alice)
         .with_targets(vec![crate::game_state::Target::Object(ghoul_id)]);
     game.push_to_stack(entry);
@@ -2346,7 +2356,7 @@ fn test_undying_does_not_trigger_with_plus_counter_integration() {
         .add(ManaSymbol::Red, 1);
 
     // Cast Lightning Bolt targeting the Butcher Ghoul
-    let stack_bolt_id = game.move_object(bolt_id, Zone::Stack).unwrap();
+    let stack_bolt_id = game.move_object_by_effect(bolt_id, Zone::Stack).unwrap();
     let entry = StackEntry::new(stack_bolt_id, alice)
         .with_targets(vec![crate::game_state::Target::Object(ghoul_id)]);
     game.push_to_stack(entry);
@@ -2577,7 +2587,7 @@ fn test_counter_annihilation_enables_undying_loop() {
         .add(ManaSymbol::Red, 1);
 
     // Cast Lightning Bolt targeting Butcher Ghoul
-    let stack_bolt_id = game.move_object(bolt_id, Zone::Stack).unwrap();
+    let stack_bolt_id = game.move_object_by_effect(bolt_id, Zone::Stack).unwrap();
     let entry = StackEntry::new(stack_bolt_id, alice)
         .with_targets(vec![crate::game_state::Target::Object(butcher_id)]);
     game.push_to_stack(entry);

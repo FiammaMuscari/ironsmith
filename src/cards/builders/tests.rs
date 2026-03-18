@@ -1295,6 +1295,112 @@ fn test_aura_chosen_basic_land_type_sets_enchanted_land_subtype() {
 }
 
 #[test]
+fn test_roaming_throne_variant_parses_without_placeholders() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Roaming Throne Variant")
+        .card_types(vec![CardType::Artifact, CardType::Creature])
+        .subtypes(vec![Subtype::Golem])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .parse_text(
+            "Ward {2}\nAs this creature enters, choose a creature type.\nThis creature is the chosen type in addition to its other types.\nIf a triggered ability of another creature you control of the chosen type triggers, it triggers an additional time.",
+        )
+        .expect("parse roaming throne variant");
+
+    let ids: Vec<StaticAbilityId> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(ids.contains(&StaticAbilityId::Ward));
+    assert!(ids.contains(&StaticAbilityId::ChooseCreatureTypeAsEnters));
+    assert!(ids.contains(&StaticAbilityId::AddChosenCreatureType));
+    assert!(ids.contains(
+        &StaticAbilityId::OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime
+    ));
+    assert!(
+        !ids.contains(&StaticAbilityId::RuleTextPlaceholder)
+            && !ids.contains(&StaticAbilityId::UnsupportedParserLine),
+        "expected typed Roaming Throne static abilities, got {ids:?}"
+    );
+}
+
+#[test]
+fn test_chosen_creature_type_static_adds_selected_subtype() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Roaming Throne Variant")
+        .card_types(vec![CardType::Artifact, CardType::Creature])
+        .subtypes(vec![Subtype::Golem])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .parse_text(
+            "As this creature enters, choose a creature type.\nThis creature is the chosen type in addition to its other types.",
+        )
+        .expect("parse chosen creature type addition lines");
+
+    let mut game =
+        crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+    let alice = PlayerId::from_index(0);
+    let throne_id = game.create_object_from_definition(&def, alice, crate::zone::Zone::Battlefield);
+    game.set_chosen_creature_type(throne_id, Subtype::Wall);
+
+    let chars = game
+        .calculated_characteristics(throne_id)
+        .expect("roaming throne variant should have calculated characteristics");
+    assert!(
+        chars.subtypes.contains(&Subtype::Golem),
+        "expected original subtype to remain"
+    );
+    assert!(
+        chars.subtypes.contains(&Subtype::Wall),
+        "expected chosen subtype to be added"
+    );
+}
+
+#[test]
+fn test_roaming_throne_variant_duplicates_matching_creature_triggers() {
+    let throne_def = CardDefinitionBuilder::new(CardId::from_raw(1), "Roaming Throne Variant")
+        .card_types(vec![CardType::Artifact, CardType::Creature])
+        .subtypes(vec![Subtype::Golem])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .parse_text(
+            "As this creature enters, choose a creature type.\nThis creature is the chosen type in addition to its other types.\nIf a triggered ability of another creature you control of the chosen type triggers, it triggers an additional time.",
+        )
+        .expect("parse roaming throne trigger-doubling lines");
+    let wall_def = crate::cards::definitions::wall_of_omens();
+
+    let mut game =
+        crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+    let alice = PlayerId::from_index(0);
+    let throne_id =
+        game.create_object_from_definition(&throne_def, alice, crate::zone::Zone::Battlefield);
+    game.set_chosen_creature_type(throne_id, Subtype::Wall);
+
+    let wall_id =
+        game.create_object_from_definition(&wall_def, alice, crate::zone::Zone::Battlefield);
+    let event = crate::events::RawEvent::new(
+        crate::events::ZoneChangeEvent::with_cause(
+            wall_id,
+            crate::zone::Zone::Hand,
+            crate::zone::Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        ),
+        crate::provenance::ProvNodeId::default(),
+    );
+
+    let triggered = crate::triggers::check_triggers(&game, &event);
+    let wall_entries = triggered
+        .iter()
+        .filter(|entry| entry.source == wall_id)
+        .count();
+    assert_eq!(
+        wall_entries, 2,
+        "expected Wall of Omens ETB trigger to fire twice, got {wall_entries}: {triggered:#?}"
+    );
+}
+
+#[test]
 fn test_parse_this_cost_is_reduced_by_basic_land_types_without_placeholder() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Draco Variant")
         .mana_cost(ManaCost::from_pips(vec![
@@ -3485,7 +3591,7 @@ fn test_scavenge_uses_source_snapshot_power_after_source_is_exiled() {
     let source_snapshot =
         ObjectSnapshot::from_object(game.object(source).expect("source object exists"), &game);
     let moved_source = game
-        .move_object(source, Zone::Exile)
+        .move_object_by_effect(source, Zone::Exile)
         .expect("source should move to exile to simulate paying scavenge");
     assert!(
         game.object(moved_source)
@@ -13585,11 +13691,12 @@ fn arcbond_delayed_trigger_deals_damage_to_each_other_creature_and_each_player()
     );
 
     let damage_event = crate::triggers::TriggerEvent::new_with_provenance(
-        crate::events::DamageEvent::new(
+        crate::events::DamageEvent::with_cause(
             other_creature_one,
             crate::game_event::DamageTarget::Object(chosen_creature),
             3,
             false,
+            crate::events::cause::EventCause::effect(),
         ),
         crate::provenance::ProvNodeId::default(),
     );

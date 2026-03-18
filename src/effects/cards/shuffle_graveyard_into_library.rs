@@ -39,6 +39,7 @@ impl EffectExecutor for ShuffleGraveyardIntoLibraryEffect {
             let _ = game.move_object_with_commander_options(
                 card_id,
                 Zone::Library,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             );
         }

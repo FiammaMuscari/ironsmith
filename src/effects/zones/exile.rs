@@ -115,6 +115,7 @@ impl ExileEffect {
                 object_id,
                 from_zone,
                 Zone::Exile,
+                ctx.cause.clone(),
                 &mut ctx.decision_maker,
             );
 
@@ -271,6 +272,7 @@ impl EffectExecutor for ExileEffect {
                     object_id,
                     from_zone,
                     Zone::Exile,
+                    ctx.cause.clone(),
                     &mut ctx.decision_maker,
                 ) {
                     EventOutcome::Proceed(result) => {

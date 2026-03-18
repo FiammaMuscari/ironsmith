@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$ROOT_DIR/pkg"
 DEMO_PKG_DIR="$ROOT_DIR/web/wasm_demo/pkg"
+CARDS_JSON_FILE="$ROOT_DIR/cards.json"
 DEFAULT_FRONTEND_SCORES_FILE="$ROOT_DIR/web/ui/public/ironsmith_semantic_scores.json"
 DEFAULT_CLUSTER_CSV_FILE="$ROOT_DIR/reports/ironsmith_parse_failure_clusters.csv"
 DEFAULT_PARSE_ERRORS_CSV_FILE="$ROOT_DIR/reports/ironsmith_parse_errors.csv"
@@ -33,6 +34,12 @@ require_cmd() {
     echo "missing required command: $1" >&2
     exit 1
   }
+}
+
+feature_enabled() {
+  local normalized
+  normalized="$(printf '%s' "$FEATURES" | tr -d '[:space:]')"
+  [[ ",$normalized," == *",$1,"* ]]
 }
 
 usage() {
@@ -129,6 +136,20 @@ done
 cd "$ROOT_DIR"
 require_cmd cargo
 require_cmd wasm-pack
+
+if [[ -n "$THRESHOLD" ]] || feature_enabled "generated-registry"; then
+  if [[ ! -f "$CARDS_JSON_FILE" ]]; then
+    cat >&2 <<EOF
+[ERROR] cards database not found: $CARDS_JSON_FILE
+
+This repo expects a local gitignored Scryfall dump at cards.json.
+The current command needs it because:
+  - --threshold recomputes semantic audits from card data
+  - the generated-registry build reads cards.json during build.rs
+EOF
+    exit 1
+  fi
+fi
 
 if [[ "$SCORES_FILE_EXPLICIT" -eq 1 ]]; then
   :

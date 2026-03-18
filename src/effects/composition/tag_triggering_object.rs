@@ -104,15 +104,16 @@ mod tests {
             &game,
         );
         let graveyard_id = game
-            .move_object(creature_id, Zone::Graveyard)
+            .move_object_by_effect(creature_id, Zone::Graveyard)
             .expect("creature should move to graveyard");
         assert_ne!(graveyard_id, creature_id);
 
         let trigger_event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::zones::ZoneChangeEvent::new(
+            crate::events::zones::ZoneChangeEvent::with_cause(
                 creature_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_sba(),
                 Some(snapshot.clone()),
             ),
             crate::provenance::ProvNodeId::default(),

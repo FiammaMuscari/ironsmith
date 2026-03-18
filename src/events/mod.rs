@@ -202,16 +202,15 @@ impl Event {
     // Factory methods for common event types
 
     /// Create a damage event.
-    pub fn damage(source: ObjectId, target: DamageTarget, amount: u32, is_combat: bool) -> Self {
+    pub fn damage(
+        source: ObjectId,
+        target: DamageTarget,
+        amount: u32,
+        is_combat: bool,
+        cause: EventCause,
+    ) -> Self {
         Self::new_with_provenance(
-            DamageEvent {
-                source,
-                target,
-                amount,
-                is_combat,
-                is_unpreventable: false,
-                remainder: None,
-            },
+            DamageEvent::with_cause(source, target, amount, is_combat, cause),
             ProvNodeId::default(),
         )
     }
@@ -222,16 +221,10 @@ impl Event {
         target: DamageTarget,
         amount: u32,
         is_combat: bool,
+        cause: EventCause,
     ) -> Self {
         Self::new_with_provenance(
-            DamageEvent {
-                source,
-                target,
-                amount,
-                is_combat,
-                is_unpreventable: true,
-                remainder: None,
-            },
+            DamageEvent::unpreventable_with_cause(source, target, amount, is_combat, cause),
             ProvNodeId::default(),
         )
     }
@@ -258,10 +251,11 @@ impl Event {
         object: ObjectId,
         from: Zone,
         to: Zone,
+        cause: EventCause,
         snapshot: Option<ObjectSnapshot>,
     ) -> Self {
         Self::new_with_provenance(
-            ZoneChangeEvent::new(object, from, to, snapshot),
+            ZoneChangeEvent::with_cause(object, from, to, cause, snapshot),
             ProvNodeId::default(),
         )
     }
@@ -288,12 +282,14 @@ impl Event {
 
     /// Create a "dies" zone change event (battlefield -> graveyard).
     pub fn dies(object_id: ObjectId, controller: PlayerId, snapshot: ObjectSnapshot) -> Self {
+        let cause = EventCause::from_sba();
         let _ = controller;
         Self::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 object_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                cause,
                 Some(snapshot),
             ),
             ProvNodeId::default(),
@@ -301,13 +297,14 @@ impl Event {
     }
 
     /// Create a put counters event.
-    pub fn put_counters(target: ObjectId, counter_type: CounterType, count: u32) -> Self {
+    pub fn put_counters(
+        target: ObjectId,
+        counter_type: CounterType,
+        count: u32,
+        cause: EventCause,
+    ) -> Self {
         Self::new_with_provenance(
-            PutCountersEvent {
-                target,
-                counter_type,
-                count,
-            },
+            PutCountersEvent::with_cause(target, counter_type, count, cause),
             ProvNodeId::default(),
         )
     }
@@ -354,27 +351,6 @@ impl Event {
         )
     }
 
-    /// Create a discard event from an effect.
-    pub fn discard_from_effect(card: ObjectId, player: PlayerId) -> Self {
-        Self::new_with_provenance(
-            DiscardEvent::from_effect(card, player),
-            ProvNodeId::default(),
-        )
-    }
-
-    /// Create a discard event as a cost.
-    pub fn discard_as_cost(card: ObjectId, player: PlayerId) -> Self {
-        Self::new_with_provenance(DiscardEvent::as_cost(card, player), ProvNodeId::default())
-    }
-
-    /// Create a discard event from a game rule (e.g., cleanup step).
-    pub fn discard_from_game_rule(card: ObjectId, player: PlayerId) -> Self {
-        Self::new_with_provenance(
-            DiscardEvent::from_game_rule(card, player),
-            ProvNodeId::default(),
-        )
-    }
-
     /// Create a discard event with a custom cause.
     pub fn discard_with_cause(card: ObjectId, player: PlayerId, cause: EventCause) -> Self {
         Self::new_with_provenance(
@@ -415,7 +391,7 @@ mod tests {
     fn test_event_factory_damage() {
         let source = ObjectId::from_raw(1);
         let target = DamageTarget::Player(PlayerId::from_index(0));
-        let event = Event::damage(source, target, 3, false);
+        let event = Event::damage(source, target, 3, false, EventCause::effect());
 
         assert_eq!(event.kind(), EventKind::Damage);
     }
@@ -428,7 +404,13 @@ mod tests {
 
     #[test]
     fn test_event_factory_zone_change() {
-        let event = Event::zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let event = Event::zone_change(
+            ObjectId::from_raw(1),
+            Zone::Hand,
+            Zone::Battlefield,
+            EventCause::effect(),
+            None,
+        );
         assert_eq!(event.kind(), EventKind::ZoneChange);
     }
 

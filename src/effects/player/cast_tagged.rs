@@ -183,7 +183,7 @@ impl EffectExecutor for CastTaggedEffect {
             }
         }
 
-        let Some(new_id) = game.move_object(object_id, Zone::Stack) else {
+        let Some(new_id) = game.move_object_by_effect(object_id, Zone::Stack) else {
             return Ok(EffectOutcome::impossible());
         };
         if let Some(obj) = game.object_mut(new_id) {

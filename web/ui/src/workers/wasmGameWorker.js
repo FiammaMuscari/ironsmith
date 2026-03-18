@@ -1,3 +1,6 @@
+import initWasm, { WasmGame } from "../../../../pkg/ironsmith.js";
+import wasmUrl from "../../../../pkg/ironsmith_bg.wasm?url";
+
 const WASM_ESTIMATED_SIZE = 12_500_000; // ~12MB fallback estimate
 
 let game = null;
@@ -85,7 +88,7 @@ async function runBackgroundCompileStep() {
   try {
     const status = await game.preloadRegistryChunk(16);
     postRegistryStatus(status);
-    if (Boolean(status?.done)) {
+    if (status?.done) {
       backgroundCompileDone = true;
       return;
     }
@@ -94,58 +97,6 @@ async function runBackgroundCompileStep() {
     return;
   }
   scheduleBackgroundCompile(16);
-}
-
-async function importModuleScript(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  const contentType = response.headers.get("content-type") || "unknown";
-  const scriptText = await response.text();
-  const probe = scriptText.trimStart().slice(0, 64).toLowerCase();
-  if (probe.startsWith("<!doctype") || probe.startsWith("<html")) {
-    throw new Error(
-      `Received HTML instead of JS (status ${response.status}, content-type ${contentType})`
-    );
-  }
-  const blobUrl = URL.createObjectURL(
-    new Blob([scriptText], { type: "text/javascript" })
-  );
-  try {
-    return await import(/* @vite-ignore */ blobUrl);
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
-}
-
-async function loadWasmModule(candidates, pageHref) {
-  const errors = [];
-  for (const path of candidates || []) {
-    const bust = `v=${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    const attempts = [`${path}?${bust}`, path];
-    try {
-      let lastErr = null;
-      for (const attempt of attempts) {
-        const resolvedUrl = new URL(attempt, pageHref).href;
-        try {
-          const mod = await importModuleScript(resolvedUrl);
-          const wasmPath = resolvedUrl
-            .replace(/\?.*$/, "")
-            .replace(/\.js$/i, "_bg.wasm");
-          return { mod, wasmPath };
-        } catch (innerErr) {
-          lastErr = `${resolvedUrl}: ${innerErr}`;
-        }
-      }
-      if (lastErr) throw new Error(lastErr);
-    } catch (err) {
-      errors.push(`${path}: ${err}`);
-    }
-  }
-  throw new Error(
-    `Could not load wasm JS module. Tried: ${errors.join(" | ")}`
-  );
 }
 
 async function fetchWasmWithProgress(url, onProgress) {
@@ -198,7 +149,7 @@ async function fetchWasmWithProgress(url, onProgress) {
   };
 }
 
-async function handleInit(msg) {
+async function handleInit() {
   try {
     clearBackgroundTimer();
     game = null;
@@ -207,20 +158,17 @@ async function handleInit(msg) {
     lastRegistryLoaded = -1;
     lastRegistryTotal = -1;
     postProgress("module", 0);
-    const loaded = await loadWasmModule(msg.candidates, msg.pageHref);
 
     postProgress("download", 0);
     const bust = `v=${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const { wasmResponse, downloadDone } = await fetchWasmWithProgress(
-      `${loaded.wasmPath}?${bust}`,
+      `${wasmUrl}?${bust}`,
       (p) => postProgress("download", p)
     );
 
     await downloadDone;
     postProgress("init", 1);
-    await loaded.mod.default(wasmResponse);
-
-    const WasmGame = loaded.mod.WasmGame;
+    await initWasm(wasmResponse);
     game = new WasmGame();
     if (typeof game.preloadRegistryStatus === "function") {
       const status = await game.preloadRegistryStatus();

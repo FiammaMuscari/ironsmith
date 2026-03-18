@@ -297,7 +297,9 @@ mod tests {
         // Create Braids and move it to the graveyard
         let def = braids_arisen_nightmare();
         let braids_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
-        let _new_id = game.move_object(braids_id, Zone::Graveyard).unwrap();
+        let _new_id = game
+            .move_object_by_effect(braids_id, Zone::Graveyard)
+            .unwrap();
 
         // Simulate Alice's end step
         let event = TriggerEvent::new_with_provenance(

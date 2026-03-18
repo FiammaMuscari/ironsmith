@@ -128,6 +128,7 @@ pub(super) fn resolve_stack_entry_full(
                 entry.object_id,
                 Zone::Stack,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_effect(entry.object_id, entry.controller),
                 &mut *decision_maker,
             );
         }
@@ -226,6 +227,10 @@ pub(super) fn resolve_stack_entry_full(
                         entry.object_id,
                         Zone::Stack,
                         redirect_zone,
+                        crate::events::cause::EventCause::from_effect(
+                            entry.object_id,
+                            entry.controller,
+                        ),
                         &mut *decision_maker,
                     );
                     return Ok(());
@@ -238,7 +243,7 @@ pub(super) fn resolve_stack_entry_full(
 
                 // Interactive replacement was already processed above - skip second ETB processing
                 // and move directly to battlefield (avoids double-processing)
-                let new_id = game.move_object(entry.object_id, Zone::Battlefield);
+                let new_id = game.move_object_by_effect(entry.object_id, Zone::Battlefield);
                 if let Some(id) = new_id {
                     // Apply enters tapped if needed (e.g., shock land not paying life)
                     if enters_tapped {
@@ -473,6 +478,10 @@ pub(super) fn resolve_stack_entry_full(
                         entry.object_id,
                         Zone::Stack,
                         Zone::Exile,
+                        crate::events::cause::EventCause::from_effect(
+                            entry.object_id,
+                            entry.controller,
+                        ),
                         &mut *decision_maker,
                     )
                     && result.final_zone == Zone::Exile
@@ -507,6 +516,10 @@ pub(super) fn resolve_stack_entry_full(
                     entry.object_id,
                     Zone::Stack,
                     Zone::Exile,
+                    crate::events::cause::EventCause::from_effect(
+                        entry.object_id,
+                        entry.controller,
+                    ),
                     &mut *decision_maker,
                 );
             } else {
@@ -517,6 +530,10 @@ pub(super) fn resolve_stack_entry_full(
                     entry.object_id,
                     Zone::Stack,
                     Zone::Graveyard,
+                    crate::events::cause::EventCause::from_effect(
+                        entry.object_id,
+                        entry.controller,
+                    ),
                     &mut *decision_maker,
                 );
             }

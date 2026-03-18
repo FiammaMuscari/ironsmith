@@ -46,8 +46,8 @@ use crate::color::ColorSet;
 use crate::cost::TotalCost;
 #[allow(unused_imports)]
 use crate::effect::{
-    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EventValueSpec, Until,
-    Value,
+    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EmblemDescription,
+    EventValueSpec, Until, Value,
 };
 #[allow(unused_imports)]
 use crate::effects::composition::VoteOption;
@@ -1058,6 +1058,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
             count: *count,
         },
         PredicateAst::SourcePowerAtLeast(count) => Condition::SourcePowerAtLeast(*count),
+        PredicateAst::SourceAttackedOrBlockedThisTurn => Condition::SourceAttackedOrBlockedThisTurn,
         PredicateAst::SourceIsInZone(zone) => Condition::SourceIsInZone(*zone),
         PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
         PredicateAst::SourceWasCast => Condition::SourceWasCast,
@@ -3502,7 +3503,10 @@ fn compile_effect_inner(
     effect: &EffectAst,
     ctx: &mut EffectLoweringContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    if matches!(effect, EffectAst::RepeatThisProcess) {
+    if matches!(
+        effect,
+        EffectAst::RepeatThisProcess | EffectAst::RepeatThisProcessOnce
+    ) {
         return Err(CardTextError::ParseError(
             "unsupported repeat this process effect tail".to_string(),
         ));
@@ -3644,6 +3648,16 @@ where
     Ok((effects, choices))
 }
 
+fn compile_emblem_description_from_text(text: &str) -> Result<EmblemDescription, CardTextError> {
+    let definition = CardDefinitionBuilder::new(CardId::new(), "Emblem")
+        .parse_text(text.to_string())?;
+    Ok(EmblemDescription {
+        name: "Emblem".to_string(),
+        text: text.to_string(),
+        abilities: definition.abilities,
+    })
+}
+
 pub(crate) fn compile_player_effect_with_generated_object_tag<YouBuilder, OtherBuilder>(
     player: PlayerAst,
     ctx: &mut EffectLoweringContext,
@@ -3742,6 +3756,15 @@ fn try_compile_combat_and_damage_effect(
                 ctx.last_player_filter = Some(PlayerFilter::DamagedPlayer);
             }
             (effects, choices)
+        }
+        EffectAst::DealDistributedDamage { amount, target } => {
+            let resolved_amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
+                Effect::new(crate::effects::DealDistributedDamageEffect::new(
+                    resolved_amount.clone(),
+                    spec,
+                ))
+            })?
         }
         EffectAst::DealDamageEqualToPower { source, target } => {
             let (source_spec, mut choices) =
@@ -4228,6 +4251,17 @@ fn try_compile_player_resource_and_choice_effect(
                 || Effect::gain_life(amount.clone()),
                 |filter| Effect::gain_life_player(amount.clone(), ChooseSpec::Player(filter)),
             )?
+        }
+        EffectAst::CreateEmblem { player, text } => {
+            let emblem = compile_emblem_description_from_text(text)?;
+            let (filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let effect = if matches!(filter, PlayerFilter::You) {
+                Effect::create_emblem(emblem)
+            } else {
+                Effect::for_players(filter, vec![Effect::create_emblem(emblem)])
+            };
+            (vec![effect], choices)
         }
         EffectAst::LoseGame { player } => compile_player_effect(
             *player,

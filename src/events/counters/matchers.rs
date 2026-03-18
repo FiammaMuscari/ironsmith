@@ -1,5 +1,6 @@
 //! Counter replacement effect matchers.
 
+use crate::events::cause::CauseFilter;
 use crate::events::context::EventContext;
 use crate::events::traits::{EventKind, GameEventType, ReplacementMatcher, downcast_event};
 use crate::object::CounterType;
@@ -12,6 +13,7 @@ use super::PutCountersEvent;
 pub struct WouldPutCountersMatcher {
     pub filter: ObjectFilter,
     pub counter_type: Option<CounterType>,
+    pub cause_filter: CauseFilter,
 }
 
 impl WouldPutCountersMatcher {
@@ -19,6 +21,7 @@ impl WouldPutCountersMatcher {
         Self {
             filter,
             counter_type,
+            cause_filter: CauseFilter::any(),
         }
     }
 
@@ -30,6 +33,12 @@ impl WouldPutCountersMatcher {
     /// Matches +1/+1 counters on any creature.
     pub fn plus_one_on_creature() -> Self {
         Self::new(ObjectFilter::creature(), Some(CounterType::PlusOnePlusOne))
+    }
+
+    /// Restrict this matcher to counters put by causes matching the filter.
+    pub fn with_cause_filter(mut self, cause_filter: CauseFilter) -> Self {
+        self.cause_filter = cause_filter;
+        self
     }
 }
 
@@ -46,6 +55,13 @@ impl ReplacementMatcher for WouldPutCountersMatcher {
         // Check counter type if specified
         if let Some(required_type) = &self.counter_type
             && put_counters.counter_type != *required_type
+        {
+            return false;
+        }
+
+        if !self
+            .cause_filter
+            .matches(&put_counters.cause, ctx.game, put_counters.affected_player(ctx.game))
         {
             return false;
         }
@@ -129,6 +145,7 @@ impl ReplacementMatcher for WouldRemoveCountersMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::cause::{CauseType, CauseTypeFilter};
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, PlayerId};
 
@@ -146,7 +163,12 @@ mod tests {
 
         // The matcher needs an actual object in the game to match against
         // This test verifies the basic structure
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = PutCountersEvent::with_cause(
+            ObjectId::from_raw(1),
+            CounterType::PlusOnePlusOne,
+            3,
+            crate::events::cause::EventCause::effect(),
+        );
 
         // Won't match because object doesn't exist in game
         assert!(!matcher.matches_event(&event, &ctx));
@@ -161,7 +183,12 @@ mod tests {
         let matcher = WouldPutCountersMatcher::plus_one_on_creature();
 
         // Test with wrong counter type
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::Loyalty, 3);
+        let event = PutCountersEvent::with_cause(
+            ObjectId::from_raw(1),
+            CounterType::Loyalty,
+            3,
+            crate::events::cause::EventCause::effect(),
+        );
 
         // Won't match even if object existed because counter type is wrong
         assert!(!matcher.matches_event(&event, &ctx));
@@ -180,5 +207,27 @@ mod tests {
             matcher.display(),
             "When +1/+1 counters would be put on a permanent"
         );
+    }
+
+    #[test]
+    fn test_would_put_counters_with_cause_filter() {
+        let game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let ctx = EventContext::for_controller(alice, &game);
+        let matcher = WouldPutCountersMatcher::any().with_cause_filter(CauseFilter {
+            cause_type: Some(CauseTypeFilter::Exact(CauseType::Effect)),
+            source_filter: None,
+            controller_filter: None,
+        });
+
+        let event = PutCountersEvent::with_cause(
+            ObjectId::from_raw(1),
+            CounterType::PlusOnePlusOne,
+            1,
+            crate::events::cause::EventCause::from_combat_damage(ObjectId::from_raw(2), alice),
+        );
+
+        assert!(!matcher.matches_event(&event, &ctx));
     }
 }

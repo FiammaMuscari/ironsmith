@@ -47,7 +47,7 @@ impl EffectExecutor for ExileUntilMatchGrantPlayEffect {
                 break;
             };
 
-            let Some(exiled_id) = game.move_object(top_card_id, Zone::Exile) else {
+            let Some(exiled_id) = game.move_object_by_effect(top_card_id, Zone::Exile) else {
                 break;
             };
 

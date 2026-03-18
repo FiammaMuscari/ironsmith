@@ -2717,9 +2717,11 @@ pub(super) fn propose_spell_cast(
     caster: PlayerId,
     casting_method: &CastingMethod,
 ) -> Result<ObjectId, GameLoopError> {
-    let new_id = game.move_object(spell_id, Zone::Stack).ok_or_else(|| {
-        GameLoopError::InvalidState("Failed to move spell to stack during proposal".to_string())
-    })?;
+    let new_id = game
+        .move_object_by_effect(spell_id, Zone::Stack)
+        .ok_or_else(|| {
+            GameLoopError::InvalidState("Failed to move spell to stack during proposal".to_string())
+        })?;
 
     let selected_method = game.object(new_id).and_then(|obj| match casting_method {
         CastingMethod::Alternative(idx) => obj.alternative_casts.get(*idx).cloned(),
@@ -2800,7 +2802,7 @@ pub(super) fn propose_spell_cast(
 #[allow(dead_code)]
 pub(super) fn revert_spell_cast(game: &mut GameState, stack_id: ObjectId, original_zone: Zone) {
     // Move spell back to original zone
-    game.move_object(stack_id, original_zone);
+    game.move_object_by_effect(stack_id, original_zone);
     // Note: Mana abilities activated during casting are NOT reverted per rules
     // (they happen in a special window and their effects stay)
 }
@@ -2940,7 +2942,7 @@ pub(super) fn finalize_spell_cast(
 
         // Move to exile (move_object handles removal from old zone)
         for card_id in cards_to_exile {
-            game.move_object(card_id, Zone::Exile);
+            game.move_object_by_effect(card_id, Zone::Exile);
         }
     }
 
@@ -2988,7 +2990,7 @@ pub(super) fn finalize_spell_cast(
 
         // Move to exile (move_object handles removal from old zone)
         for card_id in cards_to_exile {
-            game.move_object(card_id, Zone::Exile);
+            game.move_object_by_effect(card_id, Zone::Exile);
         }
     }
 

@@ -251,7 +251,7 @@ mod tests {
 
         // Create a land, then move it to graveyard (simulating it being destroyed)
         let land_id = create_land(&mut game, "Temporary Land", alice);
-        game.move_object(land_id, Zone::Graveyard);
+        game.move_object_by_effect(land_id, Zone::Graveyard);
 
         // Create execution context with the triggering event
         let triggering_event = TriggerEvent::new_with_provenance(

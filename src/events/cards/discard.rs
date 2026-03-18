@@ -28,70 +28,6 @@ pub struct DiscardEvent {
 }
 
 impl DiscardEvent {
-    /// Create a new discard event from an effect.
-    pub fn from_effect(card: ObjectId, player: PlayerId) -> Self {
-        Self {
-            card,
-            player,
-            destination: Zone::Graveyard,
-            cause: EventCause::default(), // Effect with no specific source
-            requires_type_verification: false,
-        }
-    }
-
-    /// Create a new discard event from an effect with a specific source.
-    pub fn from_effect_with_source(
-        card: ObjectId,
-        player: PlayerId,
-        source: ObjectId,
-        source_controller: PlayerId,
-    ) -> Self {
-        Self {
-            card,
-            player,
-            destination: Zone::Graveyard,
-            cause: EventCause::from_effect(source, source_controller),
-            requires_type_verification: false,
-        }
-    }
-
-    /// Create a new discard event as a cost.
-    pub fn as_cost(card: ObjectId, player: PlayerId) -> Self {
-        Self {
-            card,
-            player,
-            destination: Zone::Graveyard,
-            cause: EventCause {
-                cause_type: crate::events::cause::CauseType::Cost,
-                source: None,
-                source_controller: Some(player),
-            },
-            requires_type_verification: false,
-        }
-    }
-
-    /// Create a new discard event as a cost with a specific source.
-    pub fn as_cost_with_source(card: ObjectId, player: PlayerId, source: ObjectId) -> Self {
-        Self {
-            card,
-            player,
-            destination: Zone::Graveyard,
-            cause: EventCause::from_cost(source, player),
-            requires_type_verification: false,
-        }
-    }
-
-    /// Create a new discard event from a game rule (e.g., cleanup step).
-    pub fn from_game_rule(card: ObjectId, player: PlayerId) -> Self {
-        Self {
-            card,
-            player,
-            destination: Zone::Graveyard,
-            cause: EventCause::from_game_rule(),
-            requires_type_verification: false,
-        }
-    }
-
     /// Create a discard event with a custom cause.
     pub fn with_cause(card: ObjectId, player: PlayerId, cause: EventCause) -> Self {
         Self {
@@ -151,9 +87,13 @@ mod tests {
     use super::*;
     use crate::events::cause::CauseType;
 
+    fn discard_with(cause: EventCause) -> DiscardEvent {
+        DiscardEvent::with_cause(ObjectId::from_raw(1), PlayerId::from_index(0), cause)
+    }
+
     #[test]
     fn test_discard_event_from_effect() {
-        let event = DiscardEvent::from_effect(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::effect());
 
         assert_eq!(event.cause.cause_type, CauseType::Effect);
         assert_eq!(event.destination, Zone::Graveyard);
@@ -161,7 +101,10 @@ mod tests {
 
     #[test]
     fn test_discard_event_as_cost() {
-        let event = DiscardEvent::as_cost(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::from_cost(
+            ObjectId::from_raw(1),
+            PlayerId::from_index(0),
+        ));
 
         assert_eq!(event.cause.cause_type, CauseType::Cost);
         assert_eq!(event.destination, Zone::Graveyard);
@@ -169,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_discard_event_from_game_rule() {
-        let event = DiscardEvent::from_game_rule(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::from_game_rule());
 
         // Game rule discards are effect-like (Library of Leng applies)
         assert_eq!(event.cause.cause_type, CauseType::GameRule);
@@ -177,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_discard_event_with_destination() {
-        let event = DiscardEvent::from_effect(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::effect());
         let changed = event.with_destination(Zone::Library);
 
         assert_eq!(changed.destination, Zone::Library);
@@ -185,13 +128,13 @@ mod tests {
 
     #[test]
     fn test_discard_event_kind() {
-        let event = DiscardEvent::from_effect(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::effect());
         assert_eq!(event.event_kind(), EventKind::Discard);
     }
 
     #[test]
     fn test_discard_event_display() {
-        let event = DiscardEvent::from_effect(ObjectId::from_raw(1), PlayerId::from_index(0));
+        let event = discard_with(EventCause::effect());
         assert_eq!(event.display(), "Discard a card");
     }
 
@@ -199,11 +142,10 @@ mod tests {
     fn test_discard_event_with_source() {
         let source = ObjectId::from_raw(99);
         let controller = PlayerId::from_index(1);
-        let event = DiscardEvent::from_effect_with_source(
+        let event = DiscardEvent::with_cause(
             ObjectId::from_raw(1),
             PlayerId::from_index(0),
-            source,
-            controller,
+            EventCause::from_effect(source, controller),
         );
 
         assert_eq!(event.cause.source, Some(source));

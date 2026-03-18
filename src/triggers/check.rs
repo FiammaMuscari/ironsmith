@@ -240,6 +240,93 @@ fn suppresses_creature_etb_triggers_with_effects(
     )
 }
 
+fn trigger_source_matches_other_chosen_type_creature(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    entry: &TriggeredAbilityEntry,
+    controller: PlayerId,
+    static_source: ObjectId,
+    chosen_type: crate::types::Subtype,
+) -> bool {
+    if entry.controller != controller || entry.source == static_source {
+        return false;
+    }
+
+    if let Some(snapshot) = entry.source_snapshot.as_ref() {
+        return snapshot.controller == controller
+            && snapshot.zone == Zone::Battlefield
+            && snapshot.card_types.contains(&CardType::Creature)
+            && snapshot.subtypes.contains(&chosen_type);
+    }
+
+    let Some(source_obj) = game.object(entry.source) else {
+        return false;
+    };
+    if source_obj.controller != controller
+        || source_obj.zone != Zone::Battlefield
+        || source_obj.id == static_source
+    {
+        return false;
+    }
+
+    view.object_has_card_type(entry.source, CardType::Creature)
+        && view
+            .calculated_subtypes(entry.source)
+            .contains(&chosen_type)
+}
+
+fn additional_trigger_copies_for_entry(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    entry: &TriggeredAbilityEntry,
+) -> usize {
+    let mut copies = 0usize;
+
+    for &obj_id in &game.battlefield {
+        let Some(obj) = game.object(obj_id) else {
+            continue;
+        };
+        let Some(static_abilities) = view.static_abilities(obj_id) else {
+            continue;
+        };
+        let Some(chosen_type) = game.chosen_creature_type(obj_id) else {
+            continue;
+        };
+
+        for static_ability in static_abilities {
+            if !static_ability.duplicates_triggers_of_other_chosen_type_creatures_you_control() {
+                continue;
+            }
+            if trigger_source_matches_other_chosen_type_creature(
+                game,
+                view,
+                entry,
+                obj.controller,
+                obj_id,
+                chosen_type,
+            ) {
+                copies += 1;
+            }
+        }
+    }
+
+    copies
+}
+
+fn append_additional_trigger_copies(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    triggered: &mut Vec<TriggeredAbilityEntry>,
+) {
+    let base_entries = triggered.clone();
+    for entry in &base_entries {
+        let copies = additional_trigger_copies_for_entry(game, view, entry);
+        for _ in 0..copies {
+            triggered.push(entry.clone());
+        }
+    }
+}
+
 fn monarch_designation_source() -> (ObjectId, StableId, String) {
     let source = ObjectId::from_raw(0);
     (source, StableId::from(source), "The Monarch".to_string())
@@ -610,6 +697,7 @@ pub(crate) fn check_triggers_with_view(
     }
 
     add_monarch_designation_triggers(game, trigger_event, &mut triggered);
+    append_additional_trigger_copies(game, view, &mut triggered);
 
     triggered
 }

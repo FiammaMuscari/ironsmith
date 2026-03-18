@@ -85,6 +85,16 @@ mod tests {
         crate::tests::test_helpers::setup_two_player_game()
     }
 
+    fn etb_event(source_id: ObjectId) -> ZoneChangeEvent {
+        ZoneChangeEvent::with_cause(
+            source_id,
+            Zone::Hand,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        )
+    }
+
     #[test]
     fn test_or_trigger_matches_first() {
         let game = setup_game();
@@ -99,7 +109,7 @@ mod tests {
 
         // ETB event should match
         let etb_event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
+            etb_event(source_id),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&etb_event, &ctx));
@@ -120,11 +130,12 @@ mod tests {
 
         // Combat damage event should match
         let damage_event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 source_id,
                 DamageTarget::Player(bob),
                 3,
                 true, // is_combat
+                crate::events::cause::EventCause::combat_damage(source_id),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -147,11 +158,12 @@ mod tests {
 
         // Non-combat damage from source shouldn't match
         let damage_event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 source_id,
                 DamageTarget::Player(bob),
                 3,
                 false, // not combat
+                crate::events::cause::EventCause::effect(),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -159,7 +171,7 @@ mod tests {
 
         // ETB of different object shouldn't match
         let etb_event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(other_id, Zone::Hand, Zone::Battlefield, None),
+            etb_event(other_id),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&etb_event, &ctx));
@@ -188,7 +200,7 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
+            etb_event(source_id),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));

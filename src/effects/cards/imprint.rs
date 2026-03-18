@@ -100,7 +100,7 @@ impl EffectExecutor for ImprintFromHandEffect {
 
         if let Some(card_id) = chosen_card {
             // Exile the card (move_object returns the new ID in exile)
-            let exiled_id = game.move_object(card_id, Zone::Exile);
+            let exiled_id = game.move_object_by_effect(card_id, Zone::Exile);
 
             if let Some(exiled_id) = exiled_id {
                 // Imprint it on the source permanent

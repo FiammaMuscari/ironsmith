@@ -98,12 +98,19 @@ pub(super) fn generate_damage_triggers(
         let damage_event_provenance = game
             .provenance_graph
             .alloc_root_event(crate::events::EventKind::Damage);
+        let cause = game
+            .object(event.source)
+            .map(|obj| {
+                crate::events::cause::EventCause::from_combat_damage(event.source, obj.controller)
+            })
+            .unwrap_or_else(crate::events::cause::EventCause::effect);
         let trigger_event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 event.source,
                 damage_target,
                 event.amount,
                 true, // is_combat
+                cause,
             ),
             damage_event_provenance,
         );

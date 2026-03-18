@@ -1011,6 +1011,28 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
     {
         return Some(IfResultPredicate::DiesThisWay);
     }
+    if words.len() >= 8
+        && matches!(words[0], "creature" | "permanent" | "card")
+        && words[1] == "dealt"
+        && words[2] == "damage"
+        && words[3] == "this"
+        && words[4] == "way"
+        && words[5] == "would"
+        && words[6] == "die"
+        && words[7] == "this"
+        && words.get(8) == Some(&"turn")
+    {
+        return Some(IfResultPredicate::DiesThisWay);
+    }
+
+    if matches!(
+        words.as_slice(),
+        ["it", "deals", "excess", "damage", "this", "way"]
+            | ["its", "power", "becomes", _, "this", "way"]
+            | ["it", "power", "becomes", _, "this", "way"]
+    ) {
+        return Some(IfResultPredicate::Did);
+    }
 
     if is_exact_negated_result("you") || is_negated_this_way_result("you") {
         return Some(IfResultPredicate::DidNot);
@@ -1635,6 +1657,16 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
 
     if filtered.as_slice() == ["you", "attacked", "this", "turn"] {
         return Ok(PredicateAst::YouAttackedThisTurn);
+    }
+
+    if matches!(
+        filtered.as_slice(),
+        ["this", "creature", "attacked", "or", "blocked", "this", "turn"]
+            | ["this", "permanent", "attacked", "or", "blocked", "this", "turn"]
+            | ["this", "attacked", "or", "blocked", "this", "turn"]
+            | ["it", "attacked", "or", "blocked", "this", "turn"]
+    ) {
+        return Ok(PredicateAst::SourceAttackedOrBlockedThisTurn);
     }
 
     if filtered.as_slice() == ["you", "cast", "it"]

@@ -61,7 +61,7 @@ impl EffectExecutor for HauntExileEffect {
         }
 
         // Exile the source card (the haunt card that just died / went to graveyard).
-        let new_exiled_id = game.move_object(ctx.source, Zone::Exile);
+        let new_exiled_id = game.move_object_by_effect(ctx.source, Zone::Exile);
         let ability_source = new_exiled_id.unwrap_or(ctx.source);
 
         // Schedule a one-shot delayed trigger: when the haunted creature dies,

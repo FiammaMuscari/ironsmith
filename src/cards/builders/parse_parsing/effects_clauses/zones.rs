@@ -605,12 +605,7 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
     } else {
         ReturnControllerAst::Preserve
     };
-    if destination_words.contains(&"transformed") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported transformed return clause (clause: '{}')",
-            words(tokens).join(" ")
-        )));
-    }
+    destination_words.retain(|word| *word != "transformed");
     let has_delayed_timing_words = destination_words_full.contains(&"beginning")
         || destination_words_full.contains(&"upkeep")
         || destination_words_full
@@ -1621,6 +1616,34 @@ pub(crate) fn parse_get(
             count: Value::Fixed(1),
             player,
         });
+    }
+
+    if clause_words.starts_with(&["an", "emblem", "with"])
+        || clause_words.starts_with(&["emblem", "with"])
+    {
+        let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
+        let text_words = if clause_words[0] == "an" {
+            &clause_words[3..]
+        } else {
+            &clause_words[2..]
+        };
+        if text_words.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing emblem text (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let text = if text_words.starts_with(&["at", "the", "beginning", "of"])
+            && let Some(this_idx) = text_words.iter().position(|word| *word == "this")
+        {
+            let head = text_words[..this_idx].join(" ");
+            let tail = text_words[this_idx..].join(" ");
+            format!("{}{}, {}.", head[..1].to_ascii_uppercase(), &head[1..], tail)
+        } else {
+            let joined = text_words.join(" ");
+            format!("{}{}.", joined[..1].to_ascii_uppercase(), &joined[1..])
+        };
+        return Ok(EffectAst::CreateEmblem { player, text });
     }
 
     let modifier_start = if clause_words.starts_with(&["an", "additional"]) {

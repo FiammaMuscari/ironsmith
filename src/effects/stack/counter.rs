@@ -73,7 +73,7 @@ impl EffectExecutor for CounterEffect {
             let entry = game.stack.remove(idx);
             // Move countered spell to graveyard (abilities just disappear)
             if !entry.is_ability {
-                game.move_object(entry.object_id, Zone::Graveyard);
+                game.move_object_by_effect(entry.object_id, Zone::Graveyard);
             }
             Ok(EffectOutcome::resolved())
         } else {

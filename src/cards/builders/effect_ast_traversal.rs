@@ -105,6 +105,7 @@ macro_rules! nested_effects_variants {
 pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
     match effect {
         EffectAst::DealDamage { .. } => {}
+        EffectAst::DealDistributedDamage { .. } => {}
         EffectAst::DealDamageEqualToPower { .. } => {}
         EffectAst::Fight { .. } => {}
         EffectAst::FightIterated { .. } => {}
@@ -232,6 +233,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ReturnAllToBattlefield { .. } => {}
         EffectAst::ExchangeControl { .. } => {}
         EffectAst::BecomeMonarch { .. } => {}
+        EffectAst::CreateEmblem { .. } => {}
         EffectAst::SetLifeTotal { .. } => {}
         EffectAst::SkipTurn { .. } => {}
         EffectAst::SkipCombatPhases { .. } => {}
@@ -242,6 +244,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ChooseCardName { .. } => {}
         EffectAst::ChooseColor { .. } => {}
         EffectAst::RepeatThisProcess => {}
+        EffectAst::RepeatThisProcessOnce => {}
         EffectAst::May { .. } => {}
         EffectAst::MayByPlayer { .. } => {}
         EffectAst::MayByTaggedController { .. } => {}

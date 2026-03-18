@@ -620,7 +620,7 @@ impl TurnRunner {
                     } else {
                         crate::zone::Zone::Hand
                     };
-                    if let Some(new_id) = game.move_object(object_id, final_zone)
+                    if let Some(new_id) = game.move_object_by_effect(object_id, final_zone)
                         && final_zone == crate::zone::Zone::Hand
                     {
                         drawn.push(new_id);
@@ -649,7 +649,7 @@ impl TurnRunner {
                                 return RunnerProgress::NeedsDecision(ctx);
                             }
                         } else if let Some(new_id) =
-                            game.move_object(card_id, crate::zone::Zone::Hand)
+                            game.move_object_by_effect(card_id, crate::zone::Zone::Hand)
                         {
                             drawn.push(new_id);
                         }
@@ -749,7 +749,7 @@ impl TurnRunner {
                 {
                     let send_to_command = self.pending_boolean.take().unwrap_or(false);
                     if send_to_command {
-                        game.move_object(obj_id, crate::zone::Zone::Command);
+                        game.move_object_by_effect(obj_id, crate::zone::Zone::Command);
                     } else {
                         game.decline_commander_command_zone_move(obj_id);
                     }

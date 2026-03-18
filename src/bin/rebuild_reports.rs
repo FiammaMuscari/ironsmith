@@ -249,7 +249,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tmp_dir = env::temp_dir();
 
     let mismatch_names_file = tmp_dir.join(format!("ironsmith_wasm_mismatch_names_{run_id}.txt"));
-    let filtered_skip_names_file = reports_dir.join(format!("ironsmith_wasm_skip_names_{run_id}.txt"));
+    let filtered_skip_names_file =
+        reports_dir.join(format!("ironsmith_wasm_skip_names_{run_id}.txt"));
     let failures_report = tmp_dir.join(format!("ironsmith_wasm_threshold_failures_{run_id}.json"));
     let cluster_report = tmp_dir.join(format!("ironsmith_wasm_cluster_report_{run_id}.json"));
     let audits_report = tmp_dir.join(format!("ironsmith_wasm_card_audits_{run_id}.json"));

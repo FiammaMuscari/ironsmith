@@ -62,6 +62,7 @@ impl ReturnFromGraveyardToHandEffect {
             object_id,
             Zone::Graveyard,
             Zone::Hand,
+            ctx.cause.clone(),
             &mut ctx.decision_maker,
         ) {
             EventOutcome::Proceed(result) => result.new_object_id,

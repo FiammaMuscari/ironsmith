@@ -127,6 +127,7 @@ impl EffectExecutor for MoveToZoneEffect {
                 object_id,
                 from_zone,
                 self.zone,
+                ctx.cause.clone(),
                 &mut ctx.decision_maker,
             );
 
@@ -159,7 +160,8 @@ impl EffectExecutor for MoveToZoneEffect {
                         continue;
                     }
 
-                    let result = finalize_zone_change_move(game, object_id, final_zone);
+                    let result =
+                        finalize_zone_change_move(game, object_id, final_zone, ctx.cause.clone());
                     if let Some(new_id) = result.new_object_id {
                         if final_zone == Zone::Exile {
                             game.add_exiled_with_source_link(ctx.source, new_id);

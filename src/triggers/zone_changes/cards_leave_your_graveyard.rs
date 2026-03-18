@@ -179,10 +179,11 @@ mod tests {
         snapshot.zone = Zone::Graveyard;
 
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 ObjectId::from_raw(20),
                 Zone::Graveyard,
                 Zone::Exile,
+                crate::events::cause::EventCause::effect(),
                 Some(snapshot),
             ),
             crate::provenance::ProvNodeId::default(),
@@ -206,10 +207,11 @@ mod tests {
         snapshot.owner = bob;
 
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 ObjectId::from_raw(20),
                 Zone::Graveyard,
                 Zone::Exile,
+                crate::events::cause::EventCause::effect(),
                 Some(snapshot),
             ),
             crate::provenance::ProvNodeId::default(),
@@ -235,10 +237,11 @@ mod tests {
         snapshot.zone = Zone::Graveyard;
 
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 ObjectId::from_raw(20),
                 Zone::Graveyard,
                 Zone::Exile,
+                crate::events::cause::EventCause::effect(),
                 Some(snapshot),
             ),
             crate::provenance::ProvNodeId::default(),

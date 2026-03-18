@@ -85,6 +85,14 @@ impl<'a> DerivedGameView<'a> {
             .map(|chars| chars.abilities)
     }
 
+    pub(crate) fn static_abilities(
+        &self,
+        object_id: ObjectId,
+    ) -> Option<Vec<crate::static_abilities::StaticAbility>> {
+        self.calculated_characteristics(object_id)
+            .map(|chars| chars.static_abilities)
+    }
+
     pub(crate) fn object_has_card_type(&self, object_id: ObjectId, card_type: CardType) -> bool {
         self.calculated_characteristics(object_id)
             .is_some_and(|chars| chars.card_types.contains(&card_type))

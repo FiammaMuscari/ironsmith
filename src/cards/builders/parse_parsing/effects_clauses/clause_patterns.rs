@@ -197,6 +197,11 @@ fn parse_permission_tail(
     if is_until_end_of_turn(words) || words == ["until", "the", "end", "of", "turn"] {
         return Some((PermissionLifetime::UntilEndOfTurn, false));
     }
+    if words == ["until", "end", "of", "your", "next", "turn"]
+        || words == ["until", "the", "end", "of", "your", "next", "turn"]
+    {
+        return Some((PermissionLifetime::UntilYourNextTurn, false));
+    }
     if (words.starts_with(&["until", "end", "of", "turn"])
         || words.starts_with(&["until", "the", "end", "of", "turn"]))
         && is_without_paying_mana_cost_tail(&words[if words[1] == "the" { 5 } else { 4 }..])
@@ -483,11 +488,13 @@ pub(crate) fn parse_until_your_next_turn_may_play_tagged_clause(
             as_copy: false,
             without_paying_mana_cost: false,
             lifetime: PermissionLifetime::UntilYourNextTurn,
-        }) if player == PlayerAst::You => Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
+        }) if matches!(player, PlayerAst::You | PlayerAst::Implicit) => {
+            Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
             tag: TagKey::from(IT_TAG),
-            player,
+            player: PlayerAst::You,
             allow_land: true,
-        })),
+        }))
+        }
         _ => Ok(None),
     }
 }

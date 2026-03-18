@@ -2,6 +2,7 @@
 
 use std::any::Any;
 
+use crate::events::cause::EventCause;
 use crate::events::traits::{EventKind, GameEventType, RedirectValidTypes, RedirectableTarget};
 use crate::game_event::DamageTarget;
 use crate::game_state::{GameState, Target};
@@ -20,6 +21,8 @@ pub struct DamageEvent {
     pub is_combat: bool,
     /// Whether this damage cannot be prevented
     pub is_unpreventable: bool,
+    /// What caused this damage event.
+    pub cause: EventCause,
     /// Optional remaining damage that should be processed as a follow-up event.
     ///
     /// This is used for partial-redirection effects that split one damage event
@@ -28,24 +31,32 @@ pub struct DamageEvent {
 }
 
 impl DamageEvent {
-    /// Create a new damage event.
-    pub fn new(source: ObjectId, target: DamageTarget, amount: u32, is_combat: bool) -> Self {
+    /// Create a new damage event with an explicit cause.
+    pub fn with_cause(
+        source: ObjectId,
+        target: DamageTarget,
+        amount: u32,
+        is_combat: bool,
+        cause: EventCause,
+    ) -> Self {
         Self {
             source,
             target,
             amount,
             is_combat,
             is_unpreventable: false,
+            cause,
             remainder: None,
         }
     }
 
-    /// Create a new damage event that cannot be prevented.
-    pub fn unpreventable(
+    /// Create a new damage event that cannot be prevented, with an explicit cause.
+    pub fn unpreventable_with_cause(
         source: ObjectId,
         target: DamageTarget,
         amount: u32,
         is_combat: bool,
+        cause: EventCause,
     ) -> Self {
         Self {
             source,
@@ -53,6 +64,7 @@ impl DamageEvent {
             amount,
             is_combat,
             is_unpreventable: true,
+            cause,
             remainder: None,
         }
     }
@@ -186,14 +198,29 @@ impl GameEventType for DamageEvent {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_damage_event_creation() {
-        let event = DamageEvent::new(
+    fn effect_damage(amount: u32) -> DamageEvent {
+        DamageEvent::with_cause(
             ObjectId::from_raw(1),
             DamageTarget::Player(PlayerId::from_index(0)),
-            3,
+            amount,
             false,
-        );
+            EventCause::effect(),
+        )
+    }
+
+    fn combat_damage_to_object(amount: u32) -> DamageEvent {
+        DamageEvent::with_cause(
+            ObjectId::from_raw(1),
+            DamageTarget::Object(ObjectId::from_raw(2)),
+            amount,
+            true,
+            EventCause::combat_damage(ObjectId::from_raw(1)),
+        )
+    }
+
+    #[test]
+    fn test_damage_event_creation() {
+        let event = effect_damage(3);
 
         assert_eq!(event.amount, 3);
         assert!(!event.is_combat);
@@ -202,12 +229,7 @@ mod tests {
 
     #[test]
     fn test_damage_event_doubled() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            3,
-            false,
-        );
+        let event = effect_damage(3);
 
         let doubled = event.doubled();
         assert_eq!(doubled.amount, 6);
@@ -215,12 +237,7 @@ mod tests {
 
     #[test]
     fn test_damage_event_reduced() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            5,
-            false,
-        );
+        let event = effect_damage(5);
 
         let reduced = event.reduced(3);
         assert_eq!(reduced.amount, 2);
@@ -232,12 +249,7 @@ mod tests {
 
     #[test]
     fn test_damage_event_prevented() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            5,
-            false,
-        );
+        let event = effect_damage(5);
 
         let prevented = event.prevented();
         assert_eq!(prevented.amount, 0);
@@ -245,24 +257,14 @@ mod tests {
 
     #[test]
     fn test_damage_event_kind() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            3,
-            false,
-        );
+        let event = effect_damage(3);
 
         assert_eq!(event.event_kind(), EventKind::Damage);
     }
 
     #[test]
     fn test_damage_event_redirectable_targets() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Object(ObjectId::from_raw(2)),
-            3,
-            true,
-        );
+        let event = combat_damage_to_object(3);
 
         let targets = event.redirectable_targets();
         assert_eq!(targets.len(), 1);
@@ -275,12 +277,7 @@ mod tests {
 
     #[test]
     fn test_damage_event_with_target_replaced() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            3,
-            false,
-        );
+        let event = effect_damage(3);
 
         let old_target = Target::Player(PlayerId::from_index(0));
         let new_target = Target::Player(PlayerId::from_index(1));
@@ -298,31 +295,22 @@ mod tests {
 
     #[test]
     fn test_damage_event_display() {
-        let event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Player(PlayerId::from_index(0)),
-            3,
-            false,
-        );
+        let event = effect_damage(3);
         assert_eq!(event.display(), "Deal 3 damage to player");
 
-        let combat_event = DamageEvent::new(
-            ObjectId::from_raw(1),
-            DamageTarget::Object(ObjectId::from_raw(2)),
-            5,
-            true,
-        );
+        let combat_event = combat_damage_to_object(5);
         assert_eq!(combat_event.display(), "Deal 5 combat damage to permanent");
     }
 
     #[test]
     fn test_damage_event_source_object() {
         let source = ObjectId::from_raw(42);
-        let event = DamageEvent::new(
+        let event = DamageEvent::with_cause(
             source,
             DamageTarget::Player(PlayerId::from_index(0)),
             3,
             false,
+            EventCause::effect(),
         );
 
         assert_eq!(event.source_object(), Some(source));
@@ -331,11 +319,12 @@ mod tests {
     #[test]
     fn test_damage_event_player_returns_damaged_player() {
         let damaged_player = PlayerId::from_index(1);
-        let event = DamageEvent::new(
+        let event = DamageEvent::with_cause(
             ObjectId::from_raw(42),
             DamageTarget::Player(damaged_player),
             3,
             true,
+            EventCause::combat_damage(ObjectId::from_raw(42)),
         );
 
         assert_eq!(event.player(), Some(damaged_player));

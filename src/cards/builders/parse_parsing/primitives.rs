@@ -6,7 +6,7 @@ use crate::cards::builders::{
     parse_ability_phrase, parse_counter_type_from_tokens, parse_counter_type_word,
     parse_object_filter, parse_subtype_word, parse_supertype_word, token_index_for_word_index,
 };
-use crate::effect::EffectId;
+use crate::effect::{EffectId, EventValueSpec};
 use crate::filter::{AlternativeCastKind, ObjectFilter};
 use crate::static_abilities::StaticAbilityId;
 use crate::{
@@ -434,6 +434,25 @@ pub(crate) fn parse_number_or_x_value(tokens: &[Token]) -> Option<(crate::effect
 fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
     if words.is_empty() {
         return None;
+    }
+
+    if matches!(
+        words.get(..2),
+        Some(["that", "many"]) | Some(["that", "much"]) | Some(["that", "amount"])
+    ) {
+        return Some((Value::EventValue(EventValueSpec::Amount), 2));
+    }
+    if matches!(
+        words.get(..5),
+        Some(["that", "amount", "of", "excess", "damage"])
+    ) {
+        return Some((Value::EventValue(EventValueSpec::Amount), 5));
+    }
+    if matches!(
+        words.get(..4),
+        Some(["that", "much", "excess", "damage"])
+    ) {
+        return Some((Value::EventValue(EventValueSpec::Amount), 4));
     }
 
     if words[0] == "x" {

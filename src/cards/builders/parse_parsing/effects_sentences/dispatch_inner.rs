@@ -1225,7 +1225,11 @@ pub(crate) fn parse_token_copy_modifier_sentence(tokens: &[Token]) -> Option<Tok
         return Some(TokenCopyFollowup::HasHaste);
     }
 
-    if filtered.starts_with(&["sacrifice", "it"]) || filtered.starts_with(&["sacrifice", "them"]) {
+    if filtered.starts_with(&["sacrifice", "it"])
+        || filtered.starts_with(&["sacrifice", "them"])
+        || filtered.starts_with(&["sacrifice", "that", "token"])
+        || filtered.starts_with(&["sacrifice", "those", "tokens"])
+    {
         let has_next_end_step = filtered
             .windows(6)
             .any(|window| window == ["at", "beginning", "of", "next", "end", "step"]);
@@ -1588,6 +1592,35 @@ pub(crate) fn parse_delayed_when_that_dies_this_turn_sentence(
             ))
         })?);
         dealt_idx + 6
+    } else if let Some(dealt_idx) = clause_words.windows(8).position(|window| {
+        window == ["dealt", "damage", "this", "way", "would", "die", "this", "turn"]
+    }) {
+        if dealt_idx <= 1 {
+            return Ok(None);
+        }
+        let subject_start = token_index_for_word_index(tokens, 1).unwrap_or(tokens.len());
+        let subject_end = token_index_for_word_index(tokens, dealt_idx).unwrap_or(tokens.len());
+        if subject_start >= subject_end {
+            return Ok(None);
+        }
+        let mut subject_tokens = trim_edge_punctuation(&tokens[subject_start..subject_end]);
+        if subject_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing object filter in delayed dies-this-way clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let stripped_subject = strip_leading_articles(&subject_tokens);
+        if !stripped_subject.is_empty() {
+            subject_tokens = stripped_subject;
+        }
+        delayed_filter = Some(parse_object_filter(&subject_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported object filter in delayed dies-this-way clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?);
+        dealt_idx + 7
     } else {
         return Ok(None);
     };

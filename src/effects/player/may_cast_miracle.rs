@@ -128,7 +128,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
         let stable_id = game.object(card_id).map(|o| o.stable_id);
 
         // Move spell from hand to stack
-        if let Some(new_id) = game.move_object(card_id, Zone::Stack) {
+        if let Some(new_id) = game.move_object_by_effect(card_id, Zone::Stack) {
             if let Some(obj) = game.object_mut(new_id) {
                 obj.x_value = x_value;
             }

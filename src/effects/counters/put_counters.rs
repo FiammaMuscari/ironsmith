@@ -139,8 +139,13 @@ impl EffectExecutor for PutCountersEffect {
                 continue;
             }
             // Process through replacement effects (e.g., Melira, Doubling Season).
-            let final_count =
-                process_put_counters_with_event(game, target_id, self.counter_type, assigned_count);
+            let final_count = process_put_counters_with_event(
+                game,
+                target_id,
+                self.counter_type,
+                assigned_count,
+                ctx.cause.clone(),
+            );
             if final_count == 0 {
                 outcomes.push(EffectOutcome::prevented());
                 continue;

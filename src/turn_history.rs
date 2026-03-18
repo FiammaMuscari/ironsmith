@@ -7,6 +7,7 @@ use crate::events::other::{
 use crate::events::permanents::SacrificeEvent;
 use crate::events::spells::SpellCastEvent;
 use crate::events::zones::ZoneChangeEvent;
+use crate::events::combat::{CreatureBecameBlockedEvent, CreatureBlockedEvent};
 use crate::events::{DamageEvent, EventKind, LifeGainEvent, LifeLossEvent};
 use crate::game_state::TurnCounterTracker;
 use crate::ids::{ObjectId, PlayerId, StableId};
@@ -370,6 +371,19 @@ impl TurnHistory {
                     matches!(event.target, crate::game_event::DamageTarget::Object(target) if target == creature)
                         && event.amount > 0
                 })
+        })
+    }
+
+    pub fn creature_blocked_this_turn(&self, creature: ObjectId) -> bool {
+        self.projected_records().any(|record| {
+            record
+                .event
+                .downcast::<CreatureBlockedEvent>()
+                .is_some_and(|event| event.blocker == creature)
+                || record
+                    .event
+                    .downcast::<CreatureBecameBlockedEvent>()
+                    .is_some_and(|event| event.attacker == creature)
         })
     }
 

@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import ZoneViewer from "@/components/board/ZoneViewer";
+import CreateCardForgeSheet from "./CreateCardForgeSheet";
 
 const triggerPill = "stone-pill inline-flex items-center rounded-none px-2.5 py-0.5 text-[13px] font-medium uppercase transition-all select-none hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45";
 const inputPill = "stone-input rounded-none px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
@@ -345,6 +346,8 @@ export default function AddCardBar({
                   <option value="hand">Hand</option>
                   <option value="graveyard">GY</option>
                   <option value="exile">Exile</option>
+                  <option value="library">Library</option>
+                  <option value="command">Command</option>
                 </select>
               </div>
 
@@ -370,6 +373,16 @@ export default function AddCardBar({
             </div>
           </PopoverContent>
         </Popover>
+        <CreateCardForgeSheet
+          disabled={addLocked}
+          players={players}
+          selectedPlayer={selectedPlayer}
+          onSelectPlayer={setPlayerIndex}
+          zone={zone}
+          onZoneChange={setZone}
+          skipTriggers={skipTriggers}
+          onSkipTriggersChange={(checked) => setSkipTriggers(checked === true)}
+        />
         <span className="add-card-toolbar-separator" aria-hidden="true" />
 
         <span

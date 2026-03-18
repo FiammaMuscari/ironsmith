@@ -100,6 +100,7 @@ impl EffectExecutor for MillEffect {
                 card_id,
                 from_zone,
                 Zone::Graveyard,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             ) {
                 EventOutcome::Proceed(change) => {

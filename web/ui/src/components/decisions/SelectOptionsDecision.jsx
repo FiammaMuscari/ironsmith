@@ -25,7 +25,8 @@ import {
 import { useHoverSuppressedWhileScrolling } from "@/lib/useHoverSuppressedWhileScrolling";
 import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
-const STRIP_ITEM_BASE_CLASS = "decision-option-row decision-option-row--strip h-auto min-h-8 max-w-[360px] min-w-[120px] shrink-0 justify-start self-stretch overflow-hidden px-2.5 text-left text-[12px] font-semibold whitespace-nowrap";
+const STRIP_ITEM_BASE_CLASS =
+  "decision-option-row decision-option-row--strip h-auto min-h-8 max-w-[360px] min-w-[120px] shrink-0 justify-start self-stretch overflow-hidden px-2.5 text-left text-[12px] font-semibold whitespace-nowrap";
 const STRIP_ITEM_ACTIVE_CLASS = "is-selected";
 const STRIP_ITEM_DISABLED_CLASS = "is-disabled";
 function isPaymentOptionDescription(text) {
@@ -45,21 +46,33 @@ function isPaymentDecision(decision) {
   const reason = String(decision.reason || "").toLowerCase();
   if (reason.includes("next cost")) return false;
   if (isPaymentOptionDescription(decision.description || "")) return true;
-  return (decision.options || []).some((opt) => isPaymentOptionDescription(opt.description));
+  return (decision.options || []).some((opt) =>
+    isPaymentOptionDescription(opt.description),
+  );
 }
 
 function isSpellCastFlowDecision(decision) {
   if (!decision || decision.kind !== "select_options") return false;
   if (isCastOptionDescription(decision.description || "")) return true;
-  return (decision.options || []).some((opt) => isCastOptionDescription(opt.description));
+  return (decision.options || []).some((opt) =>
+    isCastOptionDescription(opt.description),
+  );
 }
 
 function isColorChoiceDecision(decision) {
   if (!decision || decision.kind !== "select_options") return false;
-  return String(decision.reason || "").trim().toLowerCase() === "choose color";
+  return (
+    String(decision.reason || "")
+      .trim()
+      .toLowerCase() === "choose color"
+  );
 }
 
-function buildContextualOptions(options, hoveredObjectId, { fallbackToAll = false } = {}) {
+function buildContextualOptions(
+  options,
+  hoveredObjectId,
+  { fallbackToAll = false } = {},
+) {
   const hasObjectBoundOptions = options.some((opt) => opt.object_id != null);
   if (!hasObjectBoundOptions) {
     return {
@@ -69,9 +82,13 @@ function buildContextualOptions(options, hoveredObjectId, { fallbackToAll = fals
   }
 
   const hasHoveredObject = hoveredObjectId != null;
-  const hasMatchedHover = hasHoveredObject && options.some(
-    (opt) => opt.object_id != null && String(opt.object_id) === String(hoveredObjectId)
-  );
+  const hasMatchedHover =
+    hasHoveredObject &&
+    options.some(
+      (opt) =>
+        opt.object_id != null &&
+        String(opt.object_id) === String(hoveredObjectId),
+    );
 
   if (fallbackToAll && !hasMatchedHover) {
     return {
@@ -93,17 +110,24 @@ function buildContextualOptions(options, hoveredObjectId, { fallbackToAll = fals
 
 function optionsSignature(options) {
   return (options || [])
-    .map((option) => `${Number(option?.index)}:${String(option?.description || "")}`)
+    .map(
+      (option) =>
+        `${Number(option?.index)}:${String(option?.description || "")}`,
+    )
     .join("|");
 }
 
 function optionAccent(state, objectControllerById, opt) {
   const objectId = opt?.object_id;
   if (objectId == null) return null;
-  const controllerId = opt?.object_controller != null
-    ? Number(opt.object_controller)
-    : objectControllerById.get(String(objectId));
-  if (controllerId == null || Number(controllerId) === Number(state?.perspective)) {
+  const controllerId =
+    opt?.object_controller != null
+      ? Number(opt.object_controller)
+      : objectControllerById.get(String(objectId));
+  if (
+    controllerId == null ||
+    Number(controllerId) === Number(state?.perspective)
+  ) {
     return null;
   }
   return getPlayerAccent(state?.players || [], controllerId);
@@ -111,9 +135,10 @@ function optionAccent(state, objectControllerById, opt) {
 
 function optionLabelContent(state, objectNameById, objectControllerById, opt) {
   const normalizedText = normalizeDecisionText(opt.description);
-  const objectName = opt?.object_id != null
-    ? objectNameById.get(String(opt.object_id)) || ""
-    : "";
+  const objectName =
+    opt?.object_id != null
+      ? objectNameById.get(String(opt.object_id)) || ""
+      : "";
   const accent = optionAccent(state, objectControllerById, opt);
   return (
     <HighlightedDecisionText
@@ -144,10 +169,13 @@ function useAnimatedRows(rows, showRows, hideDelayMs = 180) {
       hideTimerRef.current = null;
     }
 
-    hideTimerRef.current = setTimeout(() => {
-      setVisibleRows(showRows ? rows : []);
-      hideTimerRef.current = null;
-    }, showRows ? 0 : hideDelayMs);
+    hideTimerRef.current = setTimeout(
+      () => {
+        setVisibleRows(showRows ? rows : []);
+        hideTimerRef.current = null;
+      },
+      showRows ? 0 : hideDelayMs,
+    );
   }, [rows, showRows, hideDelayMs]);
 
   useEffect(
@@ -157,10 +185,52 @@ function useAnimatedRows(rows, showRows, hideDelayMs = 180) {
         hideTimerRef.current = null;
       }
     },
-    []
+    [],
   );
 
   return visibleRows;
+}
+
+function useHorizontalWheelScroll(enabled) {
+  const nodeRef = useRef(null);
+
+  const attachRef = useCallback((node) => {
+    nodeRef.current = node;
+  }, []);
+
+  const handleWheel = useCallback(
+    (event) => {
+      if (!enabled) return;
+      const node = nodeRef.current;
+      if (!node) return;
+      if (node.scrollWidth <= node.clientWidth + 1) return;
+
+      const primaryDelta =
+        Math.abs(event.deltaX) > Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.deltaY;
+      if (Math.abs(primaryDelta) < 0.5) return;
+
+      event.preventDefault();
+      node.scrollBy({
+        left: primaryDelta,
+        behavior: "auto",
+      });
+    },
+    [enabled],
+  );
+
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!enabled || !node) return undefined;
+
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      node.removeEventListener("wheel", handleWheel);
+    };
+  }, [enabled, handleWheel]);
+
+  return attachRef;
 }
 
 function HoverHint({ text }) {
@@ -198,10 +268,7 @@ function OptionButton({
         !horizontal && isSelected && "is-selected",
         horizontal && !isSelected && isHighlighted && STRIP_ITEM_ACTIVE_CLASS,
         !horizontal && !isSelected && isHighlighted && "is-highlighted",
-        disabled
-          && (horizontal
-            ? STRIP_ITEM_DISABLED_CLASS
-            : "is-disabled")
+        disabled && (horizontal ? STRIP_ITEM_DISABLED_CLASS : "is-disabled"),
       )}
       disabled={disabled}
       onPointerDown={(e) => {
@@ -315,7 +382,9 @@ export default function SelectOptionsDecision({
       />
     );
   }
-  const hasRepeatableOption = (decision.options || []).some((opt) => opt.repeatable);
+  const hasRepeatableOption = (decision.options || []).some(
+    (opt) => opt.repeatable,
+  );
   if (decision.repeatable || hasRepeatableOption) {
     return (
       <RepeatableDecision
@@ -369,58 +438,91 @@ function SingleSelectDecision({
 }) {
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
-  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
-    onScrollStart: clearHover,
-  });
+  const { attachScrollableRef, hoverSuppressed } =
+    useHoverSuppressedWhileScrolling({
+      onScrollStart: clearHover,
+    });
   const stripLayout = layout === "strip";
+  const attachHorizontalWheelRef = useHorizontalWheelScroll(stripLayout);
+  const attachStripScrollRef = useCallback(
+    (node) => {
+      attachScrollableRef(node);
+      attachHorizontalWheelRef(node);
+    },
+    [attachScrollableRef, attachHorizontalWheelRef],
+  );
   const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
-  const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
+  const objectControllerById = useMemo(
+    () => buildObjectControllerById(state),
+    [state],
+  );
   const options = useMemo(() => decision.options || [], [decision.options]);
-  const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
-  const castFlowDecision = useMemo(() => isSpellCastFlowDecision(decision), [decision]);
+  const paymentDecision = useMemo(
+    () => isPaymentDecision(decision),
+    [decision],
+  );
+  const castFlowDecision = useMemo(
+    () => isSpellCastFlowDecision(decision),
+    [decision],
+  );
   const payOption = useMemo(
-    () => options.find((opt) => isPaymentOptionDescription(opt.description)) || null,
-    [options]
+    () =>
+      options.find((opt) => isPaymentOptionDescription(opt.description)) ||
+      null,
+    [options],
   );
   const spellCastPaymentDecision = useMemo(() => {
     if (!paymentDecision) return false;
     const topStackObject = getVisibleTopStackObject(state);
     if (!topStackObject || topStackObject.ability_kind) return false;
-    if (decision?.source_name && topStackObject.name && decision.source_name !== topStackObject.name) {
+    if (
+      decision?.source_name &&
+      topStackObject.name &&
+      decision.source_name !== topStackObject.name
+    ) {
       return false;
     }
     return true;
   }, [paymentDecision, state, decision?.source_name]);
-  const colorChoiceDecision = useMemo(() => isColorChoiceDecision(decision), [decision]);
-  const showDescription = !hideDescription && !(stripLayout && colorChoiceDecision);
+  const colorChoiceDecision = useMemo(
+    () => isColorChoiceDecision(decision),
+    [decision],
+  );
+  const showDescription =
+    !hideDescription && !(stripLayout && colorChoiceDecision);
   const canSubmitPayment = canAct && !!payOption && payOption.legal !== false;
-  const paymentProgressLabel = canSubmitPayment ? "Submit (1/1)" : "Submit (0/1)";
+  const paymentProgressLabel = canSubmitPayment
+    ? "Submit (1/1)"
+    : "Submit (0/1)";
   const submitPayment = useCallback(() => {
     if (!payOption || payOption.legal === false) return;
     dispatch(
       { type: "select_options", option_indices: [payOption.index] },
-      payOption.description || "Submit"
+      payOption.description || "Submit",
     );
   }, [dispatch, payOption]);
   const displayOptions = useMemo(
-    () => (paymentDecision ? options.filter((opt) => !isPaymentOptionDescription(opt.description)) : options),
-    [options, paymentDecision]
+    () =>
+      paymentDecision
+        ? options.filter((opt) => !isPaymentOptionDescription(opt.description))
+        : options,
+    [options, paymentDecision],
   );
   const activeObjectId = hoveredObjectId ?? selectedObjectId;
   const legalDisplayOptions = useMemo(
     () => displayOptions.filter((opt) => opt.legal !== false),
-    [displayOptions]
+    [displayOptions],
   );
   const singleLegalOption = useMemo(
     () => (legalDisplayOptions.length === 1 ? legalDisplayOptions[0] : null),
-    [legalDisplayOptions]
+    [legalDisplayOptions],
   );
   const canSubmitSingle = canAct && !!singleLegalOption;
   const submitSingle = useCallback(() => {
     if (!singleLegalOption || singleLegalOption.legal === false) return;
     dispatch(
       { type: "select_options", option_indices: [singleLegalOption.index] },
-      singleLegalOption.description || "Submit"
+      singleLegalOption.description || "Submit",
     );
   }, [dispatch, singleLegalOption]);
   const singleSubmitLabel = useMemo(() => {
@@ -431,16 +533,26 @@ function SingleSelectDecision({
     return "Submit (1/1)";
   }, [singleLegalOption]);
   const contextual = useMemo(
-    () => buildContextualOptions(displayOptions, activeObjectId, { fallbackToAll: stripLayout }),
-    [activeObjectId, displayOptions, stripLayout]
+    () =>
+      buildContextualOptions(displayOptions, activeObjectId, {
+        fallbackToAll: stripLayout,
+      }),
+    [activeObjectId, displayOptions, stripLayout],
   );
-  const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
-  const showHoverHint = contextual.waitingForHover && options.some((opt) => opt.object_id != null);
+  const visibleOptions = useAnimatedRows(
+    contextual.options,
+    contextual.options.length > 0,
+  );
+  const showHoverHint =
+    contextual.waitingForHover && options.some((opt) => opt.object_id != null);
   const showHeader = !stripLayout;
   const submitAction = useMemo(() => {
     if (paymentDecision) {
       return {
-        label: (spellCastPaymentDecision || castFlowDecision) ? "Cast" : paymentProgressLabel,
+        label:
+          spellCastPaymentDecision || castFlowDecision
+            ? "Cast"
+            : paymentProgressLabel,
         disabled: !canSubmitPayment,
         onSubmit: submitPayment,
       };
@@ -469,48 +581,70 @@ function SingleSelectDecision({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-1">
-      <div className="transition-all duration-200">
+      <div className="min-w-0 transition-all duration-200">
         {showHeader && (
           <div
             className={cn(
               stripLayout
                 ? "decision-strip-header px-1.5 py-1"
-                : "decision-panel-header sticky top-0 z-10 px-1.5 py-1"
+                : "decision-panel-header sticky top-0 z-10 px-1.5 py-1",
             )}
           >
             {!paymentDecision && showDescription && (
-              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
             )}
             {!stripLayout && showHoverHint && (
               <HoverHint text="Hover or select a related card to show its available choices." />
             )}
           </div>
         )}
-        <div className={cn(
-          "w-full",
-          stripLayout ? "" : "decision-options-panel"
-        )}
-        ref={stripLayout ? undefined : attachScrollableRef}>
-          <div className={cn(
+        <div
+          className={cn(
+            "w-full min-w-0 max-w-full",
             stripLayout
-              ? "flex w-max min-w-full flex-nowrap items-center gap-1.5 overflow-visible py-0.5 pr-1"
-              : "w-full divide-y divide-[rgba(128,107,78,0.28)] max-h-[220px] overflow-y-auto"
-          )}>
+              ? "overflow-x-auto overflow-y-hidden pb-1"
+              : "decision-options-panel",
+          )}
+          ref={stripLayout ? attachStripScrollRef : attachScrollableRef}
+        >
+          <div
+            className={cn(
+              stripLayout
+                ? "flex w-max min-w-full flex-nowrap items-center gap-1.5 overflow-visible py-0.5 pr-1"
+                : "w-full divide-y divide-[rgba(128,107,78,0.28)] max-h-[220px] overflow-y-auto",
+            )}
+          >
             {visibleOptions.map((opt) => {
-              const objId = opt.object_id != null ? String(opt.object_id) : null;
-              const hoverObjectId = optionHoverObjectId(decision, opt, selectedObjectId);
+              const objId =
+                opt.object_id != null ? String(opt.object_id) : null;
+              const hoverObjectId = optionHoverObjectId(
+                decision,
+                opt,
+                selectedObjectId,
+              );
               return (
                 <OptionButton
                   key={opt.index}
                   opt={opt}
-                  content={optionLabelContent(state, objectNameById, objectControllerById, opt)}
+                  content={optionLabelContent(
+                    state,
+                    objectNameById,
+                    objectControllerById,
+                    opt,
+                  )}
                   canAct={canAct}
-                  isHighlighted={objId != null && String(activeObjectId) === objId}
+                  isHighlighted={
+                    objId != null && String(activeObjectId) === objId
+                  }
                   horizontal={stripLayout}
                   onClick={() =>
                     dispatch(
                       { type: "select_options", option_indices: [opt.index] },
-                      opt.description
+                      opt.description,
                     )
                   }
                   onMouseEnter={() => {
@@ -522,11 +656,15 @@ function SingleSelectDecision({
               );
             })}
             {!showHoverHint && visibleOptions.length === 0 && (
-              <div className={cn(
-                "decision-empty-note text-[12px] italic",
-                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2"
-              )}>
-                {paymentDecision ? "No additional payment actions." : "No legal choices."}
+              <div
+                className={cn(
+                  "decision-empty-note text-[12px] italic",
+                  stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2",
+                )}
+              >
+                {paymentDecision
+                  ? "No additional payment actions."
+                  : "No legal choices."}
               </div>
             )}
           </div>
@@ -548,19 +686,43 @@ function MultiSelectDecision({
 }) {
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
-  const { attachScrollableRef, hoverSuppressed } = useHoverSuppressedWhileScrolling({
-    onScrollStart: clearHover,
-  });
+  const { attachScrollableRef, hoverSuppressed } =
+    useHoverSuppressedWhileScrolling({
+      onScrollStart: clearHover,
+    });
   const stripLayout = layout === "strip";
+  const attachHorizontalWheelRef = useHorizontalWheelScroll(stripLayout);
+  const attachStripScrollRef = useCallback(
+    (node) => {
+      attachScrollableRef(node);
+      attachHorizontalWheelRef(node);
+    },
+    [attachScrollableRef, attachHorizontalWheelRef],
+  );
   const objectNameById = useMemo(() => buildObjectNameById(state), [state]);
-  const objectControllerById = useMemo(() => buildObjectControllerById(state), [state]);
+  const objectControllerById = useMemo(
+    () => buildObjectControllerById(state),
+    [state],
+  );
   const rawOptions = useMemo(() => decision.options || [], [decision.options]);
-  const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
-  const colorChoiceDecision = useMemo(() => isColorChoiceDecision(decision), [decision]);
-  const showDescription = !hideDescription && !(stripLayout && colorChoiceDecision);
+  const paymentDecision = useMemo(
+    () => isPaymentDecision(decision),
+    [decision],
+  );
+  const colorChoiceDecision = useMemo(
+    () => isColorChoiceDecision(decision),
+    [decision],
+  );
+  const showDescription =
+    !hideDescription && !(stripLayout && colorChoiceDecision);
   const options = useMemo(
-    () => (paymentDecision ? rawOptions.filter((opt) => !isPaymentOptionDescription(opt.description)) : rawOptions),
-    [rawOptions, paymentDecision]
+    () =>
+      paymentDecision
+        ? rawOptions.filter(
+            (opt) => !isPaymentOptionDescription(opt.description),
+          )
+        : rawOptions,
+    [rawOptions, paymentDecision],
   );
   const [selected, setSelected] = useState(new Set());
   const activeObjectId = hoveredObjectId ?? selectedObjectId;
@@ -569,23 +731,32 @@ function MultiSelectDecision({
   const optionsMaxHeight = useMemo(() => {
     const oracleHeight = Number(inspectorOracleTextHeight);
     if (!Number.isFinite(oracleHeight) || oracleHeight <= 0) return 360;
-    const dynamicMax = Math.round(420 - (oracleHeight * 0.55));
+    const dynamicMax = Math.round(420 - oracleHeight * 0.55);
     return Math.max(180, Math.min(360, dynamicMax));
   }, [inspectorOracleTextHeight]);
   const contextual = useMemo(
-    () => buildContextualOptions(options, activeObjectId, { fallbackToAll: stripLayout }),
-    [activeObjectId, options, stripLayout]
+    () =>
+      buildContextualOptions(options, activeObjectId, {
+        fallbackToAll: stripLayout,
+      }),
+    [activeObjectId, options, stripLayout],
   );
-  const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
+  const visibleOptions = useAnimatedRows(
+    contextual.options,
+    contextual.options.length > 0,
+  );
   const visibleOptionIndexSet = useMemo(
     () => new Set(visibleOptions.map((opt) => opt.index)),
-    [visibleOptions]
+    [visibleOptions],
   );
   const hiddenSelectedCount = useMemo(
-    () => Array.from(selected).filter((idx) => !visibleOptionIndexSet.has(idx)).length,
-    [selected, visibleOptionIndexSet]
+    () =>
+      Array.from(selected).filter((idx) => !visibleOptionIndexSet.has(idx))
+        .length,
+    [selected, visibleOptionIndexSet],
   );
-  const showHoverHint = contextual.waitingForHover && options.some((opt) => opt.object_id != null);
+  const showHoverHint =
+    contextual.waitingForHover && options.some((opt) => opt.object_id != null);
   const showHeader = !stripLayout;
 
   const toggle = (index) => {
@@ -602,7 +773,7 @@ function MultiSelectDecision({
   const handleSubmit = useCallback(() => {
     dispatch(
       { type: "select_options", option_indices: selectedIndices },
-      `Selected ${selectedIndices.length} option(s)`
+      `Selected ${selectedIndices.length} option(s)`,
     );
   }, [dispatch, selectedIndices]);
   const submitAction = useMemo(
@@ -611,51 +782,84 @@ function MultiSelectDecision({
       disabled: !canSubmit,
       onSubmit: handleSubmit,
     }),
-    [submitLabel, canSubmit, handleSubmit]
+    [submitLabel, canSubmit, handleSubmit],
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-1.5">
-        <div className={cn(stripLayout ? "transition-all duration-200" : "-mx-1.5 transition-all duration-200")}>
-          {showHeader && (
-            <div className={cn(
+      <div
+        className={cn(
+          stripLayout
+            ? "min-w-0 transition-all duration-200"
+            : "-mx-1.5 transition-all duration-200",
+        )}
+      >
+        {showHeader && (
+          <div
+            className={cn(
               stripLayout
                 ? "decision-strip-header px-1.5 py-1"
-                : "decision-panel-header sticky top-0 z-10 px-1.5 py-1"
-            )}>
-              {!paymentDecision && showDescription && (
-                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
-              )}
-              {!stripLayout && <SectionHeader text={`Select ${min === max ? min : `${min}–${max}`}`} />}
-              {!stripLayout && showHoverHint && (
-                <HoverHint text="Hover or select a related card to show its choices. You can keep previous selections." />
-              )}
-            </div>
-          )}
+                : "decision-panel-header sticky top-0 z-10 px-1.5 py-1",
+            )}
+          >
+            {!paymentDecision && showDescription && (
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
+            )}
+            {!stripLayout && (
+              <SectionHeader
+                text={`Select ${min === max ? min : `${min}–${max}`}`}
+              />
+            )}
+            {!stripLayout && showHoverHint && (
+              <HoverHint text="Hover or select a related card to show its choices. You can keep previous selections." />
+            )}
+          </div>
+        )}
         <div
-          ref={stripLayout ? undefined : attachScrollableRef}
+          ref={stripLayout ? attachStripScrollRef : attachScrollableRef}
           className={cn(
-            "w-full transition-[max-height] duration-300 ease-out",
-            stripLayout ? "overflow-x-auto overflow-y-hidden pb-1" : "overflow-y-auto overflow-x-hidden"
-          )}
-          style={stripLayout ? undefined : { maxHeight: `${optionsMaxHeight}px` }}
-        >
-          <div className={cn(
+            "w-full min-w-0 max-w-full transition-[max-height] duration-300 ease-out",
             stripLayout
-              ? "flex w-max min-w-full flex-nowrap items-center gap-1.5 py-0.5 pr-1"
-              : "w-full divide-y divide-[rgba(128,107,78,0.28)]"
-          )}>
+              ? "overflow-x-auto overflow-y-hidden pb-1"
+              : "overflow-y-auto overflow-x-hidden",
+          )}
+          style={
+            stripLayout ? undefined : { maxHeight: `${optionsMaxHeight}px` }
+          }
+        >
+          <div
+            className={cn(
+              stripLayout
+                ? "flex w-max min-w-full flex-nowrap items-center gap-1.5 py-0.5 pr-1"
+                : "w-full divide-y divide-[rgba(128,107,78,0.28)]",
+            )}
+          >
             {visibleOptions.map((opt) => {
-              const objId = opt.object_id != null ? String(opt.object_id) : null;
-              const hoverObjectId = optionHoverObjectId(decision, opt, selectedObjectId);
-              const isHighlighted = objId != null && String(activeObjectId) === objId;
+              const objId =
+                opt.object_id != null ? String(opt.object_id) : null;
+              const hoverObjectId = optionHoverObjectId(
+                decision,
+                opt,
+                selectedObjectId,
+              );
+              const isHighlighted =
+                objId != null && String(activeObjectId) === objId;
               const isSelected = selected.has(opt.index);
               return (
                 <OptionButton
                   key={opt.index}
                   opt={opt}
-                  content={optionLabelContent(state, objectNameById, objectControllerById, opt)}
+                  content={optionLabelContent(
+                    state,
+                    objectNameById,
+                    objectControllerById,
+                    opt,
+                  )}
                   canAct={canAct}
                   isHighlighted={isHighlighted}
                   isSelected={isSelected}
@@ -670,18 +874,22 @@ function MultiSelectDecision({
               );
             })}
             {!stripLayout && hiddenSelectedCount > 0 && (
-              <div className={cn(
-                "decision-helper-text decision-helper-text--muted text-[12px]",
-                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-1"
-              )}>
+              <div
+                className={cn(
+                  "decision-helper-text decision-helper-text--muted text-[12px]",
+                  stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-1",
+                )}
+              >
                 {hiddenSelectedCount} selected option(s) from other cards.
               </div>
             )}
             {!showHoverHint && visibleOptions.length === 0 && (
-              <div className={cn(
-                "decision-empty-note text-[12px] italic",
-                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2"
-              )}>
+              <div
+                className={cn(
+                  "decision-empty-note text-[12px] italic",
+                  stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2",
+                )}
+              >
                 No legal choices.
               </div>
             )}
@@ -695,7 +903,7 @@ function MultiSelectDecision({
             size="sm"
             className={cn(
               "decision-neon-button decision-submit-button h-6 rounded-none px-2 text-[13px] font-semibold uppercase",
-              stripLayout ? "w-auto ml-1" : "w-full"
+              stripLayout ? "w-auto ml-1" : "w-full",
             )}
             disabled={!canSubmit}
             onClick={handleSubmit}
@@ -723,15 +931,14 @@ function OrderingDecision({
   const triggerOrdering = isTriggerOrderingDecision(decision);
   const triggerOrderingKey = buildTriggerOrderingKey(decision);
   const localOrderingKey = useMemo(
-    () => `${decision.description || ""}|${optionsSignature(decision.options || [])}`,
-    [decision.description, decision.options]
+    () =>
+      `${decision.description || ""}|${optionsSignature(decision.options || [])}`,
+    [decision.description, decision.options],
   );
-  const [localOrderState, setLocalOrderState] = useState(
-    () => ({
-      key: localOrderingKey,
-      order: defaultTriggerOrderingOrder(decision),
-    })
-  );
+  const [localOrderState, setLocalOrderState] = useState(() => ({
+    key: localOrderingKey,
+    order: defaultTriggerOrderingOrder(decision),
+  }));
   const order = useMemo(() => {
     if (!triggerOrdering) {
       if (localOrderState.key === localOrderingKey) {
@@ -740,7 +947,10 @@ function OrderingDecision({
       return defaultTriggerOrderingOrder(decision);
     }
     if (triggerOrderingState?.key === triggerOrderingKey) {
-      return normalizeTriggerOrderingOrder(triggerOrderingState.order, decision);
+      return normalizeTriggerOrderingOrder(
+        triggerOrderingState.order,
+        decision,
+      );
     }
     return defaultTriggerOrderingOrder(decision);
   }, [
@@ -760,9 +970,10 @@ function OrderingDecision({
       return;
     }
     setLocalOrderState((current) => {
-      const next = current.key === localOrderingKey
-        ? normalizeTriggerOrderingOrder(current.order, decision)
-        : defaultTriggerOrderingOrder(decision);
+      const next =
+        current.key === localOrderingKey
+          ? normalizeTriggerOrderingOrder(current.order, decision)
+          : defaultTriggerOrderingOrder(decision);
       [next[position], next[newPos]] = [next[newPos], next[position]];
       return {
         key: localOrderingKey,
@@ -771,35 +982,48 @@ function OrderingDecision({
     });
   };
   const handleSubmit = useCallback(() => {
-    dispatch({ type: "select_options", option_indices: order.slice() }, "Order submitted");
+    dispatch(
+      { type: "select_options", option_indices: order.slice() },
+      "Order submitted",
+    );
   }, [dispatch, order]);
   const submitAction = useMemo(
-    () => (trivialOrdering
-      ? null
-      : {
-          label: "Submit Order",
-          disabled: !canAct,
-          onSubmit: handleSubmit,
-        }),
-    [canAct, handleSubmit, trivialOrdering]
+    () =>
+      trivialOrdering
+        ? null
+        : {
+            label: "Submit Order",
+            disabled: !canAct,
+            onSubmit: handleSubmit,
+          },
+    [canAct, handleSubmit, trivialOrdering],
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   const standardRows = (
-    <div className={cn(
-      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
-    )}>
+    <div
+      className={cn(
+        stripLayout
+          ? "flex items-stretch gap-1.5 px-1 py-1"
+          : "flex flex-col gap-0.5",
+      )}
+    >
       {order.map((optIndex, pos) => {
         const opt = options.find((o) => o.index === optIndex);
         if (!opt) return null;
         return (
-          <div key={optIndex} className={cn(
-            "decision-order-row flex items-center gap-1.5 px-2 py-1 text-[13px] transition-all",
-            stripLayout
-              ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
-              : "decision-option-row decision-option-row--panel"
-          )}>
-            <span className="decision-order-index w-4 shrink-0 text-center text-[11px] font-bold">{pos + 1}</span>
+          <div
+            key={optIndex}
+            className={cn(
+              "decision-order-row flex items-center gap-1.5 px-2 py-1 text-[13px] transition-all",
+              stripLayout
+                ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
+                : "decision-option-row decision-option-row--panel",
+            )}
+          >
+            <span className="decision-order-index w-4 shrink-0 text-center text-[11px] font-bold">
+              {pos + 1}
+            </span>
             <span className="min-w-0 flex-1">
               <SymbolText text={normalizeDecisionText(opt.description)} />
             </span>
@@ -828,15 +1052,18 @@ function OrderingDecision({
   );
 
   const triggerOrderingHint = (
-    <div className={cn(
-      "decision-trigger-hint border text-[#e5d6b8]",
-      stripLayout ? "min-w-[280px] px-3 py-2" : "px-3 py-2.5"
-    )}>
+    <div
+      className={cn(
+        "decision-trigger-hint border text-[#e5d6b8]",
+        stripLayout ? "min-w-[280px] px-3 py-2" : "px-3 py-2.5",
+      )}
+    >
       <div className="decision-section-header text-[12px] font-bold uppercase tracking-[0.14em]">
         Order In Stack
       </div>
       <div className="mt-1 text-[13px] leading-snug text-[#e5d6b8]">
-        Use the arrows on the stack cards to arrange these triggers. The leftmost arrow moves a trigger closer to the top of the stack.
+        Use the arrows on the stack cards to arrange these triggers. The
+        leftmost arrow moves a trigger closer to the top of the stack.
       </div>
     </div>
   );
@@ -850,13 +1077,22 @@ function OrderingDecision({
   }
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col gap-1",
+        stripLayout && "min-w-0",
+      )}
+    >
       {stripLayout ? (
         <div className="min-w-0 overflow-x-auto overflow-y-hidden">
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+                <Description
+                  decision={decision}
+                  hideDescription={hideDescription}
+                  layout={layout}
+                />
               </div>
             )}
             <SectionHeader text={triggerOrdering ? "Stack Order" : "Order"} />
@@ -867,7 +1103,11 @@ function OrderingDecision({
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
             {!hideDescription && (
-              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
             )}
             <SectionHeader text={triggerOrdering ? "Stack Order" : "Order"} />
             {triggerOrdering ? triggerOrderingHint : standardRows}
@@ -875,14 +1115,13 @@ function OrderingDecision({
         </ScrollArea>
       )}
       {inlineSubmit && !trivialOrdering && (
-        <div className={cn(
-          "shrink-0",
-          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
-        )}>
-          <SubmitButton
-            canAct={canAct}
-            onClick={handleSubmit}
-          >
+        <div
+          className={cn(
+            "shrink-0",
+            stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1",
+          )}
+        >
+          <SubmitButton canAct={canAct} onClick={handleSubmit}>
             Submit Order
           </SubmitButton>
         </div>
@@ -904,7 +1143,7 @@ function DistributeDecision({
   const options = decision.options || [];
   const total = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
-    Object.fromEntries(options.map((opt) => [opt.index, 0]))
+    Object.fromEntries(options.map((opt) => [opt.index, 0])),
   );
 
   const assigned = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -927,7 +1166,7 @@ function DistributeDecision({
     }
     dispatch(
       { type: "select_options", option_indices: expandOptionCounts(counts) },
-      "Distribution submitted"
+      "Distribution submitted",
     );
   }, [assigned, total, setStatus, dispatch, counts]);
   const submitAction = useMemo(
@@ -936,22 +1175,31 @@ function DistributeDecision({
       disabled: !canSubmit,
       onSubmit: handleSubmit,
     }),
-    [submitLabel, canSubmit, handleSubmit]
+    [submitLabel, canSubmit, handleSubmit],
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   const rows = (
-    <div className={cn(
-      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
-    )}>
+    <div
+      className={cn(
+        stripLayout
+          ? "flex items-stretch gap-1.5 px-1 py-1"
+          : "flex flex-col gap-0.5",
+      )}
+    >
       {options.map((opt) => (
-        <label key={opt.index} className={cn(
-          "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
-          stripLayout
-            ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
-            : "decision-option-row decision-option-row--panel"
-        )}>
-          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+        <label
+          key={opt.index}
+          className={cn(
+            "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
+            stripLayout
+              ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
+              : "decision-option-row decision-option-row--panel",
+          )}
+        >
+          <span className="flex-1 min-w-0">
+            <SymbolText text={normalizeDecisionText(opt.description)} />
+          </span>
           <Input
             type="number"
             className="decision-inline-input h-6 w-16 text-[13px] bg-transparent text-center"
@@ -959,7 +1207,10 @@ function DistributeDecision({
             max={Number(opt.max_count ?? total)}
             value={counts[opt.index] || 0}
             onChange={(e) =>
-              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+              setCounts((prev) => ({
+                ...prev,
+                [opt.index]: Number(e.target.value) || 0,
+              }))
             }
             disabled={!canAct || opt.legal === false}
           />
@@ -969,13 +1220,22 @@ function DistributeDecision({
   );
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col gap-1",
+        stripLayout && "min-w-0",
+      )}
+    >
       {stripLayout ? (
         <div className="min-w-0 overflow-x-auto overflow-y-hidden">
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+                <Description
+                  decision={decision}
+                  hideDescription={hideDescription}
+                  layout={layout}
+                />
               </div>
             )}
             <SectionHeader text={`Distribute ${total} total`} />
@@ -986,7 +1246,11 @@ function DistributeDecision({
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
             {!hideDescription && (
-              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
             )}
             <SectionHeader text={`Distribute ${total} total`} />
             {rows}
@@ -994,10 +1258,12 @@ function DistributeDecision({
         </ScrollArea>
       )}
       {inlineSubmit && (
-        <div className={cn(
-          "shrink-0",
-          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
-        )}>
+        <div
+          className={cn(
+            "shrink-0",
+            stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1",
+          )}
+        >
           <SubmitButton
             canAct={canAct}
             disabled={assigned !== total}
@@ -1024,7 +1290,7 @@ function CountersDecision({
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
-    Object.fromEntries(options.map((opt) => [opt.index, 0]))
+    Object.fromEntries(options.map((opt) => [opt.index, 0])),
   );
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -1043,7 +1309,7 @@ function CountersDecision({
   const handleSubmit = useCallback(() => {
     dispatch(
       { type: "select_options", option_indices: expandOptionCounts(counts) },
-      "Counter choice submitted"
+      "Counter choice submitted",
     );
   }, [dispatch, counts]);
   const submitAction = useMemo(
@@ -1052,22 +1318,31 @@ function CountersDecision({
       disabled: !canSubmit,
       onSubmit: handleSubmit,
     }),
-    [submitLabel, canSubmit, handleSubmit]
+    [submitLabel, canSubmit, handleSubmit],
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   const rows = (
-    <div className={cn(
-      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
-    )}>
+    <div
+      className={cn(
+        stripLayout
+          ? "flex items-stretch gap-1.5 px-1 py-1"
+          : "flex flex-col gap-0.5",
+      )}
+    >
       {options.map((opt) => (
-        <label key={opt.index} className={cn(
-          "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
-          stripLayout
-            ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
-            : "decision-option-row decision-option-row--panel"
-        )}>
-          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+        <label
+          key={opt.index}
+          className={cn(
+            "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
+            stripLayout
+              ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
+              : "decision-option-row decision-option-row--panel",
+          )}
+        >
+          <span className="flex-1 min-w-0">
+            <SymbolText text={normalizeDecisionText(opt.description)} />
+          </span>
           <Input
             type="number"
             className="decision-inline-input h-6 w-16 text-[13px] bg-transparent text-center"
@@ -1075,7 +1350,10 @@ function CountersDecision({
             max={Number(opt.max_count ?? maxTotal)}
             value={counts[opt.index] || 0}
             onChange={(e) =>
-              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+              setCounts((prev) => ({
+                ...prev,
+                [opt.index]: Number(e.target.value) || 0,
+              }))
             }
             disabled={!canAct || opt.legal === false}
           />
@@ -1085,13 +1363,22 @@ function CountersDecision({
   );
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col gap-1",
+        stripLayout && "min-w-0",
+      )}
+    >
       {stripLayout ? (
         <div className="min-w-0 overflow-x-auto overflow-y-hidden">
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+                <Description
+                  decision={decision}
+                  hideDescription={hideDescription}
+                  layout={layout}
+                />
               </div>
             )}
             <SectionHeader text="Counters" />
@@ -1102,7 +1389,11 @@ function CountersDecision({
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
             {!hideDescription && (
-              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
             )}
             <SectionHeader text="Counters" />
             {rows}
@@ -1110,10 +1401,12 @@ function CountersDecision({
         </ScrollArea>
       )}
       {inlineSubmit && (
-        <div className={cn(
-          "shrink-0",
-          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
-        )}>
+        <div
+          className={cn(
+            "shrink-0",
+            stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1",
+          )}
+        >
           <SubmitButton
             canAct={canAct}
             disabled={total > maxTotal}
@@ -1140,7 +1433,7 @@ function RepeatableDecision({
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
-    Object.fromEntries(options.map((opt) => [opt.index, 0]))
+    Object.fromEntries(options.map((opt) => [opt.index, 0])),
   );
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -1160,7 +1453,7 @@ function RepeatableDecision({
   const handleSubmit = useCallback(() => {
     dispatch(
       { type: "select_options", option_indices: expandOptionCounts(counts) },
-      `Selected ${total} option(s)`
+      `Selected ${total} option(s)`,
     );
   }, [dispatch, counts, total]);
   const submitAction = useMemo(
@@ -1169,22 +1462,31 @@ function RepeatableDecision({
       disabled: !canSubmit,
       onSubmit: handleSubmit,
     }),
-    [submitLabel, canSubmit, handleSubmit]
+    [submitLabel, canSubmit, handleSubmit],
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   const rows = (
-    <div className={cn(
-      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
-    )}>
+    <div
+      className={cn(
+        stripLayout
+          ? "flex items-stretch gap-1.5 px-1 py-1"
+          : "flex flex-col gap-0.5",
+      )}
+    >
       {options.map((opt) => (
-        <label key={opt.index} className={cn(
-          "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
-          stripLayout
-            ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
-            : "decision-option-row decision-option-row--panel"
-        )}>
-          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+        <label
+          key={opt.index}
+          className={cn(
+            "decision-field-row flex items-center gap-2 px-2 py-1 text-[13px] transition-all",
+            stripLayout
+              ? "decision-option-row decision-option-row--strip min-w-[220px] max-w-[360px] self-stretch"
+              : "decision-option-row decision-option-row--panel",
+          )}
+        >
+          <span className="flex-1 min-w-0">
+            <SymbolText text={normalizeDecisionText(opt.description)} />
+          </span>
           <Input
             type="number"
             className="decision-inline-input h-6 w-16 text-[13px] bg-transparent text-center"
@@ -1192,7 +1494,10 @@ function RepeatableDecision({
             max={Number(opt.max_count ?? maxTotal)}
             value={counts[opt.index] || 0}
             onChange={(e) =>
-              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+              setCounts((prev) => ({
+                ...prev,
+                [opt.index]: Number(e.target.value) || 0,
+              }))
             }
             disabled={!canAct || opt.legal === false}
           />
@@ -1202,13 +1507,22 @@ function RepeatableDecision({
   );
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col gap-1",
+        stripLayout && "min-w-0",
+      )}
+    >
       {stripLayout ? (
         <div className="min-w-0 overflow-x-auto overflow-y-hidden">
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+                <Description
+                  decision={decision}
+                  hideDescription={hideDescription}
+                  layout={layout}
+                />
               </div>
             )}
             <SectionHeader text="Repeat" />
@@ -1219,7 +1533,11 @@ function RepeatableDecision({
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
             {!hideDescription && (
-              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+              <Description
+                decision={decision}
+                hideDescription={hideDescription}
+                layout={layout}
+              />
             )}
             <SectionHeader text="Repeat" />
             {rows}
@@ -1227,10 +1545,12 @@ function RepeatableDecision({
         </ScrollArea>
       )}
       {inlineSubmit && (
-        <div className={cn(
-          "shrink-0",
-          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
-        )}>
+        <div
+          className={cn(
+            "shrink-0",
+            stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1",
+          )}
+        >
           <SubmitButton
             canAct={canAct}
             disabled={total < min || total > maxTotal}

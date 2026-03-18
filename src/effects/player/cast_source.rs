@@ -74,7 +74,7 @@ impl EffectExecutor for CastSourceEffect {
             return Ok(EffectOutcome::impossible());
         }
 
-        let Some(new_id) = game.move_object(source_id, Zone::Stack) else {
+        let Some(new_id) = game.move_object_by_effect(source_id, Zone::Stack) else {
             return Ok(EffectOutcome::impossible());
         };
 

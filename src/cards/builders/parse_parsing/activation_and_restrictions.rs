@@ -9886,6 +9886,42 @@ pub(crate) fn append_token_reminder_to_effect(
         return false;
     };
     match effect {
+        EffectAst::CreateTokenCopy {
+            has_haste,
+            exile_at_end_of_combat,
+            sacrifice_at_next_end_step,
+            exile_at_next_end_step,
+            ..
+        }
+        | EffectAst::CreateTokenCopyFromSource {
+            has_haste,
+            exile_at_end_of_combat,
+            sacrifice_at_next_end_step,
+            exile_at_next_end_step,
+            ..
+        } => {
+            if reminder_words == ["haste"] {
+                *has_haste = true;
+                return true;
+            }
+            let (sacrifice_next_end_step, exile_next_end_step) =
+                parse_next_end_step_token_delay_flags(reminder_words);
+            if sacrifice_next_end_step {
+                *sacrifice_at_next_end_step = true;
+            }
+            if exile_next_end_step {
+                *exile_at_next_end_step = true;
+            }
+            let exile_end_of_combat =
+                reminder_words.contains(&"exile") && is_end_of_combat_words(reminder_words);
+            if exile_end_of_combat {
+                *exile_at_end_of_combat = true;
+            }
+            *has_haste
+                || *sacrifice_at_next_end_step
+                || *exile_at_next_end_step
+                || *exile_at_end_of_combat
+        }
         EffectAst::CreateToken { name, .. } => {
             if !name.ends_with(' ') {
                 name.push(' ');

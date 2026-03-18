@@ -671,8 +671,8 @@ export default function Workspace({
       if (!shellEl) return;
 
       const target = event.target;
-      const overHandCard = target instanceof Element
-        && target.closest(".hand-reveal-shell .game-card.hand-card");
+      const insideHandLaneTarget = target instanceof Element
+        && target.closest(".hand-reveal-shell");
       const insideExpandedShell = handLaneOpen && rectContainsPoint(
         shellEl.getBoundingClientRect(),
         event.clientX,
@@ -680,7 +680,7 @@ export default function Workspace({
         HAND_LANE_HOVER_FUZZ
       );
 
-      if (overHandCard || insideExpandedShell) {
+      if (insideHandLaneTarget || insideExpandedShell) {
         handleHandLaneEnter();
         return;
       }

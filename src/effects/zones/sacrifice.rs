@@ -156,6 +156,7 @@ impl EffectExecutor for SacrificeEffect {
                 id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             );
 
@@ -314,6 +315,7 @@ impl SacrificeTargetEffect {
             object_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            ctx.cause.clone(),
             &mut *ctx.decision_maker,
         );
 

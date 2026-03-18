@@ -738,6 +738,9 @@ pub(crate) fn parse_deal_damage(tokens: &[Token]) -> Result<EffectAst, CardTextE
         && clause_words.contains(&"choose")
         && clause_words.contains(&"among");
     if is_divided_as_you_choose_clause {
+        if let Some((value, used)) = parse_value(tokens) {
+            return parse_divided_damage_with_amount(tokens, value, used);
+        }
         return Err(CardTextError::ParseError(format!(
             "unsupported divided-damage distribution clause (clause: '{}')",
             clause_words.join(" ")
@@ -961,6 +964,71 @@ pub(crate) fn parse_deal_damage_equal_to_clause(
     Ok(Some(EffectAst::DealDamage { amount, target }))
 }
 
+fn parse_divided_damage_target(target_tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+    let Some(among_idx) = target_tokens.iter().position(|token| token.is_word("among")) else {
+        return Err(CardTextError::ParseError(format!(
+            "missing divided-damage targets after 'among' (clause: '{}')",
+            words(target_tokens).join(" ")
+        )));
+    };
+    let among_tail = trim_commas(&target_tokens[among_idx + 1..]);
+    let among_words = words(&among_tail);
+    let Some(target_idx) = among_words
+        .iter()
+        .position(|word| matches!(*word, "target" | "targets"))
+    else {
+        return Err(CardTextError::ParseError(format!(
+            "missing divided-damage target phrase (clause: '{}')",
+            words(target_tokens).join(" ")
+        )));
+    };
+
+    let max_targets = among_words[..target_idx]
+        .iter()
+        .filter_map(|word| crate::cards::builders::parse_number_word_u32(word))
+        .max()
+        .unwrap_or(0);
+    if max_targets == 0 && !among_words.starts_with(&["any", "number", "of"]) {
+        return Err(CardTextError::ParseError(format!(
+            "missing divided-damage target count (clause: '{}')",
+            words(target_tokens).join(" ")
+        )));
+    }
+
+    let target_phrase_tokens = &among_tail[target_idx..];
+    let base_target = if among_words[target_idx..] == ["target"] || among_words[target_idx..] == ["targets"] {
+        TargetAst::AnyTarget(span_from_tokens(target_phrase_tokens))
+    } else {
+        parse_target_phrase(target_phrase_tokens)?
+    };
+    let count = if among_words.starts_with(&["any", "number", "of"]) {
+        ChoiceCount::any_number()
+    } else {
+        ChoiceCount::up_to(max_targets as usize)
+    };
+    Ok(TargetAst::WithCount(Box::new(base_target), count))
+}
+
+fn parse_divided_damage_with_amount(
+    tokens: &[Token],
+    amount: Value,
+    used: usize,
+) -> Result<EffectAst, CardTextError> {
+    let rest = &tokens[used..];
+    if !rest.first().is_some_and(|token| token.is_word("damage")) {
+        return Err(CardTextError::ParseError(format!(
+            "missing damage keyword in divided-damage clause (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+    let mut target_tokens = &rest[1..];
+    if target_tokens.first().is_some_and(|token| token.is_word("to")) {
+        target_tokens = &target_tokens[1..];
+    }
+    let target = parse_divided_damage_target(target_tokens)?;
+    Ok(EffectAst::DealDistributedDamage { amount, target })
+}
+
 pub(crate) fn parse_deal_damage_with_amount(
     tokens: &[Token],
     amount: Value,
@@ -1073,6 +1141,15 @@ pub(crate) fn parse_deal_damage_with_amount(
     if target_words.starts_with(&["each", "of"]) {
         let each_of_tokens = &target_tokens[2..];
         let each_of_words = words(each_of_tokens);
+        if matches!(each_of_words.as_slice(), ["up", "to", _, "target"] | ["up", "to", _, "targets"])
+            && let Some(count) = crate::cards::builders::parse_number_word_u32(each_of_words[2])
+        {
+            let target = TargetAst::WithCount(
+                Box::new(TargetAst::AnyTarget(span_from_tokens(each_of_tokens))),
+                ChoiceCount::up_to(count as usize),
+            );
+            return Ok(EffectAst::DealDamage { amount, target });
+        }
         if each_of_words.iter().any(|word| *word == "target") {
             let target = parse_target_phrase(each_of_tokens)?;
             return Ok(EffectAst::DealDamage { amount, target });

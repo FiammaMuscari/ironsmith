@@ -1082,13 +1082,18 @@ impl CantAttackUnlessCondition {
                 target_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_cost(source, controller),
                 &mut decision_maker,
             ) {
                 EventOutcome::Prevented | EventOutcome::NotApplicable => {
                     return Err("Cannot pay required attack cost".to_string());
                 }
                 EventOutcome::Proceed(final_zone) => {
-                    game.move_object(target_id, final_zone);
+                    game.move_object(
+                        target_id,
+                        final_zone,
+                        crate::events::cause::EventCause::from_cost(source, controller),
+                    );
                     if final_zone == Zone::Graveyard {
                         game.queue_trigger_event(
                             crate::provenance::ProvNodeId::default(),
@@ -1109,6 +1114,7 @@ impl CantAttackUnlessCondition {
 
     fn pay_return_permanents_attack_cost(
         game: &mut GameState,
+        source: ObjectId,
         controller: PlayerId,
         filter: &ObjectFilter,
         count: u32,
@@ -1126,6 +1132,7 @@ impl CantAttackUnlessCondition {
                 target_id,
                 Zone::Battlefield,
                 Zone::Hand,
+                crate::events::cause::EventCause::from_cost(source, controller),
                 &mut decision_maker,
             ) {
                 EventOutcome::Prevented | EventOutcome::NotApplicable | EventOutcome::Replaced => {
@@ -1135,7 +1142,11 @@ impl CantAttackUnlessCondition {
                     if final_zone != Zone::Hand {
                         return Err("Cannot pay required attack cost".to_string());
                     }
-                    game.move_object(target_id, final_zone);
+                    game.move_object(
+                        target_id,
+                        final_zone,
+                        crate::events::cause::EventCause::from_cost(source, controller),
+                    );
                 }
             }
         }
@@ -1154,9 +1165,11 @@ impl CantAttackUnlessCondition {
                 AttackCostCondition::SacrificePermanents { filter, count } => Some(
                     Self::pay_sacrifice_attack_cost(game, source, controller, *count, filter),
                 ),
-                AttackCostCondition::ReturnPermanentsToOwnersHand { filter, count } => Some(
-                    Self::pay_return_permanents_attack_cost(game, controller, filter, *count),
-                ),
+                AttackCostCondition::ReturnPermanentsToOwnersHand { filter, count } => {
+                    Some(Self::pay_return_permanents_attack_cost(
+                        game, source, controller, filter, *count,
+                    ))
+                }
                 AttackCostCondition::PayGenericPerSourceCounter { .. } => Some(Ok(())),
             },
             _ => None,

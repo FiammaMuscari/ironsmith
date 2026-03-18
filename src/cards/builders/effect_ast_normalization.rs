@@ -13,6 +13,9 @@ fn normalize_effects_vec(effects: &mut Vec<EffectAst>) {
     if let Some(rewritten) = rewrite_repeat_process(effects) {
         *effects = rewritten;
     }
+    if let Some(rewritten) = rewrite_repeat_process_once(effects) {
+        *effects = rewritten;
+    }
     effects.retain(|effect| !is_noop_effect(effect));
 }
 
@@ -92,6 +95,17 @@ fn rewrite_repeat_process(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
         continue_effect_index,
         continue_predicate: *predicate,
     }])
+}
+
+fn rewrite_repeat_process_once(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
+    if effects.len() < 2 || !matches!(effects.last(), Some(EffectAst::RepeatThisProcessOnce)) {
+        return None;
+    }
+
+    let body = effects[..effects.len() - 1].to_vec();
+    let mut duplicated = body.clone();
+    duplicated.extend(body);
+    Some(duplicated)
 }
 
 fn is_noop_effect(effect: &EffectAst) -> bool {

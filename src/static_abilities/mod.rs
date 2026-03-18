@@ -813,6 +813,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Returns true when this static ability makes matching creature triggers fire again.
+    fn duplicates_triggers_of_other_chosen_type_creatures_you_control(&self) -> bool {
+        false
+    }
+
     /// Return a "Cast this spell only ..." restriction descriptor, if any.
     fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
         None
@@ -909,6 +914,11 @@ impl StaticAbility {
 
     pub fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
         self.0.conditional_spell_keyword_spec()
+    }
+
+    pub fn duplicates_triggers_of_other_chosen_type_creatures_you_control(&self) -> bool {
+        self.0
+            .duplicates_triggers_of_other_chosen_type_creatures_you_control()
     }
 
     pub fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
@@ -1935,6 +1945,10 @@ impl StaticAbility {
         Self::new(EnchantedLandIsChosenType::new(display))
     }
 
+    pub fn add_chosen_creature_type(filter: crate::target::ObjectFilter, display: String) -> Self {
+        Self::new(AddChosenCreatureTypeForFilter::new(filter, display))
+    }
+
     pub fn redirect_damage_from_you_and_other_permanents_to_source() -> Self {
         Self::new(RedirectDamageToSource::new(
             crate::target::PlayerFilter::You,
@@ -1971,6 +1985,16 @@ impl StaticAbility {
 
     pub fn creatures_entering_dont_cause_abilities_to_trigger() -> Self {
         Self::new(CreaturesEnteringDontCauseAbilitiesToTrigger)
+    }
+
+    pub fn other_chosen_type_creature_triggered_abilities_trigger_additional_time(
+        display: String,
+    ) -> Self {
+        Self::new(OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime::new(display))
+    }
+
+    pub fn double_damage_from_sources_you_control_of_chosen_type(display: String) -> Self {
+        Self::new(DoubleDamageFromSourcesYouControlOfChosenType::new(display))
     }
 
     pub fn library_of_leng_discard_replacement() -> Self {

@@ -434,6 +434,21 @@ mod tests {
         crate::tests::test_helpers::setup_two_player_game()
     }
 
+    fn effect_zone_change(
+        object: ObjectId,
+        from: Zone,
+        to: Zone,
+        snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    ) -> ZoneChangeEvent {
+        ZoneChangeEvent::with_cause(
+            object,
+            from,
+            to,
+            crate::events::cause::EventCause::effect(),
+            snapshot,
+        )
+    }
+
     fn create_creature_in_zone(game: &mut GameState, owner: PlayerId, zone: Zone) -> ObjectId {
         let card = CardBuilder::new(CardId::new(), "Matcher Test Creature")
             .card_types(vec![CardType::Creature])
@@ -451,14 +466,13 @@ mod tests {
         let matcher = WouldEnterBattlefieldMatcher::any();
 
         // Zone change to battlefield should match
-        let event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
         // Note: This won't actually match because the object doesn't exist in the game
         // In real usage, the object would be looked up from game state
         assert!(!matcher.matches_event(&event, &ctx));
 
         // Zone change to graveyard should not match
-        let event = ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Graveyard, None);
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Graveyard, None);
         assert!(!matcher.matches_event(&event, &ctx));
     }
 
@@ -476,7 +490,7 @@ mod tests {
         let matcher = WouldEnterBattlefieldMatcher::new(filter);
         let ctx = EventContext::for_replacement_effect(alice, source_id, &game);
 
-        let zone_change = ZoneChangeEvent::new(creature_id, Zone::Hand, Zone::Battlefield, None);
+        let zone_change = effect_zone_change(creature_id, Zone::Hand, Zone::Battlefield, None);
         assert!(
             matcher.matches_event(&zone_change, &ctx),
             "zone-change ETB matcher should evaluate the object as entering battlefield"
@@ -530,16 +544,16 @@ mod tests {
         let matcher = ThisWouldGoToGraveyardMatcher;
 
         // Zone change to graveyard for the source should match
-        let event = ZoneChangeEvent::new(source_id, Zone::Library, Zone::Graveyard, None);
+        let event = effect_zone_change(source_id, Zone::Library, Zone::Graveyard, None);
         assert!(matcher.matches_event(&event, &ctx));
 
         // Zone change to graveyard for different object should not match
         let other_id = ObjectId::from_raw(2);
-        let event = ZoneChangeEvent::new(other_id, Zone::Library, Zone::Graveyard, None);
+        let event = effect_zone_change(other_id, Zone::Library, Zone::Graveyard, None);
         assert!(!matcher.matches_event(&event, &ctx));
 
         // Zone change to exile should not match
-        let event = ZoneChangeEvent::new(source_id, Zone::Library, Zone::Exile, None);
+        let event = effect_zone_change(source_id, Zone::Library, Zone::Exile, None);
         assert!(!matcher.matches_event(&event, &ctx));
     }
 
@@ -561,12 +575,12 @@ mod tests {
         let matcher = WouldGoToHandMatcher::you();
 
         // Zone change to hand should try to match (won't match because object doesn't exist)
-        let event = ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Library, Zone::Hand, None);
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Library, Zone::Hand, None);
         // This won't match because the object doesn't exist in game
         assert!(!matcher.matches_event(&event, &ctx));
 
         // Zone change to battlefield should not match
-        let event = ZoneChangeEvent::new(
+        let event = effect_zone_change(
             ObjectId::from_raw(1),
             Zone::Library,
             Zone::Battlefield,

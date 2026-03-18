@@ -99,10 +99,14 @@ pub(crate) fn apply_processed_damage_assignment(
     target: crate::game_event::DamageTarget,
     amount: u32,
     keywords: SourceDamageKeywords,
+    cause: crate::events::cause::EventCause,
 ) -> AppliedDamageAssignment {
     match target {
         crate::game_event::DamageTarget::Player(player_id) => {
-            let source_controller = game.object(source).map(|obj| obj.controller);
+            let source_controller = game
+                .object(source)
+                .map(|obj| obj.controller)
+                .or(cause.source_controller);
             if keywords.has_infect {
                 if let Some(event) = game.add_player_counters_with_source(
                     player_id,
@@ -141,11 +145,25 @@ pub(crate) fn apply_processed_damage_assignment(
             }
 
             if is_creature && (keywords.has_infect || keywords.has_wither) {
-                if let Some(permanent) = game.object_mut(object_id) {
-                    *permanent
-                        .counters
-                        .entry(crate::CounterType::MinusOneMinusOne)
-                        .or_insert(0) += amount;
+                let final_count = crate::event_processor::process_put_counters_with_event(
+                    game,
+                    object_id,
+                    crate::CounterType::MinusOneMinusOne,
+                    amount,
+                    cause.clone(),
+                );
+                let source_controller = game
+                    .object(source)
+                    .map(|obj| obj.controller)
+                    .or(cause.source_controller);
+                if let Some(event) = game.add_counters_with_source(
+                    object_id,
+                    crate::CounterType::MinusOneMinusOne,
+                    final_count,
+                    Some(source),
+                    source_controller,
+                ) {
+                    game.queue_trigger_event(event.provenance(), event);
                 }
             } else {
                 game.mark_damage(object_id, amount);
@@ -583,6 +601,7 @@ mod tests {
                 has_infect: true,
                 ..SourceDamageKeywords::default()
             },
+            crate::events::cause::EventCause::from_effect(source_id, PlayerId::from_index(0)),
         );
 
         assert!(result.applied);

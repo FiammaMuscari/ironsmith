@@ -1943,7 +1943,7 @@ impl GameState {
 
             if let Some(id) = card_id {
                 // Move from library to hand
-                if let Some(new_id) = self.move_object(id, Zone::Hand) {
+                if let Some(new_id) = self.move_object_by_game_rule(id, Zone::Hand) {
                     drawn.push(new_id);
                 }
             } else {
@@ -1977,7 +1977,7 @@ impl GameState {
 
             let final_zone =
                 self.resolve_commander_move_destination(id, Zone::Hand, decision_maker);
-            if let Some(new_id) = self.move_object(id, final_zone)
+            if let Some(new_id) = self.move_object_by_game_rule(id, final_zone)
                 && final_zone == Zone::Hand
             {
                 drawn.push(new_id);
@@ -1989,7 +1989,12 @@ impl GameState {
     /// Moves an object to a new zone.
     /// Per MTG rule 400.7, this creates a new object (new ID).
     /// Returns the new ObjectId.
-    pub fn move_object(&mut self, old_id: ObjectId, new_zone: Zone) -> Option<ObjectId> {
+    pub fn move_object(
+        &mut self,
+        old_id: ObjectId,
+        new_zone: Zone,
+        cause: crate::events::cause::EventCause,
+    ) -> Option<ObjectId> {
         // Capture a full pre-move snapshot for LKI-based trigger matching.
         let pre_move_snapshot = self
             .objects
@@ -2054,8 +2059,13 @@ impl GameState {
             } else {
                 new_id
             };
-            let event =
-                ZoneChangeEvent::new(event_object_id, old_zone, new_zone, pre_move_snapshot);
+            let event = ZoneChangeEvent::with_cause(
+                event_object_id,
+                old_zone,
+                new_zone,
+                cause,
+                pre_move_snapshot,
+            );
             let event_provenance = self
                 .provenance_graph
                 .alloc_root_event(crate::events::EventKind::ZoneChange);
@@ -2070,6 +2080,30 @@ impl GameState {
         self.debug_assert_zone_consistency();
 
         Some(new_id)
+    }
+
+    pub fn move_object_by_effect(&mut self, old_id: ObjectId, new_zone: Zone) -> Option<ObjectId> {
+        self.move_object(old_id, new_zone, crate::events::cause::EventCause::effect())
+    }
+
+    pub fn move_object_by_game_rule(
+        &mut self,
+        old_id: ObjectId,
+        new_zone: Zone,
+    ) -> Option<ObjectId> {
+        self.move_object(
+            old_id,
+            new_zone,
+            crate::events::cause::EventCause::from_game_rule(),
+        )
+    }
+
+    pub fn move_object_by_sba(&mut self, old_id: ObjectId, new_zone: Zone) -> Option<ObjectId> {
+        self.move_object(
+            old_id,
+            new_zone,
+            crate::events::cause::EventCause::from_sba(),
+        )
     }
 
     /// Move an object to the battlefield with ETB replacement effect processing.
@@ -2097,11 +2131,27 @@ impl GameState {
         new_zone: Zone,
         decision_maker: &mut impl crate::decision::DecisionMaker,
     ) -> Option<EntersResult> {
+        self.move_object_with_etb_processing_with_dm_and_cause(
+            old_id,
+            new_zone,
+            crate::events::cause::EventCause::effect(),
+            decision_maker,
+        )
+    }
+
+    /// Move an object to the battlefield with ETB replacement processing and an explicit cause.
+    pub fn move_object_with_etb_processing_with_dm_and_cause(
+        &mut self,
+        old_id: ObjectId,
+        new_zone: Zone,
+        cause: crate::events::cause::EventCause,
+        decision_maker: &mut impl crate::decision::DecisionMaker,
+    ) -> Option<EntersResult> {
         let old_zone = self.object(old_id)?.zone;
 
         // Only process ETB replacement for moves TO the battlefield
         if new_zone != Zone::Battlefield {
-            let new_id = self.move_object(old_id, new_zone)?;
+            let new_id = self.move_object(old_id, new_zone, cause.clone())?;
             return Some(EntersResult {
                 new_id,
                 enters_tapped: false,
@@ -2120,7 +2170,7 @@ impl GameState {
         if result.prevented {
             if let Some(dest) = result.new_destination {
                 // Move to the alternate destination
-                let new_id = self.move_object(old_id, dest)?;
+                let new_id = self.move_object(old_id, dest, cause.clone())?;
                 return Some(EntersResult {
                     new_id,
                     enters_tapped: false,
@@ -2130,7 +2180,7 @@ impl GameState {
         }
 
         // Proceed with normal battlefield entry
-        let new_id = self.move_object(old_id, Zone::Battlefield)?;
+        let new_id = self.move_object(old_id, Zone::Battlefield, cause)?;
 
         // Apply "enters as copy" before tapped/counter modifications.
         if let Some(copy_source_id) = result.enters_as_copy_of {
@@ -2315,7 +2365,7 @@ impl GameState {
 
             if candidates.is_empty() {
                 // No legal attachment target - put the Aura into the graveyard
-                self.move_object(new_id, Zone::Graveyard);
+                self.move_object_by_effect(new_id, Zone::Graveyard);
             } else {
                 let ctx = crate::decisions::context::SelectObjectsContext::new(
                     chooser,
@@ -3454,11 +3504,12 @@ impl GameState {
         &mut self,
         object_id: ObjectId,
         requested_zone: Zone,
+        cause: crate::events::cause::EventCause,
         decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
     ) -> Option<(ObjectId, Zone)> {
         let final_zone =
             self.resolve_commander_move_destination(object_id, requested_zone, decision_maker);
-        self.move_object(object_id, final_zone)
+        self.move_object(object_id, final_zone, cause)
             .map(|new_id| (new_id, final_zone))
     }
 
@@ -3822,6 +3873,10 @@ impl GameState {
         self.turn_history
             .creatures_attacked_this_turn
             .contains(&creature)
+    }
+
+    pub fn creature_blocked_this_turn(&self, creature: ObjectId) -> bool {
+        self.turn_history.creature_blocked_this_turn(creature)
     }
 
     /// Record that a specific trigger fired this turn.

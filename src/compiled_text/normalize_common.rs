@@ -7813,6 +7813,9 @@ pub(super) fn describe_condition(condition: &Condition) -> String {
             counter.description()
         ),
         Condition::SourceAttackedThisTurn => "this creature attacked this turn".to_string(),
+        Condition::SourceAttackedOrBlockedThisTurn => {
+            "this creature attacked or blocked this turn".to_string()
+        }
         Condition::SourceIsUntapped => "this source is untapped".to_string(),
         Condition::SourceIsAttacking => "this source is attacking".to_string(),
         Condition::SourceIsBlocking => "this source is blocking".to_string(),

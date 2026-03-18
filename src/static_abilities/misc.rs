@@ -18,6 +18,7 @@ use crate::events::damage::matchers::{
     DamageFromSelfMatcher, DamageToObjectMatcher, DamageToPlayerOrObjectMatcher,
     DamageToSelfCombatMatcher, DamageToSelfFromSourceFilterMatcher,
 };
+use crate::events::damage::DamageEvent;
 use crate::events::permanents::matchers::AttachedPermanentWouldBeDestroyedMatcher;
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
@@ -1846,6 +1847,107 @@ impl StaticAbilityKind for CreaturesEnteringDontCauseAbilitiesToTrigger {
     }
 }
 
+/// "If a triggered ability of another creature you control of the chosen type triggers,
+/// it triggers an additional time."
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime {
+    pub display: String,
+}
+
+impl OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime {
+    pub fn new(display: String) -> Self {
+        Self { display }
+    }
+}
+
+impl StaticAbilityKind for OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn duplicates_triggers_of_other_chosen_type_creatures_you_control(&self) -> bool {
+        true
+    }
+}
+
+/// "Double all damage that sources you control of the chosen type would deal."
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoubleDamageFromSourcesYouControlOfChosenType {
+    pub display: String,
+}
+
+impl DoubleDamageFromSourcesYouControlOfChosenType {
+    pub fn new(display: String) -> Self {
+        Self { display }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ChosenTypeDamageSourceMatcher {
+    ability_source: ObjectId,
+}
+
+impl ReplacementMatcher for ChosenTypeDamageSourceMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::context::EventContext,
+    ) -> bool {
+        if event.event_kind() != EventKind::Damage {
+            return false;
+        }
+
+        let Some(damage) = downcast_event::<DamageEvent>(event) else {
+            return false;
+        };
+        let Some(chosen_type) = ctx.game.chosen_creature_type(self.ability_source) else {
+            return false;
+        };
+        let Some(source_obj) = ctx.game.object(damage.source) else {
+            return false;
+        };
+
+        source_obj.controller == ctx.controller && source_obj.has_subtype(chosen_type)
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::Other
+    }
+
+    fn display(&self) -> String {
+        "If a source you control of the chosen type would deal damage".to_string()
+    }
+}
+
+impl StaticAbilityKind for DoubleDamageFromSourcesYouControlOfChosenType {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::DoubleDamageFromSourcesYouControlOfChosenType
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ChosenTypeDamageSourceMatcher {
+                ability_source: source,
+            },
+            ReplacementAction::Double,
+        ))
+    }
+}
+
 /// Can be your commander.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CanBeCommander;
@@ -2971,11 +3073,12 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
         let damage_event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::DamageEvent::new(
+            crate::events::DamageEvent::with_cause(
                 source,
                 crate::game_event::DamageTarget::Player(bob),
                 3,
                 false,
+                crate::events::cause::EventCause::effect(),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -2989,7 +3092,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("bloodthirst replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
 
         assert!(
@@ -3012,7 +3121,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("bloodthirst replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
 
         assert!(
@@ -3041,7 +3156,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("conditional enters-with-counters replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
         assert!(
             matcher.matches_event(&event, &ctx),
@@ -3068,7 +3189,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("conditional enters-with-counters replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
         assert!(
             !matcher.matches_event(&event, &ctx),
@@ -3101,7 +3228,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("conditional enters-with-counters replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
         assert!(
             matcher.matches_event(&event, &ctx),
@@ -3120,7 +3253,7 @@ mod tests {
                 .build();
         let departed_id =
             game.create_object_from_card(&departed_permanent, alice, Zone::Battlefield);
-        game.move_object(departed_id, Zone::Graveyard);
+        game.move_object_by_effect(departed_id, Zone::Graveyard);
 
         let ability = EntersWithCountersIfCondition::new(
             CounterType::PlusOnePlusOne,
@@ -3135,7 +3268,13 @@ mod tests {
             .matcher
             .as_ref()
             .expect("conditional enters-with-counters replacement must have matcher");
-        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let event = ZoneChangeEvent::with_cause(
+            source,
+            Zone::Stack,
+            Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
+            None,
+        );
         let ctx = EventContext::for_replacement_effect(alice, source, &game);
         assert!(
             matcher.matches_event(&event, &ctx),
@@ -3162,11 +3301,23 @@ mod tests {
         let ctx = EventContext::for_replacement_effect(alice, src, &game);
 
         // Preventable damage from this permanent matches.
-        let dmg = DamageEvent::new(src, DamageTarget::Player(alice), 3, false);
+        let dmg = DamageEvent::with_cause(
+            src,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(matcher.matches_event(&dmg, &ctx));
 
         // Unpreventable damage from this permanent does not match.
-        let unpreventable = DamageEvent::unpreventable(src, DamageTarget::Player(alice), 3, false);
+        let unpreventable = DamageEvent::unpreventable_with_cause(
+            src,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 
@@ -3192,10 +3343,22 @@ mod tests {
             .expect("replacement must have a matcher");
         let ctx = EventContext::for_replacement_effect(alice, src, &game);
 
-        let creature_damage = DamageEvent::new(src, DamageTarget::Object(creature_id), 3, false);
+        let creature_damage = DamageEvent::with_cause(
+            src,
+            DamageTarget::Object(creature_id),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(matcher.matches_event(&creature_damage, &ctx));
 
-        let player_damage = DamageEvent::new(src, DamageTarget::Player(alice), 3, false);
+        let player_damage = DamageEvent::with_cause(
+            src,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(!matcher.matches_event(&player_damage, &ctx));
     }
 
@@ -3233,15 +3396,21 @@ mod tests {
             .expect("replacement must have a matcher");
         let ctx = EventContext::for_replacement_effect(alice, protected, &game);
 
-        let creature_damage =
-            DamageEvent::new(creature_source, DamageTarget::Object(protected), 3, false);
+        let creature_damage = DamageEvent::with_cause(
+            creature_source,
+            DamageTarget::Object(protected),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(matcher.matches_event(&creature_damage, &ctx));
 
-        let noncreature_damage = DamageEvent::new(
+        let noncreature_damage = DamageEvent::with_cause(
             noncreature_source,
             DamageTarget::Object(protected),
             3,
             false,
+            crate::events::cause::EventCause::effect(),
         );
         assert!(!matcher.matches_event(&noncreature_damage, &ctx));
     }
@@ -3265,14 +3434,31 @@ mod tests {
             .expect("replacement must have a matcher");
         let ctx = EventContext::for_replacement_effect(alice, protected, &game);
 
-        let combat_damage = DamageEvent::new(source, DamageTarget::Object(protected), 3, true);
+        let combat_damage = DamageEvent::with_cause(
+            source,
+            DamageTarget::Object(protected),
+            3,
+            true,
+            crate::events::cause::EventCause::combat_damage(source),
+        );
         assert!(matcher.matches_event(&combat_damage, &ctx));
 
-        let noncombat_damage = DamageEvent::new(source, DamageTarget::Object(protected), 3, false);
+        let noncombat_damage = DamageEvent::with_cause(
+            source,
+            DamageTarget::Object(protected),
+            3,
+            false,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(!matcher.matches_event(&noncombat_damage, &ctx));
 
-        let unpreventable =
-            DamageEvent::unpreventable(source, DamageTarget::Object(protected), 3, true);
+        let unpreventable = DamageEvent::unpreventable_with_cause(
+            source,
+            DamageTarget::Object(protected),
+            3,
+            true,
+            crate::events::cause::EventCause::combat_damage(source),
+        );
         assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 

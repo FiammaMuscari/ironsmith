@@ -2,6 +2,7 @@ use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, SubjectAst, TagKey, TargetAst,
     Token, extract_subject_player, is_article, parse_card_type, parse_color, parse_number,
     parse_object_filter, parse_subtype_word, parse_target_phrase, parse_value,
+    starts_with_inline_token_rules_tail,
     target_references_it, token_index_for_word_index, trim_commas, words,
 };
 use crate::color::ColorSet;
@@ -688,6 +689,7 @@ pub(crate) fn parse_create(
         }
         true
     });
+    name_words.retain(|word| !matches!(*word, "and" | "or"));
     let name_words_primary_len = name_words.len();
     if name_words.is_empty() {
         if tail_words
@@ -724,6 +726,17 @@ pub(crate) fn parse_create(
                     .iter()
                     .position(|token| matches!(token, Token::Comma(_)) || token.is_word("except"))
                     .unwrap_or(source_tokens.len());
+                let mut source_end = source_end;
+                for idx in 1..source_end {
+                    let remaining_words = words(&source_tokens[idx..]);
+                    if starts_with_inline_token_rules_tail(&remaining_words)
+                        || (source_tokens[idx].is_word("and")
+                            && starts_with_inline_token_rules_tail(&words(&source_tokens[idx + 1..])))
+                    {
+                        source_end = idx;
+                        break;
+                    }
+                }
                 let source_tokens = &source_tokens[..source_end];
                 let (source_tokens, tail_tapped, tail_attacking) =
                     split_copy_source_tail_modifiers(source_tokens);

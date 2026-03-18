@@ -362,7 +362,7 @@ mod tests {
         execute_chrome_mox_imprint_trigger(&mut game, alice, mox_id);
         assert!(game.has_imprinted_cards(mox_id));
 
-        let _new_id = game.move_object(mox_id, Zone::Graveyard);
+        let _new_id = game.move_object_by_effect(mox_id, Zone::Graveyard);
         assert!(!game.has_imprinted_cards(mox_id));
     }
 
@@ -383,7 +383,9 @@ mod tests {
 
         game.player_mut(alice).unwrap().mana_pool.red = 0;
 
-        let _new_id = game.move_object(imprinted_id, Zone::Graveyard).unwrap();
+        let _new_id = game
+            .move_object_by_effect(imprinted_id, Zone::Graveyard)
+            .unwrap();
         assert!(game.has_imprinted_cards(mox_id));
 
         let result2 = execute_chrome_mox_mana_ability(&mut game, alice, mox_id);

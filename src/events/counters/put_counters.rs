@@ -2,6 +2,7 @@
 
 use std::any::Any;
 
+use crate::events::cause::EventCause;
 use crate::events::traits::{EventKind, GameEventType, RedirectValidTypes, RedirectableTarget};
 use crate::game_state::{GameState, Target};
 use crate::ids::{ObjectId, PlayerId};
@@ -16,15 +17,23 @@ pub struct PutCountersEvent {
     pub counter_type: CounterType,
     /// Number of counters to add
     pub count: u32,
+    /// What caused these counters to be put.
+    pub cause: EventCause,
 }
 
 impl PutCountersEvent {
-    /// Create a new put counters event.
-    pub fn new(target: ObjectId, counter_type: CounterType, count: u32) -> Self {
+    /// Create a new put counters event with an explicit cause.
+    pub fn with_cause(
+        target: ObjectId,
+        counter_type: CounterType,
+        count: u32,
+        cause: EventCause,
+    ) -> Self {
         Self {
             target,
             counter_type,
             count,
+            cause,
         }
     }
 
@@ -113,9 +122,18 @@ impl GameEventType for PutCountersEvent {
 mod tests {
     use super::*;
 
+    fn effect_counters(count: u32) -> PutCountersEvent {
+        PutCountersEvent::with_cause(
+            ObjectId::from_raw(1),
+            CounterType::PlusOnePlusOne,
+            count,
+            EventCause::effect(),
+        )
+    }
+
     #[test]
     fn test_put_counters_event_creation() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
 
         assert_eq!(event.count, 3);
         assert_eq!(event.counter_type, CounterType::PlusOnePlusOne);
@@ -123,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_put_counters_doubled() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
 
         let doubled = event.doubled();
         assert_eq!(doubled.count, 6);
@@ -131,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_put_counters_with_additional() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
 
         let with_extra = event.with_additional(2);
         assert_eq!(with_extra.count, 5);
@@ -139,13 +157,13 @@ mod tests {
 
     #[test]
     fn test_put_counters_event_kind() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
         assert_eq!(event.event_kind(), EventKind::PutCounters);
     }
 
     #[test]
     fn test_put_counters_redirect() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
 
         let old_target = Target::Object(ObjectId::from_raw(1));
         let new_target = Target::Object(ObjectId::from_raw(2));
@@ -163,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_put_counters_redirect_to_player_fails() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
 
         let old_target = Target::Object(ObjectId::from_raw(1));
         let new_target = Target::Player(PlayerId::from_index(0));
@@ -174,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_put_counters_display() {
-        let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
+        let event = effect_counters(3);
         assert_eq!(event.display(), "Put 3 +1/+1 counter(s)");
     }
 }

@@ -177,7 +177,7 @@ impl EffectExecutor for SearchLibraryEffect {
                         BattlefieldEntryOutcome::Prevented => None,
                     }
                 } else {
-                    game.move_object(card_id, self.destination)
+                    game.move_object_by_effect(card_id, self.destination)
                 };
 
                 if let Some(new_id) = new_id {

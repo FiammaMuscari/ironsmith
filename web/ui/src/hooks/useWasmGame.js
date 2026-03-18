@@ -11,6 +11,7 @@ const WORKER_METHODS = [
   "cancelDecision",
   "cardLoadDiagnostics",
   "cardsMeetingThreshold",
+  "createCustomCard",
   "dispatch",
   "drawCard",
   "drawOpeningHands",
@@ -19,8 +20,10 @@ const WORKER_METHODS = [
   "loadDecks",
   "loadDemoDecks",
   "objectDetails",
+  "previewCustomCard",
   "registrySize",
   "reset",
+  "sampleLoadedDeckSeed",
   "setLife",
   "setAutoCleanupDiscard",
   "setSemanticThreshold",
@@ -33,28 +36,6 @@ const WORKER_METHODS = [
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function buildModuleCandidates() {
-  const pathname = window.location.pathname;
-  const baseDir = (() => {
-    if (pathname.endsWith("/")) return pathname;
-    if (pathname.includes(".")) return pathname.slice(0, pathname.lastIndexOf("/") + 1);
-    return `${pathname}/`;
-  })();
-
-  return [
-    `${window.location.origin}${baseDir}pkg/ironsmith.js`,
-    `${window.location.origin}${baseDir}pkg/ironsmith.js`,
-    `${window.location.origin}${baseDir}pkg/pkg/ironsmith.js`,
-    `${window.location.origin}${baseDir}pkg/pkg/ironsmith.js`,
-    "./pkg/ironsmith.js",
-    "./pkg/ironsmith.js",
-    "./pkg/pkg/ironsmith.js",
-    "./pkg/pkg/ironsmith.js",
-    "../../pkg/ironsmith.js",
-    "../../pkg/ironsmith.js",
-  ];
-}
 
 function toError(raw) {
   if (raw instanceof Error) return raw;
@@ -208,11 +189,7 @@ export function useWasmGame() {
     setRegistryCount(0);
     setRegistryTotal(0);
 
-    worker.postMessage({
-      type: "init",
-      pageHref: window.location.href,
-      candidates: buildModuleCandidates(),
-    });
+    worker.postMessage({ type: "init" });
 
     return () => {
       disposed = true;

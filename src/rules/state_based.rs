@@ -627,7 +627,7 @@ pub fn apply_legend_rule_choice(game: &mut GameState, keep: ObjectId) {
 
     // Move all others to graveyard
     for id in to_remove {
-        game.move_object(id, Zone::Graveyard);
+        game.move_object(id, Zone::Graveyard, crate::events::cause::EventCause::from_legend_rule(controller));
     }
 }
 
@@ -672,10 +672,11 @@ fn apply_single_sba_with_snapshots(
                     obj_id,
                     Zone::Battlefield,
                     Zone::Graveyard,
+                    crate::events::cause::EventCause::from_sba(),
                     decision_maker,
                 );
                 if let ZoneChangeOutcome::Proceed(final_zone) = outcome {
-                    game.move_object(obj_id, final_zone);
+                    game.move_object_by_sba(obj_id, final_zone);
                 }
             }
         }
@@ -688,10 +689,11 @@ fn apply_single_sba_with_snapshots(
                 obj_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_sba(),
                 decision_maker,
             );
             if let ZoneChangeOutcome::Proceed(final_zone) = outcome {
-                game.move_object(obj_id, final_zone);
+                game.move_object_by_sba(obj_id, final_zone);
             }
         }
 
@@ -702,19 +704,23 @@ fn apply_single_sba_with_snapshots(
         }
 
         StateBasedAction::LegendRuleViolation {
-            player: _,
+            player,
             name: _,
             permanents,
         } => {
             // In a full implementation, the player would choose which to keep
             // For now, keep the first one, sacrifice the rest
             for &obj_id in permanents.iter().skip(1) {
-                game.move_object(obj_id, Zone::Graveyard);
+                game.move_object(
+                    obj_id,
+                    Zone::Graveyard,
+                    crate::events::cause::EventCause::from_legend_rule(player),
+                );
             }
         }
 
         StateBasedAction::AuraFallsOff(obj_id) | StateBasedAction::EquipmentFallsOff(obj_id) => {
-            game.move_object(obj_id, Zone::Graveyard);
+            game.move_object_by_sba(obj_id, Zone::Graveyard);
         }
 
         StateBasedAction::BestowBecomesCreature(obj_id) => {
@@ -747,7 +753,7 @@ fn apply_single_sba_with_snapshots(
 
         StateBasedAction::SagaSacrifice(obj_id) => {
             // Saga is sacrificed (put into graveyard) after final chapter resolves
-            game.move_object(obj_id, Zone::Graveyard);
+            game.move_object_by_sba(obj_id, Zone::Graveyard);
         }
 
         StateBasedAction::CommanderReturnsToCommandZone(obj_id) => {
@@ -764,7 +770,7 @@ fn apply_single_sba_with_snapshots(
             .with_source_name(name);
 
             if decision_maker.decide_boolean(game, &choice_ctx) {
-                game.move_object(obj_id, Zone::Command);
+                game.move_object_by_sba(obj_id, Zone::Command);
             } else {
                 game.decline_commander_command_zone_move(obj_id);
             }
@@ -910,7 +916,7 @@ mod tests {
         );
 
         let exile_id = game
-            .move_object(commander_id, Zone::Exile)
+            .move_object_by_effect(commander_id, Zone::Exile)
             .expect("commander should move to exile");
         assert!(apply_state_based_actions_with(&mut game, &mut dm));
         assert_eq!(dm.calls, 2, "new object in exile should prompt again");

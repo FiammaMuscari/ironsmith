@@ -354,16 +354,16 @@ mod tests {
         );
 
         let first_graveyard_id = game
-            .move_object(creature_id, Zone::Graveyard)
+            .move_object_by_effect(creature_id, Zone::Graveyard)
             .expect("move to graveyard should succeed");
         assert_ne!(first_graveyard_id, creature_id);
         snapshot.object_id = first_graveyard_id;
 
         let interim_battlefield_id = game
-            .move_object(first_graveyard_id, Zone::Battlefield)
+            .move_object_by_effect(first_graveyard_id, Zone::Battlefield)
             .expect("move back to battlefield should succeed");
         let second_graveyard_id = game
-            .move_object(interim_battlefield_id, Zone::Graveyard)
+            .move_object_by_effect(interim_battlefield_id, Zone::Graveyard)
             .expect("move back to graveyard should succeed");
         assert_ne!(second_graveyard_id, first_graveyard_id);
 

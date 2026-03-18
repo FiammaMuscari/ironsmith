@@ -642,10 +642,11 @@ mod tests {
 
         // ETB from hand
         let from_hand = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 creature_id,
                 Zone::Hand,
                 Zone::Battlefield,
+                crate::events::cause::EventCause::effect(),
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
             crate::provenance::ProvNodeId::default(),
@@ -654,10 +655,11 @@ mod tests {
 
         // ETB from graveyard (reanimate)
         let from_graveyard = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 creature_id,
                 Zone::Graveyard,
                 Zone::Battlefield,
+                crate::events::cause::EventCause::effect(),
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
             crate::provenance::ProvNodeId::default(),
@@ -683,7 +685,13 @@ mod tests {
         let mut snapshot = make_creature_snapshot(old_id, alice, "Soul Warden Probe");
         snapshot.stable_id = StableId::from(old_id);
         let event = TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(new_id, Zone::Stack, Zone::Battlefield, Some(snapshot)),
+            ZoneChangeEvent::with_cause(
+                new_id,
+                Zone::Stack,
+                Zone::Battlefield,
+                crate::events::cause::EventCause::effect(),
+                Some(snapshot),
+            ),
             crate::provenance::ProvNodeId::default(),
         );
 

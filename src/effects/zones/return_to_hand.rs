@@ -96,6 +96,7 @@ impl ReturnToHandEffect {
                 object_id,
                 from_zone,
                 Zone::Hand,
+                ctx.cause.clone(),
                 &mut ctx.decision_maker,
             );
 
@@ -155,6 +156,7 @@ impl EffectExecutor for ReturnToHandEffect {
                     object_id,
                     from_zone,
                     Zone::Hand,
+                    ctx.cause.clone(),
                     &mut ctx.decision_maker,
                 ) {
                     EventOutcome::Proceed(result) => Ok(result.new_object_id.is_some()),

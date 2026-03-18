@@ -18,6 +18,7 @@ use crate::cards::builders::parse_parsing::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
+    parse_token_copy_followup_sentence, try_apply_token_copy_followup,
     parse_unsupported_play_cast_permission_clause, parse_until_end_of_turn_may_play_tagged_clause,
     parse_until_your_next_turn_may_play_tagged_clause, parse_verb_first_clause,
     parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
@@ -190,6 +191,10 @@ mod tests {
 pub(crate) fn parse_effect_chain_with_sentence_primitives(
     tokens: &[Token],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    if tokens.first().is_some_and(|token| token.is_word("and")) {
+        return parse_effect_chain_with_sentence_primitives(&tokens[1..]);
+    }
+
     let clause_words = words(tokens);
     if starts_with_until_end_of_turn_trigger_clause(&clause_words) {
         return Err(CardTextError::ParseError(format!(
@@ -338,6 +343,11 @@ pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst
             }
             continue;
         }
+        if let Some(followup) = parse_token_copy_followup_sentence(&segment)
+            && try_apply_token_copy_followup(&mut effects, followup)?
+        {
+            continue;
+        }
         let mut effect = parse_effect_clause_with_trailing_if(&segment)?;
         if let Some(context) = carried_context {
             maybe_apply_carried_player_with_clause(&mut effect, context, &segment);
@@ -353,6 +363,7 @@ pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst
     // across players (for example: Duskmantle Seer).
     collapse_for_each_player_it_tag_followups(&mut effects);
     collapse_token_copy_next_end_step_exile_followup(&mut effects, tokens);
+    collapse_token_copy_next_end_step_sacrifice_followup(&mut effects, tokens);
     collapse_token_copy_end_of_combat_exile_followup(&mut effects, tokens);
     Ok(effects)
 }
@@ -526,6 +537,57 @@ pub(crate) fn collapse_token_copy_next_end_step_exile_followup(
                 ..
             } => {
                 *exile_at_next_end_step = true;
+            }
+            _ => {}
+        }
+        effects.remove(idx + 1);
+    }
+}
+
+pub(crate) fn collapse_token_copy_next_end_step_sacrifice_followup(
+    effects: &mut Vec<EffectAst>,
+    tokens: &[Token],
+) {
+    let chain_words = words(tokens);
+    if !chain_words.contains(&"sacrifice")
+        || !chain_words.contains(&"token")
+        || !chain_words.windows(4).any(|window| window == ["next", "end", "step", "repeat"])
+            && !chain_words.windows(3).any(|window| window == ["next", "end", "step"])
+    {
+        return;
+    }
+
+    let mut idx = 0usize;
+    while idx + 1 < effects.len() {
+        let mark_next_end_step_sacrifice = match (&effects[idx], &effects[idx + 1]) {
+            (
+                EffectAst::CreateTokenCopy { .. }
+                | EffectAst::CreateTokenCopyFromSource { .. }
+                | EffectAst::CreateTokenWithMods { .. },
+                EffectAst::Sacrifice { filter, count, .. },
+            ) => *count == 1 && target_is_generic_token_filter(&TargetAst::Object(filter.clone(), None, None)),
+            _ => false,
+        };
+
+        if !mark_next_end_step_sacrifice {
+            idx += 1;
+            continue;
+        }
+
+        match &mut effects[idx] {
+            EffectAst::CreateTokenCopy {
+                sacrifice_at_next_end_step,
+                ..
+            }
+            | EffectAst::CreateTokenCopyFromSource {
+                sacrifice_at_next_end_step,
+                ..
+            }
+            | EffectAst::CreateTokenWithMods {
+                sacrifice_at_next_end_step,
+                ..
+            } => {
+                *sacrifice_at_next_end_step = true;
             }
             _ => {}
         }
@@ -1890,6 +1952,12 @@ pub(crate) fn parse_repeat_this_process_clause(
         ["repeat", "this", "process"] | ["and", "repeat", "this", "process"]
     ) {
         return Ok(Some(EffectAst::RepeatThisProcess));
+    }
+    if matches!(
+        clause_words.as_slice(),
+        ["repeat", "this", "process", "once"] | ["and", "repeat", "this", "process", "once"]
+    ) {
+        return Ok(Some(EffectAst::RepeatThisProcessOnce));
     }
     Ok(None)
 }

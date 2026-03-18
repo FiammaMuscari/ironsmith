@@ -634,6 +634,7 @@ pub enum ThisSpellCostCondition {
     TotalCreatureCardsInAllGraveyardsOrMore(u32),
     OpponentCastSpellsThisTurnOrMore(u32),
     OpponentDrewCardsThisTurnOrMore(u32),
+    YouWereDealtDamageByCreaturesThisTurnOrMore(u32),
     ConditionExpr {
         condition: crate::ConditionExpr,
         display: String,
@@ -696,6 +697,9 @@ pub fn describe_this_spell_cost_condition(condition: &ThisSpellCostCondition) ->
         ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(n) => {
             Some(format!("an opponent has drawn {n} or more cards this turn"))
         }
+        ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(n) => Some(
+            format!("you've been dealt damage by {n} or more creatures this turn"),
+        ),
         ThisSpellCostCondition::ConditionExpr { display, .. } => Some(display.clone()),
         ThisSpellCostCondition::TargetsPlayer(player) => Some(format!(
             "it targets {}",
@@ -939,6 +943,9 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             .iter()
             .filter(|player| player.is_in_game() && player.id != controller)
             .any(|player| game.turn_history.cards_drawn_by_player(player.id) >= *n),
+        ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(n) => {
+            game.turn_history.total_creature_damage_to_player(controller) >= *n
+        }
         ThisSpellCostCondition::ConditionExpr {
             condition: expr, ..
         } => {

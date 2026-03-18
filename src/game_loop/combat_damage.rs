@@ -263,6 +263,20 @@ pub(super) fn apply_combat_lifelink(
     }
 }
 
+fn combat_damage_cause(game: &GameState, source_id: ObjectId) -> crate::events::cause::EventCause {
+    game.object(source_id)
+        .map(|obj| crate::events::cause::EventCause::from_combat_damage(source_id, obj.controller))
+        .unwrap_or_else(|| crate::events::cause::EventCause::combat_damage(source_id))
+}
+
+fn combat_damage_amount_to_permanent(result: &DamageResult) -> u32 {
+    result.damage_dealt.max(result.minus_counters)
+}
+
+fn combat_damage_amount_to_player(result: &DamageResult) -> u32 {
+    result.damage_dealt.max(result.poison_counters)
+}
+
 /// Deal damage from an attacker to its blockers.
 pub(super) fn deal_damage_to_blockers(
     game: &mut GameState,
@@ -407,6 +421,7 @@ pub(super) fn deal_damage_to_defender(
                 EventDamageTarget::Object(*pw_id),
                 damage,
                 true, // is_combat
+                combat_damage_cause(game, attacker_id),
             );
 
             let mut final_damage = 0u32;
@@ -447,6 +462,7 @@ pub(super) fn deal_damage_to_defender(
                                 assignment.target,
                                 assignment.amount,
                                 keywords,
+                                combat_damage_cause(game, attacker_id),
                             );
                             if applied.applied {
                                 total_damage_dealt =
@@ -460,6 +476,7 @@ pub(super) fn deal_damage_to_defender(
                                 assignment.target,
                                 assignment.amount,
                                 keywords,
+                                combat_damage_cause(game, attacker_id),
                             );
                             if applied.applied {
                                 total_damage_dealt =
@@ -506,8 +523,9 @@ pub(super) fn apply_damage_to_permanent(
         game,
         source_id,
         DamageTarget::Object(permanent_id),
-        result.damage_dealt,
+        combat_damage_amount_to_permanent(result),
         true, // is_combat
+        combat_damage_cause(game, source_id),
     );
 
     if processed.replacement_prevented {
@@ -533,6 +551,7 @@ pub(super) fn apply_damage_to_permanent(
             assignment.target,
             assignment.amount,
             keywords,
+            combat_damage_cause(game, source_id),
         );
         if !applied.applied {
             continue;
@@ -574,8 +593,9 @@ pub(super) fn apply_damage_to_player(
         game,
         source_id,
         DamageTarget::Player(player_id),
-        result.damage_dealt,
+        combat_damage_amount_to_player(result),
         true, // is_combat
+        combat_damage_cause(game, source_id),
     );
 
     if processed.replacement_prevented {
@@ -603,6 +623,7 @@ pub(super) fn apply_damage_to_player(
             assignment.target,
             assignment.amount,
             keywords,
+            combat_damage_cause(game, source_id),
         );
         if !applied.applied {
             continue;
@@ -621,5 +642,199 @@ pub(super) fn apply_damage_to_player(
         damage_dealt: damage_to_original,
         life_lost: life_lost_to_original,
         total_damage_dealt,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ability::Ability;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::events::cause::CauseFilter;
+    use crate::events::counters::matchers::WouldPutCountersMatcher;
+    use crate::events::damage::matchers::DamageFromSourceMatcher;
+    use crate::game_event::DamageTarget as EventDamageTarget;
+    use crate::ids::{CardId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::object::{CounterType, Object};
+    use crate::replacement::{EventModification, ReplacementAction, ReplacementEffect};
+    use crate::rules::damage::DamageTarget;
+    use crate::static_abilities::StaticAbility;
+    use crate::target::ObjectFilter;
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn create_creature(
+        game: &mut GameState,
+        name: &str,
+        power: i32,
+        toughness: i32,
+        controller: PlayerId,
+        abilities: Vec<StaticAbility>,
+    ) -> ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(power, toughness))
+            .build();
+        let mut obj = Object::from_card(id, &card, controller, Zone::Battlefield);
+        for ability in abilities {
+            obj.abilities.push(Ability::static_ability(ability));
+        }
+        game.add_object(obj);
+        id
+    }
+
+    fn add_doubling_season_like_effect(
+        game: &mut GameState,
+        controller: PlayerId,
+        target: ObjectId,
+    ) {
+        let source = game.new_object_id();
+        game.replacement_effects
+            .add_resolution_effect(ReplacementEffect::with_matcher(
+                source,
+                controller,
+                WouldPutCountersMatcher::new(
+                    ObjectFilter::specific(target),
+                    Some(CounterType::MinusOneMinusOne),
+                )
+                .with_cause_filter(CauseFilter::from_effect()),
+                ReplacementAction::Modify(EventModification::Multiply(2)),
+            ));
+    }
+
+    fn add_fiery_emancipation_like_effect(
+        game: &mut GameState,
+        controller: PlayerId,
+        source: ObjectId,
+    ) {
+        game.replacement_effects
+            .add_resolution_effect(ReplacementEffect::with_matcher(
+                source,
+                controller,
+                DamageFromSourceMatcher::new(ObjectFilter::specific(source)),
+                ReplacementAction::Modify(EventModification::Multiply(3)),
+            ));
+    }
+
+    #[test]
+    fn combat_wither_damage_to_creature_ignores_effect_only_counter_doublers() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker = create_creature(
+            &mut game,
+            "Witherer",
+            1,
+            1,
+            alice,
+            vec![StaticAbility::wither()],
+        );
+        let blocker = create_creature(&mut game, "Blocker", 2, 2, bob, vec![]);
+        add_doubling_season_like_effect(&mut game, bob, blocker);
+
+        let damage_result = {
+            let attacker_obj = game.object(attacker).expect("attacker exists");
+            calculate_damage_with_game(&game, attacker_obj, DamageTarget::Permanent, 1, true)
+        };
+        assert_eq!(damage_result.minus_counters, 1);
+        assert_eq!(damage_result.damage_dealt, 0);
+
+        let applied = apply_damage_to_permanent(&mut game, blocker, attacker, &damage_result);
+
+        assert_eq!(applied.damage_dealt, 1);
+        assert_eq!(applied.total_damage_dealt, 1);
+        assert_eq!(
+            game.counter_count(blocker, CounterType::MinusOneMinusOne),
+            1
+        );
+        assert_eq!(game.damage_on(blocker), 0);
+    }
+
+    #[test]
+    fn combat_wither_damage_with_damage_tripler_still_skips_effect_only_counter_doublers() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker = create_creature(
+            &mut game,
+            "Witherer",
+            1,
+            1,
+            alice,
+            vec![StaticAbility::wither()],
+        );
+        let blocker = create_creature(&mut game, "Blocker", 6, 6, bob, vec![]);
+        add_doubling_season_like_effect(&mut game, bob, blocker);
+        add_fiery_emancipation_like_effect(&mut game, alice, attacker);
+
+        let processed = crate::event_processor::process_damage_assignments_with_event(
+            &mut game,
+            attacker,
+            EventDamageTarget::Object(blocker),
+            1,
+            true,
+            crate::events::cause::EventCause::from_combat_damage(attacker, alice),
+        );
+        assert_eq!(processed.assignments.len(), 1);
+        assert_eq!(processed.assignments[0].amount, 3);
+
+        let damage_result = {
+            let attacker_obj = game.object(attacker).expect("attacker exists");
+            calculate_damage_with_game(&game, attacker_obj, DamageTarget::Permanent, 1, true)
+        };
+        assert_eq!(damage_result.minus_counters, 1);
+        assert_eq!(damage_result.damage_dealt, 0);
+
+        let applied = apply_damage_to_permanent(&mut game, blocker, attacker, &damage_result);
+
+        assert_eq!(applied.damage_dealt, 3);
+        assert_eq!(applied.total_damage_dealt, 3);
+        assert_eq!(
+            game.counter_count(blocker, CounterType::MinusOneMinusOne),
+            3
+        );
+        assert_eq!(game.damage_on(blocker), 0);
+    }
+
+    #[test]
+    fn combat_infect_damage_to_player_adds_poison_counters() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker = create_creature(
+            &mut game,
+            "Infector",
+            1,
+            1,
+            alice,
+            vec![StaticAbility::infect()],
+        );
+
+        let damage_result = {
+            let attacker_obj = game.object(attacker).expect("attacker exists");
+            calculate_damage_with_game(&game, attacker_obj, DamageTarget::Player(bob), 1, true)
+        };
+        assert_eq!(damage_result.poison_counters, 1);
+        assert_eq!(damage_result.damage_dealt, 0);
+
+        let applied = apply_damage_to_player(&mut game, bob, attacker, &damage_result);
+
+        assert_eq!(applied.damage_dealt, 1);
+        assert_eq!(applied.life_lost, 0);
+        assert_eq!(applied.total_damage_dealt, 1);
+        assert_eq!(
+            game.player(bob).expect("player exists").poison_counters,
+            1
+        );
     }
 }

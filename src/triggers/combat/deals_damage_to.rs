@@ -96,6 +96,15 @@ mod tests {
         game.create_object_from_card(&card, controller, Zone::Battlefield)
     }
 
+    fn damage(source: ObjectId, target: ObjectId, is_combat: bool) -> DamageEvent {
+        let cause = if is_combat {
+            crate::events::cause::EventCause::combat_damage(source)
+        } else {
+            crate::events::cause::EventCause::effect()
+        };
+        DamageEvent::with_cause(source, DamageTarget::Object(target), 2, is_combat, cause)
+    }
+
     #[test]
     fn test_matches_combat_damage_to_matching_target() {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
@@ -108,7 +117,7 @@ mod tests {
             DealsDamageToTrigger::combat_only(ObjectFilter::creature(), ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(source, DamageTarget::Object(target), 2, true),
+            damage(source, target, true),
             crate::provenance::ProvNodeId::default(),
         );
 
@@ -127,7 +136,7 @@ mod tests {
             DealsDamageToTrigger::combat_only(ObjectFilter::creature(), ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(source, DamageTarget::Object(target), 2, false),
+            damage(source, target, false),
             crate::provenance::ProvNodeId::default(),
         );
 

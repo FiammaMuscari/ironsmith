@@ -104,7 +104,7 @@ impl EffectExecutor for SurveilEffect {
 
         // Put cards going to graveyard
         for &card_id in &cards_to_graveyard {
-            game.move_object(card_id, Zone::Graveyard);
+            game.move_object_by_effect(card_id, Zone::Graveyard);
         }
 
         // Put the rest back on top

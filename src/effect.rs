@@ -2134,6 +2134,9 @@ pub enum Condition {
     /// Activation restriction helper: whether the source creature attacked this turn.
     SourceAttackedThisTurn,
 
+    /// Activation/trigger helper: whether the source creature attacked or blocked this turn.
+    SourceAttackedOrBlockedThisTurn,
+
     /// Source is untapped.
     SourceIsUntapped,
 

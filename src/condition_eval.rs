@@ -244,6 +244,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::SourceHasNoCounter(..) => {}
         Condition::SourceHasCounterAtLeast { .. } => {}
         Condition::SourcePowerAtLeast(..) => {}
+        Condition::SourceAttackedOrBlockedThisTurn => {}
         Condition::SourceIsInZone(..) => {}
         Condition::ManaSpentToCastThisSpellAtLeast { .. } => {}
         Condition::ColorsOfManaSpentToCastThisSpellOrMore(..) => {}
@@ -893,6 +894,9 @@ pub fn evaluate_condition_external(
         }),
 
         Condition::SourceAttackedThisTurn => game.creature_attacked_this_turn(ctx.source),
+        Condition::SourceAttackedOrBlockedThisTurn => {
+            game.creature_attacked_this_turn(ctx.source) || game.creature_blocked_this_turn(ctx.source)
+        }
         Condition::SourceIsTapped => game.is_tapped(ctx.source),
         Condition::SourceIsSaddled => game.is_saddled(ctx.source),
         Condition::SourceIsFaceDown => game.is_face_down(ctx.source),
@@ -1482,6 +1486,7 @@ fn evaluate_condition_simple(
         | Condition::CountComparison { .. }
         | Condition::OwnsCardExiledWithCounter(_)
         | Condition::SourceAttackedThisTurn
+        | Condition::SourceAttackedOrBlockedThisTurn
         | Condition::SourceIsUntapped
         | Condition::SourceIsAttacking
         | Condition::SourceIsBlocking
@@ -2119,6 +2124,10 @@ fn evaluate_condition(
             .calculated_power(ctx.source)
             .or_else(|| game.object(ctx.source).and_then(|obj| obj.power()))
             .is_some_and(|power| power >= *min_power as i32)),
+        Condition::SourceAttackedOrBlockedThisTurn => Ok(
+            game.creature_attacked_this_turn(ctx.source)
+                || game.creature_blocked_this_turn(ctx.source),
+        ),
         Condition::TargetIsAttacking => {
             // Check if the target is among declared attackers
             // Note: Combat attackers are tracked in game_loop, not game_state directly.

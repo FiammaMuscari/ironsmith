@@ -391,9 +391,15 @@ fn perform_play_land(
     card_id: ObjectId,
     decision_maker: &mut impl crate::decision::DecisionMaker,
 ) -> Result<(), ActionError> {
+    let cause = crate::events::cause::EventCause::from_special_action(Some(card_id), player);
     // Move the land to the battlefield with ETB replacement processing.
     let result = game
-        .move_object_with_etb_processing_with_dm(card_id, Zone::Battlefield, decision_maker)
+        .move_object_with_etb_processing_with_dm_and_cause(
+            card_id,
+            Zone::Battlefield,
+            cause,
+            decision_maker,
+        )
         .ok_or(ActionError::ObjectNotFound)?;
     let new_id = result.new_id;
 
@@ -580,7 +586,11 @@ fn perform_suspend(
 
     // Move to exile
     let new_id = game
-        .move_object(card_id, Zone::Exile)
+        .move_object(
+            card_id,
+            Zone::Exile,
+            crate::events::cause::EventCause::from_special_action(Some(card_id), player),
+        )
         .ok_or(ActionError::ObjectNotFound)?;
     let _ = game.add_counters(new_id, crate::object::CounterType::Time, time);
 
@@ -662,7 +672,11 @@ fn perform_foretell(
 
     // Move to exile face-down
     let new_id = game
-        .move_object(card_id, Zone::Exile)
+        .move_object(
+            card_id,
+            Zone::Exile,
+            crate::events::cause::EventCause::from_special_action(Some(card_id), player),
+        )
         .ok_or(ActionError::ObjectNotFound)?;
 
     // Mark as face-down (foretold)
@@ -731,7 +745,11 @@ fn perform_plot(
     }
 
     let new_id = game
-        .move_object(card_id, Zone::Exile)
+        .move_object(
+            card_id,
+            Zone::Exile,
+            crate::events::cause::EventCause::from_special_action(Some(card_id), player),
+        )
         .ok_or(ActionError::ObjectNotFound)?;
     game.set_plotted(new_id, player);
     Ok(())
@@ -1073,6 +1091,7 @@ fn resolve_cost_choice(
                 target_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_cost(ctx.source, ctx.payer),
                 ctx.decision_maker,
             ) {
                 EventOutcome::Prevented | EventOutcome::NotApplicable => {

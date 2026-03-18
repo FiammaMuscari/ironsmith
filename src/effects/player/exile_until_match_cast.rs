@@ -57,7 +57,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
                 break;
             };
 
-            let Some(exiled_id) = game.move_object(top_card_id, Zone::Exile) else {
+            let Some(exiled_id) = game.move_object_by_effect(top_card_id, Zone::Exile) else {
                 break;
             };
             exiled.push(exiled_id);
@@ -99,7 +99,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
                     .as_ref()
                     .and_then(|cost| if cost.has_x() { Some(0u32) } else { None });
 
-                if let Some(new_id) = game.move_object(candidate_id, Zone::Stack) {
+                if let Some(new_id) = game.move_object_by_effect(candidate_id, Zone::Stack) {
                     if let Some(obj) = game.object_mut(new_id) {
                         obj.x_value = x_value;
                     }
@@ -148,6 +148,7 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
             if let Some((new_id, final_zone)) = game.move_object_with_commander_options(
                 exiled_id,
                 Zone::Library,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             ) {
                 if final_zone != Zone::Library {

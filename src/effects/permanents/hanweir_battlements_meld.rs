@@ -56,10 +56,16 @@ impl EffectExecutor for HanweirBattlementsMeldEffect {
             return Ok(EffectOutcome::resolved());
         };
 
-        if game.move_object(ctx.source, Zone::Exile).is_none() {
+        if game
+            .move_object_by_effect(ctx.source, Zone::Exile)
+            .is_none()
+        {
             return Ok(EffectOutcome::resolved());
         }
-        if game.move_object(garrison_id, Zone::Exile).is_none() {
+        if game
+            .move_object_by_effect(garrison_id, Zone::Exile)
+            .is_none()
+        {
             return Ok(EffectOutcome::resolved());
         }
 

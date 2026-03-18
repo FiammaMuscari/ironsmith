@@ -150,6 +150,7 @@ pub enum StaticAbilityId {
     ChoosePlayerAsEnters,
     ChooseBasicLandTypeAsEnters,
     EnchantedLandIsChosenType,
+    AddChosenCreatureType,
     RedirectDamageToSource,
     PreventAllDamageDealtByThisPermanent,
     PreventAllDamageDealtToCreatures,
@@ -183,6 +184,8 @@ pub enum StaticAbilityId {
     DrawReplacementExileTopFaceDown,
     ExileToCounteredExileInsteadOfGraveyard,
     CreaturesEnteringDontCauseAbilitiesToTrigger,
+    OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime,
+    DoubleDamageFromSourcesYouControlOfChosenType,
     StartingLifeBonus,
     BuybackCostReduction,
     LegendRuleDoesntApply,
@@ -361,6 +364,7 @@ impl StaticAbilityId {
             | ChoosePlayerAsEnters
             | ChooseBasicLandTypeAsEnters
             | EnchantedLandIsChosenType
+            | AddChosenCreatureType
             | RedirectDamageToSource
             | PreventAllDamageDealtByThisPermanent
             | PreventAllDamageDealtToCreatures
@@ -394,6 +398,8 @@ impl StaticAbilityId {
             | DrawReplacementExileTopFaceDown
             | ExileToCounteredExileInsteadOfGraveyard
             | CreaturesEnteringDontCauseAbilitiesToTrigger
+            | OtherChosenTypeCreatureTriggeredAbilitiesTriggerAdditionalTime
+            | DoubleDamageFromSourcesYouControlOfChosenType
             | StartingLifeBonus
             | BuybackCostReduction
             | LegendRuleDoesntApply

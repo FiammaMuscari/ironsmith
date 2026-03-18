@@ -4,6 +4,7 @@ use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::game_state::GameState;
+use crate::snapshot::ObjectSnapshot;
 use crate::target::ChooseSpec;
 
 /// Effect that makes two creatures fight.
@@ -45,6 +46,29 @@ impl FightEffect {
     pub fn you_vs_opponent() -> Self {
         Self::new(ChooseSpec::creature(), ChooseSpec::creature())
     }
+
+    fn execute_fight_damage(
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+        damage_source: crate::ids::ObjectId,
+        damage_source_snapshot: Option<ObjectSnapshot>,
+        target: crate::ids::ObjectId,
+        amount: u32,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        let original_source = ctx.source;
+        let original_source_snapshot = ctx.source_snapshot.clone();
+        ctx.source = damage_source;
+        ctx.source_snapshot = damage_source_snapshot;
+
+        let result = ctx.with_temp_targets(vec![ResolvedTarget::Object(target)], |ctx| {
+            let effect = Effect::deal_damage(amount as i32, ChooseSpec::AnyTarget);
+            execute_effect(game, &effect, ctx)
+        });
+
+        ctx.source = original_source;
+        ctx.source_snapshot = original_source_snapshot;
+        result
+    }
 }
 
 impl EffectExecutor for FightEffect {
@@ -61,26 +85,38 @@ impl EffectExecutor for FightEffect {
         // Use calculated power so continuous effects (pumps/shrinks) are respected.
         let power1 = game.calculated_power(creature1_id).unwrap_or(0).max(0) as u32;
         let power2 = game.calculated_power(creature2_id).unwrap_or(0).max(0) as u32;
+        let creature1_snapshot = game
+            .object(creature1_id)
+            .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game));
+        let creature2_snapshot = game
+            .object(creature2_id)
+            .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game));
 
         // Each creature deals damage equal to its power to the other.
         // Decompose into two DealDamage effects and aggregate outcomes.
         let mut outcomes = Vec::new();
 
         if power1 > 0 {
-            let outcome =
-                ctx.with_temp_targets(vec![ResolvedTarget::Object(creature2_id)], |ctx| {
-                    let effect = Effect::deal_damage(power1 as i32, ChooseSpec::AnyTarget);
-                    execute_effect(game, &effect, ctx)
-                })?;
+            let outcome = Self::execute_fight_damage(
+                game,
+                ctx,
+                creature1_id,
+                creature1_snapshot,
+                creature2_id,
+                power1,
+            )?;
             outcomes.push(outcome);
         }
 
         if power2 > 0 {
-            let outcome =
-                ctx.with_temp_targets(vec![ResolvedTarget::Object(creature1_id)], |ctx| {
-                    let effect = Effect::deal_damage(power2 as i32, ChooseSpec::AnyTarget);
-                    execute_effect(game, &effect, ctx)
-                })?;
+            let outcome = Self::execute_fight_damage(
+                game,
+                ctx,
+                creature2_id,
+                creature2_snapshot,
+                creature1_id,
+                power2,
+            )?;
             outcomes.push(outcome);
         }
 
@@ -99,12 +135,18 @@ impl EffectExecutor for FightEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ability::Ability;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::continuous::ContinuousEffect;
     use crate::effect::Until;
+    use crate::events::cause::CauseFilter;
+    use crate::events::counters::matchers::WouldPutCountersMatcher;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
-    use crate::object::Object;
+    use crate::object::{CounterType, Object};
+    use crate::replacement::{EventModification, ReplacementAction, ReplacementEffect};
+    use crate::static_abilities::StaticAbility;
+    use crate::target::ObjectFilter;
     use crate::types::CardType;
     use crate::zone::Zone;
 
@@ -137,6 +179,30 @@ mod tests {
         let obj = Object::from_card(id, &card, controller, Zone::Battlefield);
         game.add_object(obj);
         id
+    }
+
+    fn add_static_ability(game: &mut GameState, object: ObjectId, ability: StaticAbility) {
+        let obj = game.object_mut(object).expect("object exists");
+        obj.abilities.push(Ability::static_ability(ability));
+    }
+
+    fn add_doubling_season_like_effect(
+        game: &mut GameState,
+        controller: PlayerId,
+        target: ObjectId,
+    ) {
+        let source = game.new_object_id();
+        game.replacement_effects
+            .add_resolution_effect(ReplacementEffect::with_matcher(
+                source,
+                controller,
+                WouldPutCountersMatcher::new(
+                    ObjectFilter::specific(target),
+                    Some(CounterType::MinusOneMinusOne),
+                )
+                .with_cause_filter(CauseFilter::from_effect()),
+                ReplacementAction::Modify(EventModification::Multiply(2)),
+            ));
     }
 
     #[test]
@@ -283,5 +349,34 @@ mod tests {
 
         assert_eq!(game.damage_on(ogre), 4);
         assert_eq!(game.damage_on(bear), 2);
+    }
+
+    #[test]
+    fn test_fight_uses_fighters_as_damage_sources_and_effect_counters_can_double() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let infector = create_creature(&mut game, "Infector", 2, 2, alice);
+        add_static_ability(&mut game, infector, StaticAbility::infect());
+
+        let blocker = create_creature(&mut game, "Blocker", 3, 3, bob);
+        add_doubling_season_like_effect(&mut game, bob, blocker);
+
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(infector),
+            ResolvedTarget::Object(blocker),
+        ]);
+
+        let effect = FightEffect::you_vs_opponent();
+        effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(
+            game.counter_count(blocker, CounterType::MinusOneMinusOne),
+            4
+        );
+        assert_eq!(game.damage_on(blocker), 0);
+        assert_eq!(game.damage_on(infector), 3);
     }
 }

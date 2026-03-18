@@ -329,6 +329,7 @@ impl EffectExecutor for CipherEffect {
             ctx.source,
             source_obj.zone,
             Zone::Exile,
+            ctx.cause.clone(),
             &mut *ctx.decision_maker,
         ) {
             EventOutcome::Proceed(result) => {
@@ -512,6 +513,7 @@ impl EffectExecutor for DevourEffect {
                 id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             ) {
                 EventOutcome::Prevented | EventOutcome::NotApplicable => {}

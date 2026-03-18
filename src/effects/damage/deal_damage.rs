@@ -63,7 +63,7 @@ impl DealDamageEffect {
     }
 }
 
-fn apply_processed_damage_outcome(
+pub(crate) fn apply_processed_damage_outcome(
     game: &mut GameState,
     source: crate::ids::ObjectId,
     source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
@@ -71,13 +71,20 @@ fn apply_processed_damage_outcome(
     amount: u32,
     source_is_combat: bool,
     provenance: crate::provenance::ProvNodeId,
+    cause: crate::events::cause::EventCause,
 ) -> EffectOutcome {
+    let source_controller = game
+        .object(source)
+        .map(|obj| obj.controller)
+        .or_else(|| source_snapshot.map(|snapshot| snapshot.controller));
+
     let processed = process_damage_assignments_with_event_with_source_snapshot(
         game,
         source,
         initial_target,
         amount,
         source_is_combat,
+        cause.clone(),
         source_snapshot,
     );
 
@@ -86,11 +93,6 @@ fn apply_processed_damage_outcome(
     }
 
     let keywords = crate::rules::damage::source_damage_keywords(game, source, source_snapshot);
-    let source_controller = game
-        .object(source)
-        .map(|obj| obj.controller)
-        .or_else(|| source_snapshot.map(|snapshot| snapshot.controller));
-
     let mut outcomes = Vec::new();
     let mut total_damage_dealt = 0u32;
     for assignment in processed.assignments {
@@ -100,6 +102,7 @@ fn apply_processed_damage_outcome(
             assignment.target,
             assignment.amount,
             keywords,
+            cause.clone(),
         );
         if !applied.applied {
             continue;
@@ -109,11 +112,12 @@ fn apply_processed_damage_outcome(
         let mut outcome = EffectOutcome::count(assignment.amount as i32);
         if assignment.amount > 0 {
             outcome = outcome.with_event(TriggerEvent::new_with_provenance(
-                DamageEvent::new(
+                DamageEvent::with_cause(
                     source,
                     assignment.target,
                     assignment.amount,
                     source_is_combat,
+                    cause.clone(),
                 ),
                 provenance,
             ));
@@ -174,6 +178,7 @@ impl EffectExecutor for DealDamageEffect {
                     amount,
                     self.source_is_combat,
                     ctx.provenance,
+                    ctx.cause.clone(),
                 ));
             }
             return Ok(EffectOutcome::target_invalid());
@@ -195,6 +200,7 @@ impl EffectExecutor for DealDamageEffect {
                         amount,
                         self.source_is_combat,
                         ctx.provenance,
+                        ctx.cause.clone(),
                     ));
                 }
                 return Ok(EffectOutcome::target_invalid());
@@ -231,6 +237,7 @@ impl EffectExecutor for DealDamageEffect {
                         amount,
                         self.source_is_combat,
                         ctx.provenance,
+                        ctx.cause.clone(),
                     ));
                 }
                 AttackEventTarget::Planeswalker(object_id) => {
@@ -248,6 +255,7 @@ impl EffectExecutor for DealDamageEffect {
                         amount,
                         self.source_is_combat,
                         ctx.provenance,
+                        ctx.cause.clone(),
                     ));
                 }
             }
@@ -264,6 +272,7 @@ impl EffectExecutor for DealDamageEffect {
                 amount,
                 self.source_is_combat,
                 ctx.provenance,
+                ctx.cause.clone(),
             ));
         }
 
@@ -284,6 +293,7 @@ impl EffectExecutor for DealDamageEffect {
                 amount,
                 self.source_is_combat,
                 ctx.provenance,
+                ctx.cause.clone(),
             ));
         }
 
@@ -299,6 +309,7 @@ impl EffectExecutor for DealDamageEffect {
                         amount,
                         self.source_is_combat,
                         ctx.provenance,
+                        ctx.cause.clone(),
                     ));
                 }
                 ResolvedTarget::Object(object_id) => {
@@ -316,6 +327,7 @@ impl EffectExecutor for DealDamageEffect {
                             amount,
                             self.source_is_combat,
                             ctx.provenance,
+                            ctx.cause.clone(),
                         ));
                     }
                 }
@@ -338,5 +350,97 @@ impl EffectExecutor for DealDamageEffect {
 
     fn target_description(&self) -> &'static str {
         "target for damage"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ability::Ability;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::events::cause::CauseFilter;
+    use crate::events::counters::matchers::WouldPutCountersMatcher;
+    use crate::ids::{CardId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::object::{CounterType, Object};
+    use crate::replacement::{EventModification, ReplacementAction, ReplacementEffect};
+    use crate::static_abilities::StaticAbility;
+    use crate::target::ObjectFilter;
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn create_creature(
+        game: &mut GameState,
+        name: &str,
+        power: i32,
+        toughness: i32,
+        controller: PlayerId,
+        abilities: Vec<StaticAbility>,
+    ) -> crate::ids::ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(power, toughness))
+            .build();
+        let mut obj = Object::from_card(id, &card, controller, Zone::Battlefield);
+        for ability in abilities {
+            obj.abilities.push(Ability::static_ability(ability));
+        }
+        game.add_object(obj);
+        id
+    }
+
+    fn add_doubling_season_like_effect(
+        game: &mut GameState,
+        controller: PlayerId,
+        target: crate::ids::ObjectId,
+    ) {
+        let source = game.new_object_id();
+        game.replacement_effects
+            .add_resolution_effect(ReplacementEffect::with_matcher(
+                source,
+                controller,
+                WouldPutCountersMatcher::new(
+                    ObjectFilter::specific(target),
+                    Some(CounterType::MinusOneMinusOne),
+                )
+                .with_cause_filter(CauseFilter::from_effect()),
+                ReplacementAction::Modify(EventModification::Multiply(2)),
+            ));
+    }
+
+    #[test]
+    fn noncombat_infect_damage_to_creature_uses_effect_counter_replacement() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let source = create_creature(
+            &mut game,
+            "Infector",
+            1,
+            1,
+            alice,
+            vec![StaticAbility::infect()],
+        );
+        let target = create_creature(&mut game, "Target", 2, 2, bob, vec![]);
+        add_doubling_season_like_effect(&mut game, bob, target);
+
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(target)]);
+
+        let effect = DealDamageEffect::new(1, ChooseSpec::AnyTarget);
+        let outcome = effect
+            .execute(&mut game, &mut ctx)
+            .expect("damage resolves");
+
+        assert_eq!(outcome.value, crate::effect::OutcomeValue::Count(1));
+        assert_eq!(game.counter_count(target, CounterType::MinusOneMinusOne), 2);
+        assert_eq!(game.damage_on(target), 0);
     }
 }

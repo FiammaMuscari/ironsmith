@@ -7276,11 +7276,12 @@ mod tests {
         amount: u32,
     ) {
         let event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::DamageEvent::new(
+            crate::events::DamageEvent::with_cause(
                 source,
                 crate::game_event::DamageTarget::Player(player),
                 amount,
                 false,
+                crate::events::cause::EventCause::effect(),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -8330,7 +8331,7 @@ mod tests {
             .build();
         let departed_id =
             game.create_object_from_card(&departed_creature, alice, Zone::Battlefield);
-        game.move_object(departed_id, Zone::Graveyard);
+        game.move_object_by_effect(departed_id, Zone::Graveyard);
         let spell_obj = game.object(spell_id).expect("spell exists");
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);

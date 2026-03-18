@@ -30,17 +30,6 @@ pub struct ZoneChangeEvent {
 }
 
 impl ZoneChangeEvent {
-    /// Create a new zone change event for a single object.
-    pub fn new(object: ObjectId, from: Zone, to: Zone, snapshot: Option<ObjectSnapshot>) -> Self {
-        Self {
-            objects: vec![object],
-            from,
-            to,
-            cause: EventCause::default(),
-            snapshot,
-        }
-    }
-
     /// Create a zone change event with a specific cause.
     pub fn with_cause(
         object: ObjectId,
@@ -169,10 +158,13 @@ mod tests {
     use super::*;
     use crate::events::cause::CauseType;
 
+    fn effect_zone_change(object: ObjectId, from: Zone, to: Zone) -> ZoneChangeEvent {
+        ZoneChangeEvent::with_cause(object, from, to, EventCause::effect(), None)
+    }
+
     #[test]
     fn test_zone_change_event_creation() {
-        let event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield);
 
         assert_eq!(event.from, Zone::Hand);
         assert_eq!(event.to, Zone::Battlefield);
@@ -217,53 +209,37 @@ mod tests {
 
     #[test]
     fn test_zone_change_is_dies() {
-        let dies_event = ZoneChangeEvent::new(
-            ObjectId::from_raw(1),
-            Zone::Battlefield,
-            Zone::Graveyard,
-            None,
-        );
+        let dies_event =
+            effect_zone_change(ObjectId::from_raw(1), Zone::Battlefield, Zone::Graveyard);
         assert!(dies_event.is_dies());
         assert!(dies_event.is_ltb());
         assert!(dies_event.is_to_graveyard());
 
-        let not_dies_event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Graveyard, None);
+        let not_dies_event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Graveyard);
         assert!(!not_dies_event.is_dies());
         assert!(not_dies_event.is_discard());
     }
 
     #[test]
     fn test_zone_change_is_etb() {
-        let etb_event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let etb_event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield);
         assert!(etb_event.is_etb());
 
-        let not_etb_event = ZoneChangeEvent::new(
-            ObjectId::from_raw(1),
-            Zone::Battlefield,
-            Zone::Graveyard,
-            None,
-        );
+        let not_etb_event =
+            effect_zone_change(ObjectId::from_raw(1), Zone::Battlefield, Zone::Graveyard);
         assert!(!not_etb_event.is_etb());
     }
 
     #[test]
     fn test_zone_change_is_exile() {
-        let exile_event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Battlefield, Zone::Exile, None);
+        let exile_event = effect_zone_change(ObjectId::from_raw(1), Zone::Battlefield, Zone::Exile);
         assert!(exile_event.is_exile());
         assert!(exile_event.is_ltb());
     }
 
     #[test]
     fn test_zone_change_with_destination() {
-        let event = ZoneChangeEvent::new(
-            ObjectId::from_raw(1),
-            Zone::Battlefield,
-            Zone::Graveyard,
-            None,
-        );
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Battlefield, Zone::Graveyard);
 
         let changed = event.with_destination(Zone::Exile);
         assert_eq!(changed.to, Zone::Exile);
@@ -272,22 +248,20 @@ mod tests {
 
     #[test]
     fn test_zone_change_event_kind() {
-        let event =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let event = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield);
         assert_eq!(event.event_kind(), EventKind::ZoneChange);
     }
 
     #[test]
     fn test_zone_change_display() {
-        let single =
-            ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield, None);
+        let single = effect_zone_change(ObjectId::from_raw(1), Zone::Hand, Zone::Battlefield);
         assert!(single.display().contains("Move object"));
 
         let batch = ZoneChangeEvent::batch(
             vec![ObjectId::from_raw(1), ObjectId::from_raw(2)],
             Zone::Library,
             Zone::Graveyard,
-            EventCause::default(),
+            EventCause::effect(),
         );
         assert!(batch.display().contains("2 objects"));
     }

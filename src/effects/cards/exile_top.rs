@@ -47,7 +47,7 @@ impl EffectExecutor for ExileTopOfLibraryEffect {
 
         let mut moved = 0i32;
         for card_id in top_cards {
-            if game.move_object(card_id, Zone::Exile).is_some() {
+            if game.move_object_by_effect(card_id, Zone::Exile).is_some() {
                 moved += 1;
             }
         }

@@ -2555,12 +2555,46 @@ fn token_copy_followup_container_effects_mut(
         EffectAst::May { effects }
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. } => Some(effects),
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::WhenResult { effects, .. }
+        | EffectAst::ResolvedIfResult { effects, .. }
+        | EffectAst::ResolvedWhenResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayersFiltered { effects, .. }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachPlayerDoesNot { effects, .. }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::RepeatProcess { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilNextUpkeep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => Some(effects),
         _ => None,
     }
 }
 
-fn parse_token_copy_followup_sentence(tokens: &[Token]) -> Option<TokenCopyFollowup> {
+pub(crate) fn parse_token_copy_followup_sentence(tokens: &[Token]) -> Option<TokenCopyFollowup> {
+    let filtered: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if matches!(
+        filtered.as_slice(),
+        ["sacrifice", "that", "token", "at", "beginning", "of", "next", "end", "step"]
+            | ["sacrifice", "those", "tokens", "at", "beginning", "of", "next", "end", "step"]
+    ) {
+        return Some(TokenCopyFollowup::SacrificeAtNextEndStep);
+    }
+
     parse_token_copy_modifier_sentence(tokens)
         .or_else(|| {
             is_exile_that_token_at_end_of_combat(tokens)

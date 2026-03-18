@@ -193,7 +193,13 @@ fn test_queue_triggers_tracks_noncombat_damage_to_players_this_turn() {
     let source = ObjectId::from_raw(200);
 
     let event = TriggerEvent::new_with_provenance(
-        DamageEvent::new(source, EventDamageTarget::Player(bob), 4, false),
+        DamageEvent::with_cause(
+            source,
+            EventDamageTarget::Player(bob),
+            4,
+            false,
+            crate::events::cause::EventCause::effect(),
+        ),
         crate::provenance::ProvNodeId::default(),
     );
     queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
@@ -769,7 +775,7 @@ fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
         tagged_objects: std::collections::HashMap::new(),
     });
 
-    let moved = game.move_object(stangg_id, Zone::Graveyard);
+    let moved = game.move_object_by_effect(stangg_id, Zone::Graveyard);
     assert!(moved.is_some(), "expected Stangg to move to graveyard");
     assert!(
         !game.pending_trigger_events.is_empty(),
@@ -825,7 +831,7 @@ fn test_pending_zone_change_still_drives_non_delayed_triggered_abilities() {
         panic!("expected Stangg object to exist");
     }
 
-    let moved = game.move_object(twin_id, Zone::Graveyard);
+    let moved = game.move_object_by_effect(twin_id, Zone::Graveyard);
     assert!(moved.is_some(), "expected Stangg Twin to move to graveyard");
 
     drain_pending_trigger_events(&mut game, &mut trigger_queue);
@@ -857,7 +863,7 @@ fn test_optional_trigger_target_stacks_without_legal_targets() {
         .expect("optional ETB target should parse");
     let gate_id = game.create_object_from_definition(&gate_def, alice, Zone::Hand);
 
-    let moved = game.move_object(gate_id, Zone::Battlefield);
+    let moved = game.move_object_by_effect(gate_id, Zone::Battlefield);
     assert!(
         moved.is_some(),
         "expected the land to enter the battlefield"
@@ -897,7 +903,7 @@ fn test_optional_trigger_target_can_be_skipped_even_with_legal_targets() {
         .expect("optional ETB target should parse");
     let gate_id = game.create_object_from_definition(&gate_def, alice, Zone::Hand);
 
-    let moved = game.move_object(gate_id, Zone::Battlefield);
+    let moved = game.move_object_by_effect(gate_id, Zone::Battlefield);
     assert!(
         moved.is_some(),
         "expected the land to enter the battlefield"
@@ -952,7 +958,7 @@ fn test_bridge_from_below_triggers_from_graveyard_on_your_creature_dying() {
         game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
     let victim_id = create_creature(&mut game, "Butcher Ghoul Test", alice, 1, 1);
 
-    let moved = game.move_object(victim_id, Zone::Graveyard);
+    let moved = game.move_object_by_effect(victim_id, Zone::Graveyard);
     assert!(moved.is_some(), "expected creature to move to graveyard");
 
     drain_pending_trigger_events(&mut game, &mut trigger_queue);
@@ -991,7 +997,7 @@ fn test_bridge_from_below_exiles_itself_when_opponents_creature_dies() {
         game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
     let victim_id = create_creature(&mut game, "Opponent Creature Test", bob, 2, 2);
 
-    let moved = game.move_object(victim_id, Zone::Graveyard);
+    let moved = game.move_object_by_effect(victim_id, Zone::Graveyard);
     assert!(
         moved.is_some(),
         "expected opponent creature to move to graveyard"
@@ -1026,7 +1032,7 @@ fn test_bridge_from_below_token_trigger_fizzles_if_bridge_leaves_graveyard() {
         game.create_object_from_definition(&bridge_from_below_definition(), alice, Zone::Graveyard);
     let victim_id = create_creature(&mut game, "Butcher Ghoul Test", alice, 1, 1);
 
-    let moved = game.move_object(victim_id, Zone::Graveyard);
+    let moved = game.move_object_by_effect(victim_id, Zone::Graveyard);
     assert!(moved.is_some(), "expected creature to move to graveyard");
 
     drain_pending_trigger_events(&mut game, &mut trigger_queue);
@@ -1038,7 +1044,7 @@ fn test_bridge_from_below_token_trigger_fizzles_if_bridge_leaves_graveyard() {
 
     put_triggers_on_stack(&mut game, &mut trigger_queue)
         .expect("Bridge trigger should be put on stack");
-    let moved_bridge = game.move_object(bridge_id, Zone::Exile);
+    let moved_bridge = game.move_object_by_effect(bridge_id, Zone::Exile);
     assert!(
         moved_bridge.is_some(),
         "expected Bridge to leave the graveyard before the trigger resolves"
@@ -1477,7 +1483,7 @@ fn test_stack_resolution_keeps_distinct_target_clause_assignments_when_one_targe
             ]),
     );
 
-    game.move_object(land_id, Zone::Graveyard);
+    game.move_object_by_effect(land_id, Zone::Graveyard);
 
     super::resolve_stack_entry(&mut game).expect("spell should resolve");
 
@@ -2200,7 +2206,7 @@ fn test_offspring_trigger_resolves_after_source_leaves_battlefield() {
         ));
     game.push_to_stack(stack_entry);
 
-    game.move_object(source, Zone::Graveyard)
+    game.move_object_by_effect(source, Zone::Graveyard)
         .expect("source should move to graveyard before resolution");
 
     resolve_stack_entry(&mut game).expect("offspring trigger should resolve from LKI");
@@ -2229,7 +2235,7 @@ fn test_delayed_tagged_graveyard_return_resolves() {
     let reanimator_id = create_delayed_reanimator(&mut game, alice, "Delayed Reanimator");
 
     let first_graveyard_id = game
-        .move_object(reanimator_id, Zone::Graveyard)
+        .move_object_by_effect(reanimator_id, Zone::Graveyard)
         .expect("creature should move to graveyard");
     drain_pending_trigger_events(&mut game, &mut trigger_queue);
     put_triggers_on_stack(&mut game, &mut trigger_queue).expect("put dies trigger on stack");
@@ -2272,7 +2278,7 @@ fn test_delayed_tagged_graveyard_return_does_not_follow_zone_hops() {
     let reanimator_id = create_delayed_reanimator(&mut game, alice, "Delayed Reanimator");
 
     let first_graveyard_id = game
-        .move_object(reanimator_id, Zone::Graveyard)
+        .move_object_by_effect(reanimator_id, Zone::Graveyard)
         .expect("creature should move to graveyard");
     drain_pending_trigger_events(&mut game, &mut trigger_queue);
     put_triggers_on_stack(&mut game, &mut trigger_queue).expect("put dies trigger on stack");
@@ -2282,10 +2288,10 @@ fn test_delayed_tagged_graveyard_return_does_not_follow_zone_hops() {
     assert_eq!(game.delayed_triggers.len(), 1);
 
     let exile_id = game
-        .move_object(first_graveyard_id, Zone::Exile)
+        .move_object_by_effect(first_graveyard_id, Zone::Exile)
         .expect("creature should move to exile");
     let second_graveyard_id = game
-        .move_object(exile_id, Zone::Graveyard)
+        .move_object_by_effect(exile_id, Zone::Graveyard)
         .expect("creature should move back to graveyard");
     assert_ne!(second_graveyard_id, first_graveyard_id);
 
@@ -2505,7 +2511,7 @@ fn test_fatal_push_with_revolt_destroys_four_mana_target() {
         .card_types(vec![CardType::Artifact])
         .build();
     let revolt_id = game.create_object_from_card(&revolt_permanent, alice, Zone::Battlefield);
-    game.move_object(revolt_id, Zone::Graveyard);
+    game.move_object_by_effect(revolt_id, Zone::Graveyard);
 
     game.push_to_stack(
         StackEntry::new(fatal_push_id, alice).with_targets(vec![Target::Object(target_id)]),
@@ -2892,10 +2898,11 @@ fn test_etb_trigger_fires() {
 
     // Simulate ETB event
     let event = TriggerEvent::new_with_provenance(
-        crate::events::zones::ZoneChangeEvent::new(
+        crate::events::zones::ZoneChangeEvent::with_cause(
             creature_id,
             Zone::Stack,
             Zone::Battlefield,
+            crate::events::cause::EventCause::effect(),
             None,
         ),
         crate::provenance::ProvNodeId::default(),
@@ -3010,11 +3017,12 @@ fn test_ragavan_trigger_exiles_top_card_of_damaged_players_library() {
         .expect("ragavan probe should have a triggered ability");
 
     let damage_event = TriggerEvent::new_with_provenance(
-        crate::events::DamageEvent::new(
+        crate::events::DamageEvent::with_cause(
             ragavan_id,
             crate::game_event::DamageTarget::Player(bob),
             2,
             true,
+            crate::events::cause::EventCause::combat_damage(ragavan_id),
         ),
         crate::provenance::ProvNodeId::default(),
     );
@@ -3161,7 +3169,7 @@ fn test_full_game_lightning_bolt_wins() {
 
     // Step 2: Cast Lightning Bolt targeting Bob
     // Move Lightning Bolt from hand to stack
-    let stack_bolt_id = game.move_object(bolt_id, Zone::Stack).unwrap();
+    let stack_bolt_id = game.move_object_by_effect(bolt_id, Zone::Stack).unwrap();
 
     // Create stack entry with Bob as target
     let entry = StackEntry::new(stack_bolt_id, alice).with_targets(vec![Target::Player(bob)]);
@@ -4448,10 +4456,11 @@ fn test_undying_trigger_generation() {
 
     // Simulate death event
     let event = TriggerEvent::new_with_provenance(
-        ZoneChangeEvent::new(
+        ZoneChangeEvent::with_cause(
             creature_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            crate::events::cause::EventCause::from_sba(),
             Some(snapshot),
         ),
         crate::provenance::ProvNodeId::default(),
@@ -4509,10 +4518,11 @@ fn test_undying_does_not_trigger_with_plus_counters() {
 
     // Simulate death event
     let event = TriggerEvent::new_with_provenance(
-        ZoneChangeEvent::new(
+        ZoneChangeEvent::with_cause(
             creature_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            crate::events::cause::EventCause::from_sba(),
             Some(snapshot),
         ),
         crate::provenance::ProvNodeId::default(),
@@ -4566,10 +4576,11 @@ fn test_persist_trigger_generation() {
 
     // Simulate death event
     let event = TriggerEvent::new_with_provenance(
-        ZoneChangeEvent::new(
+        ZoneChangeEvent::with_cause(
             creature_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            crate::events::cause::EventCause::from_sba(),
             Some(snapshot),
         ),
         crate::provenance::ProvNodeId::default(),
@@ -4602,17 +4613,18 @@ fn test_return_from_graveyard_with_counter_effect() {
     // Take snapshot BEFORE moving (captures stable_id)
     let snapshot = ObjectSnapshot::from_object(game.object(creature_id).unwrap(), &game);
 
-    game.move_object(creature_id, Zone::Graveyard);
+    game.move_object_by_effect(creature_id, Zone::Graveyard);
 
     // The creature now has a new ID in the graveyard
     let graveyard_id = game.player(alice).unwrap().graveyard[0];
 
     // Create triggering event with the snapshot
     let trigger_event = TriggerEvent::new_with_provenance(
-        ZoneChangeEvent::new(
+        ZoneChangeEvent::with_cause(
             creature_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            crate::events::cause::EventCause::from_sba(),
             Some(snapshot),
         ),
         crate::provenance::ProvNodeId::default(),
@@ -6162,7 +6174,7 @@ fn test_bestow_cast_enters_as_aura_and_reverts_when_unattached() {
         "bestowed permanent should be attached to the chosen creature"
     );
 
-    game.move_object(host_id, Zone::Graveyard)
+    game.move_object_by_effect(host_id, Zone::Graveyard)
         .expect("host creature should move to graveyard");
     check_and_apply_sbas(&mut game, &mut trigger_queue)
         .expect("state-based actions should process unattached bestow");
@@ -6654,11 +6666,12 @@ fn test_cipher_resolution_encodes_and_combat_damage_casts_a_copy() {
     );
 
     let damage_event = TriggerEvent::new_with_provenance(
-        crate::events::DamageEvent::new(
+        crate::events::DamageEvent::with_cause(
             encoded_creature,
             crate::game_event::DamageTarget::Player(bob),
             2,
             true,
+            crate::events::cause::EventCause::combat_damage(encoded_creature),
         ),
         crate::provenance::ProvNodeId::default(),
     );
@@ -8027,6 +8040,7 @@ fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile
         bears_id,
         Zone::Battlefield,
         Zone::Graveyard,
+        crate::events::cause::EventCause::from_sba(),
         &mut dm,
     );
     assert!(
@@ -11602,7 +11616,7 @@ fn test_valley_floodcaller_flash_grant_removed_when_floodcaller_leaves() {
     );
 
     // Remove Floodcaller from battlefield
-    game.move_object(floodcaller_id, Zone::Graveyard);
+    game.move_object_by_effect(floodcaller_id, Zone::Graveyard);
 
     // Verify sorcery no longer has flash
     assert!(

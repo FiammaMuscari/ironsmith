@@ -150,6 +150,7 @@ impl EffectExecutor for NinjutsuCostEffect {
             .move_object_with_commander_options(
                 chosen_attacker,
                 Zone::Hand,
+                ctx.cause.clone(),
                 &mut *ctx.decision_maker,
             )
             .map(|(new_id, _)| new_id)

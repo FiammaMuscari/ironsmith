@@ -139,7 +139,7 @@ mod tests {
             crate::zone::Zone::Hand,
         );
         let source_id = game
-            .move_object(hand_id, crate::zone::Zone::Graveyard)
+            .move_object_by_effect(hand_id, crate::zone::Zone::Graveyard)
             .expect("move to graveyard should create new id");
 
         // Simulate an event emitted using the old/stable ID.

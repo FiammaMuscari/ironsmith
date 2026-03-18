@@ -79,7 +79,7 @@ pub fn ask_may_choice(
 ///     &valid_creatures,
 ///     "Choose a creature to sacrifice",
 /// ) {
-///     game.move_object(to_sacrifice, Zone::Graveyard);
+///     game.move_object_by_effect(to_sacrifice, Zone::Graveyard);
 /// }
 /// ```
 pub fn ask_sacrifice(

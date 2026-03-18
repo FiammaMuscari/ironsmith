@@ -4657,7 +4657,7 @@ mod tests {
             .build();
         let graveyard_id = game.create_object_from_card(&spell, alice, Zone::Graveyard);
         let stack_id = game
-            .move_object(graveyard_id, Zone::Stack)
+            .move_object_by_effect(graveyard_id, Zone::Stack)
             .expect("move probe spell to stack");
         game.push_to_stack(
             crate::game_state::StackEntry::new(stack_id, alice).with_casting_method(
@@ -4701,7 +4701,7 @@ mod tests {
             .build();
         let graveyard_id = game.create_object_from_card(&spell, alice, Zone::Graveyard);
         let stack_id = game
-            .move_object(graveyard_id, Zone::Stack)
+            .move_object_by_effect(graveyard_id, Zone::Stack)
             .expect("move flashback probe to stack");
         game.object_mut(stack_id)
             .expect("stack spell should exist")
@@ -4787,7 +4787,7 @@ mod tests {
             .build();
         let hand_id = game.create_object_from_card(&spell, alice, Zone::Hand);
         let stack_id = game
-            .move_object(hand_id, Zone::Stack)
+            .move_object_by_effect(hand_id, Zone::Stack)
             .expect("move spell to stack");
         game.push_to_stack(
             StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::Normal),
@@ -5566,6 +5566,7 @@ mod tests {
                 amount: 1,
                 is_combat: false,
                 is_unpreventable: false,
+                cause: crate::events::cause::EventCause::effect(),
                 remainder: None,
             },
             crate::provenance::ProvNodeId::default(),

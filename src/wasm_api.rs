@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::cards::{CardDefinition, CardRegistry};
+use crate::color::{Color, ColorSet};
 use crate::combat_state::AttackTarget;
 use crate::decision::{
     AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress, GameResult, LegalAction,
@@ -26,9 +27,10 @@ use crate::game_loop::{
 };
 use crate::game_state::{GameState, StackEntry, Target};
 use crate::ids::{
-    ObjectId, PlayerId, reset_runtime_id_counters, restore_id_counters, snapshot_id_counters,
+    CardId, ObjectId, PlayerId, reset_runtime_id_counters, restore_id_counters,
+    snapshot_id_counters,
 };
-use crate::mana::ManaSymbol;
+use crate::mana::{ManaCost, ManaSymbol};
 use crate::targeting::{normalize_targets_for_requirements, validate_flat_target_assignment};
 use crate::triggers::TriggerQueue;
 use crate::types::{CardType, Subtype};
@@ -1935,6 +1937,13 @@ enum ReplayRoot {
     Response(PriorityResponse),
     /// The game loop is auto-advancing and hit a decision (e.g. triggered ability targeting).
     Advance,
+    /// A card was injected directly into a zone and needs replay to resolve nested prompts.
+    AddCardToZone {
+        player: PlayerId,
+        card_name: String,
+        zone: Zone,
+        skip_triggers: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -2337,6 +2346,8 @@ pub struct WasmGame {
     active_viewed_cards: Option<ActiveViewedCards>,
     /// UI-only top stack entry that is currently resolving while a prompt is open.
     active_resolving_stack_object: Option<StackObjectSnapshot>,
+    /// Last decklists loaded into the current session, indexed by player.
+    loaded_decks: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2368,6 +2379,113 @@ struct CardLoadDiagnostics {
     compiled_abilities: Vec<String>,
     semantic_score: Option<f32>,
     threshold_percent: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CustomCardLayoutInput {
+    #[default]
+    Single,
+    TransformLike,
+    Split,
+}
+
+impl CustomCardLayoutInput {
+    fn face_count(self) -> usize {
+        match self {
+            CustomCardLayoutInput::Single => 1,
+            CustomCardLayoutInput::TransformLike | CustomCardLayoutInput::Split => 2,
+        }
+    }
+
+    fn linked_face_layout(self) -> crate::card::LinkedFaceLayout {
+        match self {
+            CustomCardLayoutInput::Single => crate::card::LinkedFaceLayout::None,
+            CustomCardLayoutInput::TransformLike => crate::card::LinkedFaceLayout::TransformLike,
+            CustomCardLayoutInput::Split => crate::card::LinkedFaceLayout::Split,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CustomCardFaceInput {
+    name: String,
+    #[serde(default)]
+    mana_cost: Option<String>,
+    #[serde(default)]
+    color_indicator: Vec<String>,
+    #[serde(default)]
+    supertypes: Vec<String>,
+    #[serde(default)]
+    card_types: Vec<String>,
+    #[serde(default)]
+    subtypes: Vec<String>,
+    #[serde(default)]
+    oracle_text: String,
+    #[serde(default)]
+    power: Option<String>,
+    #[serde(default)]
+    toughness: Option<String>,
+    #[serde(default)]
+    loyalty: Option<u32>,
+    #[serde(default)]
+    defense: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomCardInput {
+    #[serde(default)]
+    layout: CustomCardLayoutInput,
+    #[serde(default)]
+    has_fuse: bool,
+    #[serde(default)]
+    faces: Vec<CustomCardFaceInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCustomCardInput {
+    draft: CustomCardInput,
+    player_index: u8,
+    zone_name: String,
+    #[serde(default)]
+    skip_triggers: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomCardPreviewFace {
+    name: String,
+    mana_cost: Option<String>,
+    color_indicator: Vec<String>,
+    type_line: String,
+    oracle_text: String,
+    power: Option<String>,
+    toughness: Option<String>,
+    loyalty: Option<u32>,
+    defense: Option<u32>,
+    compiled_text: Vec<String>,
+    compiled_abilities: Vec<String>,
+    raw_compilation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomCardPreviewResult {
+    layout: CustomCardLayoutInput,
+    has_fuse: bool,
+    faces: Vec<CustomCardPreviewFace>,
+    can_create: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomCardSeedResult {
+    layout: CustomCardLayoutInput,
+    has_fuse: bool,
+    faces: Vec<CustomCardFaceInput>,
 }
 
 static AUTOCOMPLETE_CARD_NAMES: OnceLock<Vec<(String, String)>> = OnceLock::new();
@@ -2556,6 +2674,7 @@ impl WasmGame {
             snapshot_serial: 0,
             active_viewed_cards: None,
             active_resolving_stack_object: None,
+            loaded_decks: Vec::new(),
         }
     }
 
@@ -2910,6 +3029,87 @@ impl WasmGame {
         Ok(object_id.0)
     }
 
+    fn add_card_to_zone_with_dm(
+        &mut self,
+        player_id: PlayerId,
+        definition: &CardDefinition,
+        zone: Zone,
+        skip_triggers: bool,
+        dm: &mut impl DecisionMaker,
+    ) -> Result<u64, String> {
+        if skip_triggers {
+            let object_id = self
+                .game
+                .create_object_from_definition(definition, player_id, zone);
+            return Ok(object_id.0);
+        }
+
+        // Create in Command zone first, then move to target zone so that
+        // zone-change triggers (ETB, etc.) fire naturally.
+        let temp_id = self
+            .game
+            .create_object_from_definition(definition, player_id, Zone::Command);
+        let object_id = if zone == Zone::Battlefield {
+            let Some(result) =
+                self.game
+                    .move_object_with_etb_processing_with_dm(temp_id, Zone::Battlefield, dm)
+            else {
+                self.game.remove_object(temp_id);
+                return Err("battlefield entry was prevented by replacement effect".to_string());
+            };
+
+            let entered_id = result.new_id;
+            let entered_tapped = result.enters_tapped;
+            let entered_battlefield = self
+                .game
+                .object(entered_id)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield);
+            if entered_battlefield {
+                let etb_event_provenance = self
+                    .game
+                    .provenance_graph
+                    .alloc_root_event(crate::events::EventKind::EnterBattlefield);
+                let event = if entered_tapped {
+                    crate::triggers::TriggerEvent::new_with_provenance(
+                        crate::events::EnterBattlefieldEvent::tapped(entered_id, Zone::Command),
+                        etb_event_provenance,
+                    )
+                } else {
+                    crate::triggers::TriggerEvent::new_with_provenance(
+                        crate::events::EnterBattlefieldEvent::new(entered_id, Zone::Command),
+                        etb_event_provenance,
+                    )
+                };
+                self.game.queue_trigger_event(etb_event_provenance, event);
+
+                crate::game_loop::drain_pending_trigger_events(
+                    &mut self.game,
+                    &mut self.trigger_queue,
+                );
+
+                if self
+                    .game
+                    .object(entered_id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Saga))
+                {
+                    crate::game_loop::add_lore_counter_and_check_chapters(
+                        &mut self.game,
+                        entered_id,
+                        &mut self.trigger_queue,
+                    );
+                }
+            }
+
+            entered_id
+        } else {
+            self.game
+                .move_object_by_effect(temp_id, zone)
+                .unwrap_or(temp_id)
+        };
+        crate::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+        Ok(object_id.0)
+    }
+
     /// Add a specific card by name to a player's zone.
     ///
     /// When `skip_triggers` is true the card is placed directly without
@@ -2959,88 +3159,48 @@ impl WasmGame {
             )));
         }
 
-        if skip_triggers {
-            let object_id = self
-                .game
-                .create_object_from_definition(&definition, player_id, zone);
-            self.recompute_ui_decision()?;
-            Ok(object_id.0)
-        } else {
-            // Create in Command zone first, then move to target zone so that
-            // zone-change triggers (ETB, etc.) fire naturally.
-            let temp_id = self.game.create_object_from_definition(
-                &definition,
-                player_id,
-                crate::zone::Zone::Command,
-            );
-            let object_id = if zone == crate::zone::Zone::Battlefield {
-                let mut dm = crate::decision::SelectFirstDecisionMaker;
-                let Some(result) = self.game.move_object_with_etb_processing_with_dm(
-                    temp_id,
-                    crate::zone::Zone::Battlefield,
-                    &mut dm,
-                ) else {
-                    self.game.remove_object(temp_id);
-                    return Err(JsValue::from_str(
-                        "battlefield entry was prevented by replacement effect",
-                    ));
-                };
-
-                let entered_id = result.new_id;
-                let entered_tapped = result.enters_tapped;
-                let entered_battlefield = self
-                    .game
-                    .object(entered_id)
-                    .is_some_and(|obj| obj.zone == crate::zone::Zone::Battlefield);
-                if entered_battlefield {
-                    let etb_event_provenance = self
-                        .game
-                        .provenance_graph
-                        .alloc_root_event(crate::events::EventKind::EnterBattlefield);
-                    let event = if entered_tapped {
-                        crate::triggers::TriggerEvent::new_with_provenance(
-                            crate::events::EnterBattlefieldEvent::tapped(
-                                entered_id,
-                                crate::zone::Zone::Command,
-                            ),
-                            etb_event_provenance,
-                        )
-                    } else {
-                        crate::triggers::TriggerEvent::new_with_provenance(
-                            crate::events::EnterBattlefieldEvent::new(
-                                entered_id,
-                                crate::zone::Zone::Command,
-                            ),
-                            etb_event_provenance,
-                        )
-                    };
-                    self.game.queue_trigger_event(etb_event_provenance, event);
-
-                    crate::game_loop::drain_pending_trigger_events(
-                        &mut self.game,
-                        &mut self.trigger_queue,
-                    );
-
-                    if self
-                        .game
-                        .object(entered_id)
-                        .is_some_and(|obj| obj.subtypes.contains(&Subtype::Saga))
-                    {
-                        crate::game_loop::add_lore_counter_and_check_chapters(
-                            &mut self.game,
-                            entered_id,
-                            &mut self.trigger_queue,
-                        );
-                    }
-                }
-
-                entered_id
-            } else {
-                self.game.move_object(temp_id, zone).unwrap_or(temp_id)
+        if zone == Zone::Battlefield && !skip_triggers {
+            let checkpoint = self.capture_replay_checkpoint();
+            let root = ReplayRoot::AddCardToZone {
+                player: player_id,
+                card_name: definition.name().to_string(),
+                zone,
+                skip_triggers,
             };
-            crate::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+            let mut replay_dm = WasmReplayDecisionMaker::new(&[]);
+            let add_result = self.add_card_to_zone_with_dm(
+                player_id,
+                &definition,
+                zone,
+                skip_triggers,
+                &mut replay_dm,
+            );
+            let (pending_context, viewed_cards) = replay_dm.finish();
+            self.active_viewed_cards = viewed_cards;
+
+            if let Some(ctx) = pending_context {
+                self.restore_replay_checkpoint(&checkpoint);
+                self.pending_decision = Some(ctx);
+                self.runner_pending_decision = false;
+                self.pending_replay_action = Some(PendingReplayAction {
+                    checkpoint,
+                    root,
+                    nested_answers: Vec::new(),
+                });
+                self.clear_active_resolving_stack_object();
+                return Ok(0);
+            }
+
+            let object_id = add_result.map_err(|err| JsValue::from_str(&err))?;
             self.recompute_ui_decision()?;
-            Ok(object_id.0)
+            Ok(object_id)
+        } else {
+            let mut dm = crate::decision::SelectFirstDecisionMaker;
+            let object_id = self
+                .add_card_to_zone_with_dm(player_id, &definition, zone, skip_triggers, &mut dm)
+                .map_err(|err| JsValue::from_str(&err))?;
+            self.recompute_ui_decision()?;
+            Ok(object_id)
         }
     }
 
@@ -3141,6 +3301,66 @@ impl WasmGame {
         let diagnostics = self.build_card_load_diagnostics(&card_name, error_message.as_deref());
         serde_wasm_bindgen::to_value(&diagnostics)
             .map_err(|e| JsValue::from_str(&format!("failed to serialize card diagnostics: {e}")))
+    }
+
+    #[wasm_bindgen(js_name = sampleLoadedDeckSeed)]
+    pub fn sample_loaded_deck_seed(&mut self, player_index: u8) -> Result<JsValue, JsValue> {
+        let seed = self.build_loaded_deck_seed(player_index)?;
+        serde_wasm_bindgen::to_value(&seed)
+            .map_err(|e| JsValue::from_str(&format!("failed to serialize custom card seed: {e}")))
+    }
+
+    #[wasm_bindgen(js_name = previewCustomCard)]
+    pub fn preview_custom_card(&self, draft_js: JsValue) -> Result<JsValue, JsValue> {
+        let draft: CustomCardInput = serde_wasm_bindgen::from_value(draft_js)
+            .map_err(|e| JsValue::from_str(&format!("invalid custom card draft: {e}")))?;
+        let preview = self.build_custom_card_preview(&draft)?;
+        serde_wasm_bindgen::to_value(&preview).map_err(|e| {
+            JsValue::from_str(&format!("failed to serialize custom card preview: {e}"))
+        })
+    }
+
+    #[wasm_bindgen(js_name = createCustomCard)]
+    pub fn create_custom_card(&mut self, payload_js: JsValue) -> Result<u64, JsValue> {
+        let payload: CreateCustomCardInput = serde_wasm_bindgen::from_value(payload_js)
+            .map_err(|e| JsValue::from_str(&format!("invalid custom card payload: {e}")))?;
+        let player_id = PlayerId::from_index(payload.player_index);
+        if self.game.player(player_id).is_none() {
+            return Err(JsValue::from_str("invalid player index"));
+        }
+
+        let zone = match payload.zone_name.trim().to_lowercase().as_str() {
+            "hand" => crate::zone::Zone::Hand,
+            "battlefield" => crate::zone::Zone::Battlefield,
+            "graveyard" => crate::zone::Zone::Graveyard,
+            "exile" => crate::zone::Zone::Exile,
+            "library" => crate::zone::Zone::Library,
+            "command" => crate::zone::Zone::Command,
+            other => {
+                return Err(JsValue::from_str(&format!("unknown zone: {other}")));
+            }
+        };
+
+        let compiled = self.compile_custom_card_faces(&payload.draft)?;
+        for definition in &compiled {
+            self.registry.register(definition.clone());
+            crate::cards::register_runtime_custom_card(definition.clone());
+        }
+        let Some(front) = compiled.first() else {
+            return Err(JsValue::from_str("custom card draft produced no faces"));
+        };
+
+        let object_id = if payload.skip_triggers {
+            let object_id = self
+                .game
+                .create_object_from_definition(front, player_id, zone);
+            self.recompute_ui_decision()?;
+            object_id
+        } else {
+            self.add_definition_to_zone_with_triggers(front, player_id, zone)?
+        };
+
+        Ok(object_id.0)
     }
 
     /// Advance to next phase (or next turn if ending phase).
@@ -3595,6 +3815,7 @@ impl WasmGame {
                 Some(ReplayDecisionAnswer::Priority(action))
                     if Self::priority_action_starts_cancelable_action_chain(action)
             ),
+            ReplayRoot::AddCardToZone { .. } => false,
         }
     }
 
@@ -3803,7 +4024,7 @@ impl WasmGame {
                 false
             }
             ReplayRoot::Response(_) => true,
-            ReplayRoot::Advance => false,
+            ReplayRoot::Advance | ReplayRoot::AddCardToZone { .. } => false,
         }
     }
 
@@ -4309,6 +4530,436 @@ impl WasmGame {
             .collect()
     }
 
+    fn custom_type_line(
+        supertypes: &[String],
+        card_types: &[String],
+        subtypes: &[String],
+    ) -> Option<String> {
+        let left = supertypes
+            .iter()
+            .chain(card_types.iter())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        let right = subtypes
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+
+        if left.is_empty() && right.is_empty() {
+            return None;
+        }
+
+        let mut line = left.join(" ");
+        if !right.is_empty() {
+            if !line.is_empty() {
+                line.push_str(" — ");
+            }
+            line.push_str(&right.join(" "));
+        }
+        Some(line)
+    }
+
+    fn parse_custom_color_indicator(tokens: &[String]) -> Result<Option<ColorSet>, JsValue> {
+        let mut colors = ColorSet::COLORLESS;
+        for token in tokens {
+            let normalized = token.trim().to_lowercase();
+            if normalized.is_empty() || normalized == "c" || normalized == "colorless" {
+                continue;
+            }
+            let Some(color) = Color::from_mana_code_or_name(&normalized) else {
+                return Err(JsValue::from_str(&format!(
+                    "unknown color indicator value: {}",
+                    token.trim()
+                )));
+            };
+            colors = colors.with(color);
+        }
+
+        if colors.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(colors))
+        }
+    }
+
+    fn color_indicator_codes(colors: Option<ColorSet>) -> Vec<String> {
+        let Some(colors) = colors else {
+            return Vec::new();
+        };
+
+        Color::ALL
+            .iter()
+            .filter(|color| colors.contains(**color))
+            .map(|color| match color {
+                Color::White => "W",
+                Color::Blue => "U",
+                Color::Black => "B",
+                Color::Red => "R",
+                Color::Green => "G",
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn build_custom_face_parse_block(face: &CustomCardFaceInput) -> Result<String, JsValue> {
+        let mut lines = Vec::new();
+
+        if let Some(mana_cost) = face
+            .mana_cost
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("Mana cost: {mana_cost}"));
+        }
+
+        let Some(type_line) =
+            Self::custom_type_line(&face.supertypes, &face.card_types, &face.subtypes)
+        else {
+            return Err(JsValue::from_str("custom cards must include a type line"));
+        };
+        lines.push(format!("Type: {type_line}"));
+
+        match (
+            face.power
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty()),
+            face.toughness
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty()),
+        ) {
+            (Some(power), Some(toughness)) => {
+                lines.push(format!("Power/Toughness: {power}/{toughness}"));
+            }
+            (None, None) => {}
+            _ => {
+                return Err(JsValue::from_str(
+                    "custom card power and toughness must both be provided",
+                ));
+            }
+        }
+
+        if let Some(loyalty) = face.loyalty {
+            lines.push(format!("Loyalty: {loyalty}"));
+        }
+        if let Some(defense) = face.defense {
+            lines.push(format!("Defense: {defense}"));
+        }
+
+        let oracle_text = face.oracle_text.trim();
+        if !oracle_text.is_empty() {
+            lines.push(oracle_text.to_string());
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    fn compile_custom_card_faces(
+        &self,
+        draft: &CustomCardInput,
+    ) -> Result<Vec<CardDefinition>, JsValue> {
+        let expected_faces = draft.layout.face_count();
+        if draft.faces.len() != expected_faces {
+            return Err(JsValue::from_str(&format!(
+                "{} layout requires {} face(s)",
+                match draft.layout {
+                    CustomCardLayoutInput::Single => "single-face",
+                    CustomCardLayoutInput::TransformLike => "double-faced",
+                    CustomCardLayoutInput::Split => "split",
+                },
+                expected_faces
+            )));
+        }
+
+        let mut definitions = Vec::with_capacity(expected_faces);
+        for (index, face) in draft.faces.iter().enumerate() {
+            let name = face.name.trim();
+            if name.is_empty() {
+                return Err(JsValue::from_str(&format!(
+                    "face {} must include a name",
+                    index + 1
+                )));
+            }
+
+            let mut builder = crate::cards::CardDefinitionBuilder::new(CardId::new(), name);
+            if let Some(colors) = Self::parse_custom_color_indicator(&face.color_indicator)? {
+                builder = builder.color_indicator(colors);
+            }
+
+            let parse_block = Self::build_custom_face_parse_block(face)?;
+            let mut definition = builder.parse_text(parse_block).map_err(|err| {
+                JsValue::from_str(&format!("face {} parse failed: {err:?}", index + 1))
+            })?;
+            definition.card.linked_face_layout = draft.layout.linked_face_layout();
+            definitions.push(definition);
+        }
+
+        if definitions.len() == 2 {
+            let first_id = definitions[0].card.id;
+            let second_id = definitions[1].card.id;
+            let first_name = definitions[0].card.name.clone();
+            let second_name = definitions[1].card.name.clone();
+
+            definitions[0].card.other_face = Some(second_id);
+            definitions[0].card.other_face_name = Some(second_name.clone());
+            definitions[1].card.other_face = Some(first_id);
+            definitions[1].card.other_face_name = Some(first_name.clone());
+
+            if draft.layout == CustomCardLayoutInput::Split && draft.has_fuse {
+                definitions[0].has_fuse = true;
+            }
+        }
+
+        Ok(definitions)
+    }
+
+    fn definition_to_custom_face_input(definition: &CardDefinition) -> CustomCardFaceInput {
+        CustomCardFaceInput {
+            name: definition.card.name.clone(),
+            mana_cost: definition.card.mana_cost.as_ref().map(ManaCost::to_oracle),
+            color_indicator: Self::color_indicator_codes(definition.card.color_indicator),
+            supertypes: definition
+                .card
+                .supertypes
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect(),
+            card_types: definition
+                .card
+                .card_types
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect(),
+            subtypes: definition
+                .card
+                .subtypes
+                .iter()
+                .map(|value| format!("{value:?}"))
+                .collect(),
+            oracle_text: definition.card.oracle_text.clone(),
+            power: definition
+                .card
+                .power_toughness
+                .map(|value| value.power.to_string()),
+            toughness: definition
+                .card
+                .power_toughness
+                .map(|value| value.toughness.to_string()),
+            loyalty: definition.card.loyalty,
+            defense: definition.card.defense,
+        }
+    }
+
+    fn definition_type_line(definition: &CardDefinition) -> String {
+        let left = definition
+            .card
+            .supertypes
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .chain(
+                definition
+                    .card
+                    .card_types
+                    .iter()
+                    .map(|value| format!("{value:?}")),
+            )
+            .collect::<Vec<_>>();
+        let right = definition
+            .card
+            .subtypes
+            .iter()
+            .map(|value| format!("{value:?}"))
+            .collect::<Vec<_>>();
+
+        let mut line = left.join(" ");
+        if !right.is_empty() {
+            if !line.is_empty() {
+                line.push_str(" — ");
+            }
+            line.push_str(&right.join(" "));
+        }
+        line
+    }
+
+    fn definition_to_custom_preview_face(definition: &CardDefinition) -> CustomCardPreviewFace {
+        CustomCardPreviewFace {
+            name: definition.card.name.clone(),
+            mana_cost: definition.card.mana_cost.as_ref().map(ManaCost::to_oracle),
+            color_indicator: Self::color_indicator_codes(definition.card.color_indicator),
+            type_line: Self::definition_type_line(definition),
+            oracle_text: definition.card.oracle_text.clone(),
+            power: definition
+                .card
+                .power_toughness
+                .map(|value| value.power.to_string()),
+            toughness: definition
+                .card
+                .power_toughness
+                .map(|value| value.toughness.to_string()),
+            loyalty: definition.card.loyalty,
+            defense: definition.card.defense,
+            compiled_text: crate::compiled_text::compiled_lines(definition),
+            compiled_abilities: Self::compiled_ability_lines(definition),
+            raw_compilation: format!("{:#?}", definition),
+        }
+    }
+
+    fn build_custom_card_preview(
+        &self,
+        draft: &CustomCardInput,
+    ) -> Result<CustomCardPreviewResult, JsValue> {
+        let definitions = self.compile_custom_card_faces(draft)?;
+        Ok(CustomCardPreviewResult {
+            layout: draft.layout,
+            has_fuse: draft.layout == CustomCardLayoutInput::Split && draft.has_fuse,
+            faces: definitions
+                .iter()
+                .map(Self::definition_to_custom_preview_face)
+                .collect(),
+            can_create: true,
+        })
+    }
+
+    fn build_loaded_deck_seed(
+        &mut self,
+        player_index: u8,
+    ) -> Result<CustomCardSeedResult, JsValue> {
+        let Some(deck) = self.loaded_decks.get(player_index as usize) else {
+            return Err(JsValue::from_str("no loaded deck found for that player"));
+        };
+        if deck.is_empty() {
+            return Err(JsValue::from_str("loaded deck is empty"));
+        }
+
+        let eligible = deck
+            .iter()
+            .filter_map(|name| self.find_card_definition(name).cloned())
+            .filter(|definition| !definition.card.is_land())
+            .collect::<Vec<_>>();
+        if eligible.is_empty() {
+            return Err(JsValue::from_str(
+                "loaded deck has no nonland cards available for sampling",
+            ));
+        }
+
+        let sample_index = ((js_sys::Math::random() * eligible.len() as f64).floor() as usize)
+            .min(eligible.len() - 1);
+        let definition = eligible[sample_index].clone();
+        let layout = match definition.card.linked_face_layout {
+            crate::card::LinkedFaceLayout::Split => CustomCardLayoutInput::Split,
+            crate::card::LinkedFaceLayout::TransformLike => CustomCardLayoutInput::TransformLike,
+            crate::card::LinkedFaceLayout::None => CustomCardLayoutInput::Single,
+        };
+
+        let mut faces = vec![Self::definition_to_custom_face_input(&definition)];
+        if layout.face_count() == 2 {
+            let Some(other_face) = crate::cards::linked_face_definition_by_name_or_id(
+                definition.card.other_face_name.as_deref(),
+                definition.card.other_face,
+            ) else {
+                return Err(JsValue::from_str(
+                    "sampled card references an unsupported linked face",
+                ));
+            };
+            faces.push(Self::definition_to_custom_face_input(&other_face));
+        }
+
+        Ok(CustomCardSeedResult {
+            layout,
+            has_fuse: layout == CustomCardLayoutInput::Split && definition.has_fuse,
+            faces,
+        })
+    }
+
+    fn add_definition_to_zone_with_triggers(
+        &mut self,
+        definition: &CardDefinition,
+        player_id: PlayerId,
+        zone: Zone,
+    ) -> Result<ObjectId, JsValue> {
+        // Create in Command zone first, then move to target zone so that
+        // zone-change triggers (ETB, etc.) fire naturally.
+        let temp_id = self.game.create_object_from_definition(
+            definition,
+            player_id,
+            crate::zone::Zone::Command,
+        );
+        let object_id = if zone == crate::zone::Zone::Battlefield {
+            let mut dm = crate::decision::SelectFirstDecisionMaker;
+            let Some(result) = self.game.move_object_with_etb_processing_with_dm(
+                temp_id,
+                crate::zone::Zone::Battlefield,
+                &mut dm,
+            ) else {
+                self.game.remove_object(temp_id);
+                return Err(JsValue::from_str(
+                    "battlefield entry was prevented by replacement effect",
+                ));
+            };
+
+            let entered_id = result.new_id;
+            let entered_tapped = result.enters_tapped;
+            let entered_battlefield = self
+                .game
+                .object(entered_id)
+                .is_some_and(|obj| obj.zone == crate::zone::Zone::Battlefield);
+            if entered_battlefield {
+                let etb_event_provenance = self
+                    .game
+                    .provenance_graph
+                    .alloc_root_event(crate::events::EventKind::EnterBattlefield);
+                let event = if entered_tapped {
+                    crate::triggers::TriggerEvent::new_with_provenance(
+                        crate::events::EnterBattlefieldEvent::tapped(
+                            entered_id,
+                            crate::zone::Zone::Command,
+                        ),
+                        etb_event_provenance,
+                    )
+                } else {
+                    crate::triggers::TriggerEvent::new_with_provenance(
+                        crate::events::EnterBattlefieldEvent::new(
+                            entered_id,
+                            crate::zone::Zone::Command,
+                        ),
+                        etb_event_provenance,
+                    )
+                };
+                self.game.queue_trigger_event(etb_event_provenance, event);
+
+                crate::game_loop::drain_pending_trigger_events(
+                    &mut self.game,
+                    &mut self.trigger_queue,
+                );
+
+                if self
+                    .game
+                    .object(entered_id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Saga))
+                {
+                    crate::game_loop::add_lore_counter_and_check_chapters(
+                        &mut self.game,
+                        entered_id,
+                        &mut self.trigger_queue,
+                    );
+                }
+            }
+
+            entered_id
+        } else {
+            self.game
+                .move_object_by_effect(temp_id, zone)
+                .unwrap_or(temp_id)
+        };
+        crate::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+        self.recompute_ui_decision()?;
+        Ok(object_id)
+    }
+
     fn build_card_load_diagnostics(
         &mut self,
         card_name: &str,
@@ -4411,18 +5062,23 @@ impl WasmGame {
 
     fn initialize_empty_match(&mut self, player_names: Vec<String>, starting_life: i32, seed: u64) {
         reset_runtime_id_counters();
+        crate::cards::clear_runtime_custom_cards();
         self.game = GameState::new(player_names, starting_life);
         self.game.set_random_seed(seed);
         self.match_format = MatchFormatInput::Normal;
         self.pregame = None;
+        self.loaded_decks = Vec::new();
     }
 
     fn populate_demo_libraries(&mut self) -> Result<(), JsValue> {
         let player_ids: Vec<PlayerId> = self.game.players.iter().map(|p| p.id).collect();
+        let mut generated_decks = Vec::with_capacity(player_ids.len());
         for player_id in player_ids {
             let deck = self.build_random_demo_deck_names(60, 24)?;
             self.populate_player_library(player_id, &deck)?;
+            generated_decks.push(deck);
         }
+        self.loaded_decks = generated_decks;
         Ok(())
     }
 
@@ -4431,6 +5087,7 @@ impl WasmGame {
         for (&player_id, deck) in player_ids.iter().zip(decks.iter()) {
             self.populate_player_library(player_id, deck)?;
         }
+        self.loaded_decks = decks.to_vec();
         Ok(())
     }
 
@@ -4564,7 +5221,7 @@ impl WasmGame {
     fn shuffle_hand_into_library_and_draw(&mut self, player: PlayerId, opening_hand_size: usize) {
         let hand_ids = self.player_hand_ids(player);
         for id in hand_ids {
-            let _ = self.game.move_object(id, Zone::Library);
+            let _ = self.game.move_object_by_effect(id, Zone::Library);
         }
         self.game.shuffle_player_library(player);
         let _ = self.game.draw_cards(player, opening_hand_size);
@@ -4575,7 +5232,7 @@ impl WasmGame {
             let Some(owner) = self.game.object(card_id).map(|object| object.owner) else {
                 continue;
             };
-            let Some(new_id) = self.game.move_object(card_id, Zone::Library) else {
+            let Some(new_id) = self.game.move_object_by_effect(card_id, Zone::Library) else {
                 continue;
             };
             let Some(player) = self.game.player_mut(owner) else {
@@ -4851,7 +5508,7 @@ impl WasmGame {
                 }
                 let draw_count = hand_ids.len();
                 for id in hand_ids {
-                    let _ = self.game.move_object(id, Zone::Exile);
+                    let _ = self.game.move_object_by_effect(id, Zone::Exile);
                 }
                 let _ = self.game.draw_cards(player, draw_count);
             }
@@ -4922,7 +5579,8 @@ impl WasmGame {
                     ));
                 }
                 let exile_cards_from_hand = spec.exile_cards_from_hand;
-                let Some(new_id) = self.game.move_object(card_id, Zone::Battlefield) else {
+                let Some(new_id) = self.game.move_object_by_effect(card_id, Zone::Battlefield)
+                else {
                     return Err(JsValue::from_str(
                         "failed to move the pregame card to the battlefield",
                     ));
@@ -5089,7 +5747,7 @@ impl WasmGame {
                     }
                     PregameSelectResolution::HandExile(card_ids) => {
                         for card_id in card_ids {
-                            let _ = self.game.move_object(card_id, Zone::Exile);
+                            let _ = self.game.move_object_by_effect(card_id, Zone::Exile);
                         }
                         let Some(PregameStage::OpeningActions {
                             pending_hand_exile, ..
@@ -5906,6 +6564,28 @@ impl WasmGame {
                 } else {
                     run_priority_loop_with(&mut self.game, &mut self.trigger_queue, &mut replay_dm)
                         .map_err(|e| format!("{e}"))
+                }
+            }
+            ReplayRoot::AddCardToZone {
+                player,
+                card_name,
+                zone,
+                skip_triggers,
+            } => {
+                self.registry.ensure_cards_loaded([card_name.as_str()]);
+                match self.load_compilable_card_definition(card_name) {
+                    Ok(definition) => self
+                        .add_card_to_zone_with_dm(
+                            *player,
+                            &definition,
+                            *zone,
+                            *skip_triggers,
+                            &mut replay_dm,
+                        )
+                        .map(|_| GameProgress::Continue),
+                    Err(err) => Err(err
+                        .as_string()
+                        .unwrap_or_else(|| "failed to load card for replay".to_string())),
                 }
             }
         };
@@ -7666,8 +8346,9 @@ fn convert_and_validate_targets(
 #[cfg(test)]
 mod tests {
     use super::{
-        GameSnapshot, MatchFormatInput, PendingReplayAction, PregameState, ReplayOutcome,
-        ReplayRoot, TargetChoiceView, TargetInput, WasmGame, build_object_details_snapshot,
+        CustomCardFaceInput, CustomCardInput, CustomCardLayoutInput, GameSnapshot,
+        MatchFormatInput, PendingReplayAction, PregameState, ReplayOutcome, ReplayRoot,
+        TargetChoiceView, TargetInput, WasmGame, build_object_details_snapshot,
         build_stack_object_snapshot, convert_and_validate_targets,
     };
     use crate::ability::Ability;
@@ -7721,6 +8402,31 @@ mod tests {
                     .create_object_from_definition(&ornithopter(), player, zone)
             })
             .collect()
+    }
+
+    fn custom_face(
+        name: &str,
+        card_types: &[&str],
+        oracle_text: &str,
+        power: Option<&str>,
+        toughness: Option<&str>,
+    ) -> CustomCardFaceInput {
+        CustomCardFaceInput {
+            name: name.to_string(),
+            mana_cost: None,
+            color_indicator: Vec::new(),
+            supertypes: Vec::new(),
+            card_types: card_types
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            subtypes: Vec::new(),
+            oracle_text: oracle_text.to_string(),
+            power: power.map(str::to_string),
+            toughness: toughness.map(str::to_string),
+            loyalty: None,
+            defense: None,
+        }
     }
 
     fn start_pregame(wasm: &mut WasmGame, opening_hand_size: usize, format: MatchFormatInput) {
@@ -7898,7 +8604,7 @@ mod tests {
             .with_source_info(stack_obj.stable_id, stack_obj.name.clone());
 
         let battlefield_id = game
-            .move_object(stack_id, Zone::Battlefield)
+            .move_object_by_effect(stack_id, Zone::Battlefield)
             .expect("spell should resolve to battlefield");
         let snapshot = build_stack_object_snapshot(&game, alice, None, &entry);
 
@@ -7937,7 +8643,7 @@ mod tests {
         );
 
         let moved_source_id = game
-            .move_object(source_id, Zone::Exile)
+            .move_object_by_effect(source_id, Zone::Exile)
             .expect("source should move to exile");
         assert_ne!(moved_source_id, source_id);
 
@@ -8210,6 +8916,95 @@ mod tests {
             entered.counters.get(&CounterType::Lore).copied(),
             Some(1),
             "battlefield ETB path should give a Saga its initial lore counter"
+        );
+    }
+
+    #[test]
+    fn add_card_to_zone_battlefield_surfaces_roaming_throne_type_choice() {
+        let mut wasm = WasmGame::new();
+
+        let added_id = wasm
+            .add_card_to_zone(
+                0,
+                "Roaming Throne".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should start Roaming Throne battlefield entry");
+
+        assert_eq!(
+            added_id, 0,
+            "battlefield injection should defer committing until the type choice is answered"
+        );
+
+        let pending_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected creature-type selection prompt, got {other:?}"),
+        };
+
+        assert!(
+            pending_ctx
+                .options
+                .iter()
+                .any(|option| option.description == "Angel"),
+            "Roaming Throne should prompt for creature types when added straight to the battlefield"
+        );
+        assert!(
+            wasm.pending_replay_action.is_some(),
+            "battlefield injection prompt should be backed by replay so the add can resume after a choice"
+        );
+        assert!(
+            !wasm
+                .game
+                .battlefield
+                .iter()
+                .filter_map(|id| wasm.game.object(*id))
+                .any(|object| object.name == "Roaming Throne"),
+            "Roaming Throne should not be committed to the battlefield until the choice is confirmed"
+        );
+    }
+
+    #[test]
+    fn add_card_to_zone_battlefield_commits_roaming_throne_after_choice() {
+        let mut wasm = WasmGame::new();
+
+        wasm.add_card_to_zone(
+            0,
+            "Roaming Throne".to_string(),
+            "battlefield".to_string(),
+            false,
+        )
+        .expect("should start Roaming Throne battlefield entry");
+
+        let angel_index = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx
+                .options
+                .iter()
+                .find(|option| option.description == "Angel")
+                .map(|option| option.index)
+                .expect("Angel should be a legal creature type choice"),
+            other => panic!("expected creature-type selection prompt, got {other:?}"),
+        };
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&serde_json::json!({
+                "type": "select_options",
+                "option_indices": [angel_index],
+            }))
+            .expect("choice should serialize"),
+        )
+        .expect("dispatching Roaming Throne creature-type choice should succeed");
+
+        let throne = wasm
+            .game
+            .battlefield
+            .iter()
+            .filter_map(|id| wasm.game.object(*id))
+            .find(|object| object.name == "Roaming Throne")
+            .expect("Roaming Throne should enter after choosing a type");
+        assert!(
+            throne.subtypes.contains(&Subtype::Angel),
+            "Roaming Throne should gain the selected creature subtype once its choice resolves"
         );
     }
 
@@ -12073,5 +12868,91 @@ mod tests {
             }
             other => panic!("expected Bob to resume opening actions, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn custom_card_preview_supports_split_faces_and_fuse() {
+        let wasm = WasmGame::new();
+        let draft = CustomCardInput {
+            layout: CustomCardLayoutInput::Split,
+            has_fuse: true,
+            faces: vec![
+                custom_face(
+                    "Breaking Forge",
+                    &["Sorcery"],
+                    "Target player mills four cards.",
+                    None,
+                    None,
+                ),
+                custom_face(
+                    "Entering Forge",
+                    &["Sorcery"],
+                    "Return target creature card from a graveyard to the battlefield under your control.",
+                    None,
+                    None,
+                ),
+            ],
+        };
+
+        let preview = wasm
+            .build_custom_card_preview(&draft)
+            .expect("split custom preview should compile");
+
+        assert_eq!(preview.faces.len(), 2);
+        assert!(preview.has_fuse);
+        assert_eq!(preview.faces[0].name, "Breaking Forge");
+        assert_eq!(preview.faces[1].name, "Entering Forge");
+    }
+
+    #[test]
+    fn create_custom_card_registers_runtime_linked_face_lookup() {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(vec!["Alice".to_string(), "Bob".to_string()], 20, 1);
+
+        let payload = serde_wasm_bindgen::to_value(&json!({
+            "draft": {
+                "layout": "transform_like",
+                "hasFuse": false,
+                "faces": [
+                    {
+                        "name": "Forge Pup",
+                        "manaCost": "{1}{R}",
+                        "cardTypes": ["Creature"],
+                        "subtypes": ["Wolf"],
+                        "oracleText": "Haste",
+                        "power": "2",
+                        "toughness": "1"
+                    },
+                    {
+                        "name": "Forge Howler",
+                        "cardTypes": ["Creature"],
+                        "subtypes": ["Wolf"],
+                        "oracleText": "Trample",
+                        "power": "4",
+                        "toughness": "3"
+                    }
+                ]
+            },
+            "playerIndex": 0,
+            "zoneName": "hand",
+            "skipTriggers": true
+        }))
+        .expect("custom card payload should encode");
+
+        let object_id = wasm
+            .create_custom_card(payload)
+            .expect("linked custom card should be created");
+        let object = wasm
+            .game
+            .object(ObjectId(object_id))
+            .expect("created custom card should exist");
+
+        assert_eq!(object.name, "Forge Pup");
+        let linked = crate::cards::linked_face_definition_by_name_or_id(
+            object.other_face_name.as_deref(),
+            object.other_face,
+        )
+        .expect("linked custom back face should resolve at runtime");
+        assert_eq!(linked.name(), "Forge Howler");
     }
 }

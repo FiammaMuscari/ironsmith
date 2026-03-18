@@ -1322,6 +1322,7 @@ pub(crate) enum PredicateAst {
         count: u32,
     },
     SourcePowerAtLeast(u32),
+    SourceAttackedOrBlockedThisTurn,
     SourceIsInZone(Zone),
     YourTurn,
     CreatureDiedThisTurn,
@@ -1925,6 +1926,14 @@ pub(crate) enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    CreateEmblem {
+        player: PlayerAst,
+        text: String,
+    },
+    DealDistributedDamage {
+        amount: Value,
+        target: TargetAst,
+    },
     ChooseCardName {
         player: PlayerAst,
         filter: Option<ObjectFilter>,
@@ -1947,6 +1956,7 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
     },
     RepeatThisProcess,
+    RepeatThisProcessOnce,
     May {
         effects: Vec<EffectAst>,
     },
@@ -5940,6 +5950,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             bears_id,
             Zone::Battlefield,
             Zone::Graveyard,
+            crate::events::cause::EventCause::from_sba(),
             &mut dm,
         );
         assert!(

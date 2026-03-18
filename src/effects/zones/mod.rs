@@ -37,10 +37,11 @@ pub(crate) fn finalize_zone_change_move(
     game: &mut GameState,
     object_id: ObjectId,
     final_zone: Zone,
+    cause: crate::events::cause::EventCause,
 ) -> AppliedZoneChange {
     AppliedZoneChange {
         final_zone,
-        new_object_id: game.move_object(object_id, final_zone),
+        new_object_id: game.move_object(object_id, final_zone, cause),
     }
 }
 
@@ -49,12 +50,13 @@ pub(crate) fn apply_zone_change(
     object_id: ObjectId,
     from: Zone,
     to: Zone,
+    cause: crate::events::cause::EventCause,
     decision_maker: &mut dyn DecisionMaker,
 ) -> EventOutcome<AppliedZoneChange> {
-    match process_zone_change(game, object_id, from, to, decision_maker) {
-        EventOutcome::Proceed(final_zone) => {
-            EventOutcome::Proceed(finalize_zone_change_move(game, object_id, final_zone))
-        }
+    match process_zone_change(game, object_id, from, to, cause.clone(), decision_maker) {
+        EventOutcome::Proceed(final_zone) => EventOutcome::Proceed(finalize_zone_change_move(
+            game, object_id, final_zone, cause,
+        )),
         EventOutcome::Prevented => EventOutcome::Prevented,
         EventOutcome::Replaced => EventOutcome::Replaced,
         EventOutcome::NotApplicable => EventOutcome::NotApplicable,

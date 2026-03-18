@@ -2307,6 +2307,50 @@ impl StaticAbilityKind for EnchantedLandIsChosenType {
     }
 }
 
+/// "This creature is the chosen type in addition to its other types."
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddChosenCreatureTypeForFilter {
+    pub filter: ObjectFilter,
+    pub display: String,
+}
+
+impl AddChosenCreatureTypeForFilter {
+    pub fn new(filter: ObjectFilter, display: String) -> Self {
+        Self { filter, display }
+    }
+}
+
+impl StaticAbilityKind for AddChosenCreatureTypeForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::AddChosenCreatureType
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        let Some(chosen_type) = game.chosen_creature_type(source) else {
+            return Vec::new();
+        };
+
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                effect_target_for_filter(source, &self.filter),
+                Modification::AddSubtypes(vec![chosen_type]),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+}
+
 /// Permanents matching a filter have an activated or triggered ability.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrantObjectAbilityForFilter {

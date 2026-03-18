@@ -298,6 +298,7 @@ fn pay_ward_cost(
                 target_id,
                 crate::zone::Zone::Battlefield,
                 crate::zone::Zone::Graveyard,
+                crate::events::cause::EventCause::from_cost(source, payer),
                 decision_maker,
             ) {
                 EventOutcome::Prevented | EventOutcome::NotApplicable => false,
@@ -309,7 +310,7 @@ fn pay_ward_cost(
                         .as_ref()
                         .map(|snap| snap.controller)
                         .or(Some(payer));
-                    game.move_object(target_id, final_zone);
+                    game.move_object_by_effect(target_id, final_zone);
                     if final_zone == crate::zone::Zone::Graveyard {
                         let event_provenance = game.alloc_child_event_provenance(
                             ward_provenance,

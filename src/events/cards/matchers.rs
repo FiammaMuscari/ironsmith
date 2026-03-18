@@ -245,15 +245,27 @@ mod tests {
         let matcher = WouldDiscardMatcher::you_from_effect();
 
         // Discard from effect - should match
-        let event_effect = DiscardEvent::from_effect(ObjectId::from_raw(1), alice);
+        let event_effect = DiscardEvent::with_cause(
+            ObjectId::from_raw(1),
+            alice,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(matcher.matches_event(&event_effect, &ctx));
 
         // Discard as cost - should not match (effect-like filter)
-        let event_cost = DiscardEvent::as_cost(ObjectId::from_raw(1), alice);
+        let event_cost = DiscardEvent::with_cause(
+            ObjectId::from_raw(1),
+            alice,
+            crate::events::cause::EventCause::from_cost(ObjectId::from_raw(1), alice),
+        );
         assert!(!matcher.matches_event(&event_cost, &ctx));
 
         // Discard from game rule - should match
-        let event_rule = DiscardEvent::from_game_rule(ObjectId::from_raw(1), alice);
+        let event_rule = DiscardEvent::with_cause(
+            ObjectId::from_raw(1),
+            alice,
+            crate::events::cause::EventCause::from_game_rule(),
+        );
         assert!(!matcher.matches_event(&event_rule, &ctx));
     }
 
@@ -266,10 +278,18 @@ mod tests {
         let matcher = WouldDiscardMatcher::you(); // any cause
 
         // Should match both effect and cost discards
-        let event_effect = DiscardEvent::from_effect(ObjectId::from_raw(1), alice);
+        let event_effect = DiscardEvent::with_cause(
+            ObjectId::from_raw(1),
+            alice,
+            crate::events::cause::EventCause::effect(),
+        );
         assert!(matcher.matches_event(&event_effect, &ctx));
 
-        let event_cost = DiscardEvent::as_cost(ObjectId::from_raw(1), alice);
+        let event_cost = DiscardEvent::with_cause(
+            ObjectId::from_raw(1),
+            alice,
+            crate::events::cause::EventCause::from_cost(ObjectId::from_raw(1), alice),
+        );
         assert!(matcher.matches_event(&event_cost, &ctx));
     }
 

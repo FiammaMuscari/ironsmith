@@ -29,7 +29,7 @@ use crate::ids::CardId;
 use crate::static_abilities::StaticAbilityId;
 use crate::target::ObjectFilter;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// A complete card definition including the card data and its abilities.
 ///
@@ -676,10 +676,41 @@ pub fn builtin_registry() -> &'static CardRegistry {
     REGISTRY.get_or_init(CardRegistry::with_builtin_cards)
 }
 
+fn runtime_custom_registry() -> &'static Mutex<CardRegistry> {
+    static REGISTRY: OnceLock<Mutex<CardRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(CardRegistry::new()))
+}
+
+pub fn clear_runtime_custom_cards() {
+    if let Ok(mut registry) = runtime_custom_registry().lock() {
+        *registry = CardRegistry::new();
+    }
+}
+
+pub fn register_runtime_custom_card(definition: CardDefinition) {
+    if let Ok(mut registry) = runtime_custom_registry().lock() {
+        registry.register(definition);
+    }
+}
+
 pub fn linked_face_definition_by_name_or_id(
     name: Option<&str>,
     id: Option<CardId>,
 ) -> Option<CardDefinition> {
+    if let Ok(registry) = runtime_custom_registry().lock() {
+        if let Some(card_id) = id
+            && let Some(definition) = registry.get_by_id(card_id).cloned()
+        {
+            return Some(definition);
+        }
+
+        if let Some(face_name) = name
+            && let Some(definition) = registry.get(face_name).cloned()
+        {
+            return Some(definition);
+        }
+    }
+
     if let Some(name) = name
         && let Ok(definition) = CardRegistry::try_compile_card(name)
     {

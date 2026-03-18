@@ -111,6 +111,7 @@ fn static_ability_rule_head_hints(rule_id: &'static str) -> &'static [&'static s
         "parse_conditional_all_creatures_able_to_block_line" => &["as"],
         "parse_toph_first_metalbender_line" => &["the"],
         "parse_spell_cost_increase_per_target_beyond_first_line" => &["this"],
+        "parse_double_damage_from_sources_you_control_of_chosen_type_line" => &["double"],
         "parse_source_can_attack_as_though_no_defender_as_long_as_line" => &["this"],
         "parse_no_maximum_hand_size_line" => &["you"],
         "parse_additional_land_play_line" => &["you"],
@@ -224,6 +225,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_choose_creature_type_as_enters_line),
         single_static_ability_ast_rule!(parse_choose_player_as_enters_line),
         single_static_ability_ast_rule!(parse_enchanted_land_is_chosen_type_line),
+        single_static_ability_ast_rule!(parse_source_is_chosen_type_in_addition_line),
         single_static_ability_ast_infallible_rule!(parse_static_text_marker_line),
         multi_static_ability_ast_rule!(parse_enters_tapped_with_choose_color_line),
         single_static_ability_ast_rule!(parse_damage_not_removed_cleanup_line),
@@ -275,6 +277,12 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_spell_cost_increase_per_target_beyond_first_line),
         single_static_ability_ast_rule!(parse_flashback_cost_modifier_line),
         single_static_ability_ast_rule!(parse_spells_cost_modifier_line),
+        single_static_ability_ast_rule!(
+            parse_other_chosen_type_creature_triggers_additional_time_line
+        ),
+        single_static_ability_ast_rule!(
+            parse_double_damage_from_sources_you_control_of_chosen_type_line
+        ),
         single_static_ability_ast_rule!(parse_foretelling_cards_cost_modifier_line),
         single_static_ability_ast_rule!(parse_players_skip_upkeep_line),
         single_static_ability_ast_rule!(parse_legend_rule_doesnt_apply_line),
@@ -1330,6 +1338,61 @@ pub(crate) fn parse_enchanted_land_is_chosen_type_line(
     )))
 }
 
+pub(crate) fn parse_source_is_chosen_type_in_addition_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    let display = match words.as_slice() {
+        [
+            "this",
+            "creature",
+            "is",
+            "the",
+            "chosen",
+            "type",
+            "in",
+            "addition",
+            "to",
+            "its",
+            "other",
+            "types",
+        ] => "This creature is the chosen type in addition to its other types.",
+        [
+            "this",
+            "permanent",
+            "is",
+            "the",
+            "chosen",
+            "type",
+            "in",
+            "addition",
+            "to",
+            "its",
+            "other",
+            "types",
+        ] => "This permanent is the chosen type in addition to its other types.",
+        [
+            "it",
+            "is",
+            "the",
+            "chosen",
+            "type",
+            "in",
+            "addition",
+            "to",
+            "its",
+            "other",
+            "types",
+        ] => "It is the chosen type in addition to its other types.",
+        _ => return Ok(None),
+    };
+
+    Ok(Some(StaticAbility::add_chosen_creature_type(
+        ObjectFilter::source(),
+        display.to_string(),
+    )))
+}
+
 pub(crate) fn parse_choose_creature_type_as_enters_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -1382,6 +1445,64 @@ pub(crate) fn parse_choose_creature_type_as_enters_line(
     Ok(Some(StaticAbility::choose_creature_type_as_enters(
         words.join(" "),
     )))
+}
+
+pub(crate) fn parse_other_chosen_type_creature_triggers_additional_time_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.as_slice()
+        != [
+            "if",
+            "a",
+            "triggered",
+            "ability",
+            "of",
+            "another",
+            "creature",
+            "you",
+            "control",
+            "of",
+            "the",
+            "chosen",
+            "type",
+            "triggers",
+            "it",
+            "triggers",
+            "an",
+            "additional",
+            "time",
+        ]
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        StaticAbility::other_chosen_type_creature_triggered_abilities_trigger_additional_time(
+            "If a triggered ability of another creature you control of the chosen type triggers, it triggers an additional time.".to_string(),
+        ),
+    ))
+}
+
+pub(crate) fn parse_double_damage_from_sources_you_control_of_chosen_type_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.as_slice()
+        != [
+            "double", "all", "damage", "that", "sources", "you", "control", "of", "the",
+            "chosen", "type", "would", "deal",
+        ]
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        StaticAbility::double_damage_from_sources_you_control_of_chosen_type(
+            "Double all damage that sources you control of the chosen type would deal."
+                .to_string(),
+        ),
+    ))
 }
 
 pub(crate) fn parse_enter_as_copy_as_enters_line(
@@ -2675,6 +2796,24 @@ pub(crate) fn parse_this_spell_cost_condition(
                 || tail == ["or", "more", "card", "this", "turn"]
             {
                 return Some(ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(n));
+            }
+        }
+    }
+
+    // you've been dealt damage by two or more creatures this turn
+    if (w.starts_with(&["youve", "been", "dealt", "damage", "by"])
+        || w.starts_with(&["you", "have", "been", "dealt", "damage", "by"]))
+        && w.len() >= 11
+    {
+        let count_start = if w[0] == "youve" { 5 } else { 6 };
+        if let Some((n, _)) = parse_number(tokens.get(count_start..).unwrap_or_default()) {
+            let tail = &w[count_start + 1..];
+            if tail == ["or", "more", "creatures", "this", "turn"]
+                || tail == ["or", "more", "creature", "this", "turn"]
+            {
+                return Some(ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(
+                    n,
+                ));
             }
         }
     }

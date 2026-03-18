@@ -52,6 +52,7 @@ impl EffectExecutor for MoveToLibraryNthFromTopEffect {
                 object_id,
                 from_zone,
                 Zone::Library,
+                ctx.cause.clone(),
                 &mut ctx.decision_maker,
             );
 

@@ -572,6 +572,29 @@ mod tests {
         crate::tests::test_helpers::setup_two_player_game()
     }
 
+    fn damage(source: ObjectId, target: DamageTarget, amount: u32, is_combat: bool) -> DamageEvent {
+        let cause = if is_combat {
+            crate::events::cause::EventCause::combat_damage(source)
+        } else {
+            crate::events::cause::EventCause::effect()
+        };
+        DamageEvent::with_cause(source, target, amount, is_combat, cause)
+    }
+
+    fn unpreventable_damage(
+        source: ObjectId,
+        target: DamageTarget,
+        amount: u32,
+        is_combat: bool,
+    ) -> DamageEvent {
+        let cause = if is_combat {
+            crate::events::cause::EventCause::combat_damage(source)
+        } else {
+            crate::events::cause::EventCause::effect()
+        };
+        DamageEvent::unpreventable_with_cause(source, target, amount, is_combat, cause)
+    }
+
     #[test]
     fn test_damage_to_player_matcher() {
         let game = setup_game();
@@ -582,13 +605,11 @@ mod tests {
         let matcher = DamageToPlayerMatcher::to_you();
 
         // Damage to Alice (the controller) should match
-        let event_to_alice =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
+        let event_to_alice = damage(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
         assert!(matcher.matches_event(&event_to_alice, &ctx));
 
         // Damage to Bob should not match "you"
-        let event_to_bob =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(bob), 3, false);
+        let event_to_bob = damage(ObjectId::from_raw(1), DamageTarget::Player(bob), 3, false);
         assert!(!matcher.matches_event(&event_to_bob, &ctx));
     }
 
@@ -600,12 +621,10 @@ mod tests {
         let ctx = EventContext::for_controller(alice, &game);
         let matcher = CombatDamageMatcher;
 
-        let combat_damage =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, true);
+        let combat_damage = damage(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, true);
         assert!(matcher.matches_event(&combat_damage, &ctx));
 
-        let noncombat_damage =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
+        let noncombat_damage = damage(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
         assert!(!matcher.matches_event(&noncombat_damage, &ctx));
     }
 
@@ -617,12 +636,10 @@ mod tests {
         let ctx = EventContext::for_controller(alice, &game);
         let matcher = NoncombatDamageMatcher;
 
-        let noncombat_damage =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
+        let noncombat_damage = damage(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, false);
         assert!(matcher.matches_event(&noncombat_damage, &ctx));
 
-        let combat_damage =
-            DamageEvent::new(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, true);
+        let combat_damage = damage(ObjectId::from_raw(1), DamageTarget::Player(alice), 3, true);
         assert!(!matcher.matches_event(&combat_damage, &ctx));
     }
 
@@ -641,20 +658,19 @@ mod tests {
         let matcher = DamageToSelfCombatMatcher::new();
         let ctx = EventContext::for_replacement_effect(alice, src, &game);
 
-        let combat_to_self = DamageEvent::new(src, DamageTarget::Object(src), 3, true);
+        let combat_to_self = damage(src, DamageTarget::Object(src), 3, true);
         assert!(matcher.matches_event(&combat_to_self, &ctx));
 
-        let noncombat_to_self = DamageEvent::new(src, DamageTarget::Object(src), 3, false);
+        let noncombat_to_self = damage(src, DamageTarget::Object(src), 3, false);
         assert!(!matcher.matches_event(&noncombat_to_self, &ctx));
 
-        let combat_to_other =
-            DamageEvent::new(src, DamageTarget::Object(ObjectId::from_raw(7)), 3, true);
+        let combat_to_other = damage(src, DamageTarget::Object(ObjectId::from_raw(7)), 3, true);
         assert!(!matcher.matches_event(&combat_to_other, &ctx));
 
-        let combat_to_player = DamageEvent::new(src, DamageTarget::Player(alice), 3, true);
+        let combat_to_player = damage(src, DamageTarget::Player(alice), 3, true);
         assert!(!matcher.matches_event(&combat_to_player, &ctx));
 
-        let unpreventable = DamageEvent::unpreventable(src, DamageTarget::Object(src), 3, true);
+        let unpreventable = unpreventable_damage(src, DamageTarget::Object(src), 3, true);
         assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 
@@ -668,15 +684,15 @@ mod tests {
         let matcher = DamageFromSelfMatcher::new();
 
         // Damage from the replacement effect's source should match.
-        let from_src = DamageEvent::new(src, DamageTarget::Player(alice), 3, false);
+        let from_src = damage(src, DamageTarget::Player(alice), 3, false);
         assert!(matcher.matches_event(&from_src, &ctx));
 
         // Damage from a different source should not match.
-        let other = DamageEvent::new(ObjectId::from_raw(7), DamageTarget::Player(alice), 3, false);
+        let other = damage(ObjectId::from_raw(7), DamageTarget::Player(alice), 3, false);
         assert!(!matcher.matches_event(&other, &ctx));
 
         // Unpreventable damage should not match (prevention can't apply).
-        let unpreventable = DamageEvent::unpreventable(src, DamageTarget::Player(alice), 3, false);
+        let unpreventable = unpreventable_damage(src, DamageTarget::Player(alice), 3, false);
         assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 
@@ -705,15 +721,13 @@ mod tests {
         let matcher = DamageToSelfFromSourceFilterMatcher::from_creature();
         let ctx = EventContext::for_replacement_effect(alice, target, &game);
 
-        let creature_damage =
-            DamageEvent::new(creature_source, DamageTarget::Object(target), 3, false);
+        let creature_damage = damage(creature_source, DamageTarget::Object(target), 3, false);
         assert!(matcher.matches_event(&creature_damage, &ctx));
 
-        let noncreature_damage =
-            DamageEvent::new(artifact_source, DamageTarget::Object(target), 3, false);
+        let noncreature_damage = damage(artifact_source, DamageTarget::Object(target), 3, false);
         assert!(!matcher.matches_event(&noncreature_damage, &ctx));
 
-        let wrong_target_damage = DamageEvent::new(
+        let wrong_target_damage = damage(
             creature_source,
             DamageTarget::Object(artifact_source),
             3,
@@ -722,7 +736,7 @@ mod tests {
         assert!(!matcher.matches_event(&wrong_target_damage, &ctx));
 
         let unpreventable =
-            DamageEvent::unpreventable(creature_source, DamageTarget::Object(target), 3, false);
+            unpreventable_damage(creature_source, DamageTarget::Object(target), 3, false);
         assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 }

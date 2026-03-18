@@ -255,6 +255,7 @@ fn advance_reference_frame_for_effect(
         EffectAst::Draw { player, .. }
         | EffectAst::LoseLife { player, .. }
         | EffectAst::GainLife { player, .. }
+        | EffectAst::CreateEmblem { player, .. }
         | EffectAst::SetLifeTotal { player, .. }
         | EffectAst::BecomeMonarch { player }
         | EffectAst::PoisonCounters { player, .. }
@@ -323,7 +324,9 @@ fn advance_reference_frame_for_effect(
         | EffectAst::Flip { target } => {
             maybe_tag_target(&target, frame, id_gen, "targeted")?;
         }
-        EffectAst::DealDamage { target, .. } | EffectAst::DealDamageEqualToPower { target, .. } => {
+        EffectAst::DealDamage { target, .. }
+        | EffectAst::DealDistributedDamage { target, .. }
+        | EffectAst::DealDamageEqualToPower { target, .. } => {
             maybe_tag_target(&target, frame, id_gen, "damaged")?;
             if matches!(
                 target,
@@ -765,6 +768,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::CastTagged { .. }
         | EffectAst::ExileInsteadOfGraveyardThisTurn { .. }
         | EffectAst::RepeatThisProcess
+        | EffectAst::RepeatThisProcessOnce
         | EffectAst::RevealTopChooseCardTypePutToHandRestBottom { .. }
         | EffectAst::PutRestOnBottomOfLibrary
         | EffectAst::UnlessPays { .. }
@@ -1092,6 +1096,7 @@ fn resolve_effect_result_values_in_fields(
 ) -> Result<(), CardTextError> {
     match effect {
         EffectAst::DealDamage { amount, .. }
+        | EffectAst::DealDistributedDamage { amount, .. }
         | EffectAst::DealDamageEach { amount, .. }
         | EffectAst::Draw { count: amount, .. }
         | EffectAst::LoseLife { amount, .. }
@@ -1276,7 +1281,8 @@ fn bind_unresolved_it_in_effect(effect: &mut EffectAst, seed_tag: &TagKey) -> us
 #[cfg(test)]
 fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey) -> usize {
     match effect {
-        EffectAst::DealDamage { amount, target } => {
+        EffectAst::DealDamage { amount, target }
+        | EffectAst::DealDistributedDamage { amount, target } => {
             bind_unresolved_it_in_value(amount, seed_tag)
                 + bind_unresolved_it_in_target(target, seed_tag)
         }
@@ -1541,7 +1547,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_target(source, seed_tag)
                 + bind_unresolved_it_in_value(count, seed_tag)
         }
-        EffectAst::RepeatThisProcess => 0,
+        EffectAst::RepeatThisProcess | EffectAst::RepeatThisProcessOnce => 0,
         EffectAst::CreateTokenWithMods {
             count,
             dynamic_power_toughness,

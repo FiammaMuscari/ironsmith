@@ -63,10 +63,11 @@ mod tests {
 
     fn dies_event(object_id: ObjectId, snapshot: ObjectSnapshot) -> TriggerEvent {
         TriggerEvent::new_with_provenance(
-            ZoneChangeEvent::new(
+            ZoneChangeEvent::with_cause(
                 object_id,
                 Zone::Battlefield,
                 Zone::Graveyard,
+                crate::events::cause::EventCause::from_sba(),
                 Some(snapshot),
             ),
             crate::provenance::ProvNodeId::default(),
@@ -569,7 +570,9 @@ mod tests {
         // Create Blood Artist and move it to the graveyard
         let def = blood_artist();
         let blood_artist_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
-        let _new_id = game.move_object(blood_artist_id, Zone::Graveyard).unwrap();
+        let _new_id = game
+            .move_object_by_effect(blood_artist_id, Zone::Graveyard)
+            .unwrap();
 
         // Create a creature that will die
         let victim_id = create_creature(&mut game, "Victim", vec![], alice, 1, 1);

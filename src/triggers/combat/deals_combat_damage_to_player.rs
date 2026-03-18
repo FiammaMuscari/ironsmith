@@ -121,6 +121,16 @@ mod tests {
         game.create_object_from_card(&card, controller, Zone::Battlefield)
     }
 
+    fn combat_damage(source: ObjectId, player: PlayerId) -> DamageEvent {
+        DamageEvent::with_cause(
+            source,
+            DamageTarget::Player(player),
+            2,
+            true,
+            crate::events::cause::EventCause::combat_damage(source),
+        )
+    }
+
     #[test]
     fn test_display() {
         let trigger =
@@ -143,7 +153,7 @@ mod tests {
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let first_event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(attacker_one, DamageTarget::Player(bob), 2, true),
+            combat_damage(attacker_one, bob),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&first_event, &ctx));
@@ -151,7 +161,7 @@ mod tests {
         game.record_combat_damage_player_batch_hit(attacker_one, bob);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let second_event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(attacker_two, DamageTarget::Player(bob), 2, true),
+            combat_damage(attacker_two, bob),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&second_event, &ctx));
@@ -177,13 +187,13 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let hits_charlie = TriggerEvent::new_with_provenance(
-            DamageEvent::new(attacker, DamageTarget::Player(charlie), 2, true),
+            combat_damage(attacker, charlie),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&hits_charlie, &ctx));
 
         let hits_alice = TriggerEvent::new_with_provenance(
-            DamageEvent::new(attacker, DamageTarget::Player(alice), 2, true),
+            combat_damage(attacker, alice),
             crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&hits_alice, &ctx));

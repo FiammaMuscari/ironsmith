@@ -30,15 +30,17 @@ function SheetPortal({
 
 function SheetOverlay({
   className,
+  style,
   ...props
 }) {
   return (
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 bg-black/50",
         className
       )}
+      style={{ zIndex: 1000, ...style }}
       {...props} />
   );
 }
@@ -48,25 +50,40 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  style,
   ...props
 }) {
+  const centeredStyle = side === "center"
+    ? {
+      left: "50%",
+      top: "50%",
+      width: "96vw",
+      maxWidth: "1120px",
+      maxHeight: "92vh",
+      transform: "translate3d(-50%, -50%, 0)",
+    }
+    : null;
+
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500",
+          "fixed flex flex-col gap-4 bg-background shadow-lg",
           side === "right" &&
-            "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
+            "inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm",
           side === "left" &&
-            "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
+            "inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm",
           side === "top" &&
-            "inset-x-0 top-0 h-auto border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
+            "inset-x-0 top-0 h-auto border-b",
           side === "bottom" &&
-            "inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+            "inset-x-0 bottom-0 h-auto border-t",
+          side === "center" &&
+            "border",
           className
         )}
+        style={centeredStyle ? { zIndex: 1001, ...centeredStyle, ...style } : { zIndex: 1001, ...style }}
         {...props}>
         {children}
         {showCloseButton && (

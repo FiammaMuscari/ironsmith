@@ -43,11 +43,12 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 source_id,
                 DamageTarget::Player(bob),
                 3,
                 true, // is_combat
+                crate::events::cause::EventCause::combat_damage(source_id),
             ),
             crate::provenance::ProvNodeId::default(),
         );
@@ -66,11 +67,12 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let event = TriggerEvent::new_with_provenance(
-            DamageEvent::new(
+            DamageEvent::with_cause(
                 source_id,
                 DamageTarget::Player(bob),
                 3,
                 false, // is_combat = false
+                crate::events::cause::EventCause::effect(),
             ),
             crate::provenance::ProvNodeId::default(),
         );
