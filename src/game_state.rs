@@ -4946,12 +4946,10 @@ mod tests {
             .power_toughness(PowerToughness::fixed(1, 1))
             .build();
         let source_id = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
-        let land_id = game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
+        let land_id =
+            game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
 
-        let effect = Effect::new(EarthbendEffect::new(
-            ChooseSpec::SpecificObject(land_id),
-            8,
-        ));
+        let effect = Effect::new(EarthbendEffect::new(ChooseSpec::SpecificObject(land_id), 8));
         let mut ctx = ExecutionContext::new_default(source_id, alice);
         execute_effect(&mut game, &effect, &mut ctx).expect("earthbend should resolve");
 
@@ -4983,12 +4981,10 @@ mod tests {
             .power_toughness(PowerToughness::fixed(1, 1))
             .build();
         let source_id = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
-        let land_id = game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
+        let land_id =
+            game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
 
-        let effect = Effect::new(EarthbendEffect::new(
-            ChooseSpec::SpecificObject(land_id),
-            8,
-        ));
+        let effect = Effect::new(EarthbendEffect::new(ChooseSpec::SpecificObject(land_id), 8));
         let mut ctx = ExecutionContext::new_default(source_id, alice);
         execute_effect(&mut game, &effect, &mut ctx).expect("earthbend should resolve");
 

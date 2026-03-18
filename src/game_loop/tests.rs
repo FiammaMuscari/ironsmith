@@ -453,6 +453,97 @@ fn emrakul_cast_trigger_prompts_for_opponent_in_four_player_game() {
 }
 
 #[test]
+fn emrakul_cast_trigger_prompt_does_not_autofill_or_stack_before_choice() {
+    #[derive(Debug, Default)]
+    struct PromptOnlyDecisionMaker {
+        targets_ctx: Option<crate::decisions::context::TargetsContext>,
+    }
+
+    impl DecisionMaker for PromptOnlyDecisionMaker {
+        fn awaiting_choice(&self) -> bool {
+            self.targets_ctx.is_some()
+        }
+
+        fn decide_targets(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::TargetsContext,
+        ) -> Vec<Target> {
+            self.targets_ctx = Some(ctx.clone());
+            Vec::new()
+        }
+    }
+
+    let mut game = GameState::new(
+        vec![
+            "Alice".to_string(),
+            "Bob".to_string(),
+            "Charlie".to_string(),
+            "Dana".to_string(),
+        ],
+        20,
+    );
+    let mut trigger_queue = TriggerQueue::new();
+    let mut dm = PromptOnlyDecisionMaker::default();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+    let charlie = PlayerId::from_index(2);
+    let dana = PlayerId::from_index(3);
+
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+
+    let emrakul_id =
+        game.create_object_from_definition(&emrakul_the_promised_end(), alice, Zone::Stack);
+    let (emrakul_stable_id, emrakul_name) = game
+        .object(emrakul_id)
+        .map(|object| (object.stable_id, object.name.clone()))
+        .expect("Emrakul spell object should exist");
+    game.push_to_stack(
+        StackEntry::new(emrakul_id, alice).with_source_info(emrakul_stable_id, emrakul_name),
+    );
+
+    let event = TriggerEvent::new_with_provenance(
+        SpellCastEvent::new(emrakul_id, alice, Zone::Hand),
+        crate::provenance::ProvNodeId::default(),
+    );
+    queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
+
+    put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+        .expect("Emrakul trigger prompt should not fail");
+
+    let targets_ctx = dm
+        .targets_ctx
+        .expect("Emrakul trigger should request target selection");
+    let legal_players: Vec<PlayerId> = targets_ctx.requirements[0]
+        .legal_targets
+        .iter()
+        .filter_map(|target| match target {
+            Target::Player(player) => Some(*player),
+            Target::Object(_) => None,
+        })
+        .collect();
+
+    assert_eq!(
+        legal_players,
+        vec![bob, charlie, dana],
+        "all opponents should remain legal Emrakul targets while the prompt is open"
+    );
+    assert_eq!(
+        game.stack.len(),
+        1,
+        "the trigger should not be pushed until the player actually chooses a target"
+    );
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "the unresolved trigger should stay queued while waiting for player input"
+    );
+}
+
+#[test]
 fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_triggers() {
     use crate::ability::TriggeredAbility;
     use crate::events::phase::BeginningOfUpkeepEvent;
@@ -2549,7 +2640,10 @@ fn test_earthbent_land_deals_combat_damage_using_counter_boosted_power() {
 
     let events = execute_combat_damage_step(&mut game, &combat, false);
     assert_eq!(events.len(), 1, "earthbent land should deal combat damage");
-    assert_eq!(events[0].amount, 8, "earthbent land should hit for 8 damage");
+    assert_eq!(
+        events[0].amount, 8,
+        "earthbent land should hit for 8 damage"
+    );
     assert_eq!(
         game.player(bob).unwrap().life,
         12,

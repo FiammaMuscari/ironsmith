@@ -121,20 +121,64 @@ pub fn put_triggers_on_stack_with_dm(
         }
     }
 
-    for controller in controller_order {
+    for (controller_index, controller) in controller_order.iter().copied().enumerate() {
         let Some(triggers) = grouped.remove(&controller) else {
             continue;
         };
         let ordered = order_triggers_for_controller(game, decision_maker, triggers);
-        for trigger in ordered.into_iter().rev() {
+        if decision_maker.awaiting_choice() {
+            for trigger in ordered {
+                trigger_queue.add(trigger);
+            }
+            for remaining_controller in controller_order.iter().copied().skip(controller_index + 1)
+            {
+                if let Some(remaining_triggers) = grouped.remove(&remaining_controller) {
+                    for trigger in remaining_triggers {
+                        trigger_queue.add(trigger);
+                    }
+                }
+            }
+            return Ok(());
+        }
+        let ordered_for_stacking: Vec<_> = ordered.into_iter().rev().collect();
+        for (index, trigger) in ordered_for_stacking.iter().enumerate() {
             if !can_stack_trigger_this_turn(game, &trigger) {
                 continue;
             }
             if let Some(entry) =
-                create_triggered_stack_entry_with_targets(game, &trigger, decision_maker)
+                create_triggered_stack_entry_with_targets(game, trigger, decision_maker)
             {
+                if decision_maker.awaiting_choice() {
+                    for deferred in ordered_for_stacking.iter().skip(index).rev() {
+                        trigger_queue.add(deferred.clone());
+                    }
+                    for remaining_controller in
+                        controller_order.iter().copied().skip(controller_index + 1)
+                    {
+                        if let Some(remaining_triggers) = grouped.remove(&remaining_controller) {
+                            for trigger in remaining_triggers {
+                                trigger_queue.add(trigger);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 game.record_trigger_fired(trigger.source, trigger.trigger_identity);
                 game.push_to_stack(entry);
+            } else if decision_maker.awaiting_choice() {
+                for deferred in ordered_for_stacking.iter().skip(index).rev() {
+                    trigger_queue.add(deferred.clone());
+                }
+                for remaining_controller in
+                    controller_order.iter().copied().skip(controller_index + 1)
+                {
+                    if let Some(remaining_triggers) = grouped.remove(&remaining_controller) {
+                        for trigger in remaining_triggers {
+                            trigger_queue.add(trigger);
+                        }
+                    }
+                }
+                return Ok(());
             }
         }
     }
@@ -227,6 +271,9 @@ fn order_triggers_for_controller(
     )
     .into_order();
     let response = decision_maker.decide_order(game, &ctx);
+    if decision_maker.awaiting_choice() {
+        return triggers;
+    }
 
     let mut remaining: Vec<(ObjectId, TriggeredAbilityEntry)> =
         ctx.items.iter().map(|(id, _)| *id).zip(triggers).collect();
@@ -637,6 +684,10 @@ pub(super) fn create_triggered_stack_entry_with_targets(
             {
                 break;
             }
+        }
+
+        if decision_maker.awaiting_choice() {
+            return None;
         }
 
         if selected_targets.len() < count.min {

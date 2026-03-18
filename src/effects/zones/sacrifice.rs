@@ -475,12 +475,10 @@ mod tests {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
         let source_id = create_creature_on_battlefield(&mut game, "Kyoshi", alice);
-        let land_id = game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
+        let land_id =
+            game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
 
-        let effect = Effect::new(EarthbendEffect::new(
-            ChooseSpec::SpecificObject(land_id),
-            8,
-        ));
+        let effect = Effect::new(EarthbendEffect::new(ChooseSpec::SpecificObject(land_id), 8));
         let mut ctx = ExecutionContext::new_default(source_id, alice);
         execute_effect(&mut game, &effect, &mut ctx).expect("earthbend should resolve");
 

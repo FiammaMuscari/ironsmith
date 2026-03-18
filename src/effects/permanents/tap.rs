@@ -163,9 +163,14 @@ impl CostExecutableEffect for TapEffect {
         }
 
         // Check summoning sickness for creatures
-        if game.object(source).is_some() && game.current_is_creature(source) && game.is_summoning_sick(source)
+        if game.object(source).is_some()
+            && game.current_is_creature(source)
+            && game.is_summoning_sick(source)
         {
-            if !game.current_has_static_ability_id(source, crate::static_abilities::StaticAbilityId::Haste) {
+            if !game.current_has_static_ability_id(
+                source,
+                crate::static_abilities::StaticAbilityId::Haste,
+            ) {
                 return Err(CostValidationError::SummoningSickness);
             }
         }
@@ -307,12 +312,10 @@ mod tests {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
         let earthbend_source = create_creature(&mut game, "Kyoshi", alice);
-        let land_id = game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
+        let land_id =
+            game.create_object_from_definition(&basic_mountain(), alice, Zone::Battlefield);
 
-        let effect = Effect::new(EarthbendEffect::new(
-            ChooseSpec::SpecificObject(land_id),
-            8,
-        ));
+        let effect = Effect::new(EarthbendEffect::new(ChooseSpec::SpecificObject(land_id), 8));
         let mut ctx = ExecutionContext::new_default(earthbend_source, alice);
         execute_effect(&mut game, &effect, &mut ctx).expect("earthbend should resolve");
         game.set_summoning_sick(land_id);

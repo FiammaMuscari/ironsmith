@@ -3515,7 +3515,10 @@ pub fn get_convoke_creatures(
             }
             // Must not have summoning sickness (unless has haste)
             if game.is_summoning_sick(id) {
-                if !game.current_has_static_ability_id(id, crate::static_abilities::StaticAbilityId::Haste) {
+                if !game.current_has_static_ability_id(
+                    id,
+                    crate::static_abilities::StaticAbilityId::Haste,
+                ) {
                     return None;
                 }
             }
@@ -4168,6 +4171,14 @@ impl<D: DecisionMaker + ?Sized> DecisionMaker for &mut D {
         (*self).on_auto_pass(game, player)
     }
 
+    fn on_action_cancelled(&mut self, game: &GameState, reason: &str) {
+        (*self).on_action_cancelled(game, reason)
+    }
+
+    fn awaiting_choice(&self) -> bool {
+        (**self).awaiting_choice()
+    }
+
     fn decide_boolean(
         &mut self,
         game: &GameState,
@@ -4286,6 +4297,14 @@ impl<D: DecisionMaker + ?Sized> DecisionMaker for &mut D {
 impl<D: DecisionMaker + ?Sized> DecisionMaker for Box<D> {
     fn on_auto_pass(&mut self, game: &GameState, player: PlayerId) {
         (**self).on_auto_pass(game, player)
+    }
+
+    fn on_action_cancelled(&mut self, game: &GameState, reason: &str) {
+        (**self).on_action_cancelled(game, reason)
+    }
+
+    fn awaiting_choice(&self) -> bool {
+        (**self).awaiting_choice()
     }
 
     fn decide_boolean(

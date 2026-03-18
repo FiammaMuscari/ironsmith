@@ -2280,7 +2280,8 @@ impl ObjectFilter {
         }
 
         let mut adjusted_object_storage = None;
-        if allow_calculated_pt && object.zone == Zone::Battlefield
+        if allow_calculated_pt
+            && object.zone == Zone::Battlefield
             && let Some(chars) = game.calculated_characteristics(object.id)
         {
             let mut adjusted = object.clone();
@@ -2304,28 +2305,25 @@ impl ObjectFilter {
             let has_counters = object.counters.values().any(|count| *count > 0);
             let has_equipment = object.attachments.iter().any(|attachment_id| {
                 game.object(*attachment_id).is_some_and(|attachment| {
-                    let attachment_subtypes = if allow_calculated_pt
-                        && attachment.zone == Zone::Battlefield
-                    {
-                        game.calculated_subtypes(*attachment_id)
-                    } else {
-                        attachment.subtypes.clone()
-                    };
+                    let attachment_subtypes =
+                        if allow_calculated_pt && attachment.zone == Zone::Battlefield {
+                            game.calculated_subtypes(*attachment_id)
+                        } else {
+                            attachment.subtypes.clone()
+                        };
                     attachment_subtypes.contains(&Subtype::Equipment)
                 })
             });
             let has_controlled_aura = ctx.you.is_some_and(|you| {
                 object.attachments.iter().any(|attachment_id| {
                     game.object(*attachment_id).is_some_and(|attachment| {
-                        let attachment_subtypes = if allow_calculated_pt
-                            && attachment.zone == Zone::Battlefield
-                        {
-                            game.calculated_subtypes(*attachment_id)
-                        } else {
-                            attachment.subtypes.clone()
-                        };
-                        attachment.controller == you
-                            && attachment_subtypes.contains(&Subtype::Aura)
+                        let attachment_subtypes =
+                            if allow_calculated_pt && attachment.zone == Zone::Battlefield {
+                                game.calculated_subtypes(*attachment_id)
+                            } else {
+                                attachment.subtypes.clone()
+                            };
+                        attachment.controller == you && attachment_subtypes.contains(&Subtype::Aura)
                     })
                 })
             });
@@ -5522,10 +5520,7 @@ mod tests {
         let source_id = game.create_object_from_card(&source_card, you, Zone::Battlefield);
         let land_id = game.create_object_from_definition(&basic_mountain(), you, Zone::Battlefield);
 
-        let effect = Effect::new(EarthbendEffect::new(
-            ChooseSpec::SpecificObject(land_id),
-            8,
-        ));
+        let effect = Effect::new(EarthbendEffect::new(ChooseSpec::SpecificObject(land_id), 8));
         let mut exec_ctx = ExecutionContext::new_default(source_id, you);
         execute_effect(&mut game, &effect, &mut exec_ctx).expect("earthbend should resolve");
 
