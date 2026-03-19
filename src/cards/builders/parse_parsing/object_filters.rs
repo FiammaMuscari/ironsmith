@@ -2601,6 +2601,28 @@ pub(crate) fn parse_spell_filter(tokens: &[Token]) -> ObjectFilter {
             continue;
         }
         let word = words[idx];
+        if matches!(word, "face-down" | "facedown") {
+            filter.face_down = Some(true);
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "face-up" | "faceup") {
+            filter.face_down = Some(false);
+            idx += 1;
+            continue;
+        }
+        if word == "face" && idx + 1 < words.len() {
+            if words[idx + 1] == "down" {
+                filter.face_down = Some(true);
+                idx += 2;
+                continue;
+            }
+            if words[idx + 1] == "up" {
+                filter.face_down = Some(false);
+                idx += 2;
+                continue;
+            }
+        }
         if let Some(card_type) = parse_card_type(word)
             && !filter.card_types.contains(&card_type)
         {

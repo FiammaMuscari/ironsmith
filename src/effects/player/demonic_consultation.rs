@@ -35,7 +35,9 @@ impl EffectExecutor for DemonicConsultationEffect {
                          ctx: &mut ExecutionContext,
                          player: crate::ids::PlayerId|
          -> Option<crate::ids::ObjectId> {
-            let top = game.player(player).and_then(|state| state.library.last().copied())?;
+            let top = game
+                .player(player)
+                .and_then(|state| state.library.last().copied())?;
             let (new_id, final_zone) = game.move_object_with_commander_options(
                 top,
                 Zone::Exile,

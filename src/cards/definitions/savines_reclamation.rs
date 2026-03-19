@@ -35,7 +35,10 @@ mod tests {
             Some(AlternativeCastingMethod::Flashback { .. })
         ));
         assert_eq!(
-            def.spell_effect.as_ref().expect("spell effect exists").len(),
+            def.spell_effect
+                .as_ref()
+                .expect("spell effect exists")
+                .len(),
             1
         );
     }
@@ -45,9 +48,12 @@ mod tests {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let alice = PlayerId::from_index(0);
 
-        let target_id = game.create_object_from_definition(&savannah_lions(), alice, Zone::Graveyard);
-        let spell_id = game.create_object_from_definition(&savines_reclamation(), alice, Zone::Stack);
-        game.stack.push(StackEntry::new(spell_id, alice).with_targets(vec![Target::Object(target_id)]));
+        let target_id =
+            game.create_object_from_definition(&savannah_lions(), alice, Zone::Graveyard);
+        let spell_id =
+            game.create_object_from_definition(&savines_reclamation(), alice, Zone::Stack);
+        game.stack
+            .push(StackEntry::new(spell_id, alice).with_targets(vec![Target::Object(target_id)]));
 
         let mut dm = SelectFirstDecisionMaker;
         resolve_stack_entry_with(&mut game, &mut dm).expect("savine should resolve");
@@ -79,9 +85,12 @@ mod tests {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let alice = PlayerId::from_index(0);
 
-        let first_target = game.create_object_from_definition(&ornithopter(), alice, Zone::Graveyard);
-        let second_target = game.create_object_from_definition(&grizzly_bears(), alice, Zone::Graveyard);
-        let spell_id = game.create_object_from_definition(&savines_reclamation(), alice, Zone::Stack);
+        let first_target =
+            game.create_object_from_definition(&ornithopter(), alice, Zone::Graveyard);
+        let second_target =
+            game.create_object_from_definition(&grizzly_bears(), alice, Zone::Graveyard);
+        let spell_id =
+            game.create_object_from_definition(&savines_reclamation(), alice, Zone::Stack);
         game.stack.push(
             StackEntry::new(spell_id, alice)
                 .with_targets(vec![Target::Object(first_target)])

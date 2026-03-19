@@ -564,6 +564,7 @@ pub struct ActivatedAbilityCostReduction {
     pub reduction: u32,
     pub minimum_total_mana: Option<u32>,
     pub per_matching_objects: Option<ObjectFilter>,
+    pub condition: Option<ActivatedAbilityCostCondition>,
 }
 
 impl ActivatedAbilityCostReduction {
@@ -573,6 +574,7 @@ impl ActivatedAbilityCostReduction {
             reduction,
             minimum_total_mana: None,
             per_matching_objects: None,
+            condition: None,
         }
     }
 
@@ -584,6 +586,96 @@ impl ActivatedAbilityCostReduction {
     pub fn with_per_matching_objects(mut self, filter: ObjectFilter) -> Self {
         self.per_matching_objects = Some(filter);
         self
+    }
+
+    pub fn with_condition(mut self, condition: ActivatedAbilityCostCondition) -> Self {
+        self.condition = Some(condition);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActivatedAbilityCostCondition {
+    TargetsExactly { count: usize, filter: ObjectFilter },
+}
+
+fn describe_activated_ability_cost_condition(condition: &ActivatedAbilityCostCondition) -> String {
+    fn count_word(count: usize) -> String {
+        match count {
+            0 => "zero".to_string(),
+            1 => "one".to_string(),
+            2 => "two".to_string(),
+            3 => "three".to_string(),
+            4 => "four".to_string(),
+            5 => "five".to_string(),
+            6 => "six".to_string(),
+            7 => "seven".to_string(),
+            8 => "eight".to_string(),
+            9 => "nine".to_string(),
+            10 => "ten".to_string(),
+            _ => count.to_string(),
+        }
+    }
+
+    fn pluralize_filter_description(description: &str) -> String {
+        let without_article = description
+            .strip_prefix("a ")
+            .or_else(|| description.strip_prefix("an "))
+            .unwrap_or(description);
+        let Some((head, tail)) = without_article.split_once(' ') else {
+            return format!("{without_article}s");
+        };
+        format!("{head}s {tail}")
+    }
+
+    match condition {
+        ActivatedAbilityCostCondition::TargetsExactly { count, filter } => {
+            if *count == 1 {
+                format!("if it targets {}", filter.description())
+            } else {
+                format!(
+                    "if it targets {} {}",
+                    count_word(*count),
+                    pluralize_filter_description(&filter.description())
+                )
+            }
+        }
+    }
+}
+
+pub fn activated_ability_cost_condition_is_active_for_activation(
+    game: &crate::game_state::GameState,
+    source: crate::ids::ObjectId,
+    condition: &ActivatedAbilityCostCondition,
+    chosen_targets: &[crate::game_state::Target],
+) -> bool {
+    let Some(source_obj) = game.object(source) else {
+        return false;
+    };
+    let controller = source_obj.controller;
+    match condition {
+        ActivatedAbilityCostCondition::TargetsExactly { count, filter } => {
+            let opponents = game
+                .turn_order
+                .iter()
+                .copied()
+                .filter(|player_id| *player_id != controller)
+                .collect::<Vec<_>>();
+            let filter_ctx = crate::filter::FilterContext::new(controller)
+                .with_source(source)
+                .with_active_player(game.turn.active_player)
+                .with_opponents(opponents);
+            let matches = chosen_targets
+                .iter()
+                .filter(|target| match target {
+                    crate::game_state::Target::Object(object_id) => game
+                        .object(*object_id)
+                        .is_some_and(|object| filter.matches(object, &filter_ctx, game)),
+                    crate::game_state::Target::Player(_) => false,
+                })
+                .count();
+            matches == *count
+        }
     }
 }
 
@@ -604,6 +696,10 @@ impl StaticAbilityKind for ActivatedAbilityCostReduction {
         };
         if let Some(filter) = &self.per_matching_objects {
             line.push_str(&format!(" for each {}", filter.description()));
+        }
+        if let Some(condition) = &self.condition {
+            line.push(' ');
+            line.push_str(&describe_activated_ability_cost_condition(condition));
         }
         if let Some(minimum) = self.minimum_total_mana
             && minimum == 1

@@ -278,6 +278,41 @@ fn trigger_event_matches_duplication_matcher(
     matcher.matches(&entry.triggering_event, &ctx)
 }
 
+fn trigger_entry_matches_specs(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    entry: &TriggeredAbilityEntry,
+    controller: PlayerId,
+    static_source: ObjectId,
+    source_filter: Option<&ObjectFilter>,
+    event_matcher: Option<&Trigger>,
+) -> bool {
+    if let Some(filter) = source_filter
+        && !trigger_source_matches_duplication_filter(
+            game,
+            view,
+            entry,
+            controller,
+            static_source,
+            filter,
+        )
+    {
+        return false;
+    }
+    if let Some(matcher) = event_matcher
+        && !trigger_event_matches_duplication_matcher(
+            game,
+            entry,
+            controller,
+            static_source,
+            matcher,
+        )
+    {
+        return false;
+    }
+    true
+}
+
 fn additional_trigger_copies_for_entry(
     game: &GameState,
     view: &crate::derived_view::DerivedGameView<'_>,
@@ -297,27 +332,15 @@ fn additional_trigger_copies_for_entry(
             let Some(spec) = static_ability.trigger_duplication_spec() else {
                 continue;
             };
-            if let Some(filter) = spec.source_filter.as_ref()
-                && !trigger_source_matches_duplication_filter(
-                    game,
-                    view,
-                    entry,
-                    obj.controller,
-                    obj_id,
-                    filter,
-                )
-            {
-                continue;
-            }
-            if let Some(matcher) = spec.event_matcher.as_ref()
-                && !trigger_event_matches_duplication_matcher(
-                    game,
-                    entry,
-                    obj.controller,
-                    obj_id,
-                    matcher,
-                )
-            {
+            if !trigger_entry_matches_specs(
+                game,
+                view,
+                entry,
+                obj.controller,
+                obj_id,
+                spec.source_filter.as_ref(),
+                spec.event_matcher.as_ref(),
+            ) {
                 continue;
             }
             copies += spec.copies;
@@ -325,6 +348,48 @@ fn additional_trigger_copies_for_entry(
     }
 
     copies
+}
+
+fn trigger_is_suppressed(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    entry: &TriggeredAbilityEntry,
+) -> bool {
+    for &obj_id in &game.battlefield {
+        let Some(obj) = game.object(obj_id) else {
+            continue;
+        };
+        let Some(static_abilities) = view.static_abilities(obj_id) else {
+            continue;
+        };
+
+        for static_ability in static_abilities {
+            let Some(spec) = static_ability.trigger_suppression_spec() else {
+                continue;
+            };
+            if trigger_entry_matches_specs(
+                game,
+                view,
+                entry,
+                obj.controller,
+                obj_id,
+                spec.source_filter.as_ref(),
+                spec.event_matcher.as_ref(),
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn remove_suppressed_triggers(
+    game: &GameState,
+    view: &crate::derived_view::DerivedGameView<'_>,
+    triggered: &mut Vec<TriggeredAbilityEntry>,
+) {
+    triggered.retain(|entry| !trigger_is_suppressed(game, view, entry));
 }
 
 fn append_additional_trigger_copies(
@@ -711,6 +776,7 @@ pub(crate) fn check_triggers_with_view(
     }
 
     add_monarch_designation_triggers(game, trigger_event, &mut triggered);
+    remove_suppressed_triggers(game, view, &mut triggered);
     append_additional_trigger_copies(game, view, &mut triggered);
 
     triggered
@@ -844,6 +910,9 @@ pub fn check_delayed_triggers(
             !remove
         });
     }
+
+    let view = crate::derived_view::DerivedGameView::new(game);
+    remove_suppressed_triggers(game, &view, &mut triggered);
 
     triggered
 }

@@ -273,6 +273,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::EquippedCreatureTapped => {}
         Condition::EquippedCreatureUntapped => {}
         Condition::EquippedCreatureAttacking => {}
+        Condition::SourceChosenOption(..) => {}
         Condition::CountComparison { .. } => {}
         Condition::OwnsCardExiledWithCounter(..) => {}
         Condition::SourceAttackedThisTurn => {}
@@ -888,6 +889,9 @@ pub fn evaluate_condition_external(
                     .as_ref()
                     .is_some_and(|combat| crate::combat_state::is_attacking(combat, attached))
             }),
+        Condition::SourceChosenOption(expected) => game
+            .chosen_named_option(ctx.source)
+            .is_some_and(|chosen| chosen.eq_ignore_ascii_case(expected)),
         Condition::CountComparison {
             count, comparison, ..
         } => comparison.evaluate(crate::static_abilities::resolve_anthem_count_expression(
@@ -1494,6 +1498,7 @@ fn evaluate_condition_simple(
         | Condition::EquippedCreatureTapped
         | Condition::EquippedCreatureUntapped
         | Condition::EquippedCreatureAttacking
+        | Condition::SourceChosenOption(_)
         | Condition::CountComparison { .. }
         | Condition::OwnsCardExiledWithCounter(_)
         | Condition::SourceAttackedThisTurn
@@ -2347,6 +2352,9 @@ fn evaluate_condition(
                     .as_ref()
                     .is_some_and(|combat| crate::combat_state::is_attacking(combat, attached))
             })),
+        Condition::SourceChosenOption(expected) => Ok(game
+            .chosen_named_option(ctx.source)
+            .is_some_and(|chosen| chosen.eq_ignore_ascii_case(expected))),
         Condition::CountComparison {
             count, comparison, ..
         } => Ok(

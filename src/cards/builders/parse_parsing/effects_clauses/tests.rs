@@ -554,11 +554,15 @@ fn parse_line_look_top_card_any_time_uses_static_parser() {
 
 #[test]
 fn parse_line_look_top_two_cards_any_time_is_still_rejected() {
-    let err = parse_line("You may look at the top two cards of your library any time.", 0)
-        .expect_err("unsupported look-top variant should still be rejected");
+    let err = parse_line(
+        "You may look at the top two cards of your library any time.",
+        0,
+    )
+    .expect_err("unsupported look-top variant should still be rejected");
     let debug = format!("{err:?}");
     assert!(
-        debug.contains("unsupported static clause") || debug.contains("unsupported trailing look clause"),
+        debug.contains("unsupported static clause")
+            || debug.contains("unsupported trailing look clause"),
         "expected unsupported look-top diagnostic, got {debug}"
     );
 }

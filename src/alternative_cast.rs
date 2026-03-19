@@ -30,6 +30,11 @@ pub enum AlternativeCastingMethod {
     /// returns to its owner's hand at the beginning of the next end step.
     Dash { cost: ManaCost },
 
+    /// Warp - cast from hand for an alternative cost; exile it at the
+    /// beginning of the next end step, then you may cast it from exile on a
+    /// later turn.
+    Warp { cost: ManaCost },
+
     /// Plot - pay the plot cost from hand to exile the card as a special action,
     /// then cast it from exile on a later turn without paying its mana cost.
     Plot { cost: ManaCost },
@@ -140,6 +145,7 @@ impl AlternativeCastingMethod {
     pub fn cast_from_zone(&self) -> Zone {
         match self {
             Self::Dash { .. } => Zone::Hand,
+            Self::Warp { .. } => Zone::Hand,
             Self::Plot { .. } | Self::Suspend { .. } => Zone::Exile,
             Self::Flashback { .. }
             | Self::JumpStart
@@ -167,6 +173,7 @@ impl AlternativeCastingMethod {
     pub fn mana_cost(&self) -> Option<&ManaCost> {
         match self {
             Self::Dash { cost } => Some(cost),
+            Self::Warp { cost } => Some(cost),
             Self::Plot { cost } => Some(cost),
             Self::Suspend { cost, .. } => Some(cost),
             Self::Disturb { cost } => Some(cost),
@@ -251,6 +258,7 @@ impl AlternativeCastingMethod {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Dash { .. } => "Dash",
+            Self::Warp { .. } => "Warp",
             Self::Plot { .. } => "Plot",
             Self::Suspend { .. } => "Suspend",
             Self::Disturb { .. } => "Disturb",
@@ -328,6 +336,7 @@ impl AlternativeCastingMethod {
                 ..Default::default()
             },
             Self::Dash { .. }
+            | Self::Warp { .. }
             | Self::Plot { .. }
             | Self::Suspend { .. }
             | Self::Disturb { .. }
@@ -421,6 +430,11 @@ pub enum CastingMethod {
     /// Normal casting from hand with normal mana cost.
     #[default]
     Normal,
+    /// Cast a spell face down as a 2/2 creature spell for {3}.
+    ///
+    /// Used by morph/megamorph-style mechanics and any future shared face-down
+    /// cast support that follows the same rules scaffolding.
+    FaceDown,
     /// Cast the linked back half of a split card from hand.
     SplitOtherHalf,
     /// Cast both halves of a split card fused from hand.
@@ -454,7 +468,7 @@ pub enum CastingMethod {
 impl CastingMethod {
     /// Returns true if this is an alternative casting method.
     pub fn is_alternative(&self) -> bool {
-        matches!(self, Self::Alternative(_))
+        matches!(self, Self::Alternative(_) | Self::FaceDown)
     }
 
     /// Returns true if the spell should be exiled after resolution.

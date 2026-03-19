@@ -70,10 +70,10 @@ pub use cards::{
 };
 pub use combat::{
     EnterAttackingEffect, FightEffect, GoadEffect, GrantAbilitiesAllEffect,
-    GrantAbilitiesTargetEffect, ModifyPowerToughnessAllEffect, ModifyPowerToughnessEffect,
-    ModifyPowerToughnessForEachEffect, PreventAllCombatDamageFromEffect, PreventAllDamageEffect,
-    PreventAllDamageToTargetEffect, PreventDamageEffect, RemoveFromCombatEffect,
-    SetBasePowerToughnessEffect,
+    GrantAbilitiesTargetEffect, MeleeEffect, ModifyPowerToughnessAllEffect,
+    ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
+    PreventAllCombatDamageFromEffect, PreventAllDamageEffect, PreventAllDamageToTargetEffect,
+    PreventDamageEffect, RemoveFromCombatEffect, SetBasePowerToughnessEffect,
 };
 pub use composition::{
     AdaptEffect, BackupEffect, BeholdEffect, BolsterEffect, CastEncodedCardCopyEffect,
@@ -121,16 +121,15 @@ pub use permanents::{
 pub use player::{
     AdditionalLandPlaysEffect, BecomeMonarchEffect, CascadeEffect, CastSourceEffect,
     CastTaggedEffect, ChooseCardNameEffect, ChooseColorEffect, ChooseCreatureTypeEffect,
-    ChoosePlayerEffect,
-    ControlPlayerEffect, CreateEmblemEffect, DemonicConsultationEffect, DiscoverEffect,
-    EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExileUntilMatchCastEffect,
-    ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
-    ExtraTurnEffect, GrantBySpecEffect, GrantEffect, GrantPlayTaggedDuration,
-    GrantPlayTaggedEffect, GrantTaggedSpellFreeCastUntilEndOfTurnEffect,
-    GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect, PayEnergyEffect,
-    PoisonCountersEffect, SavinesReclamationEffect, SkipCombatPhasesEffect,
-    SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, TaintedPactEffect,
-    ThassasOracleEffect, WinTheGameEffect,
+    ChoosePlayerEffect, ControlPlayerEffect, CreateEmblemEffect, DemonicConsultationEffect,
+    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExileThenGrantPlayEffect,
+    ExileUntilMatchCastEffect, ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect,
+    ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantBySpecEffect, GrantEffect,
+    GrantNextSpellCostReductionEffect, GrantPlayTaggedDuration, GrantPlayTaggedEffect,
+    GrantTaggedSpellFreeCastUntilEndOfTurnEffect, GrantTaggedSpellLifeCostByManaValueEffect,
+    LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect, SavinesReclamationEffect,
+    SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
+    TaintedPactEffect, ThassasOracleEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;

@@ -26,14 +26,24 @@ use crate::target::{
 use crate::types::Subtype;
 use crate::zone::Zone;
 
-fn split_chosen_creature_type_qualifier(
-    tokens: &[Token],
-) -> Option<(Vec<Token>, bool, bool)> {
+fn split_chosen_creature_type_qualifier(tokens: &[Token]) -> Option<(Vec<Token>, bool, bool)> {
     let words = words(tokens);
     let patterns: [(&[&str], bool, bool); 5] = [
-        (&["that", "arent", "of", "the", "chosen", "type"], false, true),
-        (&["that", "aren't", "of", "the", "chosen", "type"], false, true),
-        (&["that", "are", "not", "of", "the", "chosen", "type"], false, true),
+        (
+            &["that", "arent", "of", "the", "chosen", "type"],
+            false,
+            true,
+        ),
+        (
+            &["that", "aren't", "of", "the", "chosen", "type"],
+            false,
+            true,
+        ),
+        (
+            &["that", "are", "not", "of", "the", "chosen", "type"],
+            false,
+            true,
+        ),
         (&["of", "the", "chosen", "type"], true, false),
         (&["that", "are", "of", "the", "chosen", "type"], true, false),
     ];

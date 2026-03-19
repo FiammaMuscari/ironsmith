@@ -1,8 +1,8 @@
 use crate::alternative_cast::CastingMethod;
 use crate::decisions::context::BooleanContext;
 use crate::effect::{ChoiceCount, Effect, EffectOutcome};
-use crate::effects::helpers::resolve_objects_for_effect;
 use crate::effects::EffectExecutor;
+use crate::effects::helpers::resolve_objects_for_effect;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::filter::{Comparison, ObjectFilter};
 use crate::game_state::GameState;
@@ -40,7 +40,10 @@ impl SavinesReclamationEffect {
                 .object(ctx.source)
                 .and_then(|obj| obj.alternative_casts.get(*idx))
                 .is_some_and(|method| method.cast_from_zone() == Zone::Graveyard),
-            CastingMethod::Normal | CastingMethod::SplitOtherHalf | CastingMethod::Fuse => false,
+            CastingMethod::Normal
+            | CastingMethod::FaceDown
+            | CastingMethod::SplitOtherHalf
+            | CastingMethod::Fuse => false,
         }
     }
 }
@@ -67,12 +70,13 @@ impl EffectExecutor for SavinesReclamationEffect {
                     .iter()
                     .copied()
                     .filter(|id| {
-                        game.object(*id)
-                            .is_some_and(|obj| Self::target_filter().matches(
+                        game.object(*id).is_some_and(|obj| {
+                            Self::target_filter().matches(
                                 obj,
                                 &game.filter_context_for(ctx.controller, Some(ctx.source)),
                                 game,
-                            ))
+                            )
+                        })
                     })
                     .count()
             })
@@ -94,7 +98,8 @@ impl EffectExecutor for SavinesReclamationEffect {
             return Ok(first);
         }
 
-        let copy_choice_spec = ChooseSpec::Object(Self::target_filter()).with_count(ChoiceCount::exactly(1));
+        let copy_choice_spec =
+            ChooseSpec::Object(Self::target_filter()).with_count(ChoiceCount::exactly(1));
         let chosen = resolve_objects_for_effect(game, ctx, &copy_choice_spec)?;
         let Some(chosen_id) = chosen.first().copied() else {
             return Ok(first);

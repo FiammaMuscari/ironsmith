@@ -341,6 +341,27 @@ pub(super) fn resolve_stack_entry_full(
                     ),
                     _ => false,
                 };
+                let cast_with_warp = match &entry.casting_method {
+                    CastingMethod::Alternative(idx) => matches!(
+                        obj.alternative_casts.get(*idx),
+                        Some(crate::alternative_cast::AlternativeCastingMethod::Warp { .. })
+                    ),
+                    CastingMethod::PlayFrom {
+                        use_alternative: Some(idx),
+                        zone,
+                        ..
+                    } => matches!(
+                        crate::decision::resolve_play_from_alternative_method(
+                            game,
+                            entry.controller,
+                            obj,
+                            *zone,
+                            *idx,
+                        ),
+                        Some(crate::alternative_cast::AlternativeCastingMethod::Warp { .. })
+                    ),
+                    _ => false,
+                };
                 if cast_with_dash {
                     let dash_haste = crate::effects::ApplyContinuousEffect::new(
                         crate::continuous::EffectTarget::Specific(result.new_id),
@@ -377,6 +398,29 @@ pub(super) fn resolve_stack_entry_full(
                     let _ = crate::executor::execute_effect(
                         game,
                         &crate::effect::Effect::new(return_to_hand),
+                        &mut crate::executor::ExecutionContext::new_default(
+                            result.new_id,
+                            entry.controller,
+                        ),
+                    );
+                }
+                if cast_with_warp {
+                    let exile_then_grant = crate::effects::ScheduleDelayedTriggerEffect::new(
+                        Trigger::beginning_of_end_step(crate::target::PlayerFilter::Any),
+                        vec![crate::effect::Effect::new(
+                            crate::effects::ExileThenGrantPlayEffect::new(
+                                crate::target::ChooseSpec::SpecificObject(result.new_id),
+                                crate::target::PlayerFilter::Specific(entry.controller),
+                                crate::grant::GrantDuration::Forever,
+                            ),
+                        )],
+                        true,
+                        vec![result.new_id],
+                        crate::target::PlayerFilter::Specific(entry.controller),
+                    );
+                    let _ = crate::executor::execute_effect(
+                        game,
+                        &crate::effect::Effect::new(exile_then_grant),
                         &mut crate::executor::ExecutionContext::new_default(
                             result.new_id,
                             entry.controller,
@@ -439,6 +483,7 @@ pub(super) fn resolve_stack_entry_full(
             // Check if cast with flashback/escape/jump-start/granted escape (exiles after resolution)
             let should_exile = match &entry.casting_method {
                 CastingMethod::Normal => false,
+                CastingMethod::FaceDown => false,
                 CastingMethod::SplitOtherHalf | CastingMethod::Fuse => false,
                 CastingMethod::Alternative(idx) => obj
                     .alternative_casts

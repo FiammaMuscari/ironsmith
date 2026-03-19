@@ -483,7 +483,9 @@ pub(crate) enum KeywordAction {
     Backup(u32),
     Cipher,
     Dash(ManaCost),
+    Warp(ManaCost),
     Plot(ManaCost),
+    Melee,
     Mobilize(u32),
     Suspend {
         time: u32,
@@ -737,7 +739,9 @@ impl KeywordAction {
             Self::Backup(amount) => format!("Backup {amount}"),
             Self::Cipher => "Cipher".to_string(),
             Self::Dash(cost) => format!("Dash {}", cost.to_oracle()),
+            Self::Warp(cost) => format!("Warp {}", cost.to_oracle()),
             Self::Plot(cost) => format!("Plot {}", cost.to_oracle()),
+            Self::Melee => "Melee".to_string(),
             Self::Mobilize(amount) => format!("Mobilize {amount}"),
             Self::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
             Self::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
@@ -1676,6 +1680,11 @@ pub(crate) enum EffectAst {
         count: Value,
         player: PlayerAst,
         duration: Until,
+    },
+    ReduceNextSpellCostThisTurn {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        reduction: ManaCost,
     },
     GrantPlayTaggedUntilEndOfTurn {
         tag: TagKey,
@@ -2657,7 +2666,9 @@ impl CardDefinitionBuilder {
             KeywordAction::Backup(amount) => self.backup(amount),
             KeywordAction::Cipher => self.cipher(),
             KeywordAction::Dash(cost) => self.dash(cost),
+            KeywordAction::Warp(cost) => self.warp(cost),
             KeywordAction::Plot(cost) => self.plot(cost),
+            KeywordAction::Melee => self.melee(),
             KeywordAction::Mobilize(amount) => self.mobilize(amount),
             KeywordAction::Suspend { time, cost } => self.suspend(time, cost),
             KeywordAction::Disturb(cost) => self.disturb(cost),
@@ -3336,6 +3347,20 @@ impl CardDefinitionBuilder {
                 vec![Effect::pump_all(filter, 1, 0, Until::EndOfTurn)],
             )
             .with_text("Battle cry"),
+        )
+    }
+
+    /// Add melee.
+    ///
+    /// Melee means "Whenever this creature attacks, it gets +1/+1 until end of
+    /// turn for each opponent you attacked this combat."
+    pub fn melee(self) -> Self {
+        self.with_ability(
+            Ability::triggered(
+                Trigger::this_attacks(),
+                vec![Effect::new(crate::effects::MeleeEffect::new())],
+            )
+            .with_text("Melee"),
         )
     }
 
@@ -4855,6 +4880,13 @@ impl CardDefinitionBuilder {
     pub fn dash(mut self, cost: ManaCost) -> Self {
         self.alternative_casts
             .push(AlternativeCastingMethod::Dash { cost });
+        self
+    }
+
+    /// Add warp with the given cost.
+    pub fn warp(mut self, cost: ManaCost) -> Self {
+        self.alternative_casts
+            .push(AlternativeCastingMethod::Warp { cost });
         self
     }
 
@@ -12149,8 +12181,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         );
         let debug = format!("{:?}", def.abilities);
         assert!(
-            debug.contains("RuleRestriction")
-                && debug.contains("AdditionalLandPlays(You, 2)"),
+            debug.contains("RuleRestriction") && debug.contains("AdditionalLandPlays(You, 2)"),
             "expected shared additional-land-play restriction, got {debug}"
         );
     }

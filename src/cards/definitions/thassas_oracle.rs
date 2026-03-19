@@ -35,14 +35,11 @@ mod tests {
         assert!(def.is_creature());
         assert_eq!(def.card.mana_value(), 2);
         assert_eq!(def.abilities.len(), 2);
-        assert!(def
-            .abilities
-            .iter()
-            .any(|ability| matches!(
-                &ability.kind,
-                AbilityKind::Static(static_ability)
-                    if static_ability == &StaticAbility::flying()
-            )));
+        assert!(def.abilities.iter().any(|ability| matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability == &StaticAbility::flying()
+        )));
         assert!(def.abilities.iter().any(|ability| matches!(
             &ability.kind,
             AbilityKind::Triggered(triggered)

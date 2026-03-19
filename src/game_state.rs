@@ -373,6 +373,22 @@ impl GoadEffectInstance {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TemporarySpellCostReductionEffectInstance {
+    pub player: PlayerId,
+    pub source: ObjectId,
+    pub filter: crate::target::ObjectFilter,
+    pub reduction: crate::mana::ManaCost,
+    pub remaining_uses: u32,
+    pub expires_end_of_turn: u32,
+}
+
+impl TemporarySpellCostReductionEffectInstance {
+    pub fn is_expired(&self, current_turn: u32) -> bool {
+        self.remaining_uses == 0 || current_turn > self.expires_end_of_turn
+    }
+}
+
 impl CantEffectTracker {
     /// Create a new empty tracker.
     pub fn new() -> Self {
@@ -1300,6 +1316,9 @@ pub struct GameState {
     /// Temporary mana abilities granted to players (e.g., Channel), expiring at end of turn.
     pub granted_mana_abilities: Vec<GrantedManaAbility>,
 
+    /// Temporary spell-cost reductions waiting for the next matching spell this turn.
+    pub temporary_spell_cost_reductions: Vec<TemporarySpellCostReductionEffectInstance>,
+
     /// Active restriction effects (spell/ability-based "can't" effects).
     pub restriction_effects: Vec<RestrictionEffectInstance>,
 
@@ -1335,6 +1354,9 @@ pub struct GameState {
 
     /// Chosen players for permanents ("as this enters, choose a player").
     pub chosen_players: HashMap<ObjectId, PlayerId>,
+
+    /// Chosen named options for permanents ("as this enters, choose A or B").
+    pub chosen_named_options: HashMap<ObjectId, String>,
 
     /// Regeneration shields on permanents (expires at end of turn).
     pub regeneration_shields: HashMap<ObjectId, u32>,
@@ -1451,6 +1473,7 @@ impl GameState {
             ninjutsu_attack_targets: HashMap::new(),
             combat_damage_player_batch_hits: Vec::new(),
             granted_mana_abilities: Vec::new(),
+            temporary_spell_cost_reductions: Vec::new(),
             restriction_effects: Vec::new(),
             goad_effects: Vec::new(),
             // Battlefield state extension maps
@@ -1462,6 +1485,7 @@ impl GameState {
             chosen_basic_land_types: HashMap::new(),
             chosen_creature_types: HashMap::new(),
             chosen_players: HashMap::new(),
+            chosen_named_options: HashMap::new(),
             regeneration_shields: HashMap::new(),
             monstrous: HashSet::new(),
             renowned: HashSet::new(),
@@ -1593,6 +1617,25 @@ impl GameState {
         });
     }
 
+    pub fn add_temporary_spell_cost_reduction(
+        &mut self,
+        player: PlayerId,
+        source: ObjectId,
+        filter: crate::target::ObjectFilter,
+        reduction: crate::mana::ManaCost,
+        remaining_uses: u32,
+    ) {
+        self.temporary_spell_cost_reductions
+            .push(TemporarySpellCostReductionEffectInstance {
+                player,
+                source,
+                filter,
+                reduction,
+                remaining_uses,
+                expires_end_of_turn: self.turn.turn_number,
+            });
+    }
+
     pub fn active_goaders_for(&self, creature: ObjectId) -> HashSet<PlayerId> {
         let current_turn = self.turn.turn_number;
         self.goad_effects
@@ -1618,6 +1661,12 @@ impl GameState {
         let current_turn = self.turn.turn_number;
         self.granted_mana_abilities
             .retain(|grant| grant.expires_end_of_turn > current_turn);
+    }
+
+    pub fn cleanup_temporary_spell_cost_reductions_end_of_turn(&mut self) {
+        let current_turn = self.turn.turn_number;
+        self.temporary_spell_cost_reductions
+            .retain(|effect| !effect.is_expired(current_turn));
     }
 
     /// Can the player draw any cards?
@@ -1995,6 +2044,7 @@ impl GameState {
         new_zone: Zone,
         cause: crate::events::cause::EventCause,
     ) -> Option<ObjectId> {
+        let was_face_down = self.is_face_down(old_id);
         // Capture a full pre-move snapshot for LKI-based trigger matching.
         let pre_move_snapshot = self
             .objects
@@ -2033,6 +2083,7 @@ impl GameState {
             new_object.keyword_payment_contributions_to_cast.clear();
             new_object.x_value = None;
             new_object.bestow_cast_state = None;
+            new_object.face_down_cast_state = None;
         }
 
         // Set battlefield state for new permanents
@@ -2041,6 +2092,10 @@ impl GameState {
         }
 
         self.add_object(new_object);
+
+        if old_zone == Zone::Stack && new_zone == Zone::Battlefield && was_face_down {
+            self.set_face_down(new_id);
+        }
 
         // Record entry timestamp per Rule 613.7d when entering the battlefield
         if new_zone == Zone::Battlefield {
@@ -2335,6 +2390,33 @@ impl GameState {
                         );
                         if let Some(chosen_idx) = chosen.pop().filter(|idx| *idx < options.len()) {
                             self.set_chosen_player(new_id, options[chosen_idx]);
+                        }
+                    }
+                    if let Some(spec) = static_ability.named_option_choice_as_enters() {
+                        if spec.options.is_empty() {
+                            continue;
+                        }
+                        let display_options = spec
+                            .options
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, option)| {
+                                crate::decisions::spec::DisplayOption::new(idx, option.clone())
+                            })
+                            .collect::<Vec<_>>();
+                        let choice_spec =
+                            crate::decisions::specs::ChoiceSpec::single(new_id, display_options);
+                        let mut chosen = crate::decisions::make_decision(
+                            self,
+                            decision_maker,
+                            controller,
+                            Some(new_id),
+                            choice_spec,
+                        );
+                        if let Some(chosen_idx) =
+                            chosen.pop().filter(|idx| *idx < spec.options.len())
+                        {
+                            self.set_chosen_named_option(new_id, spec.options[chosen_idx].clone());
                         }
                     }
                 }
@@ -4568,6 +4650,7 @@ impl GameState {
         self.chosen_basic_land_types.remove(&id);
         self.chosen_creature_types.remove(&id);
         self.chosen_players.remove(&id);
+        self.chosen_named_options.remove(&id);
         self.chosen_modes_by_ability
             .retain(|(source, _), _| *source != id);
         self.turn_history
@@ -4691,6 +4774,20 @@ impl GameState {
     /// Get a chosen player for a permanent, if any.
     pub fn chosen_player(&self, permanent_id: ObjectId) -> Option<PlayerId> {
         self.chosen_players.get(&permanent_id).copied()
+    }
+
+    // === Chosen named option helpers ===
+
+    /// Record a chosen named option for a permanent.
+    pub fn set_chosen_named_option(&mut self, permanent_id: ObjectId, option: String) {
+        self.chosen_named_options.insert(permanent_id, option);
+    }
+
+    /// Get a chosen named option for a permanent, if any.
+    pub fn chosen_named_option(&self, permanent_id: ObjectId) -> Option<&str> {
+        self.chosen_named_options
+            .get(&permanent_id)
+            .map(String::as_str)
     }
 
     // === Imprint helpers ===

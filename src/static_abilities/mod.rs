@@ -288,6 +288,7 @@ impl ThisSpellCastRestrictionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PregameActionKind {
     BeginOnBattlefield(PregameBeginOnBattlefieldSpec),
+    ChooseColor,
 }
 
 /// "You may begin the game with this on the battlefield" pregame action.
@@ -620,6 +621,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Returns info for "as this enters, choose <A> or <B>" abilities.
+    fn named_option_choice_as_enters(&self) -> Option<ChooseNamedOptionAsEntersSpec> {
+        None
+    }
+
     /// Returns info for "you may have this enter as a copy ..." abilities.
     fn enter_as_copy_as_enters(&self) -> Option<&EnterAsCopyAsEntersSpec> {
         None
@@ -819,6 +825,12 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Return a trigger-suppression descriptor, if this ability prevents matching
+    /// triggers from triggering.
+    fn trigger_suppression_spec(&self) -> Option<TriggerSuppressionSpec> {
+        None
+    }
+
     /// Return a "Cast this spell only ..." restriction descriptor, if any.
     fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
         None
@@ -848,6 +860,12 @@ pub struct ChooseBasicLandTypeAsEntersSpec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChooseCreatureTypeAsEntersSpec;
 
+/// Spec for "as this enters, choose <A> or <B>" abilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChooseNamedOptionAsEntersSpec {
+    pub options: Vec<String>,
+}
+
 /// Spec for "you may have this enter as a copy ..." abilities.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnterAsCopyAsEntersSpec {
@@ -863,6 +881,13 @@ pub struct TriggerDuplicationSpec {
     pub source_filter: Option<crate::target::ObjectFilter>,
     pub event_matcher: Option<crate::triggers::Trigger>,
     pub copies: usize,
+}
+
+/// Spec for static abilities that suppress matching triggered abilities.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriggerSuppressionSpec {
+    pub source_filter: Option<crate::target::ObjectFilter>,
+    pub event_matcher: Option<crate::triggers::Trigger>,
 }
 
 // Implement Clone for Box<dyn StaticAbilityKind>
@@ -913,6 +938,10 @@ impl StaticAbility {
         self.0.creature_type_choice_as_enters()
     }
 
+    pub fn named_option_choice_as_enters(&self) -> Option<ChooseNamedOptionAsEntersSpec> {
+        self.0.named_option_choice_as_enters()
+    }
+
     pub fn enter_as_copy_as_enters(&self) -> Option<&EnterAsCopyAsEntersSpec> {
         self.0.enter_as_copy_as_enters()
     }
@@ -927,6 +956,10 @@ impl StaticAbility {
 
     pub fn trigger_duplication_spec(&self) -> Option<TriggerDuplicationSpec> {
         self.0.trigger_duplication_spec()
+    }
+
+    pub fn trigger_suppression_spec(&self) -> Option<TriggerSuppressionSpec> {
+        self.0.trigger_suppression_spec()
     }
 
     pub fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
@@ -1382,6 +1415,10 @@ impl StaticAbility {
 
     pub fn partner() -> Self {
         Self::new(Partner)
+    }
+
+    pub fn doctors_companion() -> Self {
+        Self::new(DoctorsCompanion)
     }
 
     pub fn assist() -> Self {
@@ -1866,6 +1903,20 @@ impl StaticAbility {
         Self::new(ability)
     }
 
+    pub fn reduce_activated_ability_costs_if_targets(
+        filter: crate::target::ObjectFilter,
+        reduction: u32,
+        condition: crate::static_abilities::cost_modifiers::ActivatedAbilityCostCondition,
+        minimum_total_mana: Option<u32>,
+    ) -> Self {
+        let mut ability =
+            ActivatedAbilityCostReduction::new(filter, reduction).with_condition(condition);
+        if let Some(minimum) = minimum_total_mana {
+            ability = ability.with_minimum_total_mana(minimum);
+        }
+        Self::new(ability)
+    }
+
     pub fn reduce_activated_ability_costs_for_each(
         filter: crate::target::ObjectFilter,
         reduction: u32,
@@ -1945,6 +1996,10 @@ impl StaticAbility {
         Self::new(ChooseCreatureTypeAsEnters::new(display))
     }
 
+    pub fn choose_named_option_as_enters(options: Vec<String>, display: String) -> Self {
+        Self::new(ChooseNamedOptionAsEnters::new(options, display))
+    }
+
     pub fn with_enter_as_copy_as_enters(spec: EnterAsCopyAsEntersSpec, display: String) -> Self {
         Self::new(EnterAsCopyAsEnters::new(spec, display))
     }
@@ -1955,6 +2010,10 @@ impl StaticAbility {
 
     pub fn add_chosen_creature_type(filter: crate::target::ObjectFilter, display: String) -> Self {
         Self::new(AddChosenCreatureTypeForFilter::new(filter, display))
+    }
+
+    pub fn set_chosen_color(filter: crate::target::ObjectFilter, display: String) -> Self {
+        Self::new(SetChosenColorForFilter::new(filter, display))
     }
 
     pub fn redirect_damage_from_you_and_other_permanents_to_source() -> Self {
@@ -1994,13 +2053,28 @@ impl StaticAbility {
             _ => format!("You may play {count} additional lands on each of your turns."),
         };
         Self::restriction(
-            crate::effect::Restriction::additional_land_plays(crate::target::PlayerFilter::You, count),
+            crate::effect::Restriction::additional_land_plays(
+                crate::target::PlayerFilter::You,
+                count,
+            ),
             display,
         )
     }
 
     pub fn creatures_entering_dont_cause_abilities_to_trigger() -> Self {
         Self::new(CreaturesEnteringDontCauseAbilitiesToTrigger)
+    }
+
+    pub fn suppress_matching_triggered_abilities(
+        source_filter: Option<crate::target::ObjectFilter>,
+        event_matcher: Option<crate::triggers::Trigger>,
+        display: String,
+    ) -> Self {
+        Self::new(SuppressMatchingTriggeredAbilities::new(
+            source_filter,
+            event_matcher,
+            display,
+        ))
     }
 
     pub fn other_chosen_type_creature_triggered_abilities_trigger_additional_time(

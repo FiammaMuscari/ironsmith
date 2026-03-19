@@ -2269,6 +2269,7 @@ impl ObjectFilter {
                 };
                 let cast_from_zone = match &entry.casting_method {
                     crate::alternative_cast::CastingMethod::Normal => Zone::Hand,
+                    crate::alternative_cast::CastingMethod::FaceDown => Zone::Hand,
                     crate::alternative_cast::CastingMethod::SplitOtherHalf
                     | crate::alternative_cast::CastingMethod::Fuse => Zone::Hand,
                     crate::alternative_cast::CastingMethod::Alternative(index) => object

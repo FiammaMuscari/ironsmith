@@ -1102,6 +1102,32 @@ pub(super) fn apply_targets_response(
         pending.chosen_target_assignments.extend(assignments);
         pending.remaining_requirements.clear();
 
+        if let Some(ability) = game.current_ability(pending.source, pending.ability_index)
+            && let crate::ability::AbilityKind::Activated(activated) = &ability.kind
+        {
+            let repriced =
+                crate::decision::calculate_effective_activation_total_cost_with_chosen_targets(
+                    game,
+                    pending.activator,
+                    pending.source,
+                    &activated.mana_cost,
+                    &pending.chosen_targets,
+                );
+            pending.mana_cost_to_pay = None;
+            pending.remaining_cost_steps.clear();
+            crate::game_loop::priority_state::append_activation_cost_steps_from_components(
+                repriced.costs(),
+                &mut pending.remaining_cost_steps,
+            );
+            for cost_component in repriced.costs() {
+                if let crate::costs::CostProcessingMode::ManaPayment { cost } =
+                    cost_component.processing_mode()
+                {
+                    pending.mana_cost_to_pay = Some(cost);
+                }
+            }
+        }
+
         pending.stage = stage_after_activation_announcements(&pending);
 
         return continue_activation(game, trigger_queue, state, pending, decision_maker);

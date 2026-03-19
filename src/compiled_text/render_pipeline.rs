@@ -58,6 +58,9 @@ pub(super) fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
             AlternativeCastingMethod::Plot { cost } => {
                 out.push(format!("Plot {}", cost.to_oracle()));
             }
+            AlternativeCastingMethod::Warp { cost } => {
+                out.push(format!("Warp {}", cost.to_oracle()));
+            }
             AlternativeCastingMethod::Suspend { cost, time } => {
                 out.push(format!("Suspend {time}—{}", cost.to_oracle()));
             }

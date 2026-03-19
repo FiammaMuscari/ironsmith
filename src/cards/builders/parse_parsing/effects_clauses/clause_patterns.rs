@@ -1,3 +1,4 @@
+use super::verb_handlers::parse_counter_target_phrase;
 use crate::cards::builders::parse_parsing::merge_spell_filters;
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -337,8 +338,7 @@ pub(crate) fn parse_permission_clause_spec(
                 };
                 let subject_tokens =
                     trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
-                let Some(spell_filter) =
-                    parse_permission_subject_filter_tokens(&subject_tokens)?
+                let Some(spell_filter) = parse_permission_subject_filter_tokens(&subject_tokens)?
                 else {
                     return Ok(None);
                 };
@@ -402,12 +402,34 @@ pub(crate) fn parse_permission_clause_spec(
         }
 
         let flash_tail_specs: &[(&[&str], PermissionLifetime)] = &[
-            (&["as", "though", "they", "had", "flash"], PermissionLifetime::Static),
-            (&["as", "though", "they", "have", "flash"], PermissionLifetime::Static),
-            (&["this", "turn", "as", "though", "they", "had", "flash"], PermissionLifetime::ThisTurn),
-            (&["this", "turn", "as", "though", "they", "have", "flash"], PermissionLifetime::ThisTurn),
-            (&["until", "end", "of", "turn", "as", "though", "they", "had", "flash"], PermissionLifetime::UntilEndOfTurn),
-            (&["until", "the", "end", "of", "turn", "as", "though", "they", "had", "flash"], PermissionLifetime::UntilEndOfTurn),
+            (
+                &["as", "though", "they", "had", "flash"],
+                PermissionLifetime::Static,
+            ),
+            (
+                &["as", "though", "they", "have", "flash"],
+                PermissionLifetime::Static,
+            ),
+            (
+                &["this", "turn", "as", "though", "they", "had", "flash"],
+                PermissionLifetime::ThisTurn,
+            ),
+            (
+                &["this", "turn", "as", "though", "they", "have", "flash"],
+                PermissionLifetime::ThisTurn,
+            ),
+            (
+                &[
+                    "until", "end", "of", "turn", "as", "though", "they", "had", "flash",
+                ],
+                PermissionLifetime::UntilEndOfTurn,
+            ),
+            (
+                &[
+                    "until", "the", "end", "of", "turn", "as", "though", "they", "had", "flash",
+                ],
+                PermissionLifetime::UntilEndOfTurn,
+            ),
         ];
         for (tail, lifetime) in flash_tail_specs {
             if rest.len() <= tail.len() || !rest.ends_with(tail) {
@@ -512,7 +534,10 @@ fn parse_permission_subject_filter_tokens(
     }
 
     for separator in ["and", "or"] {
-        let Some(split_idx) = filter_tokens.iter().position(|token| token.is_word(separator)) else {
+        let Some(split_idx) = filter_tokens
+            .iter()
+            .position(|token| token.is_word(separator))
+        else {
             continue;
         };
         let left_tokens = trim_commas(&filter_tokens[..split_idx]);
@@ -1428,7 +1453,11 @@ pub(crate) fn parse_copy_spell_clause(
         }
         return Ok(Some(base));
     }
-    if !clause_words.contains(&"spell") && !clause_words.contains(&"spells") {
+    if !clause_words.contains(&"spell")
+        && !clause_words.contains(&"spells")
+        && !clause_words.contains(&"ability")
+        && !clause_words.contains(&"abilities")
+    {
         return Ok(None);
     }
 
@@ -1481,7 +1510,7 @@ pub(crate) fn parse_copy_spell_clause(
     {
         TargetAst::Source(None)
     } else {
-        parse_target_phrase(&copy_target_tokens)?
+        parse_counter_target_phrase(&copy_target_tokens)?
     };
 
     let mut may_choose_new_targets = false;

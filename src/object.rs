@@ -256,6 +256,25 @@ pub struct BestowCastState {
     pub spell_effect: Option<Vec<crate::effect::Effect>>,
 }
 
+/// Stored copiable fields needed to restore a card after a face-down cast.
+#[derive(Debug, Clone)]
+pub struct FaceDownCastState {
+    pub name: String,
+    pub mana_cost: Option<ManaCost>,
+    pub color_override: Option<ColorSet>,
+    pub supertypes: Vec<Supertype>,
+    pub card_types: Vec<CardType>,
+    pub subtypes: Vec<Subtype>,
+    pub oracle_text: String,
+    pub base_power: Option<PtValue>,
+    pub base_toughness: Option<PtValue>,
+    pub base_loyalty: Option<u32>,
+    pub base_defense: Option<u32>,
+    pub abilities: Vec<Ability>,
+    pub spell_effect: Option<Vec<crate::effect::Effect>>,
+    pub aura_attach_filter: Option<crate::target::ObjectFilter>,
+}
+
 /// Runtime representation of a game object.
 /// Contains both copiable values (layer 1) and non-copiable state.
 #[derive(Debug, Clone)]
@@ -311,6 +330,8 @@ pub struct Object {
     pub aura_attach_filter: Option<crate::target::ObjectFilter>,
     /// Original copiable fields to restore if this permanent ends bestow.
     pub bestow_cast_state: Option<BestowCastState>,
+    /// Original copiable fields to restore if this card was cast face down.
+    pub face_down_cast_state: Option<FaceDownCastState>,
     /// Alternative casting methods (flashback, escape, etc.)
     pub alternative_casts: Vec<AlternativeCastingMethod>,
     /// True if this split card can be cast fused from hand.
@@ -399,6 +420,7 @@ impl Object {
             spell_effect: None,
             aura_attach_filter: None,
             bestow_cast_state: None,
+            face_down_cast_state: None,
             alternative_casts: Vec::new(),
             has_fuse: false,
             optional_costs: Vec::new(),
@@ -423,6 +445,7 @@ impl Object {
         obj.spell_effect = def.spell_effect.clone();
         obj.aura_attach_filter = def.aura_attach_filter.clone();
         obj.bestow_cast_state = None;
+        obj.face_down_cast_state = None;
         obj.alternative_casts = def.alternative_casts.clone();
         obj.has_fuse = def.has_fuse;
         obj.optional_costs = def.optional_costs.clone();
@@ -461,6 +484,7 @@ impl Object {
         self.spell_effect = def.spell_effect.clone();
         self.aura_attach_filter = def.aura_attach_filter.clone();
         self.bestow_cast_state = None;
+        self.face_down_cast_state = None;
         self.alternative_casts = def.alternative_casts.clone();
         self.has_fuse = def.has_fuse;
         self.optional_costs = def.optional_costs.clone();
@@ -591,6 +615,7 @@ impl Object {
             spell_effect: None,
             aura_attach_filter: None,
             bestow_cast_state: None,
+            face_down_cast_state: None,
             alternative_casts: Vec::new(),
             has_fuse: false,
             optional_costs: Vec::new(),
@@ -639,6 +664,7 @@ impl Object {
             spell_effect: source.spell_effect.clone(),
             aura_attach_filter: source.aura_attach_filter.clone(),
             bestow_cast_state: source.bestow_cast_state.clone(),
+            face_down_cast_state: source.face_down_cast_state.clone(),
             // Alternative casts are copiable (though tokens rarely use them)
             alternative_casts: source.alternative_casts.clone(),
             has_fuse: source.has_fuse,
@@ -700,6 +726,7 @@ impl Object {
             spell_effect: None,
             aura_attach_filter: snapshot.aura_attach_filter.clone(),
             bestow_cast_state: None,
+            face_down_cast_state: None,
             alternative_casts: Vec::new(),
             has_fuse: false,
             optional_costs: Vec::new(),
@@ -756,6 +783,7 @@ impl Object {
             spell_effect: None,
             aura_attach_filter: None,
             bestow_cast_state: None,
+            face_down_cast_state: None,
             alternative_casts: Vec::new(),
             has_fuse: false,
             optional_costs: Vec::new(),
@@ -854,6 +882,76 @@ impl Object {
         self.subtypes = restore.subtypes;
         self.aura_attach_filter = restore.aura_attach_filter;
         self.spell_effect = restore.spell_effect;
+        true
+    }
+
+    /// Apply the shared face-down cast overlay used by morph-style casting.
+    pub fn apply_face_down_cast_overlay(&mut self) -> bool {
+        if self.face_down_cast_state.is_some() {
+            return false;
+        }
+
+        self.face_down_cast_state = Some(FaceDownCastState {
+            name: self.name.clone(),
+            mana_cost: self.mana_cost.clone(),
+            color_override: self.color_override,
+            supertypes: self.supertypes.clone(),
+            card_types: self.card_types.clone(),
+            subtypes: self.subtypes.clone(),
+            oracle_text: self.oracle_text.clone(),
+            base_power: self.base_power,
+            base_toughness: self.base_toughness,
+            base_loyalty: self.base_loyalty,
+            base_defense: self.base_defense,
+            abilities: self.abilities.clone(),
+            spell_effect: self.spell_effect.clone(),
+            aura_attach_filter: self.aura_attach_filter.clone(),
+        });
+
+        self.name = "Face-down creature".to_string();
+        self.mana_cost = None;
+        self.color_override = Some(ColorSet::COLORLESS);
+        self.supertypes.clear();
+        self.card_types = vec![CardType::Creature];
+        self.subtypes.clear();
+        self.oracle_text.clear();
+        self.base_power = Some(PtValue::Fixed(2));
+        self.base_toughness = Some(PtValue::Fixed(2));
+        self.base_loyalty = None;
+        self.base_defense = None;
+        self.abilities.retain(|ability| {
+            matches!(
+                &ability.kind,
+                crate::ability::AbilityKind::Static(static_ability)
+                    if static_ability.turn_face_up_cost().is_some()
+            )
+        });
+        self.spell_effect = None;
+        self.aura_attach_filter = None;
+        self.bestow_cast_state = None;
+        true
+    }
+
+    /// End the shared face-down cast overlay and restore printed characteristics.
+    pub fn end_face_down_cast_overlay(&mut self) -> bool {
+        let Some(restore) = self.face_down_cast_state.take() else {
+            return false;
+        };
+
+        self.name = restore.name;
+        self.mana_cost = restore.mana_cost;
+        self.color_override = restore.color_override;
+        self.supertypes = restore.supertypes;
+        self.card_types = restore.card_types;
+        self.subtypes = restore.subtypes;
+        self.oracle_text = restore.oracle_text;
+        self.base_power = restore.base_power;
+        self.base_toughness = restore.base_toughness;
+        self.base_loyalty = restore.base_loyalty;
+        self.base_defense = restore.base_defense;
+        self.abilities = restore.abilities;
+        self.spell_effect = restore.spell_effect;
+        self.aura_attach_filter = restore.aura_attach_filter;
         true
     }
 
@@ -1250,6 +1348,7 @@ impl Object {
             spell_effect: def.spell_effect.clone(),
             aura_attach_filter: def.aura_attach_filter.clone(),
             bestow_cast_state: None,
+            face_down_cast_state: None,
             alternative_casts: def.alternative_casts.clone(),
             has_fuse: def.has_fuse,
             optional_costs: def.optional_costs.clone(),

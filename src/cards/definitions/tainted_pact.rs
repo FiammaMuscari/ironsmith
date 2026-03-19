@@ -54,7 +54,10 @@ mod tests {
         assert!(def.card.is_instant());
         assert_eq!(def.card.mana_value(), 2);
         assert_eq!(
-            def.spell_effect.as_ref().expect("spell effect exists").len(),
+            def.spell_effect
+                .as_ref()
+                .expect("spell effect exists")
+                .len(),
             1
         );
     }

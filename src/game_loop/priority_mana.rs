@@ -2733,6 +2733,7 @@ pub(super) fn propose_spell_cast(
         _ => None,
     });
 
+    let mut mark_face_down = false;
     if let Some(obj) = game.object_mut(new_id) {
         obj.controller = caster;
 
@@ -2762,6 +2763,10 @@ pub(super) fn propose_spell_cast(
         }
 
         match casting_method {
+            CastingMethod::FaceDown => {
+                obj.apply_face_down_cast_overlay();
+                mark_face_down = true;
+            }
             CastingMethod::SplitOtherHalf => {
                 let other_def = crate::cards::linked_face_definition_by_name_or_id(
                     obj.other_face_name.as_deref(),
@@ -2790,6 +2795,10 @@ pub(super) fn propose_spell_cast(
         }
 
         obj.ensure_aura_cast_spell_effect();
+    }
+
+    if mark_face_down {
+        game.set_face_down(new_id);
     }
 
     Ok(new_id)
@@ -2857,7 +2866,9 @@ pub(super) fn finalize_spell_cast(
                 from_zone,
             );
             match &casting_method {
-                CastingMethod::Normal => (base_mana_cost, crate::cost::TotalCost::free(), None),
+                CastingMethod::Normal | CastingMethod::FaceDown => {
+                    (base_mana_cost, crate::cost::TotalCost::free(), None)
+                }
                 CastingMethod::SplitOtherHalf | CastingMethod::Fuse => {
                     (base_mana_cost, crate::cost::TotalCost::free(), None)
                 }
@@ -3012,13 +3023,50 @@ pub(super) fn finalize_spell_cast(
         .with_chosen_modes(chosen_modes)
         .with_tagged_objects(stack_entry_tagged_objects)
         .with_keyword_payment_contributions(keyword_payment_contributions);
-    if let Some(spell_obj) = game.object(new_id) {
+    if let Some(spell_obj) = game.object(new_id).cloned() {
         entry = entry.with_source_info(spell_obj.stable_id, spell_obj.name.clone());
     }
     if let Some(x) = x_value {
         entry = entry.with_x(x);
     }
     game.push_to_stack(entry);
+
+    if let Some(spell_obj) = game.object(new_id).cloned() {
+        let current_turn = game.turn.turn_number;
+        let ctx = crate::filter::FilterContext::new(caster)
+            .with_source(new_id)
+            .with_active_player(game.turn.active_player)
+            .with_opponents(
+                game.turn_order
+                    .iter()
+                    .copied()
+                    .filter(|player_id| *player_id != caster)
+                    .collect(),
+            )
+            .with_caster(Some(caster));
+        let matching_effects = game
+            .temporary_spell_cost_reductions
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, effect)| {
+                if effect.player != caster || effect.is_expired(current_turn) {
+                    return None;
+                }
+                let mut cast_filter = effect.filter.clone();
+                cast_filter.targets_player = None;
+                cast_filter.targets_object = None;
+                cast_filter.alternative_cast = None;
+                cast_filter.matches(&spell_obj, &ctx, game).then_some(idx)
+            })
+            .collect::<Vec<_>>();
+        for idx in matching_effects {
+            if let Some(effect) = game.temporary_spell_cost_reductions.get_mut(idx)
+                && effect.remaining_uses > 0
+            {
+                effect.remaining_uses -= 1;
+            }
+        }
+    }
     queue_becomes_targeted_events(
         game,
         trigger_queue,

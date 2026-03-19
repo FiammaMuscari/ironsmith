@@ -1,7 +1,8 @@
+use crate::cards::builders::ability_lowering::parsed_triggered_ability;
 use crate::cards::builders::{
     AdditionalCostChoiceOptionAst, CardTextError, ClauseView, EffectAst, IT_TAG, KeywordAction,
-    LineAst, ParsedAbility, PlayerAst, RULE_SHAPE_HAS_COLON, RuleDef, RuleIndex, StaticAbilityAst,
-    Token, TriggerSpec, UnsupportedDiagnoser, UnsupportedRuleDef,
+    LineAst, ParsedAbility, PlayerAst, RULE_SHAPE_HAS_COLON, ReferenceImports, RuleDef, RuleIndex,
+    StaticAbilityAst, Token, TriggerSpec, UnsupportedDiagnoser, UnsupportedRuleDef,
     dash_labeled_remainder_starts_with_trigger, find_verb,
     is_non_mana_additional_cost_modifier_line, is_untap_during_each_other_players_untap_step_words,
     leading_mana_symbols_to_oracle, parse_ability_line, parse_activated_line,
@@ -11,11 +12,12 @@ use crate::cards::builders::{
     parse_escape_line, parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line,
     parse_level_up_line, parse_loyalty_shorthand_activation_cost, parse_madness_line,
     parse_mana_symbol, parse_mana_symbol_group, parse_morph_keyword_line, parse_multikicker_line,
-    parse_offspring_line, parse_permission_clause_spec, parse_reinforce_line, parse_saga_chapter_prefix,
-    parse_scryfall_mana_cost, parse_squad_line, parse_static_ability_ast_line,
-    parse_this_spell_cost_condition, parse_transmute_line, parse_triggered_line, parser_trace,
-    parser_trace_line, split_on_or, starts_with_until_end_of_turn, tokenize_line, trim_commas,
-    unsupported_rule_error_for_view, words,
+    parse_offspring_line, parse_permission_clause_spec, parse_reinforce_line,
+    parse_saga_chapter_prefix, parse_scryfall_mana_cost, parse_squad_line,
+    parse_static_ability_ast_line, parse_this_spell_cost_condition, parse_transmute_line,
+    parse_triggered_line, parser_trace, parser_trace_line, split_on_or,
+    starts_with_until_end_of_turn, tokenize_line, trim_commas, unsupported_rule_error_for_view,
+    words,
 };
 use crate::costs::Cost;
 use crate::{AlternativeCastingMethod, OptionalCost, TotalCost};
@@ -903,7 +905,13 @@ fn parse_first_alternative_cast_rule(
         parse_madness_line(view.tokens)
     }
 
-    const RULES: [RuleDef<AlternativeCastingMethod>; 7] = [
+    fn parse_warp_rule(
+        view: &ClauseView<'_>,
+    ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+        parse_warp_line(view.tokens)
+    }
+
+    const RULES: [RuleDef<AlternativeCastingMethod>; 8] = [
         RuleDef {
             id: "if-conditional-alternative-cost",
             priority: 100,
@@ -952,6 +960,13 @@ fn parse_first_alternative_cast_rule(
             heads: &["madness"],
             shape_mask: 0,
             run: parse_madness_rule,
+        },
+        RuleDef {
+            id: "warp",
+            priority: 170,
+            heads: &["warp"],
+            shape_mask: 0,
+            run: parse_warp_rule,
         },
     ];
     let view = ClauseView::from_line(line, line, line, tokens, 0);
@@ -1651,6 +1666,36 @@ fn parse_static_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, Card
     {
         return Ok(None);
     }
+    if let Some(raw) = view.raw {
+        let trimmed = raw.trim();
+        let labeled = trimmed
+            .split_once('—')
+            .map(|(label, rest)| (label.trim(), rest.trim()))
+            .or_else(|| {
+                trimmed
+                    .split_once(" - ")
+                    .map(|(label, rest)| (label.trim(), rest.trim()))
+            });
+        if let Some((label, rest)) = labeled
+            && !label.is_empty()
+            && !rest.is_empty()
+        {
+            let remainder_tokens = tokenize_line(rest, view.line_index.unwrap_or(0));
+            if let Some(abilities) = parse_static_ability_ast_line(&remainder_tokens)? {
+                let condition =
+                    crate::ConditionExpr::SourceChosenOption(label.to_ascii_lowercase());
+                let wrapped = abilities
+                    .into_iter()
+                    .map(|ability| StaticAbilityAst::ConditionalStaticAbility {
+                        ability: Box::new(ability),
+                        condition: condition.clone(),
+                    })
+                    .collect();
+                parser_trace("parse_line:branch=static-dash-labeled", view.tokens);
+                return Ok(Some(line_ast_from_static_abilities(wrapped)));
+            }
+        }
+    }
     let Some(abilities) = parse_static_ability_ast_line(view.tokens)? else {
         return Ok(None);
     };
@@ -1734,7 +1779,15 @@ const PRE_DIAGNOSTIC_LINE_PARSE_RULES: [RuleDef<LineAst>; 17] = [
     RuleDef {
         id: "alternative-casting-method",
         priority: 150,
-        heads: &["if", "you", "escape", "bestow", "flashback", "madness"],
+        heads: &[
+            "if",
+            "you",
+            "escape",
+            "bestow",
+            "flashback",
+            "madness",
+            "warp",
+        ],
         shape_mask: 0,
         run: parse_alternative_cast_line_rule,
     },
@@ -1883,6 +1936,60 @@ fn run_line_parse_rules(view: &ClauseView<'_>) -> Result<(&'static str, LineAst)
 
 pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     parser_trace_line("parse_line:entry", line);
+    let trimmed = line.trim();
+    let labeled = trimmed
+        .split_once('—')
+        .map(|(label, rest)| (label.trim(), rest.trim()))
+        .or_else(|| {
+            trimmed
+                .split_once(" - ")
+                .map(|(label, rest)| (label.trim(), rest.trim()))
+        });
+    if let Some((label, rest)) = labeled
+        && !label.is_empty()
+        && !rest.is_empty()
+    {
+        let condition = crate::ConditionExpr::SourceChosenOption(label.to_ascii_lowercase());
+        let parsed_rest = parse_line(rest, line_index)?;
+        let wrapped = match parsed_rest {
+            LineAst::StaticAbility(ability) => {
+                LineAst::StaticAbility(StaticAbilityAst::ConditionalStaticAbility {
+                    ability: Box::new(ability),
+                    condition,
+                })
+            }
+            LineAst::StaticAbilities(abilities) => LineAst::StaticAbilities(
+                abilities
+                    .into_iter()
+                    .map(|ability| StaticAbilityAst::ConditionalStaticAbility {
+                        ability: Box::new(ability),
+                        condition: condition.clone(),
+                    })
+                    .collect(),
+            ),
+            LineAst::Triggered {
+                trigger,
+                effects,
+                max_triggers_per_turn,
+            } => LineAst::Ability(parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![crate::zone::Zone::Battlefield],
+                Some(rest.to_string()),
+                Some(if let Some(max) = max_triggers_per_turn {
+                    crate::ConditionExpr::And(
+                        Box::new(condition),
+                        Box::new(crate::ConditionExpr::MaxTimesEachTurn(max)),
+                    )
+                } else {
+                    condition
+                }),
+                ReferenceImports::default(),
+            )),
+            other => other,
+        };
+        return Ok(wrapped);
+    }
     let normalized = line
         .trim()
         .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
@@ -2060,6 +2167,22 @@ pub(crate) fn parse_flashback_line(
     }
 
     Ok(Some(AlternativeCastingMethod::Flashback { total_cost }))
+}
+
+pub(crate) fn parse_warp_line(
+    tokens: &[Token],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    if !tokens.first().is_some_and(|token| token.is_word("warp")) {
+        return Ok(None);
+    }
+
+    let words_all = words(tokens);
+    let (cost_text, _consumed) = leading_mana_symbols_to_oracle(&words_all[1..])
+        .ok_or_else(|| CardTextError::ParseError("warp keyword missing mana cost".to_string()))?;
+    let cost = parse_scryfall_mana_cost(&cost_text).map_err(|err| {
+        CardTextError::ParseError(format!("invalid warp mana cost '{cost_text}': {err:?}"))
+    })?;
+    Ok(Some(AlternativeCastingMethod::Warp { cost }))
 }
 
 pub(crate) fn parse_bestow_line(

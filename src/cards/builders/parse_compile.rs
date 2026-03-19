@@ -1677,6 +1677,7 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::Surveil { player, .. }
         | EffectAst::PlayFromGraveyardUntilEot { player }
         | EffectAst::AdditionalLandPlays { player, .. }
+        | EffectAst::ReduceNextSpellCostThisTurn { player, .. }
         | EffectAst::GrantPlayTaggedUntilEndOfTurn { player, .. }
         | EffectAst::GrantBySpec { player, .. }
         | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
@@ -4721,6 +4722,24 @@ fn try_compile_timing_and_control_effect(
                 duration.clone(),
             );
             (vec![effect], Vec::new())
+        }
+        EffectAst::ReduceNextSpellCostThisTurn {
+            player,
+            filter,
+            reduction,
+        } => {
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
+            (
+                vec![Effect::new(
+                    crate::effects::GrantNextSpellCostReductionEffect::new(
+                        player_filter,
+                        filter.clone(),
+                        reduction.clone(),
+                    ),
+                )],
+                Vec::new(),
+            )
         }
         EffectAst::GrantPlayTaggedUntilEndOfTurn {
             tag,

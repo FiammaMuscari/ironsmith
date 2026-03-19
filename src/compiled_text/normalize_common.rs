@@ -107,6 +107,8 @@ pub(super) fn describe_cast_limit_spell_filter(filter: &ObjectFilter) -> String 
     let fallback = filter.description();
     if fallback.ends_with("spell") || fallback.ends_with("spells") {
         fallback
+    } else if let Some(rest) = fallback.strip_prefix("spell matching ") {
+        format!("{rest} spell")
     } else {
         format!("spell matching {}", strip_leading_article(&fallback))
     }
@@ -7755,6 +7757,9 @@ pub(super) fn describe_condition(condition: &Condition) -> String {
         Condition::SourceAttackedThisTurn => "this creature attacked this turn".to_string(),
         Condition::SourceAttackedOrBlockedThisTurn => {
             "this creature attacked or blocked this turn".to_string()
+        }
+        Condition::SourceChosenOption(option) => {
+            format!("the chosen option is {}", option)
         }
         Condition::SourceIsUntapped => "this source is untapped".to_string(),
         Condition::SourceIsAttacking => "this source is attacking".to_string(),

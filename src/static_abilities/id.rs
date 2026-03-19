@@ -46,6 +46,7 @@ pub enum StaticAbilityId {
     Infect,
     Changeling,
     Partner,
+    DoctorsCompanion,
     Assist,
     SplitSecond,
     Rebound,
@@ -149,8 +150,10 @@ pub enum StaticAbilityId {
     ChooseColorAsEnters,
     ChoosePlayerAsEnters,
     ChooseBasicLandTypeAsEnters,
+    ChooseNamedOptionAsEnters,
     EnchantedLandIsChosenType,
     AddChosenCreatureType,
+    SetChosenColor,
     RedirectDamageToSource,
     PreventAllDamageDealtByThisPermanent,
     PreventAllDamageDealtToCreatures,
@@ -185,6 +188,7 @@ pub enum StaticAbilityId {
     ExileToCounteredExileInsteadOfGraveyard,
     CreaturesEnteringDontCauseAbilitiesToTrigger,
     DuplicateMatchingTriggeredAbilities,
+    SuppressMatchingTriggeredAbilities,
     DoubleDamageFromSourcesYouControlOfChosenType,
     StartingLifeBonus,
     BuybackCostReduction,
@@ -269,6 +273,7 @@ impl StaticAbilityId {
             | Infect
             | Changeling
             | Partner
+            | DoctorsCompanion
             | Assist
             | SplitSecond
             | Rebound
@@ -362,8 +367,10 @@ impl StaticAbilityId {
             | ChooseColorAsEnters
             | ChoosePlayerAsEnters
             | ChooseBasicLandTypeAsEnters
+            | ChooseNamedOptionAsEnters
             | EnchantedLandIsChosenType
             | AddChosenCreatureType
+            | SetChosenColor
             | RedirectDamageToSource
             | PreventAllDamageDealtByThisPermanent
             | PreventAllDamageDealtToCreatures
@@ -398,6 +405,7 @@ impl StaticAbilityId {
             | ExileToCounteredExileInsteadOfGraveyard
             | CreaturesEnteringDontCauseAbilitiesToTrigger
             | DuplicateMatchingTriggeredAbilities
+            | SuppressMatchingTriggeredAbilities
             | DoubleDamageFromSourcesYouControlOfChosenType
             | StartingLifeBonus
             | BuybackCostReduction
@@ -457,6 +465,7 @@ impl StaticAbilityId {
                 | Infect
                 | Changeling
                 | Partner
+                | DoctorsCompanion
                 | Assist
                 | SplitSecond
                 | Rebound

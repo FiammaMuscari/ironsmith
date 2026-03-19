@@ -491,6 +491,9 @@ fn perform_turn_face_up(
             .map_err(cost_error_to_action_error)?;
     }
 
+    if let Some(object) = game.object_mut(permanent_id) {
+        object.end_face_down_cast_overlay();
+    }
     game.set_face_up(permanent_id);
 
     if spec.megamorph

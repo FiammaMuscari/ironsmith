@@ -15501,6 +15501,180 @@ fn parse_creatures_entering_dont_trigger_static_line() {
 }
 
 #[test]
+fn parse_clara_oswald_full_text_compiles() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Clara Oswald")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Impossible Girl - If Clara Oswald is your commander, choose a color before the game begins.\nClara Oswald is the chosen color.\nIf a triggered ability of a Doctor you control triggers, that ability triggers an additional time.\nDoctor's companion (You can have two commanders if the other is the Doctor.)",
+        )
+        .expect("Clara Oswald should compile");
+
+    let static_abilities: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.clone()),
+            _ => None,
+        })
+        .collect();
+    let ids: Vec<_> = static_abilities
+        .iter()
+        .map(|ability| ability.id())
+        .collect();
+    assert!(
+        ids.contains(&StaticAbilityId::PregameAction),
+        "expected pregame choose-color action, got {ids:?}"
+    );
+    assert!(
+        static_abilities.iter().any(|ability| matches!(
+            ability.pregame_action_kind(),
+            Some(crate::static_abilities::PregameActionKind::ChooseColor)
+        )),
+        "expected typed choose-color pregame action, got {static_abilities:#?}"
+    );
+    assert!(
+        ids.contains(&StaticAbilityId::SetChosenColor),
+        "expected chosen-color static ability, got {ids:?}"
+    );
+    assert!(
+        ids.contains(&StaticAbilityId::DuplicateMatchingTriggeredAbilities),
+        "expected trigger duplication ability, got {ids:?}"
+    );
+}
+
+#[test]
+fn parse_clara_oswald_combined_pregame_line_compiles() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Clara Oswald")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Impossible Girl - If Clara Oswald is your commander, choose a color before the game begins. Clara Oswald is the chosen color.\nIf a triggered ability of a Doctor you control triggers, that ability triggers an additional time.\nDoctor's companion (You can have two commanders if the other is the Doctor.)",
+        )
+        .expect("Clara Oswald combined pregame line should compile");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered
+            .to_ascii_lowercase()
+            .contains("choose a color before the game begins"),
+        "expected pregame choose-color text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_elesh_norn_full_text_compiles_with_generic_trigger_suppression() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Elesh Norn, Mother of Machines")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Vigilance\nIf a permanent entering causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.\nPermanents entering don't cause abilities of permanents your opponents control to trigger.",
+        )
+        .expect("Elesh Norn should compile");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    let static_ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        static_ids.contains(&StaticAbilityId::DuplicateMatchingTriggeredAbilities),
+        "expected ETB trigger duplication ability, got {static_ids:?}"
+    );
+    assert!(
+        static_ids.contains(&StaticAbilityId::SuppressMatchingTriggeredAbilities),
+        "expected generic trigger suppression ability, got {static_ids:?}"
+    );
+    assert!(
+        abilities_debug.contains("Opponent"),
+        "expected suppression source filter to target opponents, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_vantress_visions_copy_triggered_ability_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Vantress Visions")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Copy target activated or triggered ability you control. You may choose new targets for the copy.")
+        .expect("Vantress Visions copy clause should compile");
+
+    let spell_debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        spell_debug.contains("CopySpellEffect"),
+        "expected ability-copy clause to lower through CopySpellEffect, got {spell_debug}"
+    );
+    assert!(
+        spell_debug.contains("is_ability: true") || spell_debug.contains("TriggeredAbility"),
+        "expected copied target to remain ability-shaped, got {spell_debug}"
+    );
+}
+
+#[test]
+fn parse_panoptic_projektor_full_text_compiles() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Panoptic Projektor")
+        .card_types(vec![CardType::Artifact])
+        .parse_text(
+            "{T}: The next face-down creature spell you cast this turn costs {3} less to cast.\nIf turning a face-down permanent face up causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.",
+        )
+        .expect("Panoptic Projektor should compile");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.to_ascii_lowercase().contains(
+            "the next face-down creature spell you cast this turn costs {3} less to cast"
+        ),
+        "expected next-spell cost text in compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_wayta_trainer_prodigy_full_text_compiles() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Wayta, Trainer Prodigy")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Haste\n{2}{G}, {T}: Target creature you control fights another target creature. This ability costs {2} less to activate if it targets two creatures you control.\nIf a creature you control being dealt damage causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.",
+        )
+        .expect("Wayta should compile");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let rendered_lower = rendered.to_ascii_lowercase();
+    assert!(
+        rendered_lower.contains(
+            "this ability costs {2} less to activate if it targets two creatures you control"
+        ) || rendered_lower.contains(
+            "this ability costs 2 less to activate if it targets two creatures you control"
+        ),
+        "expected inline activated cost text in compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_windcrag_siege_full_text_compiles() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Windcrag Siege")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "As this enchantment enters, choose Mardu or Jeskai.\nMardu - If a creature attacking causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.\nJeskai - At the beginning of your upkeep, create a 1/1 red Goblin creature token. It gains lifelink and haste until end of turn.",
+        )
+        .expect("Windcrag Siege should compile");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered
+            .to_ascii_lowercase()
+            .contains("choose mardu or jeskai"),
+        "expected named choice text in compiled output, got {rendered}"
+    );
+    assert!(
+        rendered
+            .to_ascii_lowercase()
+            .contains("triggers an additional time"),
+        "expected Mardu trigger-doubling text in compiled output, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_as_long_as_its_enchanted_condition_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Fledgling Osprey Variant")
         .card_types(vec![CardType::Creature])
@@ -15970,7 +16144,9 @@ fn parse_creature_type_choice_pump_sentence_uses_shared_choice_effect() {
 fn parse_return_target_of_creature_type_of_choice_uses_shared_choice_effect() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Peer Pressure Variant")
         .card_types(vec![CardType::Sorcery])
-        .parse_text("Return target creature of the creature type of your choice to its owner's hand.")
+        .parse_text(
+            "Return target creature of the creature type of your choice to its owner's hand.",
+        )
         .expect("creature-type choice return sentence should parse");
 
     let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
@@ -18210,15 +18386,19 @@ fn parse_traveling_chocobo_top_library_lines_compile() {
 
     let rendered = oracle_like_lines(&def).join(" ");
     assert!(
-        rendered.to_ascii_lowercase().contains("top card of your library")
+        rendered
+            .to_ascii_lowercase()
+            .contains("top card of your library")
             && rendered.contains("Bird spells from the top of your library")
-            && rendered.to_ascii_lowercase().contains("triggers an additional time"),
+            && rendered
+                .to_ascii_lowercase()
+                .contains("triggers an additional time"),
         "expected top-of-library and trigger-doubling text, got {rendered}"
     );
 }
 
 #[test]
-fn parse_starfield_vocalist_with_warp_marker() {
+fn parse_starfield_vocalist_with_warp_keyword() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Starfield Vocalist")
         .card_types(vec![CardType::Creature])
         .parse_text(
@@ -18229,8 +18409,31 @@ fn parse_starfield_vocalist_with_warp_marker() {
     let rendered = oracle_like_lines(&def).join(" ");
     assert!(
         rendered.contains("Warp {1}{U}")
-            && rendered.to_ascii_lowercase().contains("triggers an additional time"),
-        "expected warp marker plus trigger doubling, got {rendered}"
+            && rendered
+                .to_ascii_lowercase()
+                .contains("triggers an additional time"),
+        "expected warp keyword plus trigger doubling, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_wulfgar_of_icewind_dale_with_melee_keyword() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Wulfgar of Icewind Dale")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Melee\nIf a creature you control attacking causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.",
+        )
+        .expect("wulfgar text should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered
+            .to_ascii_lowercase()
+            .contains("for each opponent you attacked this combat")
+            && rendered
+                .to_ascii_lowercase()
+                .contains("triggers an additional time"),
+        "expected melee keyword plus trigger doubling, got {rendered}"
     );
 }
 
@@ -18238,9 +18441,7 @@ fn parse_starfield_vocalist_with_warp_marker() {
 fn parse_gandalf_flash_union_uses_generic_permission_parser() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Gandalf Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text(
-            "You may cast legendary spells and artifact spells as though they had flash.",
-        )
+        .parse_text("You may cast legendary spells and artifact spells as though they had flash.")
         .expect("gandalf-style flash union should parse");
 
     let rendered = oracle_like_lines(&def).join(" ");

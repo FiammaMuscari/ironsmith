@@ -24,7 +24,15 @@ impl EffectExecutor for ThassasOracleEffect {
         if devotion > 0 {
             let top_cards: Vec<_> = game
                 .player(ctx.controller)
-                .map(|player| player.library.iter().rev().take(devotion).copied().collect())
+                .map(|player| {
+                    player
+                        .library
+                        .iter()
+                        .rev()
+                        .take(devotion)
+                        .copied()
+                        .collect()
+                })
                 .unwrap_or_default();
 
             if !top_cards.is_empty() {

@@ -1207,6 +1207,7 @@ enum SpecialActionRef {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CastingMethodRef {
     Normal,
+    FaceDown,
     SplitOtherHalf,
     Fuse,
     Alternative {
@@ -5216,6 +5217,7 @@ impl WasmGame {
         };
         match static_ability.pregame_action_kind()? {
             crate::static_abilities::PregameActionKind::BeginOnBattlefield(spec) => Some(spec),
+            crate::static_abilities::PregameActionKind::ChooseColor => None,
         }
     }
 
@@ -7548,6 +7550,9 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
                         qualifiers.push(format!("from {}", zone_display_name(*from_zone)));
                     }
                 }
+                crate::alternative_cast::CastingMethod::FaceDown => {
+                    qualifiers.push("face down".to_string());
+                }
                 crate::alternative_cast::CastingMethod::SplitOtherHalf => {
                     qualifiers.push("other half".to_string());
                 }
@@ -7883,6 +7888,7 @@ fn special_action_ref(action: &crate::special_actions::SpecialAction) -> Special
 fn casting_method_ref(method: &crate::alternative_cast::CastingMethod) -> CastingMethodRef {
     match method {
         crate::alternative_cast::CastingMethod::Normal => CastingMethodRef::Normal,
+        crate::alternative_cast::CastingMethod::FaceDown => CastingMethodRef::FaceDown,
         crate::alternative_cast::CastingMethod::SplitOtherHalf => CastingMethodRef::SplitOtherHalf,
         crate::alternative_cast::CastingMethod::Fuse => CastingMethodRef::Fuse,
         crate::alternative_cast::CastingMethod::Alternative(index) => {
@@ -12079,9 +12085,10 @@ mod tests {
             alice,
             compute_legal_actions(&wasm.game, alice),
         )));
-        dispatch_matching_priority_action(&mut wasm, |action| {
-            matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == ObjectId::from_raw(culling_id))
-        });
+        dispatch_matching_priority_action(
+            &mut wasm,
+            |action| matches!(action, LegalAction::CastSpell { spell_id, .. } if *spell_id == ObjectId::from_raw(culling_id)),
+        );
 
         match wasm.pending_decision.as_ref() {
             Some(DecisionContext::SelectObjects(ctx)) => {
@@ -12103,7 +12110,9 @@ mod tests {
 
         let order_ctx = match wasm.pending_decision.as_ref() {
             Some(DecisionContext::Order(ctx)) => ctx,
-            other => panic!("expected trigger ordering prompt after sacrificing Blood Artist, got {other:?}"),
+            other => panic!(
+                "expected trigger ordering prompt after sacrificing Blood Artist, got {other:?}"
+            ),
         };
         assert_eq!(
             order_ctx.items.len(),

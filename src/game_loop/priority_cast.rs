@@ -54,6 +54,14 @@ pub(super) fn collect_available_casting_methods(
 
     // Check alternative casting methods from hand
     if from_zone == Zone::Hand {
+        if can_cast_spell(game, player, spell, &CastingMethod::FaceDown) {
+            methods.push(CastingMethodOption {
+                method: CastingMethod::FaceDown,
+                name: "Face down".to_string(),
+                cost_description: "{3}".to_string(),
+            });
+        }
+
         if spell.linked_face_layout == crate::card::LinkedFaceLayout::Split {
             if can_cast_spell(game, player, spell, &CastingMethod::SplitOtherHalf)
                 && let Some(other_def) = crate::cards::linked_face_definition_by_name_or_id(
@@ -194,6 +202,7 @@ pub(super) fn non_mana_costs_for_casting_method(
     casting_method: &CastingMethod,
 ) -> Vec<crate::costs::Cost> {
     match casting_method {
+        CastingMethod::FaceDown => Vec::new(),
         CastingMethod::Alternative(idx) => spell
             .alternative_casts
             .get(*idx)
@@ -434,6 +443,13 @@ pub(super) fn format_alternative_method(
         AlternativeCastingMethod::Dash { cost } => {
             let cost_desc = format_mana_cost_simple(cost);
             ("Dash".to_string(), cost_desc)
+        }
+        AlternativeCastingMethod::Warp { cost } => {
+            let cost_desc = format_mana_cost_simple(cost);
+            (
+                "Warp".to_string(),
+                format!("{cost_desc}, exile later and cast from exile"),
+            )
         }
         AlternativeCastingMethod::Plot { cost } => {
             let cost_desc = format_mana_cost_simple(cost);
@@ -1971,7 +1987,7 @@ pub(super) fn collect_spell_cost_steps(
 
     if let Some(obj) = game.object(spell_id) {
         let alternative_additional_cost = match casting_method {
-            CastingMethod::Normal => crate::cost::TotalCost::free(),
+            CastingMethod::Normal | CastingMethod::FaceDown => crate::cost::TotalCost::free(),
             CastingMethod::SplitOtherHalf | CastingMethod::Fuse => crate::cost::TotalCost::free(),
             CastingMethod::Alternative(idx) => obj
                 .alternative_casts

@@ -7792,6 +7792,27 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             grant_tagged_spell_free_cast.tag.as_str()
         );
     }
+    if let Some(grant_next_spell_cost_reduction) =
+        effect.downcast_ref::<crate::effects::GrantNextSpellCostReductionEffect>()
+    {
+        let spell_text = describe_cast_limit_spell_filter(&grant_next_spell_cost_reduction.filter);
+        let spell_text = spell_text
+            .strip_prefix("spell matching ")
+            .map(|rest| format!("{rest} spell"))
+            .unwrap_or(spell_text);
+        return format!(
+            "The next {} {} cast this turn costs {} less to cast",
+            spell_text,
+            describe_player_filter(&grant_next_spell_cost_reduction.player),
+            grant_next_spell_cost_reduction.reduction.to_oracle(),
+        );
+    }
+    if effect
+        .downcast_ref::<crate::effects::MeleeEffect>()
+        .is_some()
+    {
+        return "This creature gets +1/+1 until end of turn for each opponent you attacked this combat".to_string();
+    }
     if effect
         .downcast_ref::<crate::effects::player::MayCastForMiracleCostEffect>()
         .is_some()

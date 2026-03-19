@@ -16,13 +16,15 @@ use crate::cards::builders::parse_parsing::effects_sentences::{
     replace_unbound_x_in_effect_anywhere, strip_leading_articles, trim_edge_punctuation,
 };
 use crate::cards::builders::parse_parsing::keyword_static::{
-    parse_add_mana_equal_amount_value, parse_cost_modifier_amount,
+    parse_add_mana_equal_amount_value, parse_cost_modifier_amount, parse_cost_modifier_mana_cost,
     parse_dynamic_cost_modifier_value,
 };
 use crate::cards::builders::parse_parsing::lex::{
     is_basic_color_word, join_sentences_with_period, split_cost_segments, split_on_and,
 };
-use crate::cards::builders::parse_parsing::object_filters::is_comparison_or_delimiter;
+use crate::cards::builders::parse_parsing::object_filters::{
+    is_comparison_or_delimiter, parse_spell_filter,
+};
 use crate::cards::builders::parse_parsing::primitives::{
     parse_non_type, parse_number, parse_number_word_u32, parse_subtype_flexible,
 };
@@ -100,6 +102,7 @@ pub(crate) fn parse_activated_line_with_raw(
     let mut mana_activation_condition: Option<crate::ConditionExpr> = None;
     let mut additional_activation_restrictions: Vec<String> = Vec::new();
     let mut mana_usage_restrictions = Vec::new();
+    let mut inline_effects_ast: Vec<EffectAst> = Vec::new();
     effect_sentences.retain(|sentence| {
         if is_activate_only_restriction_sentence(sentence) {
             if let Some(parsed_timing) = parse_activate_only_timing(sentence) {
@@ -129,6 +132,14 @@ pub(crate) fn parse_activated_line_with_raw(
             return false;
         }
         if is_trigger_only_restriction_sentence(sentence) {
+            return false;
+        }
+        if is_inline_activated_text_modifier_sentence(sentence) {
+            if let Some(effect) = parse_next_spell_cost_reduction_sentence(sentence) {
+                inline_effects_ast.push(effect);
+                return false;
+            }
+            additional_activation_restrictions.push(words(sentence).join(" "));
             return false;
         }
         true
@@ -341,7 +352,37 @@ pub(crate) fn parse_activated_line_with_raw(
         parse_activation_cost(cost_tokens)?
     };
     let effect_tokens_joined = join_sentences_with_period(&effect_sentences);
-    let effects_ast = parse_effect_sentences(&effect_tokens_joined)?;
+    if effect_sentences.is_empty()
+        && !additional_activation_restrictions.is_empty()
+        && inline_effects_ast.is_empty()
+    {
+        return Ok(Some(ParsedAbility {
+            ability: {
+                let mut ability = Ability {
+                    kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+                        mana_cost,
+                        effects: vec![],
+                        choices: vec![],
+                        timing,
+                        additional_restrictions: additional_activation_restrictions,
+                        activation_restrictions: vec![],
+                        mana_output: None,
+                        activation_condition: None,
+                        mana_usage_restrictions,
+                    }),
+                    functional_zones,
+                    text: None,
+                };
+                apply_ability_label(&mut ability);
+                ability
+            },
+            effects_ast: None,
+            reference_imports: ReferenceImports::default(),
+            trigger_spec: None,
+        }));
+    }
+    let mut effects_ast = parse_effect_sentences(&effect_tokens_joined)?;
+    effects_ast.extend(inline_effects_ast);
     if effects_ast.is_empty() {
         return Ok(None);
     }
@@ -387,6 +428,57 @@ pub(crate) fn parse_activated_line_with_raw(
         reference_imports,
         trigger_spec: None,
     }))
+}
+
+fn parse_next_spell_cost_reduction_sentence(tokens: &[Token]) -> Option<EffectAst> {
+    let clause_words = words(tokens);
+    if !clause_words.starts_with(&["the", "next"]) {
+        return None;
+    }
+
+    let spell_idx = clause_words.iter().position(|word| *word == "spell")?;
+    let costs_idx = clause_words.iter().position(|word| *word == "costs")?;
+    let less_idx = clause_words.iter().position(|word| *word == "less")?;
+    if clause_words.get(spell_idx + 1).copied() != Some("you")
+        || clause_words.get(spell_idx + 2).copied() != Some("cast")
+        || clause_words.get(spell_idx + 3).copied() != Some("this")
+        || clause_words.get(spell_idx + 4).copied() != Some("turn")
+        || clause_words.get(less_idx + 1).copied() != Some("to")
+        || clause_words.get(less_idx + 2).copied() != Some("cast")
+        || costs_idx <= spell_idx
+    {
+        return None;
+    }
+
+    let spell_filter_tokens = trim_commas(&tokens[2..spell_idx]).to_vec();
+    let reduction_tokens = trim_commas(&tokens[costs_idx + 1..less_idx]).to_vec();
+    let filter = parse_spell_filter(&spell_filter_tokens);
+    let (reduction, consumed) = parse_cost_modifier_mana_cost(&reduction_tokens)?;
+    if consumed != reduction_tokens.len() {
+        return None;
+    }
+
+    Some(EffectAst::ReduceNextSpellCostThisTurn {
+        player: PlayerAst::You,
+        filter,
+        reduction,
+    })
+}
+
+fn is_inline_activated_text_modifier_sentence(tokens: &[Token]) -> bool {
+    let line_words = words(tokens);
+    if line_words.starts_with(&["this", "ability", "costs"])
+        && line_words.contains(&"less")
+        && line_words.contains(&"activate")
+    {
+        return true;
+    }
+
+    line_words.starts_with(&["the", "next"])
+        && line_words.contains(&"spell")
+        && line_words.contains(&"costs")
+        && line_words.contains(&"less")
+        && line_words.contains(&"cast")
 }
 
 fn activation_cost_mentions_x(tokens: &[Token]) -> bool {
@@ -3346,6 +3438,44 @@ pub(crate) fn parse_cost_reduction_line(
                 Some(1),
             )));
         }
+        if tail_words.starts_with(&["less", "to", "activate", "if"]) {
+            let condition_tokens = trim_commas(&tail_tokens[4..]);
+            let condition_words = words(&condition_tokens);
+            if condition_words.first().copied() == Some("it")
+                && condition_words.get(1).copied() == Some("targets")
+            {
+                let (count, used) = parse_number(&condition_tokens[2..]).ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported activated-ability target condition count (clause: '{}')",
+                        line_words.join(" ")
+                    ))
+                })?;
+                let mut filter = parse_object_filter(&condition_tokens[2 + used..], false)
+                    .map_err(|_| {
+                        CardTextError::ParseError(format!(
+                            "unsupported activated-ability target condition filter (clause: '{}')",
+                            line_words.join(" ")
+                        ))
+                    })?;
+                if filter.zone.is_none() {
+                    filter.zone = Some(Zone::Battlefield);
+                }
+                return Ok(Some(
+                    StaticAbility::reduce_activated_ability_costs_if_targets(
+                        ObjectFilter::source(),
+                        reduction,
+                        crate::static_abilities::ActivatedAbilityCostCondition::TargetsExactly {
+                            count: count as usize,
+                            filter,
+                        },
+                        Some(1),
+                    ),
+                ));
+            }
+            return Ok(Some(StaticAbility::rule_fallback_text(
+                line_words.join(" "),
+            )));
+        }
         if tail_words.starts_with(&["less", "to", "activate", "for", "each"]) {
             let mut per_filter = parse_object_filter(&tail_tokens[5..], false).map_err(|_| {
                 CardTextError::ParseError(format!(
@@ -5614,6 +5744,7 @@ pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordActi
         "haunt" => Some(KeywordAction::Haunt),
         "ingest" => Some(KeywordAction::Ingest),
         "mentor" => Some(KeywordAction::Mentor),
+        "melee" => Some(KeywordAction::Melee),
         "training" => Some(KeywordAction::Training),
         "myriad" => Some(KeywordAction::Myriad),
         "partner" => Some(KeywordAction::Partner),
@@ -5903,6 +6034,15 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         "dash",
         KeywordCostFallback::MarkerOrText,
         KeywordAction::Dash,
+    ) {
+        return Some(action);
+    }
+
+    if let Some(action) = parse_cost_keyword_action(
+        &words,
+        "warp",
+        KeywordCostFallback::MarkerOrText,
+        KeywordAction::Warp,
     ) {
         return Some(action);
     }

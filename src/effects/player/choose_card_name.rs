@@ -36,7 +36,9 @@ impl ChooseCardNameEffect {
         let mut registry = CardRegistry::with_builtin_cards();
         registry.ensure_all_generated_cards_loaded();
         let mut names = CardRegistry::supported_card_names();
-        if let Some(filter) = filter && !filter.card_types.is_empty() {
+        if let Some(filter) = filter
+            && !filter.card_types.is_empty()
+        {
             names.retain(|name| {
                 registry.get(name).is_some_and(|definition| {
                     filter

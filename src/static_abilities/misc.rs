@@ -4,9 +4,10 @@
 
 use super::{
     ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ChooseCreatureTypeAsEntersSpec,
-    ChoosePlayerAsEntersSpec, ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec,
-    EnterAsCopyAsEntersSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
-    ThisSpellCastRestrictionKind, TriggerDuplicationSpec,
+    ChooseNamedOptionAsEntersSpec, ChoosePlayerAsEntersSpec, ConditionalSpellKeywordKind,
+    ConditionalSpellKeywordSpec, EnterAsCopyAsEntersSpec, GraveyardCountMetric, StaticAbilityId,
+    StaticAbilityKind, ThisSpellCastRestrictionKind, TriggerDuplicationSpec,
+    TriggerSuppressionSpec,
     text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
@@ -1185,6 +1186,35 @@ impl StaticAbilityKind for ChooseCreatureTypeAsEnters {
     }
 }
 
+/// "As this enters, choose <A> or <B>."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChooseNamedOptionAsEnters {
+    pub options: Vec<String>,
+    pub display: String,
+}
+
+impl ChooseNamedOptionAsEnters {
+    pub fn new(options: Vec<String>, display: String) -> Self {
+        Self { options, display }
+    }
+}
+
+impl StaticAbilityKind for ChooseNamedOptionAsEnters {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ChooseNamedOptionAsEnters
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn named_option_choice_as_enters(&self) -> Option<ChooseNamedOptionAsEntersSpec> {
+        Some(ChooseNamedOptionAsEntersSpec {
+            options: self.options.clone(),
+        })
+    }
+}
+
 /// "You may have this enter tapped as a copy of ..."
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnterAsCopyAsEnters {
@@ -1825,6 +1855,15 @@ impl StaticAbilityKind for CreaturesEnteringDontCauseAbilitiesToTrigger {
     fn display(&self) -> String {
         "Creatures entering don't cause abilities to trigger.".to_string()
     }
+
+    fn trigger_suppression_spec(&self) -> Option<TriggerSuppressionSpec> {
+        Some(TriggerSuppressionSpec {
+            source_filter: None,
+            event_matcher: Some(crate::triggers::Trigger::enters_battlefield(
+                ObjectFilter::creature(),
+            )),
+        })
+    }
 }
 
 /// "If a triggered ability of another creature you control of the chosen type triggers,
@@ -1867,6 +1906,45 @@ impl StaticAbilityKind for DuplicateMatchingTriggeredAbilities {
             source_filter: self.source_filter.clone(),
             event_matcher: self.event_matcher.clone(),
             copies: self.copies,
+        })
+    }
+}
+
+/// "If [matching event] would cause [matching source] to trigger, it doesn't."
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuppressMatchingTriggeredAbilities {
+    pub source_filter: Option<ObjectFilter>,
+    pub event_matcher: Option<crate::triggers::Trigger>,
+    pub display: String,
+}
+
+impl SuppressMatchingTriggeredAbilities {
+    pub fn new(
+        source_filter: Option<ObjectFilter>,
+        event_matcher: Option<crate::triggers::Trigger>,
+        display: String,
+    ) -> Self {
+        Self {
+            source_filter,
+            event_matcher,
+            display,
+        }
+    }
+}
+
+impl StaticAbilityKind for SuppressMatchingTriggeredAbilities {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::SuppressMatchingTriggeredAbilities
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn trigger_suppression_spec(&self) -> Option<TriggerSuppressionSpec> {
+        Some(TriggerSuppressionSpec {
+            source_filter: self.source_filter.clone(),
+            event_matcher: self.event_matcher.clone(),
         })
     }
 }

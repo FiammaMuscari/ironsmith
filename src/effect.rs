@@ -2124,6 +2124,9 @@ pub enum Condition {
     /// Static condition for equipment: "as long as equipped creature is attacking".
     EquippedCreatureAttacking,
 
+    /// Static condition: the source permanent's chosen named option matches.
+    SourceChosenOption(String),
+
     /// Static count-based condition ("as long as you control three or more artifacts", etc.)
     CountComparison {
         count: crate::static_abilities::AnthemCountExpression,

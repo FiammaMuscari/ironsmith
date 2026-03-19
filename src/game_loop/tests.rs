@@ -6060,6 +6060,338 @@ fn test_dash_grants_haste_and_returns_to_hand_at_next_end_step() {
 }
 
 #[test]
+fn test_warp_exiles_at_next_end_step_and_grants_play_from_exile() {
+    use crate::cards::CardDefinitionBuilder;
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::triggers::TriggerQueue;
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Blue, 3);
+
+    let warp_def = CardDefinitionBuilder::new(CardId::new(), "Warp Runtime Probe")
+        .mana_cost(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(2)],
+            vec![ManaSymbol::Blue],
+        ]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .warp(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(1)],
+            vec![ManaSymbol::Blue],
+        ]))
+        .build();
+    let warp_id = game.create_object_from_definition(&warp_def, alice, Zone::Hand);
+
+    let mut state = PriorityLoopState::new(2);
+    let mut trigger_queue = TriggerQueue::new();
+    let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: warp_id,
+        from_zone: Zone::Hand,
+        casting_method: CastingMethod::Alternative(0),
+    });
+    apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response)
+        .expect("warp cast should succeed");
+    resolve_stack_entry(&mut game).expect("warp spell should resolve");
+
+    let warped_id = *game
+        .battlefield
+        .iter()
+        .find(|&&id| {
+            game.object(id)
+                .is_some_and(|obj| obj.name == "Warp Runtime Probe")
+        })
+        .expect("warped creature should be on battlefield");
+
+    let end_step_event = TriggerEvent::new_with_provenance(
+        crate::events::phase::BeginningOfEndStepEvent::new(game.turn.active_player),
+        crate::provenance::ProvNodeId::default(),
+    );
+    for trigger in crate::triggers::check_delayed_triggers(&mut game, &end_step_event) {
+        trigger_queue.add(trigger);
+    }
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("put warp delayed trigger on stack");
+    while !game.stack_is_empty() {
+        resolve_stack_entry(&mut game).expect("resolve warp delayed trigger");
+    }
+
+    assert!(
+        !game.battlefield.contains(&warped_id),
+        "warped creature should leave the battlefield at the next end step"
+    );
+    let exiled_id = *game
+        .exile
+        .iter()
+        .find(|&&id| {
+            game.object(id)
+                .is_some_and(|obj| obj.name == "Warp Runtime Probe")
+        })
+        .expect("warped creature should be exiled");
+    assert!(
+        !game
+            .grant_registry
+            .granted_play_from_for_card(&game, exiled_id, Zone::Exile, alice)
+            .is_empty(),
+        "warp should grant play permission from exile"
+    );
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Blue, 3);
+
+    let legal_actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        legal_actions.iter().any(|action| matches!(
+            action,
+            LegalAction::CastSpell {
+                spell_id,
+                from_zone: Zone::Exile,
+                casting_method: CastingMethod::PlayFrom { .. },
+            } if *spell_id == exiled_id
+        )),
+        "warped card should be castable from exile after being exiled"
+    );
+}
+
+#[test]
+fn test_next_matching_spell_cost_reduction_is_consumed_by_first_match_only() {
+    use crate::cards::CardDefinitionBuilder;
+    use crate::triggers::TriggerQueue;
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+
+    let source = game.new_object_id();
+    game.add_temporary_spell_cost_reduction(
+        alice,
+        source,
+        crate::target::ObjectFilter::default().with_type(CardType::Creature),
+        ManaCost::from_pips(vec![vec![ManaSymbol::Generic(3)]]),
+        1,
+    );
+
+    let instant_def = CardDefinitionBuilder::new(CardId::new(), "Instant Probe")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+        .card_types(vec![CardType::Instant])
+        .with_spell_effect(vec![Effect::draw(1)])
+        .build();
+    let creature_def = CardDefinitionBuilder::new(CardId::new(), "Creature Probe")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    let second_creature_def = CardDefinitionBuilder::new(CardId::new(), "Second Creature Probe")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+
+    let instant_id = game.create_object_from_definition(&instant_def, alice, Zone::Hand);
+    let creature_id = game.create_object_from_definition(&creature_def, alice, Zone::Hand);
+    let second_creature_id =
+        game.create_object_from_definition(&second_creature_def, alice, Zone::Hand);
+
+    let instant = game.object(instant_id).expect("instant exists");
+    let instant_cost = crate::decision::calculate_effective_mana_cost(
+        &game,
+        alice,
+        instant,
+        instant.mana_cost.as_ref().expect("instant mana cost"),
+    );
+    assert_eq!(
+        instant_cost.to_oracle(),
+        "{1}",
+        "nonmatching spell should not be reduced"
+    );
+
+    game.player_mut(alice)
+        .expect("alice exists")
+        .mana_pool
+        .add(ManaSymbol::Colorless, 6);
+    let mut state = PriorityLoopState::new(2);
+    let mut trigger_queue = TriggerQueue::new();
+
+    let instant_cast = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: instant_id,
+        from_zone: Zone::Hand,
+        casting_method: CastingMethod::Normal,
+    });
+    apply_priority_response(&mut game, &mut trigger_queue, &mut state, &instant_cast)
+        .expect("instant cast should succeed");
+    resolve_stack_entry(&mut game).expect("instant should resolve");
+
+    let creature = game.object(creature_id).expect("creature exists");
+    let reduced_cost = crate::decision::calculate_effective_mana_cost(
+        &game,
+        alice,
+        creature,
+        creature.mana_cost.as_ref().expect("creature mana cost"),
+    );
+    assert_eq!(
+        reduced_cost.to_oracle(),
+        "{1}",
+        "first matching creature spell should be reduced"
+    );
+
+    let creature_cast = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+        spell_id: creature_id,
+        from_zone: Zone::Hand,
+        casting_method: CastingMethod::Normal,
+    });
+    apply_priority_response(&mut game, &mut trigger_queue, &mut state, &creature_cast)
+        .expect("creature cast should succeed");
+    resolve_stack_entry(&mut game).expect("creature should resolve");
+
+    let second_creature = game
+        .object(second_creature_id)
+        .expect("second creature exists");
+    let full_cost = crate::decision::calculate_effective_mana_cost(
+        &game,
+        alice,
+        second_creature,
+        second_creature
+            .mana_cost
+            .as_ref()
+            .expect("second creature mana cost"),
+    );
+    assert_eq!(
+        full_cost.to_oracle(),
+        "{4}",
+        "temporary reduction should be consumed by the first matching spell"
+    );
+}
+
+#[test]
+fn test_face_down_cast_matches_panoptic_filter_and_enters_battlefield_face_down() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    game.turn.phase = Phase::FirstMain;
+    game.turn.step = None;
+    game.turn.active_player = alice;
+    game.turn.priority_player = Some(alice);
+
+    let source = game.new_object_id();
+    game.add_temporary_spell_cost_reduction(
+        alice,
+        source,
+        crate::target::ObjectFilter::default()
+            .with_type(CardType::Creature)
+            .face_down(),
+        ManaCost::from_pips(vec![vec![ManaSymbol::Generic(3)]]),
+        1,
+    );
+
+    let normal_creature = CardDefinitionBuilder::new(CardId::new(), "Normal Creature Probe")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    let normal_creature_id =
+        game.create_object_from_definition(&normal_creature, alice, Zone::Hand);
+    let normal_creature_obj = game
+        .object(normal_creature_id)
+        .expect("normal creature should exist");
+    let normal_cost = crate::decision::calculate_effective_mana_cost(
+        &game,
+        alice,
+        normal_creature_obj,
+        normal_creature_obj
+            .mana_cost
+            .as_ref()
+            .expect("normal creature mana cost"),
+    );
+    assert_eq!(
+        normal_cost.mana_value(),
+        4,
+        "face-down-only reducer should not affect normal creature spells in hand"
+    );
+
+    let morph_card = CardBuilder::new(CardId::from_raw(1200), "Morph Probe")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(6)]]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(5, 5))
+        .build();
+    let morph_id = game.create_object_from_card(&morph_card, alice, Zone::Hand);
+    game.object_mut(morph_id)
+        .expect("morph card should exist")
+        .abilities
+        .push(Ability::static_ability(StaticAbility::morph(
+            ManaCost::from_pips(vec![vec![ManaSymbol::Green]]),
+        )));
+
+    let stack_id = super::priority_mana::propose_spell_cast(
+        &mut game,
+        morph_id,
+        Zone::Hand,
+        alice,
+        &CastingMethod::FaceDown,
+    )
+    .expect("face-down cast should move spell to stack");
+    assert!(
+        game.is_face_down(stack_id),
+        "face-down cast should mark the spell object as face down on the stack"
+    );
+
+    let stack_obj = game.object(stack_id).expect("stack spell should exist");
+    let face_down_cost = crate::decision::spell_mana_cost_for_cast(
+        &game,
+        alice,
+        stack_obj,
+        &CastingMethod::FaceDown,
+        Zone::Hand,
+    )
+    .expect("face-down cast should use the shared {3} cost");
+    let reduced_cost =
+        crate::decision::calculate_effective_mana_cost(&game, alice, stack_obj, &face_down_cost);
+    assert_eq!(
+        reduced_cost.mana_value(),
+        0,
+        "Panoptic-style reducer should apply once the creature spell is actually being cast face down"
+    );
+
+    let battlefield_id = game
+        .move_object_by_effect(stack_id, Zone::Battlefield)
+        .expect("face-down spell should resolve onto the battlefield");
+    assert!(
+        game.is_face_down(battlefield_id),
+        "stack-to-battlefield move should preserve face-down state for a face-down cast"
+    );
+    let permanent = game
+        .object(battlefield_id)
+        .expect("resolved permanent should exist");
+    assert_eq!(permanent.power(), Some(2));
+    assert_eq!(permanent.toughness(), Some(2));
+
+    game.player_mut(alice)
+        .expect("alice should exist")
+        .mana_pool
+        .add(ManaSymbol::Green, 1);
+    let actions = crate::decision::compute_legal_actions(&game, alice);
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            LegalAction::TurnFaceUp { creature_id } if *creature_id == battlefield_id
+        )),
+        "resolved face-down morph permanent should still be turnable face up"
+    );
+}
+
+#[test]
 fn test_bestow_cast_enters_as_aura_and_reverts_when_unattached() {
     use crate::cards::CardDefinitionBuilder;
     use crate::decision::compute_legal_actions;

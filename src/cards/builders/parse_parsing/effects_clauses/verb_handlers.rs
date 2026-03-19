@@ -1853,7 +1853,7 @@ pub(crate) fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError
     Ok(EffectAst::Counter { target })
 }
 
-fn parse_counter_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+pub(crate) fn parse_counter_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
     if let Some(target) = parse_counter_ability_target_phrase(tokens)? {
         return Ok(target);
     }
@@ -1931,6 +1931,16 @@ fn parse_counter_ability_target_phrase(
         if clause_tokens
             .get(scan)
             .is_some_and(|token| token.is_word("from"))
+        {
+            list_end = scan;
+            break;
+        }
+        if clause_tokens
+            .get(scan)
+            .is_some_and(|token| token.is_word("you"))
+            && clause_tokens
+                .get(scan + 1)
+                .is_some_and(|token| token.is_word("control") || token.is_word("controls"))
         {
             list_end = scan;
             break;
@@ -2095,7 +2105,7 @@ fn parse_counter_ability_target_phrase(
     }
 
     let mut source_types: Vec<CardType> = Vec::new();
-    let mut opponent_controlled = false;
+    let mut controller_filter: Option<PlayerFilter> = None;
     while idx < clause_tokens.len() {
         let Some(word) = clause_tokens.get(idx).and_then(Token::as_word) else {
             idx += 1;
@@ -2108,12 +2118,21 @@ fn parse_counter_ability_target_phrase(
         if word == "you"
             && clause_tokens
                 .get(idx + 1)
+                .is_some_and(|token| token.is_word("control") || token.is_word("controls"))
+        {
+            controller_filter = Some(PlayerFilter::You);
+            idx += 2;
+            continue;
+        }
+        if word == "you"
+            && clause_tokens
+                .get(idx + 1)
                 .is_some_and(|token| token.is_word("dont"))
             && clause_tokens
                 .get(idx + 2)
                 .is_some_and(|token| token.is_word("control"))
         {
-            opponent_controlled = true;
+            controller_filter = Some(PlayerFilter::NotYou);
             idx += 3;
             continue;
         }
@@ -2159,8 +2178,10 @@ fn parse_counter_ability_target_phrase(
     }
 
     for (filter, term) in &mut term_filters {
-        if opponent_controlled {
-            *filter = filter.clone().opponent_controls();
+        if let Some(controller) = controller_filter.clone() {
+            let mut updated = filter.clone();
+            updated.controller = Some(controller);
+            *filter = updated;
         }
         if !source_types.is_empty() && matches!(term, CounterTargetTerm::Ability) {
             for card_type in &source_types {

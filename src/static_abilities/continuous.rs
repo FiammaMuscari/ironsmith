@@ -482,6 +482,9 @@ fn describe_static_condition(condition: &crate::ConditionExpr) -> String {
         crate::ConditionExpr::EquippedCreatureAttacking => {
             "as long as equipped creature is attacking".to_string()
         }
+        crate::ConditionExpr::SourceChosenOption(option) => {
+            format!("as long as the chosen option is {}", option)
+        }
         crate::ConditionExpr::SourceIsAttacking => {
             "as long as this creature is attacking".to_string()
         }
@@ -875,6 +878,13 @@ impl StaticAbilityKind for GrantAbility {
         } else {
             grant_subject_text(&self.filter)
         };
+        let mut ability_text = self.ability.display();
+        if matches!(
+            ability_text.split_whitespace().next(),
+            Some("If" | "When" | "Whenever" | "At")
+        ) {
+            ability_text = format!("\"{ability_text}\"");
+        }
         let mut text = match self.ability.id() {
             StaticAbilityId::Unblockable => format!("{subject} can't be blocked"),
             StaticAbilityId::CantAttack => format!("{subject} can't attack"),
@@ -885,7 +895,7 @@ impl StaticAbilityKind for GrantAbility {
                     || subject.starts_with("this ")
                     || subject.starts_with("that ");
                 let verb = if singular_subject { "has" } else { "have" };
-                format!("{subject} {verb} {}", self.ability.display())
+                format!("{subject} {verb} {ability_text}")
             }
         };
         if let Some(condition) = &self.condition {
@@ -2348,6 +2358,50 @@ impl StaticAbilityKind for AddChosenCreatureTypeForFilter {
                 controller,
                 effect_target_for_filter(source, &self.filter),
                 Modification::AddSubtypes(vec![chosen_type]),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+}
+
+/// "This permanent is the chosen color."
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetChosenColorForFilter {
+    pub filter: ObjectFilter,
+    pub display: String,
+}
+
+impl SetChosenColorForFilter {
+    pub fn new(filter: ObjectFilter, display: String) -> Self {
+        Self { filter, display }
+    }
+}
+
+impl StaticAbilityKind for SetChosenColorForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::SetChosenColor
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        let Some(chosen_color) = game.chosen_color(source) else {
+            return Vec::new();
+        };
+
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                effect_target_for_filter(source, &self.filter),
+                Modification::SetColors(crate::color::ColorSet::from(chosen_color)),
             )
             .with_source_type(EffectSourceType::StaticAbility),
         ]

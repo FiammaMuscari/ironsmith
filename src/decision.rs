@@ -776,6 +776,14 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
 
                 // Only add alternative casts if Normal is not available
                 if !has_normal_cast {
+                    if can_cast_spell_with_view(game, player, card, &CastingMethod::FaceDown, &view)
+                    {
+                        actions.push(LegalAction::CastSpell {
+                            spell_id: card_id,
+                            from_zone: Zone::Hand,
+                            casting_method: CastingMethod::FaceDown,
+                        });
+                    }
                     if card.linked_face_layout == crate::card::LinkedFaceLayout::Split {
                         if can_cast_spell_with_view(
                             game,
@@ -1123,12 +1131,29 @@ pub fn calculate_effective_activation_total_cost(
     ability_source: ObjectId,
     cost: &crate::cost::TotalCost,
 ) -> crate::cost::TotalCost {
+    calculate_effective_activation_total_cost_with_chosen_targets(
+        game,
+        activator,
+        ability_source,
+        cost,
+        &[],
+    )
+}
+
+pub fn calculate_effective_activation_total_cost_with_chosen_targets(
+    game: &GameState,
+    activator: PlayerId,
+    ability_source: ObjectId,
+    cost: &crate::cost::TotalCost,
+    chosen_targets: &[Target],
+) -> crate::cost::TotalCost {
     let view = DerivedGameView::new(game);
     calculate_effective_activation_total_cost_with_view(
         game,
         activator,
         ability_source,
         cost,
+        chosen_targets,
         &view,
     )
 }
@@ -1138,6 +1163,7 @@ fn calculate_effective_activation_total_cost_with_view(
     activator: PlayerId,
     ability_source: ObjectId,
     cost: &crate::cost::TotalCost,
+    chosen_targets: &[Target],
     view: &DerivedGameView<'_>,
 ) -> crate::cost::TotalCost {
     let mut costs = Vec::with_capacity(cost.costs().len());
@@ -1148,6 +1174,7 @@ fn calculate_effective_activation_total_cost_with_view(
                 activator,
                 ability_source,
                 mana_cost,
+                chosen_targets,
                 view,
             );
             costs.push(crate::costs::Cost::mana(reduced));
@@ -1161,16 +1188,17 @@ fn calculate_effective_activation_total_cost_with_view(
 /// Calculate the effective mana portion of an activated ability's cost.
 pub fn calculate_effective_activation_mana_cost(
     game: &GameState,
-    _activator: PlayerId,
+    activator: PlayerId,
     ability_source: ObjectId,
     base_cost: &crate::mana::ManaCost,
 ) -> crate::mana::ManaCost {
     let view = DerivedGameView::new(game);
     calculate_effective_activation_mana_cost_with_view(
         game,
-        _activator,
+        activator,
         ability_source,
         base_cost,
+        &[],
         &view,
     )
 }
@@ -1180,6 +1208,7 @@ fn calculate_effective_activation_mana_cost_with_view(
     _activator: PlayerId,
     ability_source: ObjectId,
     base_cost: &crate::mana::ManaCost,
+    chosen_targets: &[Target],
     view: &DerivedGameView<'_>,
 ) -> crate::mana::ManaCost {
     use crate::ability::AbilityKind;
@@ -1245,6 +1274,16 @@ fn calculate_effective_activation_mana_cost_with_view(
             if !reduction
                 .filter
                 .matches(ability_source_object, &filter_ctx, game)
+            {
+                continue;
+            }
+            if let Some(condition) = &reduction.condition
+                && !crate::static_abilities::activated_ability_cost_condition_is_active_for_activation(
+                    game,
+                    ability_source,
+                    condition,
+                    chosen_targets,
+                )
             {
                 continue;
             }
@@ -1658,6 +1697,20 @@ fn has_valid_spell_timing(
     game.turn.active_player == player && crate::turn::is_sorcery_timing(game)
 }
 
+fn face_down_cast_mana_cost() -> crate::mana::ManaCost {
+    crate::mana::ManaCost::from_pips(vec![vec![crate::mana::ManaSymbol::Generic(3)]])
+}
+
+fn spell_can_be_cast_face_down(spell: &crate::object::Object) -> bool {
+    spell.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            crate::ability::AbilityKind::Static(static_ability)
+                if static_ability.turn_face_up_cost().is_some()
+        )
+    })
+}
+
 /// Resolve the mana cost for a spell cast from a specific zone and method.
 pub fn spell_mana_cost_for_cast(
     game: &GameState,
@@ -1668,6 +1721,7 @@ pub fn spell_mana_cost_for_cast(
 ) -> Option<crate::mana::ManaCost> {
     let base_cost = match casting_method {
         CastingMethod::Normal => spell.mana_cost.clone(),
+        CastingMethod::FaceDown => Some(face_down_cast_mana_cost()),
         CastingMethod::SplitOtherHalf => {
             linked_face_definition(spell).and_then(|def| def.card.mana_cost)
         }
@@ -1753,6 +1807,12 @@ fn can_cast_spell_with_view(
     view: &DerivedGameView<'_>,
 ) -> bool {
     let split_view = match casting_method {
+        CastingMethod::FaceDown => {
+            if !spell_can_be_cast_face_down(spell) {
+                return false;
+            }
+            Some(spell_view_for_face_down_cast(spell))
+        }
         CastingMethod::SplitOtherHalf => match spell_view_for_split_other_half_cast(spell) {
             Some(view) => Some(view),
             None => return false,
@@ -2003,6 +2063,12 @@ fn spell_view_for_disturb_cast(spell: &crate::object::Object) -> Option<crate::o
     view.apply_definition_face(&other_def);
     view.ensure_aura_cast_spell_effect();
     Some(view)
+}
+
+fn spell_view_for_face_down_cast(spell: &crate::object::Object) -> crate::object::Object {
+    let mut view = spell.clone();
+    view.apply_face_down_cast_overlay();
+    view
 }
 
 fn linked_face_definition(spell: &crate::object::Object) -> Option<crate::cards::CardDefinition> {
@@ -2650,6 +2716,16 @@ fn apply_spell_cost_modifiers(
                 let extra = (per_target_amount as i32).saturating_mul(additional_targets as i32);
                 total_increase = total_increase.saturating_add(extra);
             }
+        }
+    }
+
+    let current_turn = game.turn.turn_number;
+    for effect in &game.temporary_spell_cost_reductions {
+        if effect.player != player || effect.is_expired(current_turn) {
+            continue;
+        }
+        if spell_matches_filter(game, spell, player, &effect.filter, &ctx) {
+            reduction_pips.extend(effect.reduction.pips().iter().cloned());
         }
     }
 
@@ -6048,6 +6124,9 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> Str
                 match casting_method {
                     crate::alternative_cast::CastingMethod::Normal => {
                         format!("{} ({})", obj.name, format_mana_cost(obj))
+                    }
+                    crate::alternative_cast::CastingMethod::FaceDown => {
+                        format!("{} [Face down] ({})", obj.name, "{3}")
                     }
                     crate::alternative_cast::CastingMethod::SplitOtherHalf => {
                         if let Some(other_def) = crate::cards::linked_face_definition_by_name_or_id(
@@ -9824,6 +9903,65 @@ mod tests {
                 |a| matches!(a, LegalAction::TurnFaceUp { creature_id: id } if *id == creature_id)
             ),
             "face-down creature with payable morph cost should have TurnFaceUp legal action"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_actions_includes_face_down_cast_for_morph_when_normal_cast_is_too_expensive()
+     {
+        use crate::ability::Ability;
+        use crate::static_abilities::StaticAbility;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.priority_player = Some(alice);
+        game.turn.active_player = alice;
+
+        let creature = CardBuilder::new(CardId::from_raw(102), "Costly Morph Bear")
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![
+                vec![crate::mana::ManaSymbol::Generic(5)],
+                vec![crate::mana::ManaSymbol::Green],
+            ]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(5, 5))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Hand);
+        game.object_mut(creature_id)
+            .unwrap()
+            .abilities
+            .push(Ability::static_ability(StaticAbility::morph(
+                crate::mana::ManaCost::from_pips(vec![vec![crate::mana::ManaSymbol::Green]]),
+            )));
+        game.player_mut(alice)
+            .unwrap()
+            .mana_pool
+            .add(crate::mana::ManaSymbol::Colorless, 3);
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::FaceDown,
+                } if *spell_id == creature_id
+            )),
+            "morph card should be castable face down when {{3}} is payable"
+        );
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::Normal,
+                } if *spell_id == creature_id
+            )),
+            "normal cast should stay unavailable when the printed mana cost is too expensive"
         );
     }
 

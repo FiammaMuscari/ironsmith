@@ -272,6 +272,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::AddManaFromLandCouldProduce { player, .. }
         | EffectAst::AddManaCommanderIdentity { player, .. }
         | EffectAst::ExtraTurnAfterTurn { player, .. }
+        | EffectAst::ReduceNextSpellCostThisTurn { player, .. }
         | EffectAst::RevealHand { player }
         | EffectAst::PutIntoHand { player, .. }
         | EffectAst::PutSomeIntoHandRestIntoGraveyard { player, .. }

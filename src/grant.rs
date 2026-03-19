@@ -328,13 +328,8 @@ impl GrantSpec {
                 );
             }
         }
-        if matches!(self.grantable, Grantable::PlayFrom)
-            && self.zone == Zone::Library
-        {
-            return format!(
-                "You may play {} from the top of your library",
-                filter_desc
-            );
+        if matches!(self.grantable, Grantable::PlayFrom) && self.zone == Zone::Library {
+            return format!("You may play {} from the top of your library", filter_desc);
         }
         if let Grantable::AlternativeCast(method) = &self.grantable
             && self.zone == Zone::Hand
