@@ -166,7 +166,7 @@ impl ReplacementMatcher for WouldDieMatcher {
     }
 }
 
-/// Matches when this specific permanent would die (self-replacement).
+/// Matches when this specific permanent would die.
 #[derive(Debug, Clone)]
 pub struct ThisWouldDieMatcher;
 
@@ -191,7 +191,7 @@ impl ReplacementMatcher for ThisWouldDieMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -239,6 +239,65 @@ impl ReplacementMatcher for WouldGoToGraveyardMatcher {
     }
 }
 
+/// Matches when an object matching the filter would move between specific zones.
+#[derive(Debug, Clone)]
+pub struct WouldChangeZoneMatcher {
+    pub filter: ObjectFilter,
+    pub from_zone: Option<Zone>,
+    pub to_zone: Option<Zone>,
+}
+
+impl WouldChangeZoneMatcher {
+    pub fn new(filter: ObjectFilter, from_zone: Option<Zone>, to_zone: Option<Zone>) -> Self {
+        Self {
+            filter,
+            from_zone,
+            to_zone,
+        }
+    }
+}
+
+impl ReplacementMatcher for WouldChangeZoneMatcher {
+    fn matches_event(&self, event: &dyn GameEventType, ctx: &EventContext) -> bool {
+        if event.event_kind() != EventKind::ZoneChange {
+            return false;
+        }
+
+        let Some(zone_change) = downcast_event::<ZoneChangeEvent>(event) else {
+            return false;
+        };
+
+        if self.from_zone.is_some_and(|zone| zone_change.from != zone) {
+            return false;
+        }
+        if self.to_zone.is_some_and(|zone| zone_change.to != zone) {
+            return false;
+        }
+
+        if let Some(obj) = zone_change
+            .objects
+            .first()
+            .and_then(|&id| ctx.game.object(id))
+        {
+            self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
+        } else {
+            false
+        }
+    }
+
+    fn display(&self) -> String {
+        let from = self
+            .from_zone
+            .map(|zone| format!(" from {zone:?}"))
+            .unwrap_or_default();
+        let to = self
+            .to_zone
+            .map(|zone| format!(" to {zone:?}"))
+            .unwrap_or_default();
+        format!("When an object would change zones{from}{to}")
+    }
+}
+
 /// Matches when an object would be exiled.
 #[derive(Debug, Clone)]
 pub struct WouldBeExiledMatcher {
@@ -281,7 +340,7 @@ impl ReplacementMatcher for WouldBeExiledMatcher {
     }
 }
 
-/// Matches when this specific object would be put into a graveyard from anywhere (self-replacement).
+/// Matches when this specific object would be put into a graveyard from anywhere.
 ///
 /// Unlike `ThisWouldDieMatcher` which only matches battlefield to graveyard,
 /// this matches any zone to graveyard (e.g., library to graveyard, hand to graveyard).
@@ -311,7 +370,7 @@ impl ReplacementMatcher for ThisWouldGoToGraveyardMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -510,9 +569,9 @@ mod tests {
     }
 
     #[test]
-    fn test_this_would_die_self_replacement() {
+    fn test_this_would_die_priority_is_other() {
         let matcher = ThisWouldDieMatcher;
-        assert_eq!(matcher.priority(), ReplacementPriority::SelfReplacement);
+        assert_eq!(matcher.priority(), ReplacementPriority::Other);
     }
 
     #[test]
@@ -528,9 +587,9 @@ mod tests {
     }
 
     #[test]
-    fn test_this_would_go_to_graveyard_self_replacement() {
+    fn test_this_would_go_to_graveyard_priority_is_other() {
         let matcher = ThisWouldGoToGraveyardMatcher;
-        assert_eq!(matcher.priority(), ReplacementPriority::SelfReplacement);
+        assert_eq!(matcher.priority(), ReplacementPriority::Other);
     }
 
     #[test]
@@ -539,7 +598,7 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
 
-        // Create context with source set (for self-replacement matching)
+        // Create context with source set so the matcher can compare object identity.
         let ctx = EventContext::for_replacement_effect(alice, source_id, &game);
         let matcher = ThisWouldGoToGraveyardMatcher;
 

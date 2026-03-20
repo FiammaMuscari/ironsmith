@@ -131,7 +131,9 @@ pub use player::{
     SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
     TaintedPactEffect, ThassasOracleEffect, WinTheGameEffect, YasharnImplacableEarthEffect,
 };
-pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
+pub use replacement::{
+    ApplyReplacementEffect, RegisterZoneReplacementEffect, ReplacementApplyMode,
+};
 pub use restrictions::CantEffect;
 pub use stack::{
     ChooseNewTargetsEffect, CopySpellEffect, CounterEffect, NewTargetRestriction, RetargetMode,

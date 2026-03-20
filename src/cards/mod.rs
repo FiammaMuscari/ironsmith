@@ -27,6 +27,7 @@ use crate::card::Card;
 use crate::cost::{OptionalCost, TotalCost};
 use crate::effect::Effect;
 use crate::ids::CardId;
+use crate::resolution::ResolutionProgram;
 use crate::static_abilities::StaticAbilityId;
 use crate::target::ObjectFilter;
 use std::collections::HashMap;
@@ -45,7 +46,7 @@ pub struct CardDefinition {
     pub abilities: Vec<Ability>,
 
     /// For instants/sorceries: the effects when the spell resolves
-    pub spell_effect: Option<Vec<Effect>>,
+    pub spell_effect: Option<ResolutionProgram>,
 
     /// For Auras: what this card can enchant (used for non-target attachments)
     pub aura_attach_filter: Option<ObjectFilter>,
@@ -105,7 +106,7 @@ impl CardDefinition {
         Self {
             card,
             abilities: Vec::new(),
-            spell_effect: Some(effects),
+            spell_effect: Some(ResolutionProgram::from_effects(effects)),
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
             has_fuse: false,
@@ -120,7 +121,7 @@ impl CardDefinition {
         Self {
             card,
             abilities,
-            spell_effect: Some(effects),
+            spell_effect: Some(ResolutionProgram::from_effects(effects)),
             aura_attach_filter: None,
             alternative_casts: Vec::new(),
             has_fuse: false,

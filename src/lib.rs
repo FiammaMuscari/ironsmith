@@ -35,6 +35,7 @@ pub mod prevention;
 pub mod provenance;
 pub mod replacement;
 pub mod replacement_ability_processor;
+pub mod resolution;
 pub mod rules;
 pub mod semantic_compare;
 pub mod snapshot;
@@ -106,6 +107,7 @@ pub use provenance::{ProvNodeId, ProvenanceGraph, ProvenanceNode, ProvenanceNode
 pub use replacement::{
     ReplacementAction, ReplacementEffect, ReplacementEffectId, ReplacementEffectManager,
 };
+pub use resolution::{ResolutionProgram, ResolutionSegment, SelfReplacementBranch};
 pub use static_abilities::StaticAbility;
 pub use tag::TagKey;
 pub use target::ChooseSpec;

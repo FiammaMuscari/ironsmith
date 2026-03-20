@@ -1317,6 +1317,40 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ChooseLastReplacementDecisionMaker;
+
+    impl DecisionMaker for ChooseLastReplacementDecisionMaker {
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            ctx.options
+                .iter()
+                .rev()
+                .find(|option| option.legal)
+                .map(|option| vec![option.index])
+                .unwrap_or_default()
+        }
+    }
+
+    fn assert_zone_change_destination(
+        result: crate::event_processor::TraitEventResult,
+        expected: Zone,
+    ) {
+        match result {
+            crate::event_processor::TraitEventResult::Proceed(event)
+            | crate::event_processor::TraitEventResult::Modified(event) => {
+                let zone_change =
+                    crate::events::downcast_event::<crate::events::ZoneChangeEvent>(event.inner())
+                        .expect("replacement result should still be a zone change event");
+                assert_eq!(zone_change.to, expected);
+            }
+            other => panic!("expected modified zone change event, got {other:?}"),
+        }
+    }
+
     fn setup_spelunking_airship_game() -> (GameState, PlayerId, ObjectId) {
         let spelunking = crate::CardDefinitionBuilder::new(crate::ids::CardId::new(), "Spelunking")
             .card_types(vec![crate::types::CardType::Enchantment])
@@ -1381,6 +1415,151 @@ mod tests {
         assert!(
             game.is_tapped(result.new_id),
             "choosing Spelunking's replacement first should still allow Airship Engine Room to enter tapped"
+        );
+    }
+
+    #[test]
+    fn test_darksteel_colossus_and_external_graveyard_replacement_require_choice() {
+        let alice = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+
+        let island_id = game.create_object_from_definition(
+            &crate::cards::basic_island(),
+            alice,
+            Zone::Battlefield,
+        );
+        let colossus_id = game.create_object_from_definition(
+            &crate::cards::darksteel_colossus(),
+            alice,
+            Zone::Hand,
+        );
+
+        game.replacement_effects.add_resolution_effect(
+            crate::replacement::ReplacementEffect::with_matcher(
+                island_id,
+                alice,
+                crate::events::zones::matchers::WouldGoToGraveyardMatcher::new(
+                    crate::target::ObjectFilter::default()
+                        .owned_by(crate::target::PlayerFilter::Specific(alice)),
+                ),
+                crate::replacement::ReplacementAction::ChangeDestination(Zone::Exile),
+            ),
+        );
+
+        let result = crate::event_processor::process_zone_change_full(
+            &mut game,
+            colossus_id,
+            Zone::Hand,
+            Zone::Graveyard,
+            EventCause::from_game_rule(),
+        );
+
+        match result {
+            crate::event_processor::ZoneChangeResult::NeedsChoice {
+                player,
+                applicable_effects,
+                event,
+                ..
+            } => {
+                assert_eq!(player, alice);
+                assert_eq!(
+                    applicable_effects.len(),
+                    2,
+                    "Darksteel Colossus and the external exile replacement should both apply"
+                );
+
+                let library_effect_id = applicable_effects
+                    .iter()
+                    .copied()
+                    .find(|&id| {
+                        game.replacement_effects
+                            .get_effect(id)
+                            .is_some_and(|effect| {
+                                matches!(
+                                    effect.replacement,
+                                    crate::replacement::ReplacementAction::ChangeDestination(
+                                        Zone::Library
+                                    )
+                                )
+                            })
+                    })
+                    .expect("expected Darksteel Colossus library replacement");
+                let exile_effect_id = applicable_effects
+                    .iter()
+                    .copied()
+                    .find(|&id| {
+                        game.replacement_effects
+                            .get_effect(id)
+                            .is_some_and(|effect| {
+                                matches!(
+                                    effect.replacement,
+                                    crate::replacement::ReplacementAction::ChangeDestination(
+                                        Zone::Exile
+                                    )
+                                )
+                            })
+                    })
+                    .expect("expected external exile replacement");
+
+                let event = (*event).clone();
+                assert_zone_change_destination(
+                    crate::event_processor::process_event_with_chosen_replacement_trait(
+                        &mut game,
+                        event.clone(),
+                        library_effect_id,
+                    ),
+                    Zone::Library,
+                );
+                assert_zone_change_destination(
+                    crate::event_processor::process_event_with_chosen_replacement_trait(
+                        &mut game,
+                        event,
+                        exile_effect_id,
+                    ),
+                    Zone::Exile,
+                );
+            }
+            other => panic!("expected a replacement-order choice, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_copy_as_enters_applies_before_other_etb_replacements() {
+        let copy_land =
+            crate::CardDefinitionBuilder::new(crate::ids::CardId::new(), "Copycat Harbor")
+                .card_types(vec![crate::types::CardType::Land])
+                .parse_text(
+                    "This land enters tapped.\nYou may have this land enter as a copy of any land on the battlefield."
+                        .to_string(),
+                )
+                .expect("copy land oracle text should parse");
+
+        let alice = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        game.create_object_from_definition(&crate::cards::basic_island(), alice, Zone::Battlefield);
+        let copy_land_id = game.create_object_from_definition(&copy_land, alice, Zone::Hand);
+        let cause = EventCause::from_special_action(Some(copy_land_id), alice);
+        let mut dm = ChooseLastReplacementDecisionMaker;
+
+        let result = game
+            .move_object_with_etb_processing_with_dm_and_cause(
+                copy_land_id,
+                Zone::Battlefield,
+                cause,
+                &mut dm,
+            )
+            .expect("copy land should enter the battlefield");
+
+        let entered = game
+            .object(result.new_id)
+            .expect("copy land should exist on the battlefield");
+        assert_eq!(
+            entered.name, "Island",
+            "choosing the copy option should make the land enter as an Island"
+        );
+        assert!(
+            !game.is_tapped(result.new_id),
+            "copy-as-enters should apply before the original enters-tapped replacement"
         );
     }
 

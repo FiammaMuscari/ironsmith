@@ -26,6 +26,92 @@ pub(super) fn active_target_assignments_for_effect(
     assignments[start..end].to_vec()
 }
 
+fn representative_segment_targets(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    effect: &Effect,
+    effect_target_assignments: Vec<crate::game_state::TargetAssignment>,
+) -> Result<Option<Vec<crate::executor::ResolvedTarget>>, GameLoopError> {
+    ctx.with_temp_target_assignments(effect_target_assignments, |ctx| {
+        let Some(spec) = effect.0.get_target_spec() else {
+            return Ok(None);
+        };
+        let object_id = match crate::effects::helpers::resolve_single_object_for_effect(game, ctx, spec)
+        {
+            Ok(id) => id,
+            Err(crate::executor::ExecutionError::InvalidTarget) => return Ok(None),
+            Err(err) => return Err(GameLoopError::ResolutionFailed(err.to_string())),
+        };
+        Ok(Some(vec![crate::executor::ResolvedTarget::Object(object_id)]))
+    })
+}
+
+fn apply_self_replacement_tag_prelude(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    effects: &[Effect],
+) -> Result<(), GameLoopError> {
+    for effect in effects {
+        let is_pure_tag_effect = effect
+            .downcast_ref::<crate::effects::TagAttachedToSourceEffect>()
+            .is_some()
+            || effect
+                .downcast_ref::<crate::effects::TagTriggeringObjectEffect>()
+                .is_some()
+            || effect
+                .downcast_ref::<crate::effects::TagTriggeringDamageTargetEffect>()
+                .is_some()
+            || effect
+                .downcast_ref::<crate::effects::TaggedEffect>()
+                .is_some_and(|tagged| {
+                    tagged
+                        .effect
+                        .downcast_ref::<crate::effects::SequenceEffect>()
+                        .is_some_and(|sequence| sequence.effects.is_empty())
+                });
+        if !is_pure_tag_effect {
+            break;
+        }
+        crate::executor::execute_effect(game, effect, ctx)
+            .map_err(|err| GameLoopError::ResolutionFailed(err.to_string()))?;
+    }
+    Ok(())
+}
+
+fn evaluate_self_replacement_branch(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    branch: &crate::resolution::SelfReplacementBranch,
+    segment_effects: &[Effect],
+    representative_effect: Option<&Effect>,
+    representative_assignments: Vec<crate::game_state::TargetAssignment>,
+) -> Result<bool, GameLoopError> {
+    let original_tagged_objects = ctx.tagged_objects.clone();
+    apply_self_replacement_tag_prelude(game, ctx, segment_effects)?;
+    let Some(effect) = representative_effect else {
+        let result =
+            crate::condition_eval::evaluate_condition_resolution(game, &branch.condition, ctx)
+            .map_err(|err| GameLoopError::ResolutionFailed(err.to_string()));
+        ctx.tagged_objects = original_tagged_objects;
+        return result;
+    };
+
+    let representative_targets =
+        representative_segment_targets(game, ctx, effect, representative_assignments.clone())?;
+    let result = ctx.with_temp_target_assignments(representative_assignments, |ctx| {
+        if let Some(targets) = representative_targets {
+            ctx.with_temp_targets(targets, |ctx| {
+                crate::condition_eval::evaluate_condition_resolution(game, &branch.condition, ctx)
+            })
+        } else {
+            crate::condition_eval::evaluate_condition_resolution(game, &branch.condition, ctx)
+        }
+    })
+    .map_err(|err| GameLoopError::ResolutionFailed(err.to_string()));
+    ctx.tagged_objects = original_tagged_objects;
+    result
+}
+
 // ============================================================================
 // Stack Resolution
 // ============================================================================
@@ -166,12 +252,12 @@ pub(super) fn resolve_stack_entry_full(
     // Get effects to execute
     // For abilities with stored effects (like triggered abilities), use those directly
     // even if the source object no longer exists (e.g., undying triggers from dead creatures)
-    let effects = if let Some(ref ability_effects) = entry.ability_effects {
+    let program = if let Some(ref ability_effects) = entry.ability_effects {
         ability_effects.clone()
     } else if let Some(obj) = &obj {
         get_effects_for_stack_entry(game, &entry, obj)
     } else {
-        Vec::new()
+        crate::resolution::ResolutionProgram::default()
     };
 
     // ETB replacement is resolved when the spell actually moves to the battlefield.
@@ -180,22 +266,83 @@ pub(super) fn resolve_stack_entry_full(
     let mut all_events = Vec::new();
     let mut consumed_modal_selection = false;
     let mut assignment_cursor = 0usize;
-    for effect in &effects {
-        let effect_target_assignments = active_target_assignments_for_effect(
-            game,
-            effect,
-            entry.controller,
-            entry.object_id,
-            entry.chosen_modes.as_deref(),
-            &mut consumed_modal_selection,
-            &valid_target_assignments,
-            &mut assignment_cursor,
-        );
-        let outcome = ctx.with_temp_target_assignments(effect_target_assignments, |ctx| {
-            execute_effect(game, effect, ctx)
-        });
-        if let Ok(outcome) = outcome {
-            all_events.extend(outcome.events);
+    for segment in &program.segments {
+        let (selected_effects, selected_self_replacement) = if segment.self_replacements.is_empty() {
+            (segment.default_effects.clone(), false)
+        } else {
+            let representative_effect = segment
+                .default_effects
+                .iter()
+                .find(|effect| effect.0.get_target_spec().is_some())
+                .or_else(|| {
+                    segment
+                        .self_replacements
+                        .iter()
+                        .flat_map(|branch| branch.replacement_effects.iter())
+                        .find(|effect| effect.0.get_target_spec().is_some())
+                });
+            let representative_assignments = representative_effect
+                .map(|effect| {
+                    let mut temp_cursor = assignment_cursor;
+                    let mut temp_consumed_modal_selection = consumed_modal_selection;
+                    active_target_assignments_for_effect(
+                        game,
+                        effect,
+                        entry.controller,
+                        entry.object_id,
+                        entry.chosen_modes.as_deref(),
+                        &mut temp_consumed_modal_selection,
+                        &valid_target_assignments,
+                        &mut temp_cursor,
+                    )
+                })
+                .unwrap_or_default();
+            let mut applicable = Vec::new();
+            for branch in &segment.self_replacements {
+                if evaluate_self_replacement_branch(
+                    game,
+                    &mut ctx,
+                    branch,
+                    &segment.default_effects,
+                    representative_effect,
+                    representative_assignments.clone(),
+                )? {
+                    applicable.push(branch);
+                }
+            }
+
+            match applicable.len() {
+                0 => (segment.default_effects.clone(), false),
+                1 => (applicable[0].replacement_effects.clone(), true),
+                _ => {
+                    return Err(GameLoopError::ResolutionFailed(
+                        "multiple self-replacement branches applied during resolution".to_string(),
+                    ));
+                }
+            }
+        };
+
+        if selected_self_replacement {
+            apply_self_replacement_tag_prelude(game, &mut ctx, &segment.default_effects)?;
+        }
+
+        for effect in &selected_effects {
+            let effect_target_assignments = active_target_assignments_for_effect(
+                game,
+                effect,
+                entry.controller,
+                entry.object_id,
+                entry.chosen_modes.as_deref(),
+                &mut consumed_modal_selection,
+                &valid_target_assignments,
+                &mut assignment_cursor,
+            );
+            let outcome = ctx.with_temp_target_assignments(effect_target_assignments, |ctx| {
+                execute_effect(game, effect, ctx)
+            });
+            if let Ok(outcome) = outcome {
+                all_events.extend(outcome.events);
+            }
         }
     }
     // Process events from effect outcomes for triggers
@@ -595,7 +742,7 @@ pub(super) fn get_effects_for_stack_entry(
     _game: &GameState,
     entry: &StackEntry,
     obj: &crate::object::Object,
-) -> Vec<Effect> {
+) -> crate::resolution::ResolutionProgram {
     // If this is an ability with stored effects, use those directly
     if let Some(ref effects) = entry.ability_effects {
         return effects.clone();
@@ -610,7 +757,7 @@ pub(super) fn get_effects_for_stack_entry(
     // that execute on resolution - they just enter the battlefield.
     // Don't fall back to looking at their abilities.
     if obj.is_permanent() {
-        return Vec::new();
+        return crate::resolution::ResolutionProgram::default();
     }
 
     // For ability stack entries without stored effects, look in the object's abilities
@@ -618,16 +765,16 @@ pub(super) fn get_effects_for_stack_entry(
     for ability in &obj.abilities {
         match &ability.kind {
             AbilityKind::Triggered(triggered) => {
-                return triggered.effects.clone();
+                return triggered.effects.clone().into();
             }
             AbilityKind::Activated(activated) => {
-                return activated.effects.clone();
+                return activated.effects.clone().into();
             }
             _ => {}
         }
     }
 
-    Vec::new()
+    crate::resolution::ResolutionProgram::default()
 }
 
 #[cfg(test)]

@@ -242,20 +242,15 @@ impl ReplacementMatcher for DamageFromSourceMatcher {
     }
 }
 
-/// Matches preventable damage events dealt by the source of the replacement effect (self-replacement).
+/// Matches preventable damage events dealt by the source of the replacement effect.
 ///
 /// Used for abilities like "Prevent all damage that would be dealt by this creature."
 #[derive(Debug, Clone)]
-pub struct DamageFromSelfMatcher {
-    /// Whether to treat this as a self-replacement effect for priority ordering.
-    pub self_replacement: bool,
-}
+pub struct DamageFromSelfMatcher;
 
 impl DamageFromSelfMatcher {
     pub fn new() -> Self {
-        Self {
-            self_replacement: true,
-        }
+        Self
     }
 }
 
@@ -284,11 +279,7 @@ impl ReplacementMatcher for DamageFromSelfMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        if self.self_replacement {
-            ReplacementPriority::SelfReplacement
-        } else {
-            ReplacementPriority::Other
-        }
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -392,18 +383,13 @@ impl ReplacementMatcher for PreventableDamageConstraintMatcher {
     }
 }
 
-/// Matches damage events to the source of the replacement effect (self-replacement).
+/// Matches damage events to the source of the replacement effect.
 #[derive(Debug, Clone)]
-pub struct DamageToSelfMatcher {
-    /// Whether this is a self-replacement effect.
-    pub self_replacement: bool,
-}
+pub struct DamageToSelfMatcher;
 
 impl DamageToSelfMatcher {
     pub fn new() -> Self {
-        Self {
-            self_replacement: true,
-        }
+        Self
     }
 }
 
@@ -430,11 +416,7 @@ impl ReplacementMatcher for DamageToSelfMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        if self.self_replacement {
-            ReplacementPriority::SelfReplacement
-        } else {
-            ReplacementPriority::Other
-        }
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -442,18 +424,13 @@ impl ReplacementMatcher for DamageToSelfMatcher {
     }
 }
 
-/// Matches preventable combat damage events to the source of the replacement effect
-/// (self-replacement).
+/// Matches preventable combat damage events to the source of the replacement effect.
 #[derive(Debug, Clone)]
-pub struct DamageToSelfCombatMatcher {
-    pub self_replacement: bool,
-}
+pub struct DamageToSelfCombatMatcher;
 
 impl DamageToSelfCombatMatcher {
     pub fn new() -> Self {
-        Self {
-            self_replacement: true,
-        }
+        Self
     }
 }
 
@@ -484,11 +461,7 @@ impl ReplacementMatcher for DamageToSelfCombatMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        if self.self_replacement {
-            ReplacementPriority::SelfReplacement
-        } else {
-            ReplacementPriority::Other
-        }
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -501,15 +474,11 @@ impl ReplacementMatcher for DamageToSelfCombatMatcher {
 #[derive(Debug, Clone)]
 pub struct DamageToSelfFromSourceFilterMatcher {
     pub source_filter: ObjectFilter,
-    pub self_replacement: bool,
 }
 
 impl DamageToSelfFromSourceFilterMatcher {
     pub fn new(source_filter: ObjectFilter) -> Self {
-        Self {
-            source_filter,
-            self_replacement: true,
-        }
+        Self { source_filter }
     }
 
     pub fn from_creature() -> Self {
@@ -547,11 +516,7 @@ impl ReplacementMatcher for DamageToSelfFromSourceFilterMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        if self.self_replacement {
-            ReplacementPriority::SelfReplacement
-        } else {
-            ReplacementPriority::Other
-        }
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -646,7 +611,7 @@ mod tests {
     #[test]
     fn test_damage_to_self_matcher_priority() {
         let matcher = DamageToSelfMatcher::new();
-        assert_eq!(matcher.priority(), ReplacementPriority::SelfReplacement);
+        assert_eq!(matcher.priority(), ReplacementPriority::Other);
     }
 
     #[test]

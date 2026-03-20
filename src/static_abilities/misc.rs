@@ -23,7 +23,7 @@ use crate::events::damage::matchers::{
 use crate::events::permanents::matchers::AttachedPermanentWouldBeDestroyedMatcher;
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
-    ThisWouldEnterBattlefieldMatcher, ThisWouldGoToGraveyardMatcher, WouldEnterBattlefieldMatcher,
+    ThisWouldEnterBattlefieldMatcher, WouldEnterBattlefieldMatcher,
 };
 use crate::events::zones::{EnterBattlefieldEvent, ZoneChangeEvent};
 use crate::game_state::GameState;
@@ -31,7 +31,9 @@ use crate::grant::GrantSpec;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaCost;
 use crate::object::CounterType;
-use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect};
+use crate::replacement::{
+    RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect, ZoneReplacementSpec,
+};
 use crate::tag::SOURCE_EXILED_TAG;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::Subtype;
@@ -950,13 +952,9 @@ impl StaticAbilityKind for ShuffleIntoLibraryFromGraveyard {
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
         Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldGoToGraveyardMatcher,
-                ReplacementAction::ChangeDestination(crate::zone::Zone::Library),
-            )
-            .self_replacing(),
+            ZoneReplacementSpec::new(ObjectFilter::specific(source), crate::zone::Zone::Library)
+                .to_zone(crate::zone::Zone::Graveyard)
+                .build(source, controller),
         )
     }
 }
@@ -2521,21 +2519,19 @@ impl StaticAbilityKind for ExileToCounteredExileInsteadOfGraveyard {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(ReplacementEffect::with_matcher(
-            source,
-            controller,
-            crate::events::zones::matchers::WouldGoToGraveyardMatcher::new(
+        Some(
+            ZoneReplacementSpec::new(
                 ObjectFilter::default().owned_by(self.player.clone()),
-            ),
-            ReplacementAction::Instead(vec![
-                Effect::new(crate::effects::ExileEffect::with_spec(ChooseSpec::Source)),
-                Effect::new(crate::effects::PutCountersEffect::new(
-                    self.counter_type,
-                    Value::Fixed(1),
-                    ChooseSpec::All(ObjectFilter::tagged(SOURCE_EXILED_TAG).in_zone(Zone::Exile)),
-                )),
-            ]),
-        ))
+                Zone::Exile,
+            )
+            .to_zone(Zone::Graveyard)
+            .with_follow_up_effects(vec![Effect::new(crate::effects::PutCountersEffect::new(
+                self.counter_type,
+                Value::Fixed(1),
+                ChooseSpec::All(ObjectFilter::tagged(SOURCE_EXILED_TAG).in_zone(Zone::Exile)),
+            ))])
+            .build(source, controller),
+        )
     }
 }
 

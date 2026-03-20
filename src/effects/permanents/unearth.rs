@@ -92,8 +92,7 @@ impl EffectExecutor for UnearthEffect {
             ctx.controller,
             WouldLeaveBattlefieldMatcher::new(ObjectFilter::specific(new_id)),
             ReplacementAction::ChangeDestination(Zone::Exile),
-        )
-        .self_replacing();
+        );
         let _ = execute_effect(
             game,
             &Effect::new(ApplyReplacementEffect::one_shot(replacement)),

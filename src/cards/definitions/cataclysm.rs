@@ -88,7 +88,7 @@ mod tests {
 
     fn cataclysm_effects() -> Vec<Effect> {
         let def = cataclysm();
-        def.spell_effect.clone().unwrap_or_default()
+        def.spell_effect.clone().unwrap_or_default().to_vec()
     }
 
     fn create_artifact_creature(game: &mut GameState, name: &str, owner: PlayerId) -> ObjectId {

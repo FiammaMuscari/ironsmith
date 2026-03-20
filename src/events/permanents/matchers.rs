@@ -135,7 +135,7 @@ impl ReplacementMatcher for WouldBeDestroyedMatcher {
     }
 }
 
-/// Matches when this specific permanent would be destroyed (self-replacement).
+/// Matches when this specific permanent would be destroyed.
 #[derive(Debug, Clone)]
 pub struct ThisWouldBeDestroyedMatcher;
 
@@ -153,7 +153,7 @@ impl ReplacementMatcher for ThisWouldBeDestroyedMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -284,8 +284,7 @@ impl ReplacementMatcher for RegenerationShieldMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        // Regeneration is a self-replacement effect (it only affects the specific creature)
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -321,7 +320,7 @@ mod tests {
     #[test]
     fn test_this_would_be_destroyed_priority() {
         let matcher = ThisWouldBeDestroyedMatcher;
-        assert_eq!(matcher.priority(), ReplacementPriority::SelfReplacement);
+        assert_eq!(matcher.priority(), ReplacementPriority::Other);
     }
 
     #[test]

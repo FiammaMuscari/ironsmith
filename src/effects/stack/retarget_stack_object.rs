@@ -91,7 +91,7 @@ fn requires_target_selection(spec: &ChooseSpec) -> bool {
 
 fn effects_for_stack_entry(game: &GameState, entry: &StackEntry) -> Vec<crate::effect::Effect> {
     if let Some(ref effects) = entry.ability_effects {
-        return effects.clone();
+        return effects.to_vec();
     }
 
     let Some(obj) = game.object(entry.object_id) else {
@@ -99,7 +99,7 @@ fn effects_for_stack_entry(game: &GameState, entry: &StackEntry) -> Vec<crate::e
     };
 
     if let Some(ref effects) = obj.spell_effect {
-        return effects.clone();
+        return effects.to_vec();
     }
 
     Vec::new()

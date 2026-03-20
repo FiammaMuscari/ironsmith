@@ -1,37 +1,45 @@
 //! Replacement ability processor.
 //!
-//! This module converts static abilities on permanents into replacement effects
-//! that can be registered with the ReplacementEffectManager.
+//! This module converts static abilities into replacement effects that can be
+//! registered with the `ReplacementEffectManager`.
 //!
-//! Per MTG rules, certain static abilities generate replacement effects that
-//! modify how permanents enter the battlefield, how damage is dealt, etc.
-//! These effects need to be tracked separately from continuous effects.
+//! Per MTG rules, replacement effects can function outside the battlefield
+//! when the source text says so (for example, "from anywhere" effects like
+//! Darksteel Colossus). We therefore scan all objects and respect each
+//! ability's functional zones instead of assuming every replacement effect
+//! comes only from battlefield permanents.
 
 use crate::ability::AbilityKind;
 use crate::game_state::GameState;
 use crate::replacement::ReplacementEffect;
 
-/// Generate all replacement effects from static abilities on the battlefield.
+/// Generate all replacement effects from static abilities in zones where they function.
 ///
-/// This scans all permanents for static abilities that generate replacement effects
-/// and returns the corresponding ReplacementEffect structs.
+/// This scans all objects for static abilities that generate replacement effects
+/// and returns the corresponding `ReplacementEffect` structs.
 ///
 /// This function is called during game state refresh to ensure that static ability
 /// replacement effects are properly registered.
 pub fn generate_replacement_effects_from_abilities(game: &GameState) -> Vec<ReplacementEffect> {
     let mut effects = Vec::new();
 
-    // Iterate over all permanents on the battlefield
-    for &permanent_id in &game.battlefield {
-        if let Some(permanent) = game.object(permanent_id) {
-            let controller = permanent.controller;
+    let mut object_ids: Vec<_> = game.objects_iter().map(|object| object.id).collect();
+    object_ids.sort_unstable();
 
-            // Process each ability on the permanent
-            for ability in &permanent.abilities {
+    // Iterate over all objects and apply static abilities only in zones where they function.
+    for object_id in object_ids {
+        if let Some(object) = game.object(object_id) {
+            let controller = object.controller;
+            let zone = object.zone;
+
+            // Process each static ability on the object.
+            for ability in &object.abilities {
                 if let AbilityKind::Static(static_ability) = &ability.kind {
-                    // Use the trait method to generate replacement effects
+                    if !ability.functions_in(&zone) {
+                        continue;
+                    }
                     if let Some(effect) =
-                        static_ability.generate_replacement_effect(permanent_id, controller)
+                        static_ability.generate_replacement_effect(object_id, controller)
                     {
                         effects.push(effect);
                     }
@@ -45,6 +53,11 @@ pub fn generate_replacement_effects_from_abilities(game: &GameState) -> Vec<Repl
 
 #[cfg(test)]
 mod tests {
+    use super::generate_replacement_effects_from_abilities;
+    use crate::cards::CardDefinitionBuilder;
+    use crate::cards::basic_island;
+    use crate::game_state::GameState;
+    use crate::ids::CardId;
     use crate::ids::{ObjectId, PlayerId};
     use crate::replacement::ReplacementAction;
     use crate::static_abilities::StaticAbility;
@@ -58,7 +71,7 @@ mod tests {
 
         assert!(effect.is_some());
         let effect = effect.unwrap();
-        assert!(effect.self_replacement);
+        assert_eq!(effect.priority_override, None);
         // Now using trait-based matcher instead of ReplacementCondition enum
         assert!(
             effect.matcher.is_some(),
@@ -84,7 +97,7 @@ mod tests {
 
         assert!(effect.is_some());
         let effect = effect.unwrap();
-        assert!(effect.self_replacement);
+        assert_eq!(effect.priority_override, None);
         // Now using trait-based matcher instead of ReplacementCondition enum
         assert!(
             effect.matcher.is_some(),
@@ -94,5 +107,35 @@ mod tests {
             effect.replacement,
             ReplacementAction::ChangeDestination(Zone::Library)
         ));
+    }
+
+    #[test]
+    fn test_generate_replacements_respects_nonbattlefield_functional_zones() {
+        let alice = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+
+        let darksteel = CardDefinitionBuilder::new(CardId::new(), "Darksteel Test")
+            .card_types(vec![
+                crate::types::CardType::Artifact,
+                crate::types::CardType::Creature,
+            ])
+            .shuffle_into_library_from_graveyard()
+            .build();
+        let island = basic_island();
+
+        let darksteel_id = game.create_object_from_definition(&darksteel, alice, Zone::Hand);
+        game.create_object_from_definition(&island, alice, Zone::Battlefield);
+
+        let effects = generate_replacement_effects_from_abilities(&game);
+        assert!(
+            effects.iter().any(|effect| {
+                effect.source == darksteel_id
+                    && matches!(
+                        effect.replacement,
+                        ReplacementAction::ChangeDestination(Zone::Library)
+                    )
+            }),
+            "expected nonbattlefield shuffle replacement to be generated from hand"
+        );
     }
 }

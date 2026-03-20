@@ -451,7 +451,7 @@ pub fn apply_priority_response_with_dm(
                 );
                 (cost, obj.spell_effect.clone().unwrap_or_default())
             } else {
-                (None, Vec::new())
+                (None, crate::resolution::ResolutionProgram::default())
             };
 
             let (needs_x, max_x) = compute_spell_cast_x_bounds(

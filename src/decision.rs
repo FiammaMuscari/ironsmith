@@ -11121,11 +11121,13 @@ mod tests {
         let spell_id = game.create_object_from_card(&card, alice, Zone::Hand);
         game.object_mut(spell_id)
             .expect("spell exists")
-            .spell_effect = Some(vec![Effect::conditional(
-            Condition::TargetSpellControllerIsPoisoned,
-            vec![Effect::counter(ChooseSpec::target_spell())],
-            vec![],
-        )]);
+            .spell_effect = Some(crate::resolution::ResolutionProgram::from_effects(vec![
+            Effect::conditional(
+                Condition::TargetSpellControllerIsPoisoned,
+                vec![Effect::counter(ChooseSpec::target_spell())],
+                vec![],
+            ),
+        ]));
 
         // With no spell on stack, the counterspell must not be castable.
         let actions_without_stack = compute_legal_actions(&game, alice);
@@ -11191,11 +11193,13 @@ mod tests {
         let spell_id = game.create_object_from_card(&card, alice, Zone::Hand);
         game.object_mut(spell_id)
             .expect("spell exists")
-            .spell_effect = Some(vec![Effect::if_then(
-            crate::effect::EffectId(0),
-            crate::effect::EffectPredicate::Happened,
-            vec![Effect::counter(ChooseSpec::target_spell())],
-        )]);
+            .spell_effect = Some(crate::resolution::ResolutionProgram::from_effects(vec![
+            Effect::if_then(
+                crate::effect::EffectId(0),
+                crate::effect::EffectPredicate::Happened,
+                vec![Effect::counter(ChooseSpec::target_spell())],
+            ),
+        ]));
 
         // With no spell on stack, the spell must not be castable.
         let actions_without_stack = compute_legal_actions(&game, alice);

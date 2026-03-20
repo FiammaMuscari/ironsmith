@@ -1,5 +1,28 @@
 use super::*;
 
+fn describe_resolution_program(program: &crate::resolution::ResolutionProgram) -> String {
+    let mut rendered_segments = Vec::new();
+    for segment in &program.segments {
+        if segment.self_replacements.len() == 1 {
+            let branch = &segment.self_replacements[0];
+            rendered_segments.push(describe_effect_list(&[Effect::conditional(
+                branch.condition.clone(),
+                branch.replacement_effects.clone(),
+                segment.default_effects.clone(),
+            )]));
+            continue;
+        }
+
+        if !segment.default_effects.is_empty() {
+            rendered_segments.push(describe_effect_list(&segment.default_effects));
+        }
+        for branch in &segment.self_replacements {
+            rendered_segments.push(describe_effect_list(&branch.replacement_effects));
+        }
+    }
+    rendered_segments.join(". ")
+}
+
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     stacker::maybe_grow(1024 * 1024, 8 * 1024 * 1024, || compiled_lines_inner(def))
 }
@@ -270,7 +293,7 @@ pub(super) fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
     {
         out.push(format!(
             "Spell effects: {}",
-            describe_effect_list(spell_effects)
+            describe_resolution_program(spell_effects)
         ));
     }
     if spell_like_card {

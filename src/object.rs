@@ -253,7 +253,7 @@ pub struct BestowCastState {
     pub card_types: Vec<CardType>,
     pub subtypes: Vec<Subtype>,
     pub aura_attach_filter: Option<crate::target::ObjectFilter>,
-    pub spell_effect: Option<Vec<crate::effect::Effect>>,
+    pub spell_effect: Option<crate::resolution::ResolutionProgram>,
 }
 
 /// Stored copiable fields needed to restore a card after a face-down cast.
@@ -271,7 +271,7 @@ pub struct FaceDownCastState {
     pub base_loyalty: Option<u32>,
     pub base_defense: Option<u32>,
     pub abilities: Vec<Ability>,
-    pub spell_effect: Option<Vec<crate::effect::Effect>>,
+    pub spell_effect: Option<crate::resolution::ResolutionProgram>,
     pub aura_attach_filter: Option<crate::target::ObjectFilter>,
 }
 
@@ -325,7 +325,7 @@ pub struct Object {
 
     // Spell-related state
     /// Spell effects (for instants/sorceries)
-    pub spell_effect: Option<Vec<crate::effect::Effect>>,
+    pub spell_effect: Option<crate::resolution::ResolutionProgram>,
     /// For Auras: what this card can enchant (used for non-target attachments)
     pub aura_attach_filter: Option<crate::target::ObjectFilter>,
     /// Original copiable fields to restore if this permanent ends bestow.
@@ -865,7 +865,9 @@ impl Object {
 
         let target_spec =
             crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(filter));
-        self.spell_effect = Some(vec![crate::effect::Effect::attach_to(target_spec)]);
+        self.spell_effect = Some(crate::resolution::ResolutionProgram::from_effects(vec![
+            crate::effect::Effect::attach_to(target_spec),
+        ]));
     }
 
     /// Returns true if this object is currently in the temporary bestow Aura form.

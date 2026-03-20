@@ -2058,6 +2058,88 @@ fn test_resolve_stack_entry_basic() {
 }
 
 #[test]
+fn test_resolve_stack_entry_uses_self_replacement_branch_when_condition_is_true() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    let spell_def = CardDefinitionBuilder::new(CardId::new(), "Refined Analysis")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Draw a card. If you control an artifact, draw two cards instead.")
+        .expect("self-replacement spell should parse");
+    let artifact_def = CardDefinitionBuilder::new(CardId::new(), "Proof Artifact")
+        .card_types(vec![CardType::Artifact])
+        .build();
+    let library_card = CardBuilder::new(CardId::new(), "Library Card A")
+        .card_types(vec![CardType::Artifact])
+        .build();
+    let second_library_card = CardBuilder::new(CardId::new(), "Library Card B")
+        .card_types(vec![CardType::Artifact])
+        .build();
+
+    game.create_object_from_definition(&artifact_def, alice, Zone::Battlefield);
+    game.create_object_from_card(&library_card, alice, Zone::Library);
+    game.create_object_from_card(&second_library_card, alice, Zone::Library);
+
+    let hand_before = game.player(alice).expect("alice exists").hand.len();
+    let library_before = game.player(alice).expect("alice exists").library.len();
+
+    let spell_id = game.create_object_from_definition(&spell_def, alice, Zone::Stack);
+    game.push_to_stack(StackEntry::new(spell_id, alice));
+
+    resolve_stack_entry(&mut game).expect("spell should resolve");
+
+    assert_eq!(
+        game.player(alice).expect("alice exists").hand.len(),
+        hand_before + 2,
+        "the self-replacement branch should replace draw one with draw two"
+    );
+    assert_eq!(
+        game.player(alice).expect("alice exists").library.len(),
+        library_before - 2,
+        "the replacement branch should consume two cards from the library"
+    );
+}
+
+#[test]
+fn test_resolve_stack_entry_uses_default_effect_when_self_replacement_condition_is_false() {
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+
+    let spell_def = CardDefinitionBuilder::new(CardId::new(), "Refined Analysis")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Draw a card. If you control an artifact, draw two cards instead.")
+        .expect("self-replacement spell should parse");
+    let library_card = CardBuilder::new(CardId::new(), "Library Card A")
+        .card_types(vec![CardType::Artifact])
+        .build();
+    let second_library_card = CardBuilder::new(CardId::new(), "Library Card B")
+        .card_types(vec![CardType::Artifact])
+        .build();
+
+    game.create_object_from_card(&library_card, alice, Zone::Library);
+    game.create_object_from_card(&second_library_card, alice, Zone::Library);
+
+    let hand_before = game.player(alice).expect("alice exists").hand.len();
+    let library_before = game.player(alice).expect("alice exists").library.len();
+
+    let spell_id = game.create_object_from_definition(&spell_def, alice, Zone::Stack);
+    game.push_to_stack(StackEntry::new(spell_id, alice));
+
+    resolve_stack_entry(&mut game).expect("spell should resolve");
+
+    assert_eq!(
+        game.player(alice).expect("alice exists").hand.len(),
+        hand_before + 1,
+        "the default segment should resolve when the self-replacement condition is false"
+    );
+    assert_eq!(
+        game.player(alice).expect("alice exists").library.len(),
+        library_before - 1,
+        "the default segment should draw exactly one card"
+    );
+}
+
+#[test]
 fn test_echo_upkeep_trigger_without_payment_sacrifices_source() {
     use crate::ability::AbilityKind;
     use crate::cards::CardDefinitionBuilder;
@@ -7074,7 +7156,9 @@ fn test_rebound_exiles_on_resolution_and_schedules_next_upkeep_cast() {
         .card_types(vec![CardType::Instant])
         .build();
     let mut definition = CardDefinition::new(card);
-    definition.spell_effect = Some(vec![Effect::gain_life(1)]);
+    definition.spell_effect = Some(crate::resolution::ResolutionProgram::from_effects(vec![
+        Effect::gain_life(1),
+    ]));
     definition.abilities.push(
         Ability::static_ability(StaticAbility::rebound())
             .in_zones(vec![Zone::Stack])

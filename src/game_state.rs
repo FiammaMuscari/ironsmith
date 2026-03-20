@@ -979,7 +979,7 @@ pub struct StackEntry {
     pub x_value: Option<u32>,
     /// For triggered/activated abilities, the effects to execute.
     /// For spells, this is None and effects come from the spell itself.
-    pub ability_effects: Option<Vec<crate::effect::Effect>>,
+    pub ability_effects: Option<crate::resolution::ResolutionProgram>,
     /// Whether this is an ability (triggered or activated) vs a spell.
     pub is_ability: bool,
     /// The casting method used (normal or alternative like flashback).
@@ -1070,7 +1070,7 @@ impl StackEntry {
     pub fn ability(
         source_id: ObjectId,
         controller: PlayerId,
-        effects: Vec<crate::effect::Effect>,
+        effects: impl Into<crate::resolution::ResolutionProgram>,
     ) -> Self {
         Self {
             object_id: source_id,
@@ -1079,7 +1079,7 @@ impl StackEntry {
             targets: Vec::new(),
             target_assignments: Vec::new(),
             x_value: None,
-            ability_effects: Some(effects),
+            ability_effects: Some(effects.into()),
             is_ability: true,
             casting_method: CastingMethod::Normal,
             optional_costs_paid: OptionalCostsPaid::default(),

@@ -592,7 +592,7 @@ pub(super) fn extract_modal_spec_from_spell(
 
     // Check spell effects with context to handle conditional effects like Akroma's Will
     if let Some(ref effects) = obj.spell_effect {
-        for effect in effects {
+        for effect in effects.all_effects() {
             // Try context-aware extraction first (handles ConditionalEffect)
             if let Some(spec) = effect
                 .0
@@ -628,8 +628,13 @@ pub(super) fn check_modes_or_continue(
         let source = pending.spell_id;
         let spell_effects = game
             .object(source)
-            .and_then(|obj| obj.spell_effect.as_deref())
-            .unwrap_or(&[]);
+            .map(|obj| {
+                obj.spell_effect
+                    .as_ref()
+                    .map(|program| program.all_effects_owned())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
 
         // Resolve min/max mode counts
         let max_modes = resolve_modal_count_value(
@@ -645,7 +650,7 @@ pub(super) fn check_modes_or_continue(
             .map(|o| o.name.clone())
             .unwrap_or_else(|| "spell".to_string());
 
-        if !spell_has_legal_targets(game, spell_effects, player, Some(source)) {
+        if !spell_has_legal_targets(game, &spell_effects, player, Some(source)) {
             return Err(GameLoopError::InvalidState(
                 "No legal mode/target combination available".to_string(),
             ));
@@ -659,7 +664,7 @@ pub(super) fn check_modes_or_continue(
                 let selected_mode = [i];
                 let legal = spell_has_legal_targets_with_modes(
                     game,
-                    spell_effects,
+                    &spell_effects,
                     player,
                     Some(source),
                     Some(&selected_mode),

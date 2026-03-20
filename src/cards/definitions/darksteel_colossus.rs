@@ -54,6 +54,35 @@ mod tests {
 
         assert!(has_trample);
         assert!(has_indestructible);
+
+        let shuffle_ability = def
+            .abilities
+            .iter()
+            .find(|ability| {
+                matches!(
+                    &ability.kind,
+                    AbilityKind::Static(s)
+                        if s.id()
+                            == crate::static_abilities::StaticAbilityId::ShuffleIntoLibraryFromGraveyard
+                )
+            })
+            .expect("Darksteel Colossus should have a graveyard replacement ability");
+
+        for zone in [
+            crate::zone::Zone::Battlefield,
+            crate::zone::Zone::Hand,
+            crate::zone::Zone::Stack,
+            crate::zone::Zone::Graveyard,
+            crate::zone::Zone::Exile,
+            crate::zone::Zone::Library,
+            crate::zone::Zone::Command,
+        ] {
+            assert!(
+                shuffle_ability.functions_in(&zone),
+                "shuffle replacement should function in {:?}",
+                zone
+            );
+        }
     }
 
     #[test]

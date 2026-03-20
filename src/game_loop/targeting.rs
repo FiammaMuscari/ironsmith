@@ -839,12 +839,12 @@ pub(super) fn stack_entry_validation_target_specs(
     } else if let Some(obj) = game.object(entry.object_id) {
         get_effects_for_stack_entry(game, entry, obj)
     } else {
-        Vec::new()
+        crate::resolution::ResolutionProgram::default()
     };
 
     let mut specs = Vec::new();
     let mut consumed_modal_selection = false;
-    for effect in &effects {
+    for effect in effects.all_effects() {
         collect_validation_target_specs_from_effect(
             effect,
             entry.chosen_modes.as_deref(),

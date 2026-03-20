@@ -158,7 +158,7 @@ mod tests {
     fn test_mox_diamond_has_etb_replacement_marker() {
         let def = mox_diamond();
 
-        // The card should have a static ability with a self-replacement effect
+        // The card should have a static ability with an ETB replacement effect
         use crate::static_abilities::StaticAbilityId;
         let has_discard_replacement = def.abilities.iter().any(|a| {
             if let AbilityKind::Static(s) = &a.kind {

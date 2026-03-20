@@ -493,6 +493,7 @@ pub fn execute_cleanup_step(game: &mut GameState) {
     // Clear one-shot replacement effects (like regeneration shields)
     // These only last "until end of turn" per MTG rules
     game.replacement_effects.clear_one_shot_effects();
+    game.replacement_effects.clear_until_end_of_turn_effects();
 
     // Clean up expired grants (e.g., flashback from Snapcaster Mage)
     let turn_number = game.turn.turn_number;

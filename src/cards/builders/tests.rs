@@ -7530,7 +7530,7 @@ fn hellish_rebuke_keeps_lose_life_inside_granted_trigger() {
         "lose life should not be hoisted to a top-level spell effect: {spell_effects:?}"
     );
 
-    let [apply_effect] = spell_effects.as_slice() else {
+    let [apply_effect] = &spell_effects[..] else {
         panic!("expected exactly one top-level spell effect: {spell_effects:?}");
     };
     let apply = apply_effect
@@ -7540,9 +7540,9 @@ fn hellish_rebuke_keeps_lose_life_inside_granted_trigger() {
         .modification
         .as_ref()
         .and_then(|modification| match modification {
-            crate::continuous::Modification::AddAbilityGeneric(ability) => Some(ability),
+            crate::continuous::Modification::AddAbilityGeneric(ability) => Some(ability.clone()),
             crate::continuous::Modification::AddAbility(static_ability) => {
-                static_ability.granted_inline_ability()
+                static_ability.granted_inline_ability().cloned()
             }
             _ => None,
         })
@@ -8231,6 +8231,32 @@ fn parse_urzas_tower_conditional_mana_output() {
             && mana_line.contains("Add {C}"),
         "expected conditional tron mana render, got {mana_line}"
     );
+
+}
+
+#[test]
+fn parse_activated_ability_instead_followup_builds_stack_self_replacement_program() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Draw Relay Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{T}: Draw a card. If you control an artifact, draw two cards instead.")
+        .expect("activated ability instead followup should parse");
+
+    let ability = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+    let entry = crate::game_state::StackEntry::ability(
+        ObjectId::from_raw(1),
+        PlayerId::from_index(0),
+        ability.effects.clone(),
+    );
+    let program = entry.ability_effects.as_ref().expect("stack ability program");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
 }
 
 #[test]
@@ -8610,6 +8636,11 @@ fn parse_spell_line_instead_followup_merges_into_prior_spell_effect() {
                 .contains("It deals 4 damage instead if you control three or more artifacts"),
         "expected metalcraft line to replace prior damage amount and reuse target, got {rendered}"
     );
+
+    let program = def.spell_effect.as_ref().expect("spell effect");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].default_effects.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
 }
 
 #[test]
@@ -8626,6 +8657,35 @@ fn parse_spell_line_instead_followup_merges_non_control_predicate() {
             && rendered.contains("It deals 5 damage instead if you have no cards in hand"),
         "expected hellbent line to replace prior damage amount and reuse target, got {rendered}"
     );
+
+    let program = def.spell_effect.as_ref().expect("spell effect");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
+}
+
+#[test]
+fn parse_cabal_ritual_threshold_instead_compiles_to_self_replacement_branch() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Cabal Ritual Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Add {B}{B}{B}. Threshold — Add {B}{B}{B}{B}{B} instead if there are seven or more cards in your graveyard.",
+        )
+        .expect("cabal ritual threshold instead should parse");
+
+    let program = def.spell_effect.as_ref().expect("spell effect");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].default_effects.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
+}
+
+#[test]
+fn parse_instead_followup_without_prior_spell_segment_fails_loudly() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Broken Self-Replacement Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("If you control an artifact, draw two cards instead.")
+        .expect_err("unanchored self-replacement followup should fail");
+
+    assert!(matches!(err, CardTextError::UnsupportedLine(_)));
 }
 
 #[test]
@@ -17599,6 +17659,7 @@ const STRICT_PARSE_REGRESSION_SUCCESS_CARDS: &[&str] = &[
     "Fatal Push",
     "Grief",
     "Mox Amber",
+    "Nexus of Fate",
     "Nykthos, Shrine to Nyx",
     "Nine-Lives Familiar",
     "Otawara, Soaring City",
@@ -17781,6 +17842,120 @@ fn parse_oracle_tragic_slip_morbid_branch_stays_parseable() {
     assert!(
         rendered.contains("gets -13/-13 until end of turn"),
         "expected morbid PT branch to compile, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_oracle_nexus_of_fate_keeps_extra_turn_and_replacement() {
+    let def = parse_oracle_card_definition("Nexus of Fate");
+
+    let spell_debug = format!("{:?}", def.spell_effect);
+    assert!(
+        spell_debug.contains("ExtraTurnEffect"),
+        "expected Nexus of Fate spell effect to include an extra turn, got {spell_debug}"
+    );
+
+    let has_shuffle_replacement = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id()
+                    == crate::static_abilities::StaticAbilityId::ShuffleIntoLibraryFromGraveyard
+        )
+    });
+    assert!(
+        has_shuffle_replacement,
+        "expected Nexus of Fate to keep its graveyard replacement ability"
+    );
+}
+
+#[test]
+fn parse_oracle_cabal_ritual_compiles_to_self_replacement_branch() {
+    let def = parse_oracle_card_definition("Cabal Ritual");
+
+    let program = def.spell_effect.as_ref().expect("spell effect");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].default_effects.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
+
+    let debug = format!("{program:?}");
+    assert!(
+        debug.contains("AddManaEffect") && debug.contains("count: 7"),
+        "expected Cabal Ritual oracle text to lower into a threshold self-replacement, got {debug}"
+    );
+}
+
+#[test]
+fn parse_oracle_future_replacement_followups_do_not_use_self_replacement_bridge() {
+    for name in ["Faunsbane Troll", "Mawloc", "Nine-Ringed Bo"] {
+        let def = parse_oracle_card_definition(name);
+        let debug = format!("{:#?}", def.abilities);
+
+        assert!(
+            !debug.contains(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
+            "expected future-event replacement wording on {name} to avoid the self-replacement bridge, got {debug}"
+        );
+        assert!(
+            debug.contains("Exile"),
+            "expected {name} to keep its exile followup semantics after parsing, got {debug}"
+        );
+    }
+}
+
+#[test]
+fn parse_oracle_future_replacement_followups_register_zone_replacements() {
+    for name in ["Magma Spray", "Carbonize", "Obliterating Bolt"] {
+        let def = parse_oracle_card_definition(name);
+        let debug = format!("{:#?}", def.spell_effect);
+
+        assert!(
+            debug.contains("RegisterZoneReplacementEffect"),
+            "expected {name} to lower its future graveyard replacement as a registered zone replacement, got {debug}"
+        );
+        assert!(
+            !debug.contains("SelfReplacementBranch"),
+            "expected {name} to avoid self-replacement lowering for `would ... instead` text, got {debug}"
+        );
+    }
+}
+
+#[test]
+fn parse_counter_then_exile_clause_registers_future_zone_replacement() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Counter Exile Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Counter target spell. If that spell is countered this way, exile it instead of putting it into its owners graveyard.",
+        )
+        .expect("counter-then-exile text should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("RegisterZoneReplacementEffect"),
+        "expected countered-this-way exile clause to lower as a future zone replacement, got {debug}"
+    );
+    assert!(
+        !debug.contains("SelfReplacementBranch"),
+        "expected countered-this-way exile clause to avoid self-replacement lowering, got {debug}"
+    );
+}
+
+#[test]
+fn parse_fatal_push_revolt_stays_self_replacement() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Fatal Push Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Destroy target creature if it has mana value 2 or less.\nRevolt — Destroy that creature if it has mana value 4 or less instead if a permanent left the battlefield under your control this turn.",
+        )
+        .expect("Fatal Push variant should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("SelfReplacementBranch"),
+        "expected revolt followup to remain a true self-replacement, got {debug}"
+    );
+    assert!(
+        !debug.contains("RegisterZoneReplacementEffect"),
+        "expected Fatal Push revolt followup to avoid future-zone-replacement lowering, got {debug}"
     );
 }
 
@@ -17992,12 +18167,16 @@ fn parse_screaming_nemesis_any_other_target() {
 
 #[test]
 fn parse_burst_lightning_kicker_instead_clause() {
-    CardDefinitionBuilder::new(CardId::new(), "Burst Lightning Variant")
+    let def = CardDefinitionBuilder::new(CardId::new(), "Burst Lightning Variant")
         .card_types(vec![CardType::Instant])
         .parse_text(
             "Kicker {4} (You may pay an additional {4} as you cast this spell.)\nThis spell deals 2 damage to any target. If this spell was kicked, it deals 4 damage instead.",
         )
         .expect("kicker damage-instead followup should parse");
+
+    let program = def.spell_effect.as_ref().expect("spell effect");
+    assert_eq!(program.segments.len(), 1);
+    assert_eq!(program.segments[0].self_replacements.len(), 1);
 }
 
 #[test]

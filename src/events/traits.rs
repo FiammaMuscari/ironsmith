@@ -269,7 +269,7 @@ impl Clone for Box<dyn GameEventType> {
 /// Priority order for replacement effects per Rule 616.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum ReplacementPriority {
-    /// 616.1a: Self-replacement effects (affect only their source)
+    /// 616.1a: True self-replacement effects per CR 614.15
     SelfReplacement = 0,
     /// 616.1b: Control-changing effects
     ControlChanging = 1,

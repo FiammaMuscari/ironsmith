@@ -28,7 +28,7 @@ use crate::zone::Zone;
 /// Priority order for replacement effects per Rule 616.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReplacementPriority {
-    /// 616.1a: Self-replacement effects (affect only their source)
+    /// 616.1a: True self-replacement effects per CR 614.15
     SelfReplacement = 0,
     /// 616.1b: Control-changing effects
     ControlChanging = 1,
@@ -50,19 +50,19 @@ pub fn process_trait_event(game: &mut GameState, event: Event) -> TraitEventResu
     process_event_direct(game, event, &mut state, &[])
 }
 
-/// Process an event through the replacement effect system with additional self-replacement effects.
+/// Process an event through the replacement effect system with additional effects.
 ///
-/// This variant allows passing in self-replacement effects from an object's abilities,
-/// which is needed for effects like shock lands' "pay 2 life or enter tapped" that apply
-/// to the object while it's still in the source zone (before it enters the battlefield).
-pub fn process_trait_event_with_self_effects(
+/// This variant allows passing in additional replacement effects for the event,
+/// which is needed for object-local ETB replacement effects that apply before the
+/// object fully enters the battlefield.
+pub fn process_trait_event_with_additional_effects(
     game: &mut GameState,
     event: Event,
-    self_effects: &[ReplacementEffect],
+    additional_effects: &[ReplacementEffect],
 ) -> TraitEventResult {
     let event = game.ensure_event_provenance(event);
     let mut state = TraitEventProcessingState::default();
-    process_event_direct(game, event, &mut state, self_effects)
+    process_event_direct(game, event, &mut state, additional_effects)
 }
 
 /// State for tracking trait-based event processing.
@@ -104,7 +104,7 @@ fn process_event_direct(
     game: &mut GameState,
     event: Event,
     state: &mut TraitEventProcessingState,
-    self_effects: &[ReplacementEffect],
+    additional_effects: &[ReplacementEffect],
 ) -> TraitEventResult {
     // Safety check for infinite loops
     if state.exceeded_max_iterations() {
@@ -113,7 +113,7 @@ fn process_event_direct(
     state.increment();
 
     // Find all applicable replacement effects using trait-based matchers
-    let applicable = find_applicable_trait_replacements(game, &event, state, self_effects);
+    let applicable = find_applicable_trait_replacements(game, &event, state, additional_effects);
 
     if applicable.is_empty() {
         return TraitEventResult::Proceed(event);
@@ -164,7 +164,7 @@ fn process_event_direct(
 
     match result {
         TraitApplyResult::Modified(modified_event) => {
-            process_event_direct(game, modified_event, state, self_effects)
+            process_event_direct(game, modified_event, state, additional_effects)
         }
         TraitApplyResult::Prevented => TraitEventResult::Prevented,
         TraitApplyResult::Replaced(effects) => TraitEventResult::Replaced { effects, effect_id },
@@ -680,7 +680,7 @@ fn find_applicable_trait_replacements(
     game: &GameState,
     event: &Event,
     state: &TraitEventProcessingState,
-    self_effects: &[ReplacementEffect],
+    additional_effects: &[ReplacementEffect],
 ) -> Vec<(ReplacementEffect, ReplacementPriority)> {
     let mut applicable = Vec::new();
 
@@ -697,8 +697,8 @@ fn find_applicable_trait_replacements(
         }
     }
 
-    // Check self-replacement effects (from the object's own abilities)
-    for effect in self_effects {
+    // Check additional ephemeral effects for this event.
+    for effect in additional_effects {
         // Skip if already applied (Rule 614.5)
         if state.was_applied(effect.id) {
             continue;
@@ -729,16 +729,15 @@ fn trait_effect_matches_event(
         return None;
     }
 
-    let priority = if effect.self_replacement {
-        ReplacementPriority::SelfReplacement
-    } else {
-        match matcher.priority() {
-            TraitPriority::SelfReplacement => ReplacementPriority::SelfReplacement,
-            TraitPriority::ControlChanging => ReplacementPriority::ControlChanging,
-            TraitPriority::CopyEffect => ReplacementPriority::CopyEffect,
-            TraitPriority::BackFace => ReplacementPriority::BackFace,
-            TraitPriority::Other => ReplacementPriority::Other,
-        }
+    let trait_priority = effect
+        .priority_override
+        .unwrap_or_else(|| matcher.priority());
+    let priority = match trait_priority {
+        TraitPriority::SelfReplacement => ReplacementPriority::SelfReplacement,
+        TraitPriority::ControlChanging => ReplacementPriority::ControlChanging,
+        TraitPriority::CopyEffect => ReplacementPriority::CopyEffect,
+        TraitPriority::BackFace => ReplacementPriority::BackFace,
+        TraitPriority::Other => ReplacementPriority::Other,
     };
 
     Some(priority)
@@ -2011,20 +2010,18 @@ fn process_with_dm(
 
 fn find_effect_for_choice(
     game: &GameState,
-    self_effects: &[ReplacementEffect],
+    additional_effects: &[ReplacementEffect],
     id: ReplacementEffectId,
 ) -> Option<ReplacementEffect> {
     game.replacement_effects
         .get_effect(id)
         .cloned()
-        .or_else(|| self_effects.iter().find(|e| e.id == id).cloned())
+        .or_else(|| additional_effects.iter().find(|e| e.id == id).cloned())
 }
 
-fn assign_ephemeral_effect_ids(effects: &mut [ReplacementEffect]) {
-    // Keep ephemeral IDs far away from manager-issued IDs.
-    const EPHEMERAL_ID_BASE: u64 = u64::MAX - 1_000_000;
+fn assign_ephemeral_effect_ids(effects: &mut [ReplacementEffect], id_base: u64) {
     for (idx, effect) in effects.iter_mut().enumerate() {
-        effect.id = ReplacementEffectId(EPHEMERAL_ID_BASE.saturating_add(idx as u64));
+        effect.id = ReplacementEffectId(id_base.saturating_add(idx as u64));
     }
 }
 
@@ -2491,8 +2488,8 @@ pub fn process_etb_with_event_and_dm(
     let mut enters_with_counters: Vec<(CounterType, u32)> = Vec::new();
 
     // Gather ETB replacement effects from the object's abilities.
-    // These include effects like shock lands' "pay 2 life or enter tapped".
-    let mut self_replacement_effects: Vec<ReplacementEffect> = Vec::new();
+    let mut object_etb_effects: Vec<ReplacementEffect> = Vec::new();
+    let mut copy_choice_effects: Vec<ReplacementEffect> = Vec::new();
 
     if let Some(obj) = game.object(object) {
         if let Some(loyalty) = obj.base_loyalty
@@ -2508,7 +2505,7 @@ pub fn process_etb_with_event_and_dm(
             if let AbilityKind::Static(s) = &ability.kind {
                 // Check for unified replacement effects
                 if let Some(effect) = s.generate_replacement_effect(object, controller) {
-                    self_replacement_effects.push(effect);
+                    object_etb_effects.push(effect);
                 }
                 if let Some(spec) = s.enter_as_copy_as_enters() {
                     let filter_ctx = game.filter_context_for(controller, Some(object));
@@ -2521,19 +2518,19 @@ pub fn process_etb_with_event_and_dm(
                     candidates.sort_by_key(|id| id.0);
 
                     if spec.may {
-                        self_replacement_effects.push(
+                        copy_choice_effects.push(
                             ReplacementEffect::with_matcher(
                                 object,
                                 controller,
                                 crate::events::zones::matchers::ThisWouldEnterBattlefieldMatcher,
                                 ReplacementAction::Additionally(Vec::new()),
                             )
-                            .self_replacing(),
+                            .with_priority_override(crate::events::ReplacementPriority::CopyEffect),
                         );
                     }
 
                     for candidate in candidates {
-                        self_replacement_effects.push(
+                        copy_choice_effects.push(
                             ReplacementEffect::with_matcher(
                                 object,
                                 controller,
@@ -2544,14 +2541,18 @@ pub fn process_etb_with_event_and_dm(
                                     added_subtypes: spec.added_subtypes.clone(),
                                 },
                             )
-                            .self_replacing(),
+                            .with_priority_override(crate::events::ReplacementPriority::CopyEffect),
                         );
                     }
                 }
             }
         }
     }
-    assign_ephemeral_effect_ids(&mut self_replacement_effects);
+    // Keep ephemeral IDs far away from manager-issued IDs.
+    const OBJECT_ETB_ID_BASE: u64 = u64::MAX - 1_000_000;
+    const COPY_CHOICE_ID_BASE: u64 = u64::MAX - 500_000;
+    assign_ephemeral_effect_ids(&mut object_etb_effects, OBJECT_ETB_ID_BASE);
+    assign_ephemeral_effect_ids(&mut copy_choice_effects, COPY_CHOICE_ID_BASE);
 
     let etb_event_provenance = game
         .provenance_graph
@@ -2570,11 +2571,28 @@ pub fn process_etb_with_event_and_dm(
     let mut state = TraitEventProcessingState::default();
 
     loop {
+        let copy_choice_consumed = copy_choice_effects
+            .iter()
+            .any(|effect| state.was_applied(effect.id));
+        let original_object_effects_still_apply =
+            downcast_event::<EnterBattlefieldEvent>(current_event.inner())
+                .map(|etb| etb.enters_as_copy_of.is_none())
+                .unwrap_or(false);
+        let current_additional_effects: Vec<ReplacementEffect> = copy_choice_effects
+            .iter()
+            .filter(|_| !copy_choice_consumed)
+            .chain(
+                object_etb_effects
+                    .iter()
+                    .filter(|_| original_object_effects_still_apply),
+            )
+            .cloned()
+            .collect();
         let result = process_event_direct(
             game,
             current_event.clone(),
             &mut state,
-            &self_replacement_effects,
+            &current_additional_effects,
         );
 
         match result {
@@ -2633,7 +2651,7 @@ pub fn process_etb_with_event_and_dm(
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, &id)| {
-                        find_effect_for_choice(game, &self_replacement_effects, id).map(|e| {
+                        find_effect_for_choice(game, &current_additional_effects, id).map(|e| {
                             ReplacementOption::new(
                                 idx,
                                 e.source,
@@ -2655,7 +2673,7 @@ pub fn process_etb_with_event_and_dm(
                     return EtbEventResult::default();
                 };
                 let Some(chosen_effect) =
-                    find_effect_for_choice(game, &self_replacement_effects, chosen_id)
+                    find_effect_for_choice(game, &current_additional_effects, chosen_id)
                 else {
                     state.mark_applied(chosen_id);
                     current_event = *event;
@@ -2663,6 +2681,14 @@ pub fn process_etb_with_event_and_dm(
                 };
 
                 state.mark_applied(chosen_id);
+                if matches!(
+                    chosen_effect.priority_override,
+                    Some(crate::events::ReplacementPriority::CopyEffect)
+                ) {
+                    for effect in &copy_choice_effects {
+                        state.mark_applied(effect.id);
+                    }
+                }
                 let apply_result = apply_trait_replacement(game, *event, &chosen_effect);
                 consume_one_shot_if_applied(game, chosen_id, &apply_result);
                 match apply_result {
@@ -2838,6 +2864,8 @@ pub fn process_zone_change_full(
     cause: crate::events::cause::EventCause,
 ) -> ZoneChangeResult {
     use crate::events::{ZoneChangeEvent, downcast_event};
+
+    game.update_replacement_effects();
 
     let snapshot = game
         .object(object)

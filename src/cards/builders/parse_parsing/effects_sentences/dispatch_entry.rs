@@ -4,8 +4,10 @@ use crate::cards::builders::effect_ast_traversal::{
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, CarryContext, EffectAst, GrantedAbilityAst, IT_TAG, IfResultPredicate,
-    KeywordAction, PlayerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token, TokenCopyFollowup,
-    append_token_reminder_to_last_create_effect, build_may_cast_tagged_effect,
+    InsteadSemantics, KeywordAction, PlayerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token,
+    TokenCopyFollowup, ZoneReplacementDurationAst, append_token_reminder_to_last_create_effect,
+    build_may_cast_tagged_effect,
+    classify_instead_followup_text,
     collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
     effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry, helper_tag_for_tokens,
@@ -36,6 +38,85 @@ type TripleSentenceRule =
     fn(&[Token], &[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
 type QuadSentenceRule =
     fn(&[Token], &[Token], &[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
+
+fn future_zone_replacement_from_sentence_text(sentence_text: &str) -> Option<EffectAst> {
+    let normalized = sentence_text.to_ascii_lowercase();
+    let target = TargetAst::Tagged(TagKey::from(IT_TAG), None);
+
+    if normalized.contains("countered this way")
+        && normalized.contains("instead of putting it into")
+        && normalized.contains("graveyard")
+    {
+        return Some(EffectAst::RegisterZoneReplacement {
+            target,
+            from_zone: Some(Zone::Stack),
+            to_zone: Some(Zone::Graveyard),
+            replacement_zone: Zone::Exile,
+            duration: ZoneReplacementDurationAst::OneShot,
+        });
+    }
+
+    if normalized.contains("would die this turn") && normalized.contains("exile") {
+        return Some(EffectAst::RegisterZoneReplacement {
+            target,
+            from_zone: Some(Zone::Battlefield),
+            to_zone: Some(Zone::Graveyard),
+            replacement_zone: Zone::Exile,
+            duration: ZoneReplacementDurationAst::OneShot,
+        });
+    }
+
+    if normalized.contains("would be put into")
+        && normalized.contains("graveyard")
+        && normalized.contains("this turn")
+        && normalized.contains("exile")
+    {
+        return Some(EffectAst::RegisterZoneReplacement {
+            target,
+            from_zone: None,
+            to_zone: Some(Zone::Graveyard),
+            replacement_zone: Zone::Exile,
+            duration: ZoneReplacementDurationAst::OneShot,
+        });
+    }
+
+    None
+}
+
+fn maybe_rewrite_future_zone_replacement_sentence(
+    sentence_effects: &mut Vec<EffectAst>,
+    sentence_text: &str,
+) {
+    if !matches!(
+        classify_instead_followup_text(sentence_text),
+        InsteadSemantics::FutureReplacement
+    ) {
+        return;
+    }
+
+    let Some(replacement) = future_zone_replacement_from_sentence_text(sentence_text) else {
+        return;
+    };
+
+    if sentence_effects.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectAst::ExileInsteadOfGraveyardThisTurn { .. }
+                | EffectAst::PreventNextTimeDamage { .. }
+                | EffectAst::RedirectNextTimeDamageToSource { .. }
+        )
+    }) {
+        return;
+    }
+
+    if sentence_effects.len() == 1 {
+        if let Some(EffectAst::IfResult { effects, .. }) = sentence_effects.first_mut() {
+            *effects = vec![replacement];
+            return;
+        }
+        *sentence_effects = vec![replacement];
+    }
+}
 
 fn parse_reveal_top_count_put_all_matching_into_hand_rest_graveyard(
     first: &[Token],
@@ -1786,8 +1867,15 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
                 replace_it_damage_target_in_effects(if_result_effects, &previous_target);
             }
         }
-        let has_instead = sentence.iter().any(|token| token.is_word("instead"));
-        if has_instead && sentence_effects.len() == 1 && effects.len() >= 1 {
+        let sentence_text = words(&sentence_tokens).join(" ");
+        maybe_rewrite_future_zone_replacement_sentence(&mut sentence_effects, &sentence_text);
+        if matches!(
+            classify_instead_followup_text(&sentence_text),
+            InsteadSemantics::SelfReplacement
+        )
+            && sentence_effects.len() == 1
+            && effects.len() >= 1
+        {
             if matches!(
                 sentence_effects.first(),
                 Some(EffectAst::Conditional { .. })
@@ -1813,7 +1901,7 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
                         replace_placeholder_damage_target_in_effects(&mut if_true, &target);
                     }
                     if_false.insert(0, previous);
-                    effects.push(EffectAst::Conditional {
+                    effects.push(EffectAst::SelfReplacement {
                         predicate,
                         if_true,
                         if_false,

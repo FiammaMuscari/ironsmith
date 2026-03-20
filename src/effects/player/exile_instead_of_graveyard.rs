@@ -46,7 +46,7 @@ impl EffectExecutor for ExileInsteadOfGraveyardEffect {
             ReplacementAction::ChangeDestination(Zone::Exile),
         );
 
-        let apply = ApplyReplacementEffect::resolution(replacement);
+        let apply = ApplyReplacementEffect::until_end_of_turn(replacement);
         let _ = execute_effect(game, &Effect::new(apply), ctx)?;
 
         Ok(EffectOutcome::resolved())

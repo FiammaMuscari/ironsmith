@@ -181,6 +181,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { .. } => {}
         EffectAst::GrantPlayTaggedUntilYourNextTurn { .. } => {}
         EffectAst::CastTagged { .. } => {}
+        EffectAst::RegisterZoneReplacement { .. } => {}
         EffectAst::ExileInsteadOfGraveyardThisTurn { .. } => {}
         EffectAst::GainControl { .. } => {}
         EffectAst::ControlPlayer { .. } => {}
@@ -209,6 +210,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::CopySpell { .. } => {}
         EffectAst::RetargetStackObject { .. } => {}
         EffectAst::Conditional { .. } => {}
+        EffectAst::SelfReplacement { .. } => {}
         EffectAst::ChooseObjects { .. } => {}
         EffectAst::ChooseObjectsAcrossZones { .. } => {}
         EffectAst::ChoosePlayer { .. } => {}
@@ -333,6 +335,9 @@ pub(super) fn for_each_nested_effects(
     match effect {
         EffectAst::Conditional {
             if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
+            if_true, if_false, ..
         } => {
             visit(if_true);
             visit(if_false);
@@ -363,6 +368,9 @@ pub(super) fn for_each_nested_effects_mut(
     match effect {
         EffectAst::Conditional {
             if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
+            if_true, if_false, ..
         } => {
             visit(if_true);
             visit(if_false);
@@ -392,6 +400,9 @@ pub(super) fn try_for_each_nested_effects_mut<E>(
     assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::Conditional {
+            if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
             if_true, if_false, ..
         } => {
             visit(if_true)?;

@@ -408,6 +408,9 @@ fn advance_reference_frame_for_effect(
                 frame.last_object_tag = Some(next_reference_tag(id_gen, "moved"));
             }
         }
+        EffectAst::RegisterZoneReplacement { target, .. } => {
+            maybe_tag_target(target, frame, id_gen, "replaced")?;
+        }
         EffectAst::RevealTagged { tag } => {
             frame.last_object_tag = Some(if tag.as_str() == IT_TAG {
                 frame
@@ -665,6 +668,9 @@ fn advance_reference_frame_for_effect(
             track_effect_player(player.clone(), frame, true, true)?;
         }
         EffectAst::Conditional {
+            if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
             if_true, if_false, ..
         } => {
             let saved = frame.clone();
@@ -1032,6 +1038,9 @@ fn advance_reference_env_for_effect(
 ) -> Result<ReferenceEnv, CardTextError> {
     match effect {
         EffectAst::Conditional {
+            if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
             if_true, if_false, ..
         } => {
             let true_sequence =
@@ -1495,7 +1504,8 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             }
             replacements
         }
-        EffectAst::Conditional { predicate, .. } => {
+        EffectAst::Conditional { predicate, .. }
+        | EffectAst::SelfReplacement { predicate, .. } => {
             bind_unresolved_it_in_predicate(predicate, seed_tag)
         }
         EffectAst::ChooseObjects { filter, tag, .. } => {

@@ -1,7 +1,7 @@
 use crate::ChooseSpec;
 use crate::cards::builders::EffectAst;
 use crate::cards::builders::parse_parsing::LoweringFrame;
-use crate::effect::{Effect, EffectId};
+use crate::effect::EffectId;
 use crate::{PlayerFilter, TagKey};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -276,7 +276,7 @@ impl ReferenceExports {
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoweredEffects {
-    pub(crate) effects: Vec<Effect>,
+    pub(crate) effects: crate::resolution::ResolutionProgram,
     pub(crate) choices: Vec<ChooseSpec>,
     pub(crate) exports: ReferenceExports,
 }

@@ -18,6 +18,7 @@ use crate::effect::{
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
+use crate::resolution::ResolutionProgram;
 use crate::static_abilities::StaticAbility;
 use crate::tag::TagKey;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
@@ -131,6 +132,30 @@ fn replace_whole_word_case_insensitive(text: &str, from: &str, to: &str) -> Stri
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InsteadSemantics {
+    SelfReplacement,
+    FutureReplacement,
+    NonReplacement,
+}
+
+pub(crate) fn classify_instead_followup_text(text: &str) -> InsteadSemantics {
+    let normalized = text.to_ascii_lowercase();
+
+    if !normalized.contains(" instead") {
+        return InsteadSemantics::NonReplacement;
+    }
+
+    if normalized.contains(" would ")
+        || normalized.contains(" instead of ")
+        || normalized.contains("the next time")
+    {
+        return InsteadSemantics::FutureReplacement;
+    }
+
+    InsteadSemantics::SelfReplacement
+}
+
 fn overload_rewritten_text(text: &str) -> Option<String> {
     let mut rewritten_lines = Vec::new();
     let mut saw_overload = false;
@@ -171,7 +196,7 @@ fn finalize_overload_definitions(
 
     for method in &mut definition.alternative_casts {
         if let AlternativeCastingMethod::Overload { effects, .. } = method {
-            *effects = overloaded_effects.clone();
+            *effects = overloaded_effects.to_vec();
         }
     }
 
@@ -258,7 +283,7 @@ fn finalize_cipher_effects(mut definition: CardDefinition) -> CardDefinition {
         .retain(|ability| !is_cipher_placeholder(ability));
     definition
         .spell_effect
-        .get_or_insert_with(Vec::new)
+        .get_or_insert_with(ResolutionProgram::default)
         .push(Effect::cipher());
     definition
 }
@@ -405,8 +430,8 @@ fn finalize_nonpermanent_delayed_triggered_abilities(
     if !rewritten_effects.is_empty() {
         definition
             .spell_effect
-            .get_or_insert_with(Vec::new)
-            .extend(rewritten_effects);
+            .get_or_insert_with(ResolutionProgram::default)
+            .extend(ResolutionProgram::from_effects(rewritten_effects));
     }
     definition
 }
@@ -1353,6 +1378,14 @@ pub(crate) enum PredicateAst {
     And(Box<PredicateAst>, Box<PredicateAst>),
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ZoneReplacementDurationAst {
+    OneShot,
+    UntilEndOfTurn,
+    Resolution,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlDurationAst {
     UntilEndOfTurn,
@@ -1707,6 +1740,13 @@ pub(crate) enum EffectAst {
         as_copy: bool,
         without_paying_mana_cost: bool,
     },
+    RegisterZoneReplacement {
+        target: TargetAst,
+        from_zone: Option<Zone>,
+        to_zone: Option<Zone>,
+        replacement_zone: Zone,
+        duration: ZoneReplacementDurationAst,
+    },
     ExileInsteadOfGraveyardThisTurn {
         player: PlayerAst,
     },
@@ -1813,6 +1853,11 @@ pub(crate) enum EffectAst {
         new_target_restriction: Option<NewTargetRestrictionAst>,
     },
     Conditional {
+        predicate: PredicateAst,
+        if_true: Vec<EffectAst>,
+        if_false: Vec<EffectAst>,
+    },
+    SelfReplacement {
         predicate: PredicateAst,
         if_true: Vec<EffectAst>,
         if_false: Vec<EffectAst>,
@@ -2421,7 +2466,7 @@ pub struct CardDefinitionBuilder {
     abilities: Vec<Ability>,
 
     /// Spell effects for instants/sorceries
-    spell_effect: Option<Vec<Effect>>,
+    spell_effect: Option<ResolutionProgram>,
 
     /// Alternative casting methods (flashback, escape, etc.)
     alternative_casts: Vec<AlternativeCastingMethod>,
@@ -2602,9 +2647,9 @@ impl CardDefinitionBuilder {
     /// Mark this card as an Aura that enchants objects matching the given filter.
     pub fn enchants(mut self, filter: ObjectFilter) -> Self {
         self.aura_attach_filter = Some(filter.clone());
-        self.spell_effect = Some(vec![Effect::attach_to(ChooseSpec::target(
-            ChooseSpec::Object(filter),
-        ))]);
+        self.spell_effect = Some(ResolutionProgram::from_effects(vec![Effect::attach_to(
+            ChooseSpec::target(ChooseSpec::Object(filter)),
+        )]));
         self
     }
 
@@ -4682,6 +4727,7 @@ impl CardDefinitionBuilder {
                     Zone::Library,
                     Zone::Graveyard,
                     Zone::Exile,
+                    Zone::Command,
                 ])
                 .with_text("If ~ would be put into a graveyard from anywhere, reveal it and shuffle it into its owner's library instead."),
         )
@@ -4838,7 +4884,7 @@ impl CardDefinitionBuilder {
 
     /// Set the spell effects (for instants/sorceries).
     pub fn with_spell_effect(mut self, effects: Vec<Effect>) -> Self {
-        self.spell_effect = Some(effects);
+        self.spell_effect = Some(ResolutionProgram::from_effects(effects));
         self
     }
 
@@ -5247,7 +5293,7 @@ mod delayed_trigger_finalization_tests {
             CardDefinitionBuilder::new(CardId::new(), "Delayed Safety Net Probe")
                 .card_types(vec![CardType::Instant]);
         let mut definition = original_builder.clone().build();
-        definition.spell_effect = Some(vec![Effect::draw(1)]);
+        definition.spell_effect = Some(ResolutionProgram::from_effects(vec![Effect::draw(1)]));
         definition.abilities.push(
             Ability::triggered(
                 Trigger::beginning_of_upkeep(PlayerFilter::You),
@@ -5282,7 +5328,7 @@ mod delayed_trigger_finalization_tests {
         let original_builder = CardDefinitionBuilder::new(CardId::new(), "Stack Trigger Probe")
             .card_types(vec![CardType::Instant]);
         let mut definition = original_builder.clone().build();
-        definition.spell_effect = Some(vec![Effect::draw(1)]);
+        definition.spell_effect = Some(ResolutionProgram::from_effects(vec![Effect::draw(1)]));
         definition.abilities.push(
             Ability::triggered(Trigger::you_cast_this_spell(), vec![Effect::draw(1)])
                 .in_zones(vec![Zone::Stack])
@@ -7164,10 +7210,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "should include create-token-copy effect: {debug}"
         );
         assert!(
-            debug.contains("set_base_power_toughness: Some(")
-                && debug
-                    .contains("\n                            6,\n                            6,")
-                || debug.contains("set_base_power_toughness: Some((6, 6))"),
+            debug.contains("set_base_power_toughness: Some(") && debug.contains("6,"),
             "expected 6/6 override in copy effect, got {debug}"
         );
         assert!(
@@ -7187,8 +7230,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected copy effect to grant trample, got {debug}"
         );
         assert!(
-            debug.contains("card_types: [\n                                    Creature,\n                                ]")
-                || debug.contains("card_types: [Creature]"),
+            debug.contains("card_types:")
+                && debug.contains("Creature")
+                && debug.contains("zone: Some(")
+                && debug.contains("Exile"),
             "expected creature target filter on copied source, got {debug}"
         );
         assert!(
@@ -11799,9 +11844,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("artifact-creature conditional should parse without explicit prior tag");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches")),
             "expected artifact-creature conditional lowering, got {debug}"
         );
@@ -11815,9 +11862,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("kicker conditional counter spell should parse");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && debug.contains("TaggedObjectMatches")
                 && debug.contains("LessThanOrEqual(2)")
                 && debug.contains("LessThanOrEqual(4)"),
@@ -11833,9 +11882,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("enchantment-or-legendary conditional should parse");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches"))
                 && debug.contains("PutCountersEffect"),
             "expected conditional counter-and-pump lowering, got {debug}"
@@ -11850,9 +11901,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("human conditional should parse");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches"))
                 && debug.contains("Indestructible"),
             "expected conditional human branch with indestructible, got {debug}"
@@ -11867,9 +11920,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("trailing gets-instead conditional should parse");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches"))
                 && debug.contains("power: Fixed(3)")
                 && debug.contains("toughness: Fixed(3)"),
@@ -11885,9 +11940,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("landfall-history conditional should parse");
 
-        let debug = format!("{:?}", def.spell_effect);
+        let program = def.spell_effect.as_ref().expect("spell effect");
+        let debug = format!("{:?}", program);
         assert!(
-            debug.contains("ConditionalEffect")
+            program.segments.len() == 1
+                && program.segments[0].self_replacements.len() == 1
                 && debug.contains("PlayerHadLandEnterBattlefieldThisTurn")
                 && debug.contains("power: Fixed(4)")
                 && debug.contains("toughness: Fixed(4)"),

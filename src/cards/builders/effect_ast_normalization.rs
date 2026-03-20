@@ -23,6 +23,9 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
     match effect {
         EffectAst::Conditional {
             if_true, if_false, ..
+        }
+        | EffectAst::SelfReplacement {
+            if_true, if_false, ..
         } => {
             normalize_effects_vec(if_true);
             normalize_effects_vec(if_false);

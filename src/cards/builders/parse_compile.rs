@@ -320,7 +320,11 @@ pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), 
 pub(crate) fn compile_statement_effects(
     effects: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
-    Ok(compile_statement_effects_with_imports(effects, &ReferenceImports::default())?.effects)
+    Ok(
+        compile_statement_effects_with_imports(effects, &ReferenceImports::default())?
+            .effects
+            .to_vec(),
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -335,12 +339,45 @@ pub(crate) fn compile_statement_effects_with_imports(
 pub(crate) fn materialize_prepared_statement_effects(
     prepared: &PreparedEffectsForLowering,
 ) -> Result<LoweredEffects, CardTextError> {
+    if let [EffectAst::SelfReplacement {
+        predicate,
+        if_true,
+        if_false,
+    }] = prepared.effects.as_slice()
+    {
+        let default_effects =
+            compile_statement_effects_with_imports(if_false, &prepared.imports)?.effects;
+        let replacement_effects =
+            compile_statement_effects_with_imports(if_true, &prepared.imports)?.effects;
+        let condition = compile_condition_from_predicate_ast_with_env(
+            predicate,
+            &prepared.initial_env,
+            prepared.imports.last_object_tag.as_ref(),
+        )?;
+        return Ok(LoweredEffects {
+            effects: crate::resolution::ResolutionProgram::new(vec![
+                crate::resolution::ResolutionSegment {
+                    default_effects: default_effects.flattened_default_effects().to_vec(),
+                    self_replacements: vec![crate::resolution::SelfReplacementBranch::new(
+                        condition,
+                        replacement_effects.flattened_default_effects().to_vec(),
+                    )],
+                },
+            ]),
+            choices: Vec::new(),
+            exports: prepared.exports.clone(),
+        });
+    }
+
     let mut ctx = EffectLoweringContext::new();
     ctx.force_auto_tag_object_targets = prepared.force_auto_tag_object_targets;
     ctx.apply_reference_env(&prepared.initial_env);
     let (compiled, _) = compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
     Ok(LoweredEffects {
-        effects: prepend_effect_prelude(compiled, compile_effect_prelude_tags(&prepared.prelude)),
+        effects: crate::resolution::ResolutionProgram::from_effects(prepend_effect_prelude(
+            compiled,
+            compile_effect_prelude_tags(&prepared.prelude),
+        )),
         choices: Vec::new(),
         exports: ReferenceExports::from_env(&ctx.reference_env()),
     })
@@ -349,13 +386,47 @@ pub(crate) fn materialize_prepared_statement_effects(
 pub(crate) fn materialize_prepared_effects_with_trigger_context(
     prepared: &PreparedEffectsForLowering,
 ) -> Result<LoweredEffects, CardTextError> {
+    if let [EffectAst::SelfReplacement {
+        predicate,
+        if_true,
+        if_false,
+    }] = prepared.effects.as_slice()
+    {
+        let default_lowered = compile_statement_effects_with_imports(if_false, &prepared.imports)?;
+        let replacement_lowered =
+            compile_statement_effects_with_imports(if_true, &prepared.imports)?;
+        let condition = compile_condition_from_predicate_ast_with_env(
+            predicate,
+            &prepared.initial_env,
+            prepared.imports.last_object_tag.as_ref(),
+        )?;
+        let mut choices = default_lowered.choices;
+        choices.extend(replacement_lowered.choices);
+        return Ok(LoweredEffects {
+            effects: crate::resolution::ResolutionProgram::new(vec![
+                crate::resolution::ResolutionSegment {
+                    default_effects: default_lowered.effects.flattened_default_effects().to_vec(),
+                    self_replacements: vec![crate::resolution::SelfReplacementBranch::new(
+                        condition,
+                        replacement_lowered.effects.flattened_default_effects().to_vec(),
+                    )],
+                },
+            ]),
+            choices,
+            exports: prepared.exports.clone(),
+        });
+    }
+
     let mut ctx = EffectLoweringContext::new();
     ctx.force_auto_tag_object_targets = prepared.force_auto_tag_object_targets;
     ctx.apply_reference_env(&prepared.initial_env);
     let (compiled, choices) =
         compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
     Ok(LoweredEffects {
-        effects: prepend_effect_prelude(compiled, compile_effect_prelude_tags(&prepared.prelude)),
+        effects: crate::resolution::ResolutionProgram::from_effects(prepend_effect_prelude(
+            compiled,
+            compile_effect_prelude_tags(&prepared.prelude),
+        )),
         choices,
         exports: ReferenceExports::from_env(&ctx.reference_env()),
     })
@@ -778,7 +849,7 @@ pub(crate) fn compile_trigger_effects(
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     let lowered =
         compile_trigger_effects_with_imports(trigger, effects, &ReferenceImports::default())?;
-    Ok((lowered.effects, lowered.choices))
+    Ok((lowered.effects.to_vec(), lowered.choices))
 }
 
 pub(crate) fn compile_trigger_effects_with_imports(
@@ -1402,6 +1473,11 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
 
     match effect {
         EffectAst::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        }
+        | EffectAst::SelfReplacement {
             predicate,
             if_true,
             if_false,
@@ -4847,6 +4923,35 @@ fn try_compile_timing_and_control_effect(
                 *without_paying_mana_cost,
             );
             (vec![effect], Vec::new())
+        }
+        EffectAst::RegisterZoneReplacement {
+            target,
+            from_zone,
+            to_zone,
+            replacement_zone,
+            duration,
+        } => {
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+            let mode = match duration {
+                crate::cards::builders::ZoneReplacementDurationAst::OneShot => {
+                    crate::effects::ReplacementApplyMode::OneShot
+                }
+                crate::cards::builders::ZoneReplacementDurationAst::UntilEndOfTurn => {
+                    crate::effects::ReplacementApplyMode::UntilEndOfTurn
+                }
+                crate::cards::builders::ZoneReplacementDurationAst::Resolution => {
+                    crate::effects::ReplacementApplyMode::Resolution
+                }
+            };
+            let effect = Effect::new(crate::effects::RegisterZoneReplacementEffect::new(
+                spec,
+                *from_zone,
+                *to_zone,
+                *replacement_zone,
+                mode,
+            ));
+            (vec![effect], choices)
         }
         EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
             let player_filter =

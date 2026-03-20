@@ -4,16 +4,18 @@
 //! Per MTG rule 614, they use "instead" or "as [event]" or "skip".
 
 use crate::effect::{Effect, Value};
-use crate::events::ReplacementMatcher;
 use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
 use crate::events::damage::matchers::{DamageFromSourceMatcher, DamageToPlayerMatcher};
 use crate::events::life::matchers::WouldGainLifeMatcher;
 use crate::events::permanents::matchers::ThisWouldBeDestroyedMatcher;
 use crate::events::zones::matchers::{
-    ThisWouldDieMatcher, ThisWouldEnterBattlefieldMatcher, WouldEnterBattlefieldMatcher,
+    ThisWouldDieMatcher, ThisWouldEnterBattlefieldMatcher, WouldChangeZoneMatcher,
+    WouldEnterBattlefieldMatcher,
 };
+use crate::events::{ReplacementMatcher, ReplacementPriority};
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
+use crate::target::ChooseSpec;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::types::Subtype;
 use crate::zone::Zone;
@@ -33,8 +35,8 @@ pub struct ReplacementEffect {
     /// What happens instead
     pub replacement: ReplacementAction,
 
-    /// Whether this is a self-replacement effect (affects only its source)
-    pub self_replacement: bool,
+    /// Optional explicit priority bucket override per CR 616.1.
+    pub priority_override: Option<ReplacementPriority>,
 
     /// Trait-based matcher for checking if this effect applies.
     pub matcher: Option<Box<dyn ReplacementMatcher>>,
@@ -236,6 +238,65 @@ pub enum ReplacementEffectSource {
     Resolution,
 }
 
+/// Shared builder for zone-change replacement effects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneReplacementSpec {
+    pub filter: ObjectFilter,
+    pub from_zone: Option<Zone>,
+    pub to_zone: Option<Zone>,
+    pub replacement_zone: Zone,
+    pub follow_up_effects: Vec<Effect>,
+}
+
+impl ZoneReplacementSpec {
+    pub fn new(filter: ObjectFilter, replacement_zone: Zone) -> Self {
+        Self {
+            filter,
+            from_zone: None,
+            to_zone: None,
+            replacement_zone,
+            follow_up_effects: Vec::new(),
+        }
+    }
+
+    pub fn from_zone(mut self, zone: Zone) -> Self {
+        self.from_zone = Some(zone);
+        self
+    }
+
+    pub fn to_zone(mut self, zone: Zone) -> Self {
+        self.to_zone = Some(zone);
+        self
+    }
+
+    pub fn with_follow_up_effects(mut self, effects: Vec<Effect>) -> Self {
+        self.follow_up_effects = effects;
+        self
+    }
+
+    pub fn build(self, source: ObjectId, controller: PlayerId) -> ReplacementEffect {
+        let replacement = if self.follow_up_effects.is_empty() {
+            ReplacementAction::ChangeDestination(self.replacement_zone)
+        } else {
+            let move_effect = if self.replacement_zone == Zone::Exile {
+                Effect::new(crate::effects::ExileEffect::with_spec(ChooseSpec::Source))
+            } else {
+                Effect::move_to_zone(ChooseSpec::Source, self.replacement_zone, true)
+            };
+            let mut effects = vec![move_effect];
+            effects.extend(self.follow_up_effects);
+            ReplacementAction::Instead(effects)
+        };
+
+        ReplacementEffect::with_matcher(
+            source,
+            controller,
+            WouldChangeZoneMatcher::new(self.filter, self.from_zone, self.to_zone),
+            replacement,
+        )
+    }
+}
+
 /// Manages all replacement effects in the game.
 #[derive(Debug, Clone, Default)]
 pub struct ReplacementEffectManager {
@@ -248,6 +309,9 @@ pub struct ReplacementEffectManager {
     /// One-shot effects that are consumed after a single use (e.g., regeneration shields).
     /// These are removed after being applied once.
     one_shot_effects: std::collections::HashSet<ReplacementEffectId>,
+
+    /// Temporary replacement effects that expire during cleanup.
+    until_end_of_turn_effects: std::collections::HashSet<ReplacementEffectId>,
 
     /// Next effect ID to assign
     next_id: u64,
@@ -282,6 +346,17 @@ impl ReplacementEffectManager {
         entries
     }
 
+    /// Snapshot cleanup-scoped effect ids in deterministic order.
+    pub fn until_end_of_turn_effects_snapshot(&self) -> Vec<u64> {
+        let mut entries: Vec<u64> = self
+            .until_end_of_turn_effects
+            .iter()
+            .map(|id| id.0)
+            .collect();
+        entries.sort();
+        entries
+    }
+
     /// Get the next effect id (for deterministic state hashing).
     pub fn next_id(&self) -> u64 {
         self.next_id
@@ -301,6 +376,7 @@ impl ReplacementEffectManager {
         self.effects.retain(|e| e.id != id);
         self.effect_sources.remove(&id.0);
         self.one_shot_effects.remove(&id);
+        self.until_end_of_turn_effects.remove(&id);
     }
 
     /// Remove all effects from a specific source.
@@ -351,22 +427,6 @@ impl ReplacementEffectManager {
             .collect()
     }
 
-    /// Get all self-replacement effects for a specific source.
-    pub fn get_self_replacements(&self, source: ObjectId) -> Vec<&ReplacementEffect> {
-        self.effects
-            .iter()
-            .filter(|e| e.self_replacement && e.source == source)
-            .collect()
-    }
-
-    /// Get all non-self replacement effects.
-    pub fn get_other_replacements(&self) -> Vec<&ReplacementEffect> {
-        self.effects
-            .iter()
-            .filter(|e| !e.self_replacement)
-            .collect()
-    }
-
     /// Get a replacement effect by its ID.
     pub fn get_effect(&self, id: ReplacementEffectId) -> Option<&ReplacementEffect> {
         self.effects.iter().find(|e| e.id == id)
@@ -412,18 +472,6 @@ impl ReplacementEffectManager {
         }
     }
 
-    /// Get ETB replacement effects that apply to a specific object entering.
-    ///
-    /// Returns self-replacement effects for the object plus any other effects
-    /// Get ETB replacement effects that apply to objects entering the battlefield.
-    /// All effects are returned and filtered at runtime via matches_event().
-    pub fn get_etb_replacements(&self, entering_object: ObjectId) -> Vec<&ReplacementEffect> {
-        self.effects
-            .iter()
-            .filter(|e| e.matcher.is_some() && (e.source == entering_object || !e.self_replacement))
-            .collect()
-    }
-
     /// Get discard replacement effects that might apply.
     /// All effects are returned and filtered at runtime via matches_event().
     pub fn get_discard_replacements(&self) -> Vec<&ReplacementEffect> {
@@ -447,6 +495,13 @@ impl ReplacementEffectManager {
     pub fn add_one_shot_effect(&mut self, effect: ReplacementEffect) -> ReplacementEffectId {
         let id = self.add_effect(effect);
         self.one_shot_effects.insert(id);
+        id
+    }
+
+    /// Add a replacement effect that lasts until cleanup.
+    pub fn add_until_end_of_turn_effect(&mut self, effect: ReplacementEffect) -> ReplacementEffectId {
+        let id = self.add_effect(effect);
+        self.until_end_of_turn_effects.insert(id);
         id
     }
 
@@ -477,6 +532,15 @@ impl ReplacementEffectManager {
         self.one_shot_effects.clear();
     }
 
+    /// Clear all replacement effects that expire during cleanup.
+    pub fn clear_until_end_of_turn_effects(&mut self) {
+        let ids: Vec<_> = self.until_end_of_turn_effects.iter().copied().collect();
+        for id in ids {
+            self.remove_effect(id);
+        }
+        self.until_end_of_turn_effects.clear();
+    }
+
     /// Get the count of one-shot effects from a specific source.
     ///
     /// This is useful for checking how many regeneration shields a creature has.
@@ -501,7 +565,7 @@ impl ReplacementEffect {
             source,
             controller,
             replacement,
-            self_replacement: false,
+            priority_override: None,
             matcher: Some(Box::new(matcher)),
         }
     }
@@ -512,9 +576,9 @@ impl ReplacementEffect {
         self
     }
 
-    /// Mark this as a self-replacement effect.
-    pub fn self_replacing(mut self) -> Self {
-        self.self_replacement = true;
+    /// Override the natural priority bucket used when applying this effect.
+    pub fn with_priority_override(mut self, priority: ReplacementPriority) -> Self {
+        self.priority_override = Some(priority);
         self
     }
 
@@ -565,7 +629,6 @@ impl ReplacementEffect {
                 added_subtypes: Vec::new(),
             },
         )
-        .self_replacing()
     }
 
     /// Create a "if this would die, exile it instead" effect.
@@ -576,7 +639,6 @@ impl ReplacementEffect {
             ThisWouldDieMatcher,
             ReplacementAction::ChangeDestination(Zone::Exile),
         )
-        .self_replacing()
     }
 
     /// Create a "double damage" effect.
@@ -614,7 +676,6 @@ impl ReplacementEffect {
             ThisWouldBeDestroyedMatcher,
             ReplacementAction::Prevent,
         )
-        .self_replacing()
     }
 
     /// Create a Library of Leng style discard replacement effect.
@@ -659,7 +720,7 @@ mod tests {
             Value::Fixed(3),
         );
 
-        assert!(effect.self_replacement);
+        assert_eq!(effect.priority_override, None);
         assert!(
             effect.matcher.is_some(),
             "enters_with_counters should use trait-based matcher"
@@ -677,7 +738,7 @@ mod tests {
             PlayerId::from_index(0),
         );
 
-        assert!(effect.self_replacement);
+        assert_eq!(effect.priority_override, None);
         assert!(
             effect.matcher.is_some(),
             "exile_instead_of_dying should use trait-based matcher"
@@ -717,33 +778,18 @@ mod tests {
     }
 
     #[test]
-    fn test_self_vs_other_replacements() {
-        let mut manager = ReplacementEffectManager::new();
-
-        let self_effect = ReplacementEffect::enters_with_counters(
+    fn test_priority_override() {
+        let effect = ReplacementEffect::with_matcher(
             ObjectId::from_raw(1),
             PlayerId::from_index(0),
-            CounterType::PlusOnePlusOne,
-            Value::Fixed(2),
-        );
-
-        let other_effect = ReplacementEffect::enters_tapped(
-            ObjectId::from_raw(2),
-            PlayerId::from_index(0),
-            ObjectFilter::creature(),
-        );
-
-        manager.add_effect(self_effect);
-        manager.add_effect(other_effect);
+            ThisWouldEnterBattlefieldMatcher,
+            ReplacementAction::EnterTapped,
+        )
+        .with_priority_override(ReplacementPriority::CopyEffect);
 
         assert_eq!(
-            manager.get_self_replacements(ObjectId::from_raw(1)).len(),
-            1
+            effect.priority_override,
+            Some(ReplacementPriority::CopyEffect)
         );
-        assert_eq!(
-            manager.get_self_replacements(ObjectId::from_raw(2)).len(),
-            0
-        );
-        assert_eq!(manager.get_other_replacements().len(), 1);
     }
 }

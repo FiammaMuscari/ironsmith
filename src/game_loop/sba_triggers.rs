@@ -455,7 +455,7 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
     } else if let Some(obj) = game.object(entry.object_id) {
         get_effects_for_stack_entry(game, &entry, obj)
     } else {
-        Vec::new()
+        crate::resolution::ResolutionProgram::default()
     };
 
     let mut all_events = Vec::new();

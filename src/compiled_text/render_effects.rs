@@ -7551,6 +7551,30 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             "If a card would be put into {graveyard_owner} graveyard from anywhere this turn, exile that card instead"
         );
     }
+    if let Some(register) = effect.downcast_ref::<crate::effects::RegisterZoneReplacementEffect>()
+    {
+        let target = describe_choose_spec(&register.target);
+        let from = register
+            .from_zone
+            .map(|zone| format!(" from {zone:?}"))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let to = register
+            .to_zone
+            .map(|zone| format!(" into {zone:?}"))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let duration = match register.mode {
+            crate::effects::ReplacementApplyMode::OneShot
+            | crate::effects::ReplacementApplyMode::UntilEndOfTurn => " this turn",
+            crate::effects::ReplacementApplyMode::Resolution => "",
+        };
+        return format!(
+            "If {target} would go{from}{to}{duration}, it goes to {:?} instead",
+            register.replacement_zone
+        )
+        .to_ascii_lowercase();
+    }
     if let Some(additional_land_plays) =
         effect.downcast_ref::<crate::effects::AdditionalLandPlaysEffect>()
     {

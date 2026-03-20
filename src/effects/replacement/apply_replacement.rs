@@ -11,6 +11,8 @@ use crate::replacement::ReplacementEffect;
 pub enum ReplacementApplyMode {
     /// Register as a one-shot effect (consumed after one use).
     OneShot,
+    /// Register until cleanup of the current turn.
+    UntilEndOfTurn,
     /// Register as a resolution effect (persists until removed).
     Resolution,
 }
@@ -38,6 +40,13 @@ impl ApplyReplacementEffect {
             mode: ReplacementApplyMode::Resolution,
         }
     }
+
+    pub fn until_end_of_turn(effect: ReplacementEffect) -> Self {
+        Self {
+            effect,
+            mode: ReplacementApplyMode::UntilEndOfTurn,
+        }
+    }
 }
 
 impl EffectExecutor for ApplyReplacementEffect {
@@ -50,6 +59,10 @@ impl EffectExecutor for ApplyReplacementEffect {
             ReplacementApplyMode::OneShot => {
                 game.replacement_effects
                     .add_one_shot_effect(self.effect.clone());
+            }
+            ReplacementApplyMode::UntilEndOfTurn => {
+                game.replacement_effects
+                    .add_until_end_of_turn_effect(self.effect.clone());
             }
             ReplacementApplyMode::Resolution => {
                 game.replacement_effects

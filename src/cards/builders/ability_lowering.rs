@@ -4,14 +4,37 @@ use crate::cards::builders::{
     CardDefinitionBuilder, CardTextError, EffectAst, LineInfo, LoweredEffects,
     NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility, NormalizedPreparedAbility,
     ParsedAbility, PreparedEffectsForLowering, ReferenceExports, ReferenceImports, TriggerSpec,
+    InsteadSemantics,
     collect_tag_spans_from_effects_with_context, compile_trigger_spec,
     materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
     materialize_prepared_triggered_effects, prepare_effects_for_lowering,
     prepare_effects_with_trigger_context_for_lowering, prepare_triggered_effects_for_lowering,
     trigger_binds_player_reference_context, validate_iterated_player_bindings_in_lowered_effects,
+    classify_instead_followup_text,
 };
 use crate::effect::{Effect, EffectMode};
 use crate::zone::Zone;
+
+fn resolution_program_to_ability_effects(
+    program: &crate::resolution::ResolutionProgram,
+) -> Vec<Effect> {
+    if program.segments.len() == 1
+        && let Some(segment) = program.segments.first()
+        && segment.self_replacements.len() == 1
+    {
+        let branch = &segment.self_replacements[0];
+        return vec![
+            Effect::new(crate::effects::ConditionalEffect::new(
+                branch.condition.clone(),
+                branch.replacement_effects.clone(),
+                segment.default_effects.clone(),
+            ))
+            .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
+        ];
+    }
+
+    program.to_vec()
+}
 
 pub(crate) fn lower_prepared_statement_effects(
     prepared: &PreparedEffectsForLowering,
@@ -36,7 +59,10 @@ pub(crate) fn lower_statement_effects_with_imports(
 pub(crate) fn lower_statement_effects(
     effects_ast: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
-    Ok(lower_statement_effects_with_imports(effects_ast, &ReferenceImports::default())?.effects)
+    Ok(lower_statement_effects_with_imports(effects_ast, &ReferenceImports::default())?
+        .effects
+        .flattened_default_effects()
+        .to_vec())
 }
 
 pub(crate) fn lower_prepared_additional_cost_choice_modes_with_exports(
@@ -55,7 +81,7 @@ pub(crate) fn lower_prepared_additional_cost_choice_modes_with_exports(
         }
         modes.push(EffectMode {
             description: option.description.trim().to_string(),
-            effects: lowered.effects,
+            effects: lowered.effects.flattened_default_effects().to_vec(),
         });
     }
     Ok((modes, exports))
@@ -142,7 +168,7 @@ fn lower_parsed_ability_internal(
                 "triggered ability effects",
             )?;
             triggered.trigger = compile_trigger_spec(trigger);
-            triggered.effects = lowered.effects;
+            triggered.effects = resolution_program_to_ability_effects(&lowered.effects);
             triggered.choices = lowered.choices;
             triggered.intervening_if = merge_intervening_conditions(
                 triggered.intervening_if.take(),
@@ -165,7 +191,7 @@ fn lower_parsed_ability_internal(
         false,
         "activated ability effects",
     )?;
-    activated.effects = lowered.effects;
+    activated.effects = resolution_program_to_ability_effects(&lowered.effects);
     activated.choices = lowered.choices;
     Ok(parsed)
 }
@@ -191,7 +217,12 @@ pub(crate) fn apply_instead_followup_statement_to_last_ability(
     }
 
     let normalized = info.normalized.normalized.as_str().to_ascii_lowercase();
-    if !normalized.starts_with("if ") || !normalized.contains(" instead") {
+    if !normalized.starts_with("if ")
+        || !matches!(
+            classify_instead_followup_text(&normalized),
+            InsteadSemantics::SelfReplacement
+        )
+    {
         return Ok(false);
     }
 
@@ -216,22 +247,28 @@ pub(crate) fn apply_instead_followup_statement_to_last_ability(
             if original.is_empty() {
                 return Ok(false);
             }
-            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
-                conditional.condition,
-                conditional.if_true,
-                original,
-            ))];
+            ability.effects = vec![
+                Effect::new(crate::effects::ConditionalEffect::new(
+                    conditional.condition,
+                    conditional.if_true,
+                    original.to_vec(),
+                ))
+                .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
+            ];
         }
         AbilityKind::Activated(ability) => {
             let original = std::mem::take(&mut ability.effects);
             if original.is_empty() {
                 return Ok(false);
             }
-            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
-                conditional.condition,
-                conditional.if_true,
-                original,
-            ))];
+            ability.effects = vec![
+                Effect::new(crate::effects::ConditionalEffect::new(
+                    conditional.condition,
+                    conditional.if_true,
+                    original.to_vec(),
+                ))
+                .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
+            ];
         }
         _ => return Ok(false),
     }

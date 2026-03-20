@@ -107,8 +107,7 @@ impl EffectExecutor for RegenerateEffect {
                 controller,
                 matcher,
                 ReplacementAction::Instead(replacement_effects),
-            )
-            .self_replacing();
+            );
 
             let apply = ApplyReplacementEffect::one_shot(replacement_effect);
             outcomes.push(execute_effect(game, &Effect::new(apply), ctx)?);

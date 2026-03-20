@@ -2675,7 +2675,7 @@ pub(super) fn apply_casting_method_choice_response(
         );
         (cost, obj.spell_effect.clone().unwrap_or_default())
     } else {
-        (None, Vec::new())
+        (None, crate::resolution::ResolutionProgram::default())
     };
 
     let (needs_x, max_x) =
@@ -2794,7 +2794,9 @@ pub(super) fn propose_spell_cast(
             if let crate::alternative_cast::AlternativeCastingMethod::Overload { effects, .. } =
                 method
             {
-                obj.spell_effect = Some(effects.clone());
+                obj.spell_effect = Some(crate::resolution::ResolutionProgram::from_effects(
+                    effects.clone(),
+                ));
             }
         }
 

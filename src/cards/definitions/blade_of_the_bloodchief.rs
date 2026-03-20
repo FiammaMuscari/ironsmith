@@ -30,7 +30,6 @@ mod tests {
     use crate::ability::AbilityKind;
     use crate::ability::ActivationTiming;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::executor::ExecutionContext;
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::object::{CounterType, Object};
@@ -87,10 +86,12 @@ mod tests {
             unreachable!("Expected triggered ability");
         };
 
-        let mut ctx = ExecutionContext::new_default(source, controller);
-        for effect in &triggered.effects {
-            effect.0.execute(game, &mut ctx).unwrap();
-        }
+        game.push_to_stack(crate::game_state::StackEntry::ability(
+            source,
+            controller,
+            triggered.effects.clone(),
+        ));
+        crate::game_loop::resolve_stack_entry(game).expect("blade trigger should resolve");
     }
 
     // ========================================
@@ -139,8 +140,14 @@ mod tests {
                 triggered.trigger.display().contains("dies"),
                 "Should trigger when a creature dies"
             );
-            // Tag + conditional counter placement
-            assert_eq!(triggered.effects.len(), 2);
+            let entry = crate::game_state::StackEntry::ability(
+                ObjectId::from_raw(1),
+                PlayerId::from_index(0),
+                triggered.effects.clone(),
+            );
+            let program = entry.ability_effects.as_ref().expect("stack program");
+            assert_eq!(program.segments.len(), 1);
+            assert_eq!(program.segments[0].self_replacements.len(), 1);
         } else {
             panic!("Expected triggered ability");
         }

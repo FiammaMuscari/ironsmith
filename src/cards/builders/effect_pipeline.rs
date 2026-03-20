@@ -8,8 +8,10 @@ use crate::cards::builders::{
     ParsedModalHeader, ParsedRestrictions, PredicateAst, ReferenceEnv, ReferenceExports,
     ReferenceImports, StaticAbilityAst, TriggerSpec, annotate_effect_sequence,
     apply_instead_followup_statement_to_last_ability, collect_tag_spans_from_effects_with_context,
+    classify_instead_followup_text,
     combine_mana_activation_condition, effects_reference_it_tag, effects_reference_its_controller,
     effects_reference_tag, ensure_concrete_trigger_spec, inferred_trigger_player_filter,
+    InsteadSemantics,
     lower_prepared_ability, lower_prepared_additional_cost_choice_modes_with_exports,
     lower_prepared_effects_with_trigger_context, lower_prepared_statement_effects,
     lower_static_abilities_ast, lower_static_ability_ast, normalize_effects_ast,
@@ -826,8 +828,8 @@ fn normalize_spell_delayed_trigger_effects(
 
     builder
         .spell_effect
-        .get_or_insert_with(Vec::new)
-        .extend(delayed);
+        .get_or_insert_with(crate::resolution::ResolutionProgram::default)
+        .extend(crate::resolution::ResolutionProgram::from_effects(delayed));
     builder
 }
 
@@ -843,11 +845,13 @@ fn normalize_take_to_the_streets_spell_effect(
     let Some(effects) = builder.spell_effect.as_ref() else {
         return builder;
     };
-    if effects.len() != 2 {
+    if effects.segments.len() != 1 || effects.segments[0].default_effects.len() != 2 {
         return builder;
     }
 
-    let Some(apply) = effects[1].downcast_ref::<crate::effects::ApplyContinuousEffect>() else {
+    let Some(apply) = effects.segments[0].default_effects[1]
+        .downcast_ref::<crate::effects::ApplyContinuousEffect>()
+    else {
         return builder;
     };
     if apply.until != crate::effect::Until::EndOfTurn {
@@ -886,7 +890,7 @@ fn normalize_take_to_the_streets_spell_effect(
         });
 
     let mut new_effects = effects.clone();
-    new_effects[1] = Effect::new(updated);
+    new_effects.segments[0].default_effects[1] = Effect::new(updated);
     builder.spell_effect = Some(new_effects);
     builder
 }
@@ -1087,6 +1091,10 @@ fn uses_referenced_ability_functional_zones(
         && normalized_line.starts_with("this ability costs")
 }
 
+fn uses_all_zone_functional_zones(static_ability: &StaticAbility) -> bool {
+    static_ability.id() == crate::static_abilities::StaticAbilityId::ShuffleIntoLibraryFromGraveyard
+}
+
 fn infer_static_ability_functional_zones(normalized_line: &str) -> Option<Vec<Zone>> {
     let mut zones = Vec::new();
     for (needle, zone) in [
@@ -1201,6 +1209,19 @@ fn apply_line_ast(
                 ]);
             }
             if let AbilityKind::Static(static_ability) = &compiled.kind
+                && uses_all_zone_functional_zones(static_ability)
+            {
+                compiled = compiled.in_zones(vec![
+                    Zone::Battlefield,
+                    Zone::Hand,
+                    Zone::Stack,
+                    Zone::Graveyard,
+                    Zone::Exile,
+                    Zone::Library,
+                    Zone::Command,
+                ]);
+            }
+            if let AbilityKind::Static(static_ability) = &compiled.kind
                 && uses_referenced_ability_functional_zones(
                     static_ability,
                     info.normalized.normalized.as_str(),
@@ -1242,6 +1263,19 @@ fn apply_line_ast(
                     && uses_spell_only_functional_zones(static_ability)
                 {
                     compiled = compiled.in_zones(vec![
+                        Zone::Hand,
+                        Zone::Stack,
+                        Zone::Graveyard,
+                        Zone::Exile,
+                        Zone::Library,
+                        Zone::Command,
+                    ]);
+                }
+                if let AbilityKind::Static(static_ability) = &compiled.kind
+                    && uses_all_zone_functional_zones(static_ability)
+                {
+                    compiled = compiled.in_zones(vec![
+                        Zone::Battlefield,
                         Zone::Hand,
                         Zone::Stack,
                         Zone::Graveyard,
@@ -1338,23 +1372,42 @@ fn apply_line_ast(
             state.latest_spell_exports = lowered.exports;
 
             let normalized_line = info.normalized.normalized.as_str().to_ascii_lowercase();
-            if normalized_line.contains(" instead")
+            if matches!(
+                classify_instead_followup_text(&normalized_line),
+                InsteadSemantics::SelfReplacement
+            )
+                && compiled.len() == 1
+                && builder.spell_effect.is_none()
+                && compiled[0]
+                    .downcast_ref::<crate::effects::ConditionalEffect>()
+                    .is_some_and(|replacement| replacement.if_false.is_empty())
+            {
+                return Err(CardTextError::UnsupportedLine(
+                    "unsupported self-replacement follow-up without a prior spell segment"
+                        .to_string(),
+                ));
+            }
+            if matches!(
+                classify_instead_followup_text(&normalized_line),
+                InsteadSemantics::SelfReplacement
+            )
                 && compiled.len() == 1
                 && let Some(ref mut existing) = builder.spell_effect
                 && !existing.is_empty()
                 && let Some(replacement) =
                     compiled[0].downcast_ref::<crate::effects::ConditionalEffect>()
                 && replacement.if_false.is_empty()
-                && let Some(previous_target) = existing
-                    .last()
-                    .and_then(|effect| effect.downcast_ref::<crate::effects::DealDamageEffect>())
-                    .map(|damage| damage.target.clone())
-                && replacement.if_true.len() == 1
-                && let Some(replacement_damage) =
-                    replacement.if_true[0].downcast_ref::<crate::effects::DealDamageEffect>()
             {
                 let mut replacement = replacement.clone();
-                if replacement_damage.target == ChooseSpec::PlayerOrPlaneswalker(PlayerFilter::Any)
+                if replacement.if_true.len() == 1
+                    && let Some(previous_target) = existing
+                        .last()
+                        .and_then(|effect| effect.downcast_ref::<crate::effects::DealDamageEffect>())
+                        .map(|damage| damage.target.clone())
+                    && let Some(replacement_damage) =
+                        replacement.if_true[0].downcast_ref::<crate::effects::DealDamageEffect>()
+                    && replacement_damage.target
+                        == ChooseSpec::PlayerOrPlaneswalker(PlayerFilter::Any)
                 {
                     replacement.if_true = vec![Effect::deal_damage(
                         replacement_damage.amount.clone(),
@@ -1362,12 +1415,18 @@ fn apply_line_ast(
                     )];
                 }
 
-                let previous = existing.pop().expect("checked non-empty above");
-                existing.push(Effect::new(crate::effects::ConditionalEffect::new(
-                    replacement.condition,
-                    replacement.if_true,
-                    vec![previous],
-                )));
+                let Some(segment) = existing.last_segment_mut() else {
+                    return Err(CardTextError::InvariantViolation(
+                        "expected previous spell resolution segment for self-replacement"
+                            .to_string(),
+                    ));
+                };
+                segment.self_replacements.push(
+                    crate::resolution::SelfReplacementBranch::new(
+                        replacement.condition,
+                        replacement.if_true,
+                    ),
+                );
             } else if let Some(ref mut existing) = builder.spell_effect {
                 existing.extend(compiled);
             } else {
@@ -1403,7 +1462,7 @@ fn apply_line_ast(
                 }
                 Err(err) => return Err(err),
             };
-            let compiled = runtime_effects_to_costs(lowered.effects)?;
+            let compiled = runtime_effects_to_costs(lowered.effects.to_vec())?;
             state.latest_additional_cost_exports = lowered.exports;
             let mut costs = builder.additional_cost.costs().to_vec();
             costs.extend(compiled);
@@ -1592,7 +1651,7 @@ fn apply_pending_mechanic_linkages(
 }
 
 fn try_merge_modal_into_remove_mode(
-    effects: &mut Vec<Effect>,
+    effects: &mut crate::resolution::ResolutionProgram,
     modal_effect: Effect,
     predicate: EffectPredicate,
 ) -> bool {
@@ -1670,7 +1729,7 @@ fn finalize_pending_modal(
     } = header;
 
     let (prefix_effects, prefix_choices) = if prepared_prefix.is_none() {
-        (Vec::new(), Vec::new())
+        (crate::resolution::ResolutionProgram::default(), Vec::new())
     } else if trigger.is_some() || activated.is_some() {
         match lower_prepared_effects_with_trigger_context(
             prepared_prefix
@@ -1715,7 +1774,7 @@ fn finalize_pending_modal(
         };
         compiled_modes.push(EffectMode {
             description: mode.description,
-            effects,
+            effects: effects.to_vec(),
         });
     }
 
@@ -1828,7 +1887,7 @@ fn finalize_pending_modal(
         )
         .ability;
         if let AbilityKind::Triggered(triggered) = &mut ability.kind {
-            triggered.effects = combined_effects;
+            triggered.effects = combined_effects.to_vec();
             triggered.choices = prefix_choices;
         }
         builder = builder.with_ability(ability);
@@ -1836,7 +1895,7 @@ fn finalize_pending_modal(
         builder = builder.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: activated.mana_cost,
-                effects: combined_effects,
+                effects: combined_effects.to_vec(),
                 choices: prefix_choices,
                 timing: activated.timing,
                 additional_restrictions: activated.additional_restrictions,
