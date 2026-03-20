@@ -597,7 +597,7 @@ fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_trigger
     let beta_stable_id = game.object(beta_id).expect("beta exists").stable_id;
     let ability = TriggeredAbility {
         trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-        effects: vec![],
+        effects: crate::resolution::ResolutionProgram::default(),
         choices: vec![],
         intervening_if: None,
     };
@@ -680,7 +680,7 @@ fn put_triggers_on_stack_orders_each_controller_in_apnap_order() {
     );
     let ability = TriggeredAbility {
         trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-        effects: vec![],
+        effects: crate::resolution::ResolutionProgram::default(),
         choices: vec![],
         intervening_if: None,
     };
@@ -756,11 +756,11 @@ fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
 
     game.delayed_triggers.push(crate::triggers::DelayedTrigger {
         trigger: Trigger::this_leaves_battlefield(),
-        effects: vec![Effect::move_to_zone(
+        effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::move_to_zone(
             ChooseSpec::SpecificObject(twin_id),
             Zone::Exile,
             true,
-        )],
+        )]),
         one_shot: true,
         x_value: None,
         not_before_turn: None,
@@ -4135,7 +4135,7 @@ fn test_once_per_turn_ability_tracking() {
         .push(Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::from_cost(crate::costs::Cost::tap()),
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 timing: ActivationTiming::OncePerTurn,
                 additional_restrictions: vec![],
@@ -4180,7 +4180,7 @@ fn test_activate_no_more_than_twice_each_turn_restriction() {
         .push(Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::free(),
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec!["Activate no more than twice each turn.".to_string()],
@@ -4236,7 +4236,7 @@ fn test_non_mana_activation_condition_max_activations_per_turn_is_enforced() {
         .push(Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::free(),
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -4518,7 +4518,7 @@ fn test_undying_trigger_generation() {
         .push(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::undying(),
-                effects: undying_effects(),
+                effects: undying_effects().into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4577,7 +4577,7 @@ fn test_undying_does_not_trigger_with_plus_counters() {
         .push(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::undying(),
-                effects: undying_effects(),
+                effects: undying_effects().into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4638,7 +4638,7 @@ fn test_persist_trigger_generation() {
         .push(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::persist(),
-                effects: persist_effects(),
+                effects: persist_effects().into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4764,7 +4764,7 @@ fn test_once_per_turn_in_legal_actions() {
         .push(Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::free(), // Free ability for testing
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 timing: ActivationTiming::OncePerTurn,
                 additional_restrictions: vec![],

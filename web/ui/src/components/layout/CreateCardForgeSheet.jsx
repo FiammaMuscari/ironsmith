@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Sparkles, SquareSplitHorizontal, Layers3 } from "lucide-react";
 
 import { useGame } from "@/context/GameContext";
@@ -284,6 +284,7 @@ export default function CreateCardForgeSheet({
   onZoneChange,
   skipTriggers = false,
   onSkipTriggersChange,
+  trigger = null,
 }) {
   const { game, refresh, setStatus } = useGame();
   const [open, setOpen] = useState(false);
@@ -440,17 +441,30 @@ export default function CreateCardForgeSheet({
       subtitle: face.name || faceTabLabel(draft.layout, index),
     }))
   ), [draft.faces, draft.layout]);
+  const triggerNode = trigger && isValidElement(trigger)
+    ? cloneElement(trigger, {
+      disabled: trigger.props.disabled || disabled,
+      onClick: (event) => {
+        trigger.props.onClick?.(event);
+        if (!event.defaultPrevented) {
+          handleOpenChange(true);
+        }
+      },
+    })
+    : null;
 
   return (
     <>
-      <button
-        type="button"
-        className="stone-pill inline-flex items-center rounded-none px-2.5 py-0.5 text-[13px] font-medium uppercase transition-all select-none hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
-        disabled={disabled}
-        onClick={() => handleOpenChange(true)}
-      >
-        Create Card
-      </button>
+      {triggerNode ?? (
+        <button
+          type="button"
+          className="stone-pill inline-flex items-center rounded-none px-2.5 py-0.5 text-[13px] font-medium uppercase transition-all select-none hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+          disabled={disabled}
+          onClick={() => handleOpenChange(true)}
+        >
+          Create Card
+        </button>
+      )}
 
       <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetContent

@@ -57,14 +57,14 @@ pub fn young_hero_role_token_definition() -> CardDefinition {
     let triggering_tag = TagKey::from("triggering");
     let granted_trigger = TriggeredAbility {
         trigger: Trigger::this_attacks(),
-        effects: vec![
+        effects: crate::resolution::ResolutionProgram::from_effects(vec![
             Effect::tag_triggering_object(triggering_tag.clone()),
             Effect::put_counters(
                 CounterType::PlusOnePlusOne,
                 1,
                 ChooseSpec::Tagged(triggering_tag.clone()),
             ),
-        ],
+        ]),
         choices: vec![],
         intervening_if: Some(Condition::TaggedObjectMatches(
             triggering_tag,

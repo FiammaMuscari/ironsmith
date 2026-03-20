@@ -9831,12 +9831,12 @@ mod tests {
         let activated_ability = Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::mana(mana_cost),
-                effects: vec![Effect::pump(
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::pump(
                     2,
                     2,
                     crate::target::ChooseSpec::Source,
                     crate::effect::Until::EndOfTurn,
-                )],
+                )]),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -10015,7 +10015,7 @@ mod tests {
         let activated = |cost: ManaCost| Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::mana(cost),
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -10138,7 +10138,9 @@ mod tests {
                         mana_cost: TotalCost::mana(ManaCost::from_pips(vec![vec![
                             ManaSymbol::Generic(3),
                         ]])),
-                        effects: vec![Effect::draw(1)],
+                        effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                            Effect::draw(1),
+                        ]),
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
@@ -10364,7 +10366,9 @@ mod tests {
         let activated_ability = Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::free(),
-                effects: vec![Effect::gain_life(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::gain_life(1),
+                ]),
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],
@@ -10427,7 +10431,9 @@ mod tests {
             .push(Ability {
                 kind: AbilityKind::Activated(ActivatedAbility {
                     mana_cost: TotalCost::free(),
-                    effects: vec![Effect::gain_life(1)],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::gain_life(1),
+                    ]),
                     choices: vec![],
                     timing: ActivationTiming::AnyTime,
                     additional_restrictions: vec![],

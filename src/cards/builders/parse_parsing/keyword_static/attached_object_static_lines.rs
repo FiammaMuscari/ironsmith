@@ -2,11 +2,13 @@ pub(crate) fn annihilator_granted_ability(amount: u32) -> Ability {
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_attacks(),
-            effects: vec![Effect::sacrifice_player(
-                ObjectFilter::permanent(),
-                Value::Fixed(amount as i32),
-                PlayerFilter::Defending,
-            )],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::sacrifice_player(
+                    ObjectFilter::permanent(),
+                    Value::Fixed(amount as i32),
+                    PlayerFilter::Defending,
+                ),
+            ]),
             choices: vec![],
             intervening_if: None,
         }),
@@ -122,7 +124,7 @@ pub(crate) fn cumulative_upkeep_granted_ability(
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-            effects: vec![
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
                 Effect::put_counters_on_source(CounterType::Age, 1),
                 Effect::unless_pays_with_life_additional_and_multiplier(
                     vec![Effect::sacrifice_source()],
@@ -132,7 +134,7 @@ pub(crate) fn cumulative_upkeep_granted_ability(
                     None,
                     mana_multiplier,
                 ),
-            ],
+            ]),
             choices: vec![],
             intervening_if: None,
         }),

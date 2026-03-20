@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import PhaseTrack from "@/components/board/PhaseTrack";
-import { ChevronLeft, ChevronRight, Github, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Github } from "lucide-react";
 import AddCardSheet from "./AddCardSheet";
 import TopbarMenuSheet from "./TopbarMenuSheet";
 
@@ -151,34 +151,6 @@ export default function Topbar({
           ) : null}
         </div>
         <div className="topbar-mobile-overlay-actions">
-          <AddCardSheet
-            onAddCardFailure={onAddCardFailure}
-            trigger={(
-              <Button
-                variant="secondary"
-                size="icon-xs"
-                className="stone-pill topbar-add-card-trigger rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
-                aria-label="Add Card"
-              >
-                <Plus className="size-3.5" />
-              </Button>
-            )}
-          />
-          <Button
-            variant="secondary"
-            size="icon-xs"
-            className="stone-pill topbar-github-trigger rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
-            asChild
-          >
-            <a
-              href="https://github.com/Chiplis/ironsmith"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Ironsmith GitHub repository"
-            >
-              <Github className="size-3.5" />
-            </a>
-          </Button>
           <TopbarMenuSheet
             playerNames={playerNames}
             setPlayerNames={setPlayerNames}
@@ -191,6 +163,9 @@ export default function Topbar({
             onEnterDeckLoading={onEnterDeckLoading}
             onOpenLobby={onOpenLobby}
             deckLoadingMode={deckLoadingMode}
+            onAddCardFailure={onAddCardFailure}
+            triggerIcon="menu"
+            showQuickActions
           />
         </div>
       </header>
@@ -271,42 +246,46 @@ export default function Topbar({
 
       <div className="topbar-side-cluster topbar-side-cluster--right">
         <div className="topbar-minor-controls topbar-minor-controls--utility">
-          <label className="toolbar-checkbox toolbar-debug-toggle topbar-toggle flex items-center gap-1.5 whitespace-nowrap cursor-pointer uppercase">
-            <Checkbox
-              checked={inspectorDebug}
-              onCheckedChange={(value) => setInspectorDebug(!!value)}
-              className="h-3.5 w-3.5"
-            />
-            Debug
-          </label>
-          <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
-          <Button
-            variant="secondary"
-            size="icon-xs"
-            className="stone-pill topbar-github-trigger rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
-            asChild
-          >
-            <a
-              href="https://github.com/Chiplis/ironsmith"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Ironsmith GitHub repository"
-            >
-              <Github className="size-3.5" />
-            </a>
-          </Button>
-          <AddCardSheet
-            onAddCardFailure={onAddCardFailure}
-            trigger={(
+          {!nonDesktopViewport ? (
+            <>
+              <label className="toolbar-checkbox toolbar-debug-toggle topbar-toggle flex items-center gap-1.5 whitespace-nowrap cursor-pointer uppercase">
+                <Checkbox
+                  checked={inspectorDebug}
+                  onCheckedChange={(value) => setInspectorDebug(!!value)}
+                  className="h-3.5 w-3.5"
+                />
+                Debug
+              </label>
+              <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
               <Button
                 variant="secondary"
-                size="sm"
-                className="stone-pill topbar-add-card-trigger rounded-none px-2.5 text-[#d8c8a7] hover:text-[#fff1cd]"
+                size="icon-xs"
+                className="stone-pill topbar-github-trigger rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
+                asChild
               >
-                Add Card
+                <a
+                  href="https://github.com/Chiplis/ironsmith"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open Ironsmith GitHub repository"
+                >
+                  <Github className="size-3.5" />
+                </a>
               </Button>
-            )}
-          />
+              <AddCardSheet
+                onAddCardFailure={onAddCardFailure}
+                trigger={(
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="stone-pill topbar-add-card-trigger rounded-none px-2.5 text-[#d8c8a7] hover:text-[#fff1cd]"
+                  >
+                    Add Card
+                  </Button>
+                )}
+              />
+            </>
+          ) : null}
           <TopbarMenuSheet
             playerNames={playerNames}
             setPlayerNames={setPlayerNames}
@@ -319,6 +298,9 @@ export default function Topbar({
             onEnterDeckLoading={onEnterDeckLoading}
             onOpenLobby={onOpenLobby}
             deckLoadingMode={deckLoadingMode}
+            onAddCardFailure={onAddCardFailure}
+            triggerIcon={nonDesktopViewport ? "menu" : "settings"}
+            showQuickActions={nonDesktopViewport}
           />
         </div>
       </div>

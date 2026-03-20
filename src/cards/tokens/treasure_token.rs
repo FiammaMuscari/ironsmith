@@ -15,7 +15,9 @@ pub fn treasure_token_definition() -> CardDefinition {
     let mana_ability = Ability {
         kind: AbilityKind::Activated(ActivatedAbility {
             mana_cost: TotalCost::from_costs(vec![Cost::tap(), Cost::sacrifice_self()]),
-            effects: vec![Effect::add_mana_of_any_color(1)],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::add_mana_of_any_color(1),
+            ]),
             choices: vec![],
             timing: crate::ability::ActivationTiming::AnyTime,
             additional_restrictions: vec![],

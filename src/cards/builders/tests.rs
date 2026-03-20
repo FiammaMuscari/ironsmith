@@ -17889,11 +17889,30 @@ fn parse_oracle_cabal_ritual_compiles_to_self_replacement_branch() {
 fn parse_oracle_future_replacement_followups_do_not_use_self_replacement_bridge() {
     for name in ["Faunsbane Troll", "Mawloc", "Nine-Ringed Bo"] {
         let def = parse_oracle_card_definition(name);
+        let self_replacement_count = def
+            .abilities
+            .iter()
+            .map(|ability| match &ability.kind {
+                crate::ability::AbilityKind::Triggered(triggered) => triggered
+                    .effects
+                    .segments
+                    .iter()
+                    .map(|segment| segment.self_replacements.len())
+                    .sum::<usize>(),
+                crate::ability::AbilityKind::Activated(activated) => activated
+                    .effects
+                    .segments
+                    .iter()
+                    .map(|segment| segment.self_replacements.len())
+                    .sum::<usize>(),
+                _ => 0,
+            })
+            .sum::<usize>();
         let debug = format!("{:#?}", def.abilities);
 
         assert!(
-            !debug.contains(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
-            "expected future-event replacement wording on {name} to avoid the self-replacement bridge, got {debug}"
+            self_replacement_count == 0,
+            "expected future-event replacement wording on {name} to avoid self-replacement lowering, got {debug}"
         );
         assert!(
             debug.contains("Exile"),

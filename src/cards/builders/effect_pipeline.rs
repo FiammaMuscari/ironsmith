@@ -1604,7 +1604,7 @@ fn apply_line_ast(
             if contains_haunted_creature_dies
                 && let AbilityKind::Triggered(triggered) = &parsed.ability.kind
             {
-                state.haunt_linkage = Some((triggered.effects.clone(), triggered.choices.clone()));
+                state.haunt_linkage = Some((triggered.effects.to_vec(), triggered.choices.clone()));
             }
             builder = builder.with_ability(parsed.ability);
         }
@@ -1638,10 +1638,9 @@ fn apply_pending_mechanic_linkages(
     for ability in &mut builder.abilities {
         if ability.text.as_deref() == Some("Haunt") {
             if let crate::ability::AbilityKind::Triggered(ref mut triggered) = ability.kind {
-                triggered.effects = vec![crate::effect::Effect::haunt_exile(
-                    haunt_effects,
-                    haunt_choices,
-                )];
+                triggered.effects = crate::resolution::ResolutionProgram::from_effects(vec![
+                    crate::effect::Effect::haunt_exile(haunt_effects, haunt_choices),
+                ]);
                 break;
             }
         }
@@ -1887,7 +1886,7 @@ fn finalize_pending_modal(
         )
         .ability;
         if let AbilityKind::Triggered(triggered) = &mut ability.kind {
-            triggered.effects = combined_effects.to_vec();
+            triggered.effects = combined_effects.clone();
             triggered.choices = prefix_choices;
         }
         builder = builder.with_ability(ability);
@@ -1895,7 +1894,7 @@ fn finalize_pending_modal(
         builder = builder.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: activated.mana_cost,
-                effects: combined_effects.to_vec(),
+                effects: combined_effects.clone(),
                 choices: prefix_choices,
                 timing: activated.timing,
                 additional_restrictions: activated.additional_restrictions,

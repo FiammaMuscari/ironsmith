@@ -250,7 +250,7 @@ pub(crate) fn parse_activated_line_with_raw(
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
-                        effects: vec![],
+                        effects: crate::resolution::ResolutionProgram::default(),
                         choices: vec![],
                         timing: loyalty_timing.clone(),
                         additional_restrictions: build_additional_restrictions(),
@@ -291,7 +291,7 @@ pub(crate) fn parse_activated_line_with_raw(
                     let mut ability = Ability {
                         kind: AbilityKind::Activated(ActivatedAbility {
                             mana_cost,
-                            effects: vec![],
+                            effects: crate::resolution::ResolutionProgram::default(),
                             choices: vec![],
                             timing: loyalty_timing.clone(),
                             additional_restrictions: build_additional_restrictions(),
@@ -320,7 +320,7 @@ pub(crate) fn parse_activated_line_with_raw(
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
-                        effects: vec![],
+                        effects: crate::resolution::ResolutionProgram::default(),
                         choices: vec![],
                         timing: loyalty_timing,
                         additional_restrictions: build_additional_restrictions(),
@@ -361,7 +361,7 @@ pub(crate) fn parse_activated_line_with_raw(
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                         mana_cost,
-                        effects: vec![],
+                        effects: crate::resolution::ResolutionProgram::default(),
                         choices: vec![],
                         timing,
                         additional_restrictions: additional_activation_restrictions,
@@ -409,7 +409,7 @@ pub(crate) fn parse_activated_line_with_raw(
             let mut ability = Ability {
                 kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                     mana_cost,
-                    effects: vec![],
+                    effects: crate::resolution::ResolutionProgram::default(),
                     choices: vec![],
                     timing,
                     additional_restrictions: additional_activation_restrictions,
@@ -921,7 +921,9 @@ pub(crate) fn parse_level_up_line(
         ability: Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: TotalCost::mana(mana_cost),
-                effects: vec![Effect::put_counters_on_source(CounterType::Level, 1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::put_counters_on_source(CounterType::Level, 1),
+                ]),
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],
@@ -1027,7 +1029,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
         ability: Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost,
-                effects: vec![effect],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![effect]),
                 choices: Vec::new(),
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -1111,7 +1113,9 @@ pub(crate) fn parse_transmute_line(
         ability: Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost,
-                effects: vec![Effect::search_library_to_hand(filter, true)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::search_library_to_hand(filter, true),
+                ]),
                 choices: Vec::new(),
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
@@ -1230,7 +1234,7 @@ pub(crate) fn parse_reinforce_line(
         ability: Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost,
-                effects: vec![effect],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![effect]),
                 choices: Vec::new(),
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -1837,7 +1841,9 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
             ability: Ability {
                 kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                     mana_cost: total_cost,
-                    effects: vec![Effect::attach_to(target.clone())],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::attach_to(target.clone()),
+                    ]),
                     choices: vec![target.clone()],
                     timing: ActivationTiming::SorcerySpeed,
                     additional_restrictions: vec![],
@@ -1885,7 +1891,9 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
         ability: Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: total_cost,
-                effects: vec![Effect::attach_to(target.clone())],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::attach_to(target.clone()),
+                ]),
                 choices: vec![target.clone()],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],

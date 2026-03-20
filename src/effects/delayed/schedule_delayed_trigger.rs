@@ -5,6 +5,7 @@ use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::resolution::ResolutionProgram;
 use crate::tag::TagKey;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::triggers::Trigger;
@@ -17,7 +18,7 @@ use super::trigger_queue::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleDelayedTriggerEffect {
     pub trigger: Trigger,
-    pub effects: Vec<crate::effect::Effect>,
+    pub effects: ResolutionProgram,
     pub one_shot: bool,
     pub start_next_turn: bool,
     pub until_end_of_turn: bool,
@@ -30,14 +31,14 @@ pub struct ScheduleDelayedTriggerEffect {
 impl ScheduleDelayedTriggerEffect {
     pub fn new(
         trigger: Trigger,
-        effects: Vec<crate::effect::Effect>,
+        effects: impl Into<ResolutionProgram>,
         one_shot: bool,
         target_objects: Vec<crate::ids::ObjectId>,
         controller: PlayerFilter,
     ) -> Self {
         Self {
             trigger,
-            effects,
+            effects: effects.into(),
             one_shot,
             start_next_turn: false,
             until_end_of_turn: false,
@@ -50,14 +51,14 @@ impl ScheduleDelayedTriggerEffect {
 
     pub fn from_tag(
         trigger: Trigger,
-        effects: Vec<crate::effect::Effect>,
+        effects: impl Into<ResolutionProgram>,
         one_shot: bool,
         target_tag: impl Into<TagKey>,
         controller: PlayerFilter,
     ) -> Self {
         Self {
             trigger,
-            effects,
+            effects: effects.into(),
             one_shot,
             start_next_turn: false,
             until_end_of_turn: false,

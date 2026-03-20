@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import useViewportLayout from "@/hooks/useViewportLayout";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,9 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { ExternalLink, Github, RefreshCw, Settings2 } from "lucide-react";
+import { ExternalLink, Github, Menu, RefreshCw, Settings2 } from "lucide-react";
+import AddCardSheet from "./AddCardSheet";
+import CreateCardForgeSheet from "./CreateCardForgeSheet";
 
 const inputClass =
   "fantasy-field w-full px-3 py-2 text-[14px] text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50";
@@ -52,6 +54,9 @@ export default function TopbarMenuSheet({
   onEnterDeckLoading,
   onOpenLobby,
   deckLoadingMode,
+  onAddCardFailure,
+  triggerIcon = "settings",
+  showQuickActions = false,
 }) {
   const [open, setOpen] = useState(false);
   const { nonDesktopViewport } = useViewportLayout();
@@ -75,6 +80,7 @@ export default function TopbarMenuSheet({
   const me = players.find((player) => player.id === perspective) || players[0];
   const lobbyBusy = multiplayer.mode !== "idle";
   const matchLocked = multiplayer.matchStarted;
+  const addLocked = multiplayer.mode !== "idle";
   const compiledLabel = useMemo(() => {
     if (!Number.isFinite(wasmRegistryCount) || wasmRegistryCount < 0) return "-";
     if (wasmRegistryTotal > 0) {
@@ -95,6 +101,25 @@ export default function TopbarMenuSheet({
     setOpen(false);
     onEnterDeckLoading();
   };
+  const handleRefresh = () => {
+    setOpen(false);
+    onRefresh();
+  };
+  const handleToggleLog = () => {
+    setOpen(false);
+    onToggleLog();
+  };
+  const triggerGlyph = triggerIcon === "menu"
+    ? <Menu className="size-3.5" />
+    : <Settings2 className="size-3.5" />;
+  const selectedPlayer = perspective ?? players[0]?.id ?? 0;
+  const [forgePlayer, setForgePlayer] = useState(selectedPlayer);
+  const [forgeZone, setForgeZone] = useState("battlefield");
+  const [forgeSkipTriggers, setForgeSkipTriggers] = useState(false);
+
+  useEffect(() => {
+    setForgePlayer(selectedPlayer);
+  }, [selectedPlayer]);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -103,9 +128,9 @@ export default function TopbarMenuSheet({
           variant="secondary"
           size="icon-xs"
           className="stone-pill topbar-menu-trigger rounded-none text-[#d8c8a7] hover:text-[#fff1cd]"
-          aria-label="Open game menu"
+          aria-label={triggerIcon === "menu" ? "Open navigation menu" : "Open game menu"}
         >
-          <Settings2 className="size-3.5" />
+          {triggerGlyph}
         </Button>
       </SheetTrigger>
       <SheetContent
@@ -124,6 +149,93 @@ export default function TopbarMenuSheet({
         </SheetHeader>
 
         <div className="grid gap-4 p-4">
+          {showQuickActions ? (
+            <MenuSection
+              eyebrow="Quick Actions"
+              title="Shortcuts"
+              description="Mobile keeps a single entry point, so the main desktop actions are gathered here."
+            >
+              <div className="grid gap-2 sm:grid-cols-2">
+                <AddCardSheet
+                  onAddCardFailure={onAddCardFailure}
+                  trigger={(
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="stone-pill justify-start"
+                      disabled={addLocked}
+                    >
+                      Add Card
+                    </Button>
+                  )}
+                />
+                <CreateCardForgeSheet
+                  disabled={addLocked}
+                  players={players}
+                  selectedPlayer={forgePlayer}
+                  onSelectPlayer={setForgePlayer}
+                  zone={forgeZone}
+                  onZoneChange={setForgeZone}
+                  skipTriggers={forgeSkipTriggers}
+                  onSkipTriggersChange={setForgeSkipTriggers}
+                  trigger={(
+                    <button
+                      type="button"
+                      className="stone-pill inline-flex items-center justify-start rounded-none px-2.5 py-2 text-[13px] font-medium uppercase transition-all select-none hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+                      disabled={addLocked}
+                    >
+                      Create Card
+                    </button>
+                  )}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
+                  disabled={lobbyBusy}
+                  onClick={handleToggleDeckLoading}
+                >
+                  {deckLoadingMode ? "Cancel Deck Load" : "Load Decks"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
+                  onClick={handleOpenLobby}
+                >
+                  {lobbyBusy ? "Open Lobby" : "Create Lobby"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
+                  onClick={handleToggleLog}
+                >
+                  Open Log
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
+                  onClick={handleRefresh}
+                >
+                  <RefreshCw className="size-3.5" />
+                  Refresh View
+                </Button>
+              </div>
+              <Button variant="secondary" size="sm" className="stone-pill justify-start" asChild>
+                <a
+                  href="https://github.com/Chiplis/ironsmith"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Github className="size-3.5" />
+                  Repository
+                  <ExternalLink className="size-3" />
+                </a>
+              </Button>
+            </MenuSection>
+          ) : null}
           <MenuSection
             eyebrow="Match"
             title="Setup"
@@ -173,7 +285,7 @@ export default function TopbarMenuSheet({
               <Button variant="secondary" size="sm" className="stone-pill" onClick={handleOpenLobby}>
                 {lobbyBusy ? "Open Lobby" : "Create Lobby"}
               </Button>
-              <Button variant="secondary" size="sm" className="stone-pill" onClick={onRefresh}>
+              <Button variant="secondary" size="sm" className="stone-pill" onClick={handleRefresh}>
                 <RefreshCw className="size-3.5" />
                 Refresh View
               </Button>
@@ -290,7 +402,7 @@ export default function TopbarMenuSheet({
                 </label>
               </div>
             </div>
-            <Button variant="secondary" size="sm" className="stone-pill" onClick={onToggleLog}>
+            <Button variant="secondary" size="sm" className="stone-pill" onClick={handleToggleLog}>
               Open Log
             </Button>
           </MenuSection>

@@ -13,6 +13,9 @@ export default function AddCardBar({
   zoneViews = ["battlefield"],
   setZoneViews,
   onAddCardFailure,
+  onEnterDeckLoading,
+  onOpenLobby,
+  deckLoadingMode = false,
 }) {
   const {
     state,
@@ -34,6 +37,7 @@ export default function AddCardBar({
   const selectedPlayer = playerIndex ?? perspective;
   const addLocked = multiplayer.mode !== "idle";
   const matchLocked = multiplayer.matchStarted;
+  const lobbyBusy = multiplayer.mode !== "idle";
 
   return (
     <div className="add-card-toolbar table-toolbar table-toolbar--secondary rounded-none px-3 py-2">
@@ -60,6 +64,21 @@ export default function AddCardBar({
           skipTriggers={skipTriggers}
           onSkipTriggersChange={(checked) => setSkipTriggers(checked === true)}
         />
+        <button
+          type="button"
+          className={triggerPill}
+          disabled={lobbyBusy}
+          onClick={onEnterDeckLoading}
+        >
+          {deckLoadingMode ? "Cancel Deck Load" : "Load Decks"}
+        </button>
+        <button
+          type="button"
+          className={triggerPill}
+          onClick={onOpenLobby}
+        >
+          {lobbyBusy ? "Open Lobby" : "Create Lobby"}
+        </button>
         <span className="add-card-toolbar-separator" aria-hidden="true" />
 
         <span

@@ -8698,7 +8698,10 @@ pub(crate) fn token_dies_deals_damage_any_target_ability(amount: i32) -> Ability
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_dies(),
-            effects: vec![Effect::deal_damage(Value::Fixed(amount), target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::deal_damage(
+                Value::Fixed(amount),
+                target.clone(),
+            )]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -8714,7 +8717,10 @@ pub(crate) fn token_leaves_deals_damage_any_target_ability(amount: i32) -> Abili
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_leaves_battlefield(),
-            effects: vec![Effect::deal_damage(Value::Fixed(amount), target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::deal_damage(
+                Value::Fixed(amount),
+                target.clone(),
+            )]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -8730,7 +8736,10 @@ pub(crate) fn token_becomes_tapped_deals_damage_target_player_ability(amount: i3
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::becomes_tapped(),
-            effects: vec![Effect::deal_damage(Value::Fixed(amount), target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::deal_damage(
+                Value::Fixed(amount),
+                target.clone(),
+            )]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -8746,7 +8755,12 @@ pub(crate) fn token_dies_target_creature_gets_minus_one_minus_one_ability() -> A
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_dies(),
-            effects: vec![Effect::pump(-1, -1, target.clone(), Until::EndOfTurn)],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::pump(
+                -1,
+                -1,
+                target.clone(),
+                Until::EndOfTurn,
+            )]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -8761,7 +8775,12 @@ pub(crate) fn token_red_pump_ability() -> Ability {
     Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
             mana_cost: TotalCost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::Red]])),
-            effects: vec![Effect::pump(1, 0, ChooseSpec::Source, Until::EndOfTurn)],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::pump(
+                1,
+                0,
+                ChooseSpec::Source,
+                Until::EndOfTurn,
+            )]),
             choices: Vec::new(),
             timing: ActivationTiming::AnyTime,
             additional_restrictions: Vec::new(),
@@ -8783,7 +8802,9 @@ pub(crate) fn token_white_tap_target_creature_ability() -> Ability {
                 crate::costs::Cost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::White]])),
                 crate::costs::Cost::tap(),
             ]),
-            effects: vec![Effect::tap(target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::tap(
+                target.clone(),
+            )]),
             choices: vec![target],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: Vec::new(),
@@ -8802,7 +8823,9 @@ pub(crate) fn token_tap_add_single_mana_ability(symbol: ManaSymbol) -> Ability {
     Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
             mana_cost: TotalCost::from_costs(vec![crate::costs::Cost::tap()]),
-            effects: vec![Effect::add_mana(vec![symbol])],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::add_mana(
+                vec![symbol],
+            )]),
             choices: Vec::new(),
             timing: crate::ability::ActivationTiming::AnyTime,
             additional_restrictions: Vec::new(),
@@ -8832,10 +8855,9 @@ pub(crate) fn token_damage_to_player_poison_counter_ability() -> Ability {
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_deals_combat_damage_to_player(),
-            effects: vec![Effect::poison_counters_player(
-                1,
-                PlayerFilter::DamagedPlayer,
-            )],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::poison_counters_player(1, PlayerFilter::DamagedPlayer),
+            ]),
             choices: Vec::new(),
             intervening_if: None,
         }),
@@ -8854,10 +8876,12 @@ pub(crate) fn token_noncreature_spell_each_opponent_damage_ability(amount: i32) 
                 Some(ObjectFilter::spell().without_type(CardType::Creature)),
                 PlayerFilter::You,
             ),
-            effects: vec![Effect::for_each_opponent(vec![Effect::deal_damage(
-                Value::Fixed(amount),
-                ChooseSpec::Player(PlayerFilter::IteratedPlayer),
-            )])],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::for_each_opponent(vec![Effect::deal_damage(
+                    Value::Fixed(amount),
+                    ChooseSpec::Player(PlayerFilter::IteratedPlayer),
+                )]),
+            ]),
             choices: Vec::new(),
             intervening_if: None,
         }),
@@ -8875,13 +8899,13 @@ pub(crate) fn token_combat_damage_gain_control_target_artifact_ability() -> Abil
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_deals_combat_damage_to_player(),
-            effects: vec![Effect::new(
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::new(
                 crate::effects::ApplyContinuousEffect::with_spec_runtime(
                     target.clone(),
                     crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController,
                     Until::Forever,
                 ),
-            )],
+            )]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -8903,7 +8927,9 @@ pub(crate) fn token_leaves_return_named_from_graveyard_to_hand_ability(card_name
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_leaves_battlefield(),
-            effects: vec![Effect::return_from_graveyard_to_hand(target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::return_from_graveyard_to_hand(target.clone()),
+            ]),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -9314,10 +9340,9 @@ pub(crate) fn token_sacrifice_return_named_from_graveyard_ability(
                 total_costs.extend(costs);
                 total_costs
             }),
-            effects: vec![Effect::return_from_graveyard_to_battlefield(
-                target.clone(),
-                false,
-            )],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::return_from_graveyard_to_battlefield(target.clone(), false),
+            ]),
             choices: Vec::new(),
             timing: ActivationTiming::AnyTime,
             additional_restrictions: Vec::new(),
@@ -9365,7 +9390,7 @@ pub(crate) fn token_upkeep_sacrifice_return_named_from_graveyard_ability(
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-            effects,
+            effects: effects.into(),
             choices: vec![target],
             intervening_if: None,
         }),
@@ -9387,7 +9412,9 @@ pub(crate) fn token_dies_create_dragon_with_firebreathing_ability() -> Ability {
     Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_dies(),
-            effects: vec![Effect::create_tokens(dragon, Value::Fixed(1))],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::create_tokens(dragon, Value::Fixed(1)),
+            ]),
             choices: Vec::new(),
             intervening_if: None,
         }),
@@ -9990,13 +10017,13 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             let ability = Ability {
                 kind: AbilityKind::Triggered(crate::ability::TriggeredAbility {
                     trigger: Trigger::this_leaves_battlefield(),
-                    effects: vec![
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
                         Effect::deal_damage(amount, ChooseSpec::SourceController),
                         Effect::for_each(
                             ObjectFilter::creature().you_control(),
                             vec![Effect::deal_damage(amount, ChooseSpec::Iterated)],
                         ),
-                    ],
+                    ]),
                     choices: Vec::new(),
                     intervening_if: None,
                 }),
@@ -10102,7 +10129,9 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             let ability = Ability {
                 kind: AbilityKind::Triggered(crate::ability::TriggeredAbility {
                     trigger: Trigger::this_dies(),
-                    effects: vec![Effect::gain_life(1)],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::gain_life(1),
+                    ]),
                     choices: Vec::new(),
                     intervening_if: None,
                 }),
@@ -10127,7 +10156,9 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             let ability = Ability {
                 kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                     mana_cost: TotalCost::from_cost(crate::costs::Cost::tap()),
-                    effects: vec![Effect::pump(1, 0, target.clone(), Until::EndOfTurn)],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::pump(1, 0, target.clone(), Until::EndOfTurn),
+                    ]),
                     choices: vec![target],
                     timing: crate::ability::ActivationTiming::SorcerySpeed,
                     additional_restrictions: vec!["activate only as a sorcery".to_string()],
@@ -10192,10 +10223,9 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
                         ]])),
                         crate::costs::Cost::sacrifice_self(),
                     ]),
-                    effects: vec![Effect::counter_unless_pays(
-                        target.clone(),
-                        vec![ManaSymbol::Generic(1)],
-                    )],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::counter_unless_pays(target.clone(), vec![ManaSymbol::Generic(1)]),
+                    ]),
                     choices: vec![target],
                     timing: crate::ability::ActivationTiming::AnyTime,
                     additional_restrictions: vec![],
@@ -10284,7 +10314,9 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             let ability = Ability {
                 kind: AbilityKind::Triggered(crate::ability::TriggeredAbility {
                     trigger: Trigger::enters_battlefield(ObjectFilter::land().you_control()),
-                    effects: vec![Effect::pump(1, 0, ChooseSpec::Source, Until::EndOfTurn)],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::pump(1, 0, ChooseSpec::Source, Until::EndOfTurn),
+                    ]),
                     choices: Vec::new(),
                     intervening_if: None,
                 }),

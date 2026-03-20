@@ -13,6 +13,7 @@ use crate::filter::ObjectFilter;
 use crate::filter::ObjectRef;
 use crate::game_state::{GameState, Phase, Step};
 use crate::ids::{ObjectId, PlayerId, StableId};
+use crate::resolution::ResolutionProgram;
 use crate::snapshot::ObjectSnapshot;
 use crate::static_abilities::StaticAbilityId;
 use crate::target::PlayerFilter;
@@ -59,7 +60,7 @@ pub struct DelayedTrigger {
     /// The trigger condition to wait for.
     pub trigger: Trigger,
     /// Effects to execute when the trigger fires.
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
     /// Whether this is a one-shot trigger (fires once then is removed).
     pub one_shot: bool,
     /// X value captured when the delayed trigger was scheduled (if any).
@@ -126,10 +127,10 @@ impl TriggerQueue {
 pub fn compute_trigger_identity(trigger_ability: &TriggeredAbility) -> TriggerIdentity {
     let mut hasher = DefaultHasher::new();
     trigger_ability.trigger.display().hash(&mut hasher);
-    trigger_ability.effects.len().hash(&mut hasher);
+    trigger_ability.effects.all_effects().len().hash(&mut hasher);
     trigger_ability.choices.len().hash(&mut hasher);
     trigger_ability.intervening_if.is_some().hash(&mut hasher);
-    for effect in &trigger_ability.effects {
+    for effect in trigger_ability.effects.all_effects() {
         let _ = crate::trigger_identity::hash_debug(&mut hasher, effect);
     }
     for choice in &trigger_ability.choices {
@@ -145,12 +146,12 @@ pub fn compute_trigger_identity(trigger_ability: &TriggeredAbility) -> TriggerId
 pub fn compute_delayed_trigger_identity(delayed: &DelayedTrigger) -> TriggerIdentity {
     let mut hasher = DefaultHasher::new();
     delayed.trigger.display().hash(&mut hasher);
-    delayed.effects.len().hash(&mut hasher);
+    delayed.effects.all_effects().len().hash(&mut hasher);
     delayed.one_shot.hash(&mut hasher);
     delayed.not_before_turn.hash(&mut hasher);
     delayed.expires_at_turn.hash(&mut hasher);
     delayed.controller.hash(&mut hasher);
-    for effect in &delayed.effects {
+    for effect in delayed.effects.all_effects() {
         let _ = crate::trigger_identity::hash_debug(&mut hasher, effect);
     }
     TriggerIdentity(hasher.finish())
@@ -450,15 +451,18 @@ fn add_monarch_designation_triggers(
         push_monarch_trigger(
             triggered,
             monarch,
-            TriggeredAbility {
-                trigger: Trigger::custom(
-                    "monarch_end_step",
-                    "At the beginning of the monarch's end step".to_string(),
-                ),
-                effects: vec![Effect::target_draws(1, PlayerFilter::Specific(monarch))],
-                choices: vec![],
-                intervening_if: None,
-            },
+                TriggeredAbility {
+                    trigger: Trigger::custom(
+                        "monarch_end_step",
+                        "At the beginning of the monarch's end step".to_string(),
+                    ),
+                    effects: ResolutionProgram::from_effects(vec![Effect::target_draws(
+                        1,
+                        PlayerFilter::Specific(monarch),
+                    )]),
+                    choices: vec![],
+                    intervening_if: None,
+                },
             trigger_event,
         );
     }
@@ -480,9 +484,9 @@ fn add_monarch_designation_triggers(
                     "monarch_combat_damage",
                     "Whenever a creature deals combat damage to the monarch".to_string(),
                 ),
-                effects: vec![Effect::become_monarch_player(PlayerFilter::Specific(
-                    source_obj.controller,
-                ))],
+                effects: ResolutionProgram::from_effects(vec![Effect::become_monarch_player(
+                    PlayerFilter::Specific(source_obj.controller),
+                )]),
                 choices: vec![],
                 intervening_if: None,
             },
@@ -710,7 +714,9 @@ pub(crate) fn check_triggers_with_view(
         if cascade_count > 0 {
             let ability = TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![Effect::new(crate::effects::CascadeEffect::new())],
+                effects: ResolutionProgram::from_effects(vec![Effect::new(
+                    crate::effects::CascadeEffect::new(),
+                )]),
                 choices: vec![],
                 intervening_if: None,
             };
@@ -754,7 +760,7 @@ pub(crate) fn check_triggers_with_view(
             ];
             let ability = TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects,
+                effects: ResolutionProgram::from_effects(effects),
                 choices: vec![],
                 intervening_if: None,
             };

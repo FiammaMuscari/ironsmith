@@ -1686,13 +1686,16 @@ pub(super) fn execute_pending_mana_ability(
     if !pending.effects.is_empty() {
         let mut ctx = ExecutionContext::new(pending.source, pending.activator, decision_maker)
             .with_provenance(pending.provenance);
-        let mut emitted_events = Vec::new();
-
-        for effect in &pending.effects {
-            if let Ok(outcome) = execute_effect(game, effect, &mut ctx) {
-                emitted_events.extend(outcome.events);
-            }
-        }
+        let emitted_events = crate::game_loop::execute_resolution_program(
+            game,
+            &mut ctx,
+            pending.activator,
+            pending.source,
+            &pending.effects,
+            None,
+            &[],
+        )
+        .map_err(|err| GameLoopError::InvalidState(err.to_string()))?;
         queue_triggers_for_events(game, trigger_queue, emitted_events);
         drain_pending_trigger_events(game, trigger_queue);
     }
@@ -3642,11 +3645,11 @@ mod priority_mana_tests {
         game.object_mut(cavern_id)
             .expect("cavern test land should exist")
             .abilities
-            .push(Ability {
-                kind: AbilityKind::Activated(ActivatedAbility {
-                    mana_cost: TotalCost::free(),
-                    effects: vec![],
-                    choices: vec![],
+                .push(Ability {
+                    kind: AbilityKind::Activated(ActivatedAbility {
+                        mana_cost: TotalCost::free(),
+                        effects: crate::resolution::ResolutionProgram::default(),
+                        choices: vec![],
                     timing: crate::ability::ActivationTiming::AnyTime,
                     additional_restrictions: vec![],
                     activation_restrictions: vec![],

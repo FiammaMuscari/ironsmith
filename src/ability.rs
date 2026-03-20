@@ -6,9 +6,9 @@
 //! - Activated: Can be activated by paying a cost (mana abilities are a subtype with `mana_output`)
 
 use crate::cost::TotalCost;
-use crate::effect::Effect;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaSymbol;
+use crate::resolution::ResolutionProgram;
 use crate::static_abilities::StaticAbility as NewStaticAbility;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::triggers::Trigger;
@@ -50,11 +50,11 @@ impl Ability {
     }
 
     /// Create a triggered ability.
-    pub fn triggered(trigger: Trigger, effects: Vec<Effect>) -> Self {
+    pub fn triggered(trigger: Trigger, effects: impl Into<ResolutionProgram>) -> Self {
         Self {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger,
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -64,11 +64,11 @@ impl Ability {
     }
 
     /// Create an optional triggered ability ("you may" effects).
-    pub fn triggered_optional(trigger: Trigger, effects: Vec<Effect>) -> Self {
+    pub fn triggered_optional(trigger: Trigger, effects: impl Into<ResolutionProgram>) -> Self {
         Self {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger,
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -78,20 +78,20 @@ impl Ability {
     }
 
     /// Create an activated ability.
-    pub fn activated(mana_cost: TotalCost, effects: Vec<Effect>) -> Self {
+    pub fn activated(mana_cost: TotalCost, effects: impl Into<ResolutionProgram>) -> Self {
         Self::activated_with_timing(mana_cost, effects, ActivationTiming::AnyTime)
     }
 
     /// Create an activated ability with an explicit timing restriction.
     pub fn activated_with_timing(
         mana_cost: TotalCost,
-        effects: Vec<Effect>,
+        effects: impl Into<ResolutionProgram>,
         timing: ActivationTiming,
     ) -> Self {
         Self {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost,
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 timing,
                 additional_restrictions: vec![],
@@ -109,14 +109,14 @@ impl Ability {
     pub fn activated_with_costs(
         cost: TotalCost,
         additional_costs: Vec<crate::costs::Cost>,
-        effects: Vec<Effect>,
+        effects: impl Into<ResolutionProgram>,
     ) -> Self {
         let mut costs = cost.costs().to_vec();
         costs.extend(additional_costs);
         Self {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::from_costs(costs),
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -140,7 +140,7 @@ impl Ability {
         Self {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::from_costs(costs),
-                effects: vec![],
+                effects: ResolutionProgram::default(),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -155,13 +155,13 @@ impl Ability {
     }
 
     /// Create a mana ability with variable output (uses effects instead of fixed mana).
-    pub fn mana_with_effects(cost: TotalCost, effects: Vec<Effect>) -> Self {
+    pub fn mana_with_effects(cost: TotalCost, effects: impl Into<ResolutionProgram>) -> Self {
         let mut costs = cost.costs().to_vec();
         costs.push(crate::costs::Cost::tap());
         Self {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::from_costs(costs),
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
@@ -318,7 +318,7 @@ pub struct TriggeredAbility {
     pub trigger: Trigger,
 
     /// Effects that occur when triggered
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
 
     /// Chosen entities required when the ability goes on the stack/resolves/is paid for
     pub choices: Vec<ChooseSpec>,
@@ -359,7 +359,7 @@ pub struct ActivatedAbility {
     pub mana_cost: TotalCost,
 
     /// Effects that occur when the ability resolves
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
 
     /// Targets required when activating
     pub choices: Vec<ChooseSpec>,
@@ -436,7 +436,7 @@ impl ActivatedAbility {
         }
 
         let mut inferred = Vec::new();
-        for effect in &self.effects {
+        for effect in self.effects.flattened_default_effects() {
             let Some(symbols) = effect.producible_mana_symbols(game, source, controller) else {
                 continue;
             };
@@ -636,7 +636,7 @@ impl ActivatedAbility {
     pub fn basic_mana(mana: ManaSymbol) -> Self {
         Self {
             mana_cost: TotalCost::from_cost(crate::costs::Cost::tap()),
-            effects: vec![],
+            effects: ResolutionProgram::default(),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
@@ -657,7 +657,7 @@ impl ActivatedAbility {
         costs.extend(additional_costs);
         Self {
             mana_cost: TotalCost::from_costs(costs),
-            effects: vec![],
+            effects: ResolutionProgram::default(),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
@@ -688,7 +688,7 @@ impl ActivatedAbility {
 
         Self {
             mana_cost: TotalCost::from_cost(crate::costs::Cost::tap()),
-            effects: vec![],
+            effects: ResolutionProgram::default(),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
@@ -721,7 +721,7 @@ pub struct AbilityOnStack {
     pub x_value: Option<u32>,
 
     /// The effects to execute
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
 }
 
 /// The kind of ability on the stack.
@@ -804,17 +804,17 @@ pub fn flash() -> Ability {
 }
 
 /// Create an "enters the battlefield" triggered ability.
-pub fn etb_trigger(effects: Vec<Effect>) -> Ability {
+pub fn etb_trigger(effects: impl Into<ResolutionProgram>) -> Ability {
     Ability::triggered(Trigger::this_enters_battlefield(), effects)
 }
 
 /// Create a "when this dies" triggered ability.
-pub fn dies_trigger(effects: Vec<Effect>) -> Ability {
+pub fn dies_trigger(effects: impl Into<ResolutionProgram>) -> Ability {
     Ability::triggered(Trigger::this_dies(), effects)
 }
 
 /// Create an "at the beginning of your upkeep" triggered ability.
-pub fn upkeep_trigger(effects: Vec<Effect>) -> Ability {
+pub fn upkeep_trigger(effects: impl Into<ResolutionProgram>) -> Ability {
     Ability::triggered(Trigger::beginning_of_upkeep(PlayerFilter::You), effects)
 }
 
@@ -955,12 +955,12 @@ mod tests {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 // Triggers on ANY creature dying (including itself)
                 trigger: Trigger::dies(ObjectFilter::creature()),
-                effects: vec![
+                effects: ResolutionProgram::from_effects(vec![
                     // "target player loses 1 life"
                     Effect::lose_life_target(1),
                     // "you gain 1 life"
                     Effect::gain_life(1),
-                ],
+                ]),
                 choices: vec![ChooseSpec::target_player()],
                 intervening_if: None,
             }),
@@ -1024,7 +1024,7 @@ mod tests {
     fn activated_ability_max_activations_per_turn_uses_no_more_than_clause() {
         let ability = ActivatedAbility {
             mana_cost: TotalCost::free(),
-            effects: vec![Effect::draw(1)],
+            effects: ResolutionProgram::from_effects(vec![Effect::draw(1)]),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec!["Activate no more than twice each turn.".to_string()],

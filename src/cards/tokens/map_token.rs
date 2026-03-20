@@ -26,7 +26,9 @@ pub fn map_token_definition() -> CardDefinition {
                 Cost::tap(),
                 Cost::sacrifice_self(),
             ]),
-            effects: vec![Effect::explore(target.clone())],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::explore(target.clone()),
+            ]),
             choices: vec![target],
             timing: ActivationTiming::SorcerySpeed,
             additional_restrictions: vec![],

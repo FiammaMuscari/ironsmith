@@ -32,7 +32,9 @@ pub fn hanweir_battlements() -> CardDefinition {
                 ])),
                 Cost::tap(),
             ]),
-            effects: vec![Effect::hanweir_battlements_meld()],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::hanweir_battlements_meld(),
+            ]),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],

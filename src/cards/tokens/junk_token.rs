@@ -21,7 +21,7 @@ pub fn junk_token_definition() -> CardDefinition {
     let exile_and_play_ability = Ability {
         kind: AbilityKind::Activated(ActivatedAbility {
             mana_cost: TotalCost::from_costs(vec![Cost::tap(), Cost::sacrifice_self()]),
-            effects: vec![
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
                 Effect::new(
                     crate::effects::ChooseObjectsEffect::new(
                         ObjectFilter::default()
@@ -43,7 +43,7 @@ pub fn junk_token_definition() -> CardDefinition {
                     crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
                     true,
                 )),
-            ],
+            ]),
             choices: vec![],
             timing: ActivationTiming::SorcerySpeed,
             additional_restrictions: vec![],

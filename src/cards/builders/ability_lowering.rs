@@ -12,29 +12,8 @@ use crate::cards::builders::{
     trigger_binds_player_reference_context, validate_iterated_player_bindings_in_lowered_effects,
     classify_instead_followup_text,
 };
-use crate::effect::{Effect, EffectMode};
+use crate::effect::EffectMode;
 use crate::zone::Zone;
-
-fn resolution_program_to_ability_effects(
-    program: &crate::resolution::ResolutionProgram,
-) -> Vec<Effect> {
-    if program.segments.len() == 1
-        && let Some(segment) = program.segments.first()
-        && segment.self_replacements.len() == 1
-    {
-        let branch = &segment.self_replacements[0];
-        return vec![
-            Effect::new(crate::effects::ConditionalEffect::new(
-                branch.condition.clone(),
-                branch.replacement_effects.clone(),
-                segment.default_effects.clone(),
-            ))
-            .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
-        ];
-    }
-
-    program.to_vec()
-}
 
 pub(crate) fn lower_prepared_statement_effects(
     prepared: &PreparedEffectsForLowering,
@@ -46,23 +25,6 @@ pub(crate) fn lower_prepared_effects_with_trigger_context(
     prepared: &PreparedEffectsForLowering,
 ) -> Result<LoweredEffects, CardTextError> {
     materialize_prepared_effects_with_trigger_context(prepared)
-}
-
-pub(crate) fn lower_statement_effects_with_imports(
-    effects_ast: &[EffectAst],
-    imports: &ReferenceImports,
-) -> Result<LoweredEffects, CardTextError> {
-    let prepared = prepare_effects_for_lowering(effects_ast, imports.clone())?;
-    lower_prepared_statement_effects(&prepared)
-}
-
-pub(crate) fn lower_statement_effects(
-    effects_ast: &[EffectAst],
-) -> Result<Vec<Effect>, CardTextError> {
-    Ok(lower_statement_effects_with_imports(effects_ast, &ReferenceImports::default())?
-        .effects
-        .flattened_default_effects()
-        .to_vec())
 }
 
 pub(crate) fn lower_prepared_additional_cost_choice_modes_with_exports(
@@ -168,7 +130,7 @@ fn lower_parsed_ability_internal(
                 "triggered ability effects",
             )?;
             triggered.trigger = compile_trigger_spec(trigger);
-            triggered.effects = resolution_program_to_ability_effects(&lowered.effects);
+            triggered.effects = lowered.effects;
             triggered.choices = lowered.choices;
             triggered.intervening_if = merge_intervening_conditions(
                 triggered.intervening_if.take(),
@@ -191,7 +153,7 @@ fn lower_parsed_ability_internal(
         false,
         "activated ability effects",
     )?;
-    activated.effects = resolution_program_to_ability_effects(&lowered.effects);
+    activated.effects = lowered.effects;
     activated.choices = lowered.choices;
     Ok(parsed)
 }
@@ -226,50 +188,58 @@ pub(crate) fn apply_instead_followup_statement_to_last_ability(
         return Ok(false);
     }
 
-    let compiled = lower_statement_effects(effects)?;
-    if compiled.len() != 1 {
+    let compiled = lower_prepared_statement_effects(&prepare_effects_for_lowering(
+        effects,
+        ReferenceImports::default(),
+    )?)?;
+    if compiled.effects.len() != 1 {
         return Ok(false);
     }
 
-    let Some(replacement) = compiled[0].downcast_ref::<crate::effects::ConditionalEffect>() else {
-        return Ok(false);
+    let segment = match compiled.effects.segments.as_slice() {
+        [segment] => segment,
+        _ => return Ok(false),
     };
-    if !replacement.if_false.is_empty() {
+    if !segment.default_effects.is_empty() || segment.self_replacements.len() != 1 {
+        return Ok(false);
+    }
+
+    let replacement = &segment.self_replacements[0];
+    if !compiled.choices.is_empty() {
         return Ok(false);
     }
 
     collect_tag_spans_from_effects_with_context(effects, annotations, &info.normalized);
 
-    let conditional = replacement.clone();
     match &mut builder.abilities[index].kind {
         AbilityKind::Triggered(ability) => {
-            let original = std::mem::take(&mut ability.effects);
-            if original.is_empty() {
+            let Some(segment) = ability.effects.last_segment_mut() else {
+                return Ok(false);
+            };
+            if segment.default_effects.is_empty() {
                 return Ok(false);
             }
-            ability.effects = vec![
-                Effect::new(crate::effects::ConditionalEffect::new(
-                    conditional.condition,
-                    conditional.if_true,
-                    original.to_vec(),
-                ))
-                .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
-            ];
-        }
+            segment
+                .self_replacements
+                .push(crate::resolution::SelfReplacementBranch::new(
+                    replacement.condition.clone(),
+                    replacement.replacement_effects.clone(),
+                ));
+        },
         AbilityKind::Activated(ability) => {
-            let original = std::mem::take(&mut ability.effects);
-            if original.is_empty() {
+            let Some(segment) = ability.effects.last_segment_mut() else {
+                return Ok(false);
+            };
+            if segment.default_effects.is_empty() {
                 return Ok(false);
             }
-            ability.effects = vec![
-                Effect::new(crate::effects::ConditionalEffect::new(
-                    conditional.condition,
-                    conditional.if_true,
-                    original.to_vec(),
-                ))
-                .tag(crate::resolution::SELF_REPLACEMENT_BRIDGE_TAG),
-            ];
-        }
+            segment
+                .self_replacements
+                .push(crate::resolution::SelfReplacementBranch::new(
+                    replacement.condition.clone(),
+                    replacement.replacement_effects.clone(),
+                ));
+        },
         _ => return Ok(false),
     }
 
@@ -288,7 +258,7 @@ pub(crate) fn parsed_triggered_ability(
         ability: Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: compile_trigger_spec(trigger.clone()),
-                effects: vec![],
+                effects: crate::resolution::ResolutionProgram::default(),
                 choices: vec![],
                 intervening_if,
             }),

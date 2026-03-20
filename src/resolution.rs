@@ -1,7 +1,5 @@
 use crate::effect::{Condition, Effect};
 
-pub const SELF_REPLACEMENT_BRIDGE_TAG: &str = "__self_replacement_bridge__";
-
 #[derive(Clone, Default, PartialEq)]
 pub struct ResolutionProgram {
     pub segments: Vec<ResolutionSegment>,
@@ -138,21 +136,6 @@ impl ResolutionProgram {
 
 impl From<Vec<Effect>> for ResolutionProgram {
     fn from(value: Vec<Effect>) -> Self {
-        if value.len() == 1
-            && let Some(tagged) = value[0].downcast_ref::<crate::effects::TaggedEffect>()
-            && tagged.tag.as_str() == SELF_REPLACEMENT_BRIDGE_TAG
-            && let Some(conditional) =
-                tagged.effect.downcast_ref::<crate::effects::ConditionalEffect>()
-            && !conditional.if_false.is_empty()
-        {
-            return Self::new(vec![ResolutionSegment {
-                default_effects: conditional.if_false.clone(),
-                self_replacements: vec![SelfReplacementBranch::new(
-                    conditional.condition.clone(),
-                    conditional.if_true.clone(),
-                )],
-            }]);
-        }
         Self::from_effects(value)
     }
 }

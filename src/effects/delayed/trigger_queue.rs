@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::effect::Effect;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::resolution::ResolutionProgram;
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 use crate::triggers::{DelayedTrigger, Trigger};
@@ -13,7 +13,7 @@ use crate::triggers::{DelayedTrigger, Trigger};
 #[derive(Debug, Clone)]
 pub(crate) struct DelayedTriggerConfig {
     pub trigger: Trigger,
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
     pub one_shot: bool,
     pub not_before_turn: Option<u32>,
     pub expires_at_turn: Option<u32>,
@@ -28,14 +28,14 @@ pub(crate) struct DelayedTriggerConfig {
 impl DelayedTriggerConfig {
     pub fn new(
         trigger: Trigger,
-        effects: Vec<Effect>,
+        effects: impl Into<ResolutionProgram>,
         one_shot: bool,
         target_objects: Vec<ObjectId>,
         controller: PlayerId,
     ) -> Self {
         Self {
             trigger,
-            effects,
+            effects: effects.into(),
             one_shot,
             not_before_turn: None,
             expires_at_turn: None,
@@ -105,7 +105,7 @@ impl DelayedWatcherIdentity {
 #[derive(Debug, Clone)]
 pub(crate) struct DelayedTriggerTemplate {
     pub trigger: Trigger,
-    pub effects: Vec<Effect>,
+    pub effects: ResolutionProgram,
     pub one_shot: bool,
     pub not_before_turn: Option<u32>,
     pub expires_at_turn: Option<u32>,
@@ -119,13 +119,13 @@ pub(crate) struct DelayedTriggerTemplate {
 impl DelayedTriggerTemplate {
     pub fn new(
         trigger: Trigger,
-        effects: Vec<Effect>,
+        effects: impl Into<ResolutionProgram>,
         one_shot: bool,
         controller: PlayerId,
     ) -> Self {
         Self {
             trigger,
-            effects,
+            effects: effects.into(),
             one_shot,
             not_before_turn: None,
             expires_at_turn: None,

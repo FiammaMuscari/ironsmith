@@ -332,6 +332,9 @@ export default function Shell() {
           zoneViews={zoneViews}
           setZoneViews={setZoneViews}
           onAddCardFailure={pushNotice}
+          onEnterDeckLoading={() => setDeckLoadingMode((m) => !m)}
+          onOpenLobby={() => setLobbyOpen(true)}
+          deckLoadingMode={deckLoadingMode}
         />
       ) : null}
       <Workspace

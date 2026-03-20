@@ -21,7 +21,10 @@ pub fn shard_token_definition() -> CardDefinition {
                 Cost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(2)]])),
                 Cost::sacrifice_self(),
             ]),
-            effects: vec![Effect::scry(1), Effect::draw(1)],
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                Effect::scry(1),
+                Effect::draw(1),
+            ]),
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],

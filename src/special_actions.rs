@@ -1110,10 +1110,15 @@ pub fn perform_activate_mana_ability_restricted_colors(
             if let Some(x) = x_value_from_costs {
                 effect_ctx = effect_ctx.with_x(x);
             }
-            for effect in effects {
-                // Ignore effect execution errors for mana abilities
-                let _ = effect.0.execute(game, &mut effect_ctx);
-            }
+            let _ = crate::game_loop::execute_resolution_program(
+                game,
+                &mut effect_ctx,
+                player,
+                permanent_id,
+                &effects,
+                None,
+                &[],
+            );
         }
 
         game.record_ability_activation(permanent_id, ability_index);

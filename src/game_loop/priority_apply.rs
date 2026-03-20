@@ -589,7 +589,7 @@ pub fn apply_priority_response_with_dm(
                     } else {
                         (
                             crate::cost::TotalCost::free(),
-                            Vec::new(),
+                            crate::resolution::ResolutionProgram::default(),
                             false,
                             stable_id,
                             name,
@@ -599,7 +599,7 @@ pub fn apply_priority_response_with_dm(
                 } else {
                     (
                         crate::cost::TotalCost::free(),
-                        Vec::new(),
+                        crate::resolution::ResolutionProgram::default(),
                         false,
                         stable_id,
                         name,
@@ -687,7 +687,7 @@ pub fn apply_priority_response_with_dm(
                     player,
                     activation_provenance,
                     stage,
-                    effects.to_vec(),
+                    effects,
                     target_requirements,
                     mana_cost_to_pay,
                     payment_trace,

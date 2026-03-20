@@ -585,7 +585,7 @@ pub struct PendingActivation {
     /// Current stage of the activation process.
     pub stage: ActivationStage,
     /// The effects of the ability.
-    pub effects: Vec<crate::effect::Effect>,
+    pub effects: crate::resolution::ResolutionProgram,
     /// Targets that have been chosen so far.
     pub chosen_targets: Vec<Target>,
     /// Target requirement assignments bound to `chosen_targets`.
@@ -644,7 +644,7 @@ impl PendingActivation {
         activator: PlayerId,
         provenance: ProvNodeId,
         stage: ActivationStage,
-        effects: Vec<crate::effect::Effect>,
+        effects: crate::resolution::ResolutionProgram,
         remaining_requirements: Vec<TargetRequirement>,
         mana_cost_to_pay: Option<crate::mana::ManaCost>,
         payment_trace: Vec<CostStep>,
@@ -709,7 +709,7 @@ pub struct PendingManaAbility {
     /// The mana symbols to add (for simple mana abilities).
     pub mana_to_add: Vec<crate::mana::ManaSymbol>,
     /// The effects to execute (for complex mana abilities like Blood Celebrant).
-    pub effects: Vec<crate::effect::Effect>,
+    pub effects: crate::resolution::ResolutionProgram,
     /// True when undo should be blocked for this pending mana ability flow.
     /// This is set when either:
     /// - the root mana ability itself is not undo-safe, or

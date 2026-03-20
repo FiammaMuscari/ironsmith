@@ -321,14 +321,14 @@ fn finalize_offspring_abilities(mut definition: CardDefinition) -> CardDefinitio
     let offspring_trigger = Ability {
         kind: AbilityKind::Triggered(TriggeredAbility {
             trigger: Trigger::this_enters_battlefield(),
-            effects: vec![Effect::new(
+            effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::new(
                 crate::effects::CreateTokenCopyEffect::new(
                     ChooseSpec::Source,
                     Value::WasPaidLabel("Offspring".to_string()),
                     PlayerFilter::You,
                 )
                 .set_base_power_toughness(1, 1),
-            )],
+            )]),
             choices: vec![],
             intervening_if: Some(Condition::ThisSpellPaidLabel("Offspring".to_string())),
         }),
@@ -2800,11 +2800,13 @@ impl CardDefinitionBuilder {
             KeywordAction::Annihilator(amount) => self.with_ability(Ability {
                 kind: AbilityKind::Triggered(TriggeredAbility {
                     trigger: Trigger::this_attacks(),
-                    effects: vec![Effect::sacrifice_player(
-                        ObjectFilter::permanent(),
-                        Value::Fixed(amount as i32),
-                        PlayerFilter::Defending,
-                    )],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::sacrifice_player(
+                            ObjectFilter::permanent(),
+                            Value::Fixed(amount as i32),
+                            PlayerFilter::Defending,
+                        ),
+                    ]),
                     choices: vec![],
                     intervening_if: None,
                 }),
@@ -2829,7 +2831,7 @@ impl CardDefinitionBuilder {
                 self.with_ability(Ability {
                     kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                         mana_cost: cost,
-                        effects: vec![animate],
+                        effects: crate::resolution::ResolutionProgram::from_effects(vec![animate]),
                         choices: Vec::new(),
                         timing,
                         additional_restrictions,
@@ -2854,7 +2856,7 @@ impl CardDefinitionBuilder {
                 self.with_ability(Ability {
                     kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                         mana_cost: cost,
-                        effects: vec![saddle],
+                        effects: crate::resolution::ResolutionProgram::from_effects(vec![saddle]),
                         choices: Vec::new(),
                         timing,
                         additional_restrictions,
@@ -3254,7 +3256,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_dies(),
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 intervening_if: Some(Condition::Not(Box::new(
                     Condition::TriggeringObjectHadCounters {
@@ -3309,7 +3311,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_dies(),
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 intervening_if: Some(Condition::Not(Box::new(
                     Condition::TriggeringObjectHadCounters {
@@ -3450,7 +3452,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_attacks(),
-                effects: vec![Effect::plus_one_counters(1, target.clone())],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::plus_one_counters(1, target.clone()),
+                ]),
                 choices: vec![target],
                 intervening_if: None,
             }),
@@ -3522,7 +3526,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_dies(),
-                effects: vec![Effect::return_from_graveyard_to_hand(target.clone())],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::return_from_graveyard_to_hand(target.clone()),
+                ]),
                 choices: vec![target],
                 intervening_if: None,
             }),
@@ -3545,7 +3551,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: total_cost,
-                effects: vec![Effect::plus_one_counters(1, ChooseSpec::Source)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::plus_one_counters(1, ChooseSpec::Source),
+                ]),
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
@@ -3571,7 +3579,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: total_cost,
-                effects: vec![Effect::new(crate::effects::UnearthEffect::new())],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::new(
+                    crate::effects::UnearthEffect::new(),
+                )]),
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
@@ -3601,11 +3611,13 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: total_cost,
-                effects: vec![Effect::put_counters(
-                    CounterType::PlusOnePlusOne,
-                    Value::SourcePower,
-                    target.clone(),
-                )],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::put_counters(
+                        CounterType::PlusOnePlusOne,
+                        Value::SourcePower,
+                        target.clone(),
+                    ),
+                ]),
                 choices: vec![target],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
@@ -3633,7 +3645,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                 mana_cost: total_cost,
-                effects: vec![Effect::new(crate::effects::NinjutsuEffect::new())],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::new(
+                    crate::effects::NinjutsuEffect::new(),
+                )]),
                 choices: vec![],
                 timing: ActivationTiming::DuringCombat,
                 additional_restrictions: Vec::new(),
@@ -3666,7 +3680,7 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::with_id(
                         0,
                         Effect::remove_counters(CounterType::Echo, 1, ChooseSpec::Source),
@@ -3680,7 +3694,7 @@ impl CardDefinitionBuilder {
                             PlayerFilter::You,
                         )],
                     ),
-                ],
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -3711,7 +3725,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::put_counters_on_source(CounterType::Age, 1),
                     Effect::unless_pays_with_life_additional_and_multiplier(
                         vec![Effect::sacrifice_source()],
@@ -3721,7 +3735,7 @@ impl CardDefinitionBuilder {
                         None,
                         mana_multiplier,
                     ),
-                ],
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -3764,7 +3778,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger,
-                effects: vec![Effect::exile(ChooseSpec::Source)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::exile(ChooseSpec::Source),
+                ]),
                 choices: vec![ChooseSpec::target(ChooseSpec::creature())],
                 intervening_if: None,
             }),
@@ -3790,7 +3806,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_attacks(),
-                effects: vec![untap, must_block],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![untap, must_block]),
                 choices: vec![target_spec],
                 intervening_if: None,
             }),
@@ -3813,11 +3829,11 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![Effect::may(vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::may(vec![
                     Effect::sacrifice(creature_filter, 1),
                     Effect::with_id(0, Effect::copy_spell(ChooseSpec::Source)),
                     Effect::may_choose_new_targets(EffectId(0)),
-                ])],
+                ])]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -3843,11 +3859,11 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![Effect::may(vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::may(vec![
                     Effect::tap(ChooseSpec::All(creature_filter)),
                     Effect::with_id(0, Effect::copy_spell(ChooseSpec::Source)),
                     Effect::may_choose_new_targets(EffectId(0)),
-                ])],
+                ])]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -3889,7 +3905,7 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_enters_battlefield(),
-                effects: vec![Effect::draw(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::draw(1)]),
                 choices: vec![],
                 intervening_if: Some(Condition::XValueAtLeast(5)),
             }),
@@ -3936,7 +3952,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::enters_battlefield(ObjectFilter::permanent().you_control()),
-                effects: vec![get_blessing],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![get_blessing]),
                 choices: vec![],
                 intervening_if: Some(bless_condition),
             }),
@@ -3955,7 +3971,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::beginning_of_upkeep(PlayerFilter::Any),
-                effects: vec![Effect::conditional(
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::conditional(
                     Condition::SourceIsFaceDown,
                     vec![Effect::conditional_only(
                         Condition::SpellsWereCastLastTurnOrMore(2),
@@ -3965,7 +3981,7 @@ impl CardDefinitionBuilder {
                         Condition::NoSpellsWereCastLastTurn,
                         vec![Effect::transform(ChooseSpec::Source)],
                     )],
-                )],
+                )]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -3981,7 +3997,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::beginning_of_upkeep(PlayerFilter::Any),
-                effects: vec![Effect::conditional(
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![Effect::conditional(
                     Condition::SourceIsFaceDown,
                     vec![Effect::conditional_only(
                         Condition::SpellsWereCastLastTurnOrMore(2),
@@ -3991,7 +4007,7 @@ impl CardDefinitionBuilder {
                         Condition::NoSpellsWereCastLastTurn,
                         vec![Effect::transform(ChooseSpec::Source)],
                     )],
-                )],
+                )]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4051,7 +4067,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::spell_cast(None, PlayerFilter::You),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::with_id(
                         0,
                         Effect::may_single(Effect::new(crate::effects::PayManaEffect::new(
@@ -4073,7 +4089,7 @@ impl CardDefinitionBuilder {
                             Effect::gain_life(Value::EffectValue(EffectId(1))),
                         ],
                     ),
-                ],
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4232,7 +4248,9 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::counter_removed_from(ObjectFilter::source()),
-                effects: vec![Effect::sacrifice_source()],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::sacrifice_source(),
+                ]),
                 choices: vec![],
                 intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Fade)),
             }),
@@ -4274,7 +4292,9 @@ impl CardDefinitionBuilder {
             .with_ability(Ability {
                 kind: AbilityKind::Triggered(TriggeredAbility {
                     trigger: Trigger::counter_removed_from(ObjectFilter::source()),
-                    effects: vec![Effect::sacrifice_source()],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::sacrifice_source(),
+                    ]),
                     choices: vec![],
                     intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Time)),
                 }),
@@ -4331,14 +4351,14 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_dies(),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::tag_triggering_object(trigger_tag),
                     Effect::may_single(Effect::put_counters(
                         CounterType::PlusOnePlusOne,
                         transfer_count,
                         target.clone(),
                     )),
-                ],
+                ]),
                 choices: vec![target],
                 intervening_if: None,
             }),
@@ -4376,14 +4396,14 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_dies(),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::tag_triggering_object(trigger_tag),
                     Effect::may_single(Effect::put_counters(
                         CounterType::PlusOnePlusOne,
                         transfer_count,
                         target.clone(),
                     )),
-                ],
+                ]),
                 choices: vec![target],
                 intervening_if: None,
             }),
@@ -4410,7 +4430,7 @@ impl CardDefinitionBuilder {
         .with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::enters_battlefield(ObjectFilter::creature().other()),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::tag_triggering_object(entered_tag),
                     Effect::may_single(Effect::move_counters(
                         CounterType::PlusOnePlusOne,
@@ -4418,7 +4438,7 @@ impl CardDefinitionBuilder {
                         ChooseSpec::Source,
                         ChooseSpec::Tagged(entered_tag.into()),
                     )),
-                ],
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4451,7 +4471,7 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     Effect::with_id(
                         0,
                         Effect::copy_spell_n(
@@ -4460,7 +4480,7 @@ impl CardDefinitionBuilder {
                         ),
                     ),
                     Effect::may_choose_new_targets(EffectId(0)),
-                ],
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4821,7 +4841,7 @@ impl CardDefinitionBuilder {
         let ability = Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::this_enters_battlefield(),
-                effects,
+                effects: effects.into(),
                 choices: vec![target_spec],
                 intervening_if: None,
             }),
@@ -4843,7 +4863,7 @@ impl CardDefinitionBuilder {
         let ability = Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger,
-                effects,
+                effects: effects.into(),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -4950,11 +4970,9 @@ impl CardDefinitionBuilder {
             .with_ability(Ability {
                 kind: AbilityKind::Triggered(TriggeredAbility {
                     trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
-                    effects: vec![Effect::remove_counters(
-                        CounterType::Time,
-                        1,
-                        ChooseSpec::Source,
-                    )],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::remove_counters(CounterType::Time, 1, ChooseSpec::Source),
+                    ]),
                     choices: vec![],
                     intervening_if: None,
                 }),
@@ -4964,11 +4982,13 @@ impl CardDefinitionBuilder {
             .with_ability(Ability {
                 kind: AbilityKind::Triggered(TriggeredAbility {
                     trigger: Trigger::counter_removed_from(ObjectFilter::source()),
-                    effects: vec![Effect::may_single(Effect::new(
-                        crate::effects::CastSourceEffect::new()
-                            .without_paying_mana_cost()
-                            .require_exile(),
-                    ))],
+                    effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                        Effect::may_single(Effect::new(
+                            crate::effects::CastSourceEffect::new()
+                                .without_paying_mana_cost()
+                                .require_exile(),
+                        )),
+                    ]),
                     choices: vec![],
                     intervening_if: Some(Condition::SourceHasNoCounter(CounterType::Time)),
                 }),
@@ -5011,7 +5031,9 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::miracle(),
-                effects: vec![Effect::may_cast_for_miracle_cost()],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::may_cast_for_miracle_cost(),
+                ]),
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -5181,7 +5203,9 @@ impl CardDefinitionBuilder {
         let ability = Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::mana(cost),
-                effects: vec![Effect::put_counters_on_source(CounterType::Level, 1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::put_counters_on_source(CounterType::Level, 1),
+                ]),
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],

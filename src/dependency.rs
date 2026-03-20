@@ -1930,7 +1930,9 @@ mod tests {
         land.abilities.push(Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
                 mana_cost: TotalCost::free(),
-                effects: vec![Effect::gain_life(1)],
+                effects: crate::resolution::ResolutionProgram::from_effects(vec![
+                    Effect::gain_life(1),
+                ]),
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],

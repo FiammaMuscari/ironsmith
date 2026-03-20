@@ -102,7 +102,7 @@ mod tests {
             .find(|a| matches!(a.kind, AbilityKind::Triggered(_)))
             .expect("Cataclysmic Gearhulk should have a triggered ability");
         if let AbilityKind::Triggered(triggered) = &ability.kind {
-            triggered.effects.clone()
+            triggered.effects.to_vec()
         } else {
             Vec::new()
         }
