@@ -2440,6 +2440,9 @@ pub(crate) use cost_components::*;
 mod parse_parsing;
 pub(crate) use parse_parsing::*;
 
+mod parse_rewrite;
+pub(crate) use parse_rewrite::*;
+
 mod reference_model;
 pub(crate) use reference_model::*;
 
