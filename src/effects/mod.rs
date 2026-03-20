@@ -129,7 +129,7 @@ pub use player::{
     GrantTaggedSpellFreeCastUntilEndOfTurnEffect, GrantTaggedSpellLifeCostByManaValueEffect,
     LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect, SavinesReclamationEffect,
     SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
-    TaintedPactEffect, ThassasOracleEffect, WinTheGameEffect,
+    TaintedPactEffect, ThassasOracleEffect, WinTheGameEffect, YasharnImplacableEarthEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;

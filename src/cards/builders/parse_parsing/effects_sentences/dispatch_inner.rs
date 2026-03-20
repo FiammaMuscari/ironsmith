@@ -3065,6 +3065,7 @@ pub(crate) fn parse_exile_then_return_same_object_sentence(
             EffectAst::ReturnToBattlefield {
                 target,
                 tapped: _,
+                transformed: _,
                 controller: _,
             } if target_references_it_tag(target) => {
                 *target = TargetAst::Tagged(TagKey::from(IT_TAG), None);

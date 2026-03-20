@@ -1280,6 +1280,109 @@ pub fn run_replay_test_full_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::DecisionMaker;
+    use crate::events::cause::EventCause;
+
+    #[derive(Default)]
+    struct ChooseAirshipReplacementDecisionMaker;
+
+    impl DecisionMaker for ChooseAirshipReplacementDecisionMaker {
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            ctx.options
+                .iter()
+                .find(|option| option.legal && option.description.contains("this permanent"))
+                .map(|option| vec![option.index])
+                .unwrap_or_default()
+        }
+    }
+
+    #[derive(Default)]
+    struct ChooseSpelunkingReplacementDecisionMaker;
+
+    impl DecisionMaker for ChooseSpelunkingReplacementDecisionMaker {
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectOptionsContext,
+        ) -> Vec<usize> {
+            ctx.options
+                .iter()
+                .find(|option| option.legal && !option.description.contains("this permanent"))
+                .map(|option| vec![option.index])
+                .unwrap_or_default()
+        }
+    }
+
+    fn setup_spelunking_airship_game() -> (GameState, PlayerId, ObjectId) {
+        let spelunking = crate::CardDefinitionBuilder::new(crate::ids::CardId::new(), "Spelunking")
+            .card_types(vec![crate::types::CardType::Enchantment])
+            .parse_text(
+                "When this enchantment enters, draw a card, then you may put a land card from your hand onto the battlefield. If you put a Cave onto the battlefield this way, you gain 4 life.\nLands you control enter untapped."
+                    .to_string(),
+            )
+            .expect("Spelunking oracle text should parse");
+        let airship =
+            crate::CardDefinitionBuilder::new(crate::ids::CardId::new(), "Airship Engine Room")
+                .card_types(vec![crate::types::CardType::Land])
+                .parse_text(
+                    "This land enters tapped.\n{T}: Add {U} or {R}.\n{4}, {T}, Sacrifice this land: Draw a card."
+                        .to_string(),
+                )
+                .expect("Airship Engine Room oracle text should parse");
+
+        let alice = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        game.create_object_from_definition(&spelunking, alice, Zone::Battlefield);
+        let airship_id = game.create_object_from_definition(&airship, alice, Zone::Hand);
+
+        (game, alice, airship_id)
+    }
+
+    #[test]
+    fn test_spelunking_and_airship_engine_room_can_enter_untapped() {
+        let (mut game, alice, airship_id) = setup_spelunking_airship_game();
+        let cause = EventCause::from_special_action(Some(airship_id), alice);
+        let mut dm = ChooseAirshipReplacementDecisionMaker;
+
+        let result = game
+            .move_object_with_etb_processing_with_dm_and_cause(
+                airship_id,
+                Zone::Battlefield,
+                cause,
+                &mut dm,
+            )
+            .expect("Airship Engine Room should enter the battlefield");
+
+        assert!(
+            !game.is_tapped(result.new_id),
+            "choosing Airship Engine Room's ETB replacement first should let Spelunking untap it"
+        );
+    }
+
+    #[test]
+    fn test_spelunking_and_airship_engine_room_can_enter_tapped() {
+        let (mut game, alice, airship_id) = setup_spelunking_airship_game();
+        let cause = EventCause::from_special_action(Some(airship_id), alice);
+        let mut dm = ChooseSpelunkingReplacementDecisionMaker;
+
+        let result = game
+            .move_object_with_etb_processing_with_dm_and_cause(
+                airship_id,
+                Zone::Battlefield,
+                cause,
+                &mut dm,
+            )
+            .expect("Airship Engine Room should enter the battlefield");
+
+        assert!(
+            game.is_tapped(result.new_id),
+            "choosing Spelunking's replacement first should still allow Airship Engine Room to enter tapped"
+        );
+    }
 
     #[test]
     fn test_simple_play_land() {

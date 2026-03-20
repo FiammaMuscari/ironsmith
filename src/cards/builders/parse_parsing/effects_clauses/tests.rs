@@ -241,7 +241,13 @@ fn parse_target_phrase_up_to_two_other_targets_returns_any_other_target() {
         panic!("expected counted target");
     };
     assert_eq!(count, ChoiceCount::up_to(2));
-    assert!(matches!(*inner, TargetAst::AnyOtherTarget(_)));
+    match *inner {
+        TargetAst::AnyOtherTarget(_) => {}
+        TargetAst::Object(filter, _, _) => {
+            assert!(filter.other, "expected `other` filter to be preserved");
+        }
+        other => panic!("expected any-other-target or object target, got {other:?}"),
+    }
 }
 
 #[test]
@@ -361,12 +367,11 @@ fn parse_divided_damage_distribution_still_fails_loudly() {
         "this creature deals 4 damage divided as you choose among any number of targets",
         0,
     );
-    let err = parse_effect_clause(&tokens)
-        .expect_err("divided-damage distribution should remain unsupported");
-    let message = card_text_error_message(err);
+    let ast = parse_effect_clause(&tokens).expect("divided-damage distribution should parse");
+    let debug = format!("{ast:?}");
     assert!(
-        message.contains("unsupported divided-damage distribution clause"),
-        "expected strict divided-damage failure, got {message}"
+        debug.contains("DealDistributedDamage") && debug.contains("AnyTarget"),
+        "expected distributed-damage AST, got {debug}"
     );
 }
 

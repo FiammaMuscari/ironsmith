@@ -40,7 +40,7 @@ mod processing_mode;
 pub use payer_trait::{
     CostCheckContext, can_pay_with_check_context, can_potentially_pay_with_check_context,
 };
-pub use payer_trait::{CostContext, CostPayer, CostPaymentResult};
+pub use payer_trait::{CostContext, CostPayer, CostPaymentResult, PaymentReason};
 pub use processing_mode::CostProcessingMode;
 
 // Re-export all cost implementations

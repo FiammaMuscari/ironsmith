@@ -6,6 +6,7 @@
 
 use std::any::Any;
 
+use crate::costs::PaymentReason;
 use crate::effect::{EffectOutcome, Value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -172,12 +173,24 @@ pub trait EffectExecutor:
         source: ObjectId,
         controller: PlayerId,
     ) -> Result<(), CostValidationError> {
+        self.can_execute_as_cost_with_reason(game, source, controller, PaymentReason::Other)
+    }
+
+    /// Check if this effect can be executed as a cost for a specific payment reason.
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        reason: PaymentReason,
+    ) -> Result<(), CostValidationError> {
         if let Some(cost_effect) = self.as_cost_executable() {
-            return CostExecutableEffect::can_execute_as_cost(
+            return CostExecutableEffect::can_execute_as_cost_with_reason(
                 cost_effect,
                 game,
                 source,
                 controller,
+                reason,
             );
         }
         Ok(())
@@ -259,6 +272,17 @@ pub trait CostExecutableEffect: EffectExecutor {
         source: ObjectId,
         controller: PlayerId,
     ) -> Result<(), CostValidationError>;
+
+    /// Check whether this effect can be paid in a cost context for a specific reason.
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        _reason: PaymentReason,
+    ) -> Result<(), CostValidationError> {
+        CostExecutableEffect::can_execute_as_cost(self, game, source, controller)
+    }
 }
 
 #[cfg(test)]

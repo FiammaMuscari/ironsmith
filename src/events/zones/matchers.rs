@@ -76,7 +76,7 @@ impl ReplacementMatcher for WouldEnterBattlefieldMatcher {
     }
 }
 
-/// Matches when this specific permanent would enter the battlefield (self-replacement).
+/// Matches when this specific permanent would enter the battlefield.
 #[derive(Debug, Clone)]
 pub struct ThisWouldEnterBattlefieldMatcher;
 
@@ -108,7 +108,7 @@ impl ReplacementMatcher for ThisWouldEnterBattlefieldMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -504,9 +504,9 @@ mod tests {
     }
 
     #[test]
-    fn test_this_would_enter_battlefield_self_replacement() {
+    fn test_this_would_enter_battlefield_priority_is_other() {
         let matcher = ThisWouldEnterBattlefieldMatcher;
-        assert_eq!(matcher.priority(), ReplacementPriority::SelfReplacement);
+        assert_eq!(matcher.priority(), ReplacementPriority::Other);
     }
 
     #[test]

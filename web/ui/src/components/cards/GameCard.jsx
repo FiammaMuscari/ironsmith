@@ -307,9 +307,6 @@ export default function GameCard({
   const auraRot2Pos = `${1.2 * rotationSign}deg`;
   const auraRot2Neg = `${-1.2 * rotationSign}deg`;
   const battlefieldManaIconSize = compact ? 10 : 11;
-  const artTreatmentClass = variant === "battlefield"
-    ? "opacity-100 saturate-[1.12] contrast-[1.08] brightness-[1.08]"
-    : "opacity-72 saturate-[1.05] contrast-[1.04]";
   const stableId = card?.stable_id ?? card?.id ?? "";
   const directSemanticScore = normalizeSemanticScore(card?.semantic_score);
   if (directSemanticScore != null) {
@@ -331,6 +328,20 @@ export default function GameCard({
     || glowKind === "attack-selected"
     || glowKind === "spell"
   );
+  const battlefieldFullBrightness = variant === "battlefield" && (
+    isInspected
+    || isPlayable
+    || Boolean(glowKind)
+  );
+  const artTreatmentClass = variant === "battlefield"
+    ? (
+      battlefieldFullBrightness
+        ? "opacity-100 saturate-[1.12] contrast-[1.08] brightness-[1]"
+        : "opacity-100 saturate-[1.02] contrast-[1.01] brightness-[0.85]"
+    )
+    : variant === "hand"
+      ? "opacity-100 saturate-[1.08] contrast-[1.05] brightness-[1]"
+      : "opacity-72 saturate-[1.05] contrast-[1.04]";
   const showBattlefieldCircuit = battlefieldCircuitActive;
   const showHandCircuit = variant === "hand" && (Boolean(glowKind) || isPlayable || isInspected);
   const showCircuitAnimation = showBattlefieldCircuit || showHandCircuit;

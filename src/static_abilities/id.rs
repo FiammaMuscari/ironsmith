@@ -145,6 +145,9 @@ pub enum StaticAbilityId {
     PlayersCantCycle,
     PlayersSkipUpkeep,
     DamageNotRemovedDuringCleanup,
+    BlackManaMayBePaidWithLife,
+    MinimumSpellTotalMana,
+    CantPayLifeOrSacrificeNonlandForCastOrActivate,
 
     // === Other abilities ===
     ChooseColorAsEnters,
@@ -364,6 +367,9 @@ impl StaticAbilityId {
             | PlayersCantCycle
             | PlayersSkipUpkeep
             | DamageNotRemovedDuringCleanup
+            | BlackManaMayBePaidWithLife
+            | MinimumSpellTotalMana
+            | CantPayLifeOrSacrificeNonlandForCastOrActivate
             | ChooseColorAsEnters
             | ChoosePlayerAsEnters
             | ChooseBasicLandTypeAsEnters

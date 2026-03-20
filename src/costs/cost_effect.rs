@@ -58,7 +58,7 @@ impl CostPayer for CostEffect {
     fn can_pay(&self, game: &GameState, ctx: &CostContext) -> Result<(), CostPaymentError> {
         self.effect
             .0
-            .can_execute_as_cost(game, ctx.source, ctx.payer)
+            .can_execute_as_cost_with_reason(game, ctx.source, ctx.payer, ctx.reason)
             .map_err(convert_validation_error)
     }
 

@@ -38,7 +38,19 @@ impl PayManaEffect {
         const MAX_PAYMENT_STEPS: usize = 32;
 
         for _ in 0..MAX_PAYMENT_STEPS {
-            let can_pay_now = game.can_pay_mana_cost(player_id, Some(ctx.source), &self.cost, 0);
+            let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+                player_id,
+                Some(ctx.source),
+                &self.cost,
+                crate::costs::PaymentReason::Effect,
+            );
+            let can_pay_now = game.can_pay_mana_cost_with_reason(
+                player_id,
+                Some(ctx.source),
+                &adjusted_cost,
+                0,
+                crate::costs::PaymentReason::Effect,
+            );
             let mana_abilities =
                 get_available_mana_abilities(game, player_id, &mut ctx.decision_maker);
 
@@ -92,7 +104,13 @@ impl PayManaEffect {
 
             match choice {
                 PayManaChoice::PayNow => {
-                    return game.try_pay_mana_cost(player_id, Some(ctx.source), &self.cost, 0);
+                    return game.try_pay_mana_cost_with_reason(
+                        player_id,
+                        Some(ctx.source),
+                        &adjusted_cost,
+                        0,
+                        crate::costs::PaymentReason::Effect,
+                    );
                 }
                 PayManaChoice::ActivateManaAbility {
                     permanent_id,
@@ -110,7 +128,19 @@ impl PayManaEffect {
             }
         }
 
-        game.try_pay_mana_cost(player_id, Some(ctx.source), &self.cost, 0)
+        let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+            player_id,
+            Some(ctx.source),
+            &self.cost,
+            crate::costs::PaymentReason::Effect,
+        );
+        game.try_pay_mana_cost_with_reason(
+            player_id,
+            Some(ctx.source),
+            &adjusted_cost,
+            0,
+            crate::costs::PaymentReason::Effect,
+        )
     }
 }
 
@@ -229,14 +259,34 @@ fn describe_permanent(game: &GameState, id: ObjectId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decision::DecisionMaker;
-    use crate::ids::PlayerId;
+    use crate::ability::Ability;
+    use crate::card::CardBuilder;
+    use crate::decision::{DecisionMaker, SelectFirstDecisionMaker};
+    use crate::ids::{CardId, PlayerId};
     use crate::mana::ManaSymbol;
+    use crate::static_abilities::StaticAbility;
     use crate::target::PlayerFilter;
+    use crate::types::CardType;
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn add_payment_replacement_permanent(
+        game: &mut GameState,
+        controller: PlayerId,
+        name: &str,
+        ability: StaticAbility,
+    ) {
+        let source = CardBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Creature])
+            .build();
+        let source_id = game.create_object_from_card(&source, controller, Zone::Battlefield);
+        game.object_mut(source_id)
+            .expect("static-ability source should exist")
+            .abilities
+            .push(Ability::static_ability(ability));
     }
 
     #[derive(Default)]
@@ -329,5 +379,73 @@ mod tests {
             .expect("pay mana effect should execute");
 
         assert_eq!(result.status, crate::effect::OutcomeStatus::Impossible);
+    }
+
+    #[test]
+    fn pay_mana_effect_can_use_krrik_life_for_black() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Krrik Effect Helper",
+            StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+        );
+
+        let source = game.new_object_id();
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+        let effect = PayManaEffect::new(
+            ManaCost::from_symbols(vec![ManaSymbol::Black]),
+            ChooseSpec::Player(PlayerFilter::You),
+        );
+
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("pay mana effect should execute");
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
+        assert_eq!(game.player(alice).expect("alice exists").life, 18);
+        assert_eq!(
+            game.player(alice).expect("alice exists").mana_pool.total(),
+            0
+        );
+    }
+
+    #[test]
+    fn pay_mana_effect_still_can_use_krrik_under_yasharn() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Krrik Effect Helper",
+            StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+        );
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Yasharn Effect Helper",
+            StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+        );
+
+        let source = game.new_object_id();
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+        let effect = PayManaEffect::new(
+            ManaCost::from_symbols(vec![ManaSymbol::Black]),
+            ChooseSpec::Player(PlayerFilter::You),
+        );
+
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("pay mana effect should execute");
+
+        assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
+        assert_eq!(game.player(alice).expect("alice exists").life, 18);
+        assert_eq!(
+            game.player(alice).expect("alice exists").mana_pool.total(),
+            0
+        );
     }
 }

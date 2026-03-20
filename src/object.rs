@@ -331,7 +331,7 @@ pub struct Object {
     /// Original copiable fields to restore if this permanent ends bestow.
     pub bestow_cast_state: Option<BestowCastState>,
     /// Original copiable fields to restore if this card was cast face down.
-    pub face_down_cast_state: Option<FaceDownCastState>,
+    pub face_down_cast_state: Option<Box<FaceDownCastState>>,
     /// Alternative casting methods (flashback, escape, etc.)
     pub alternative_casts: Vec<AlternativeCastingMethod>,
     /// True if this split card can be cast fused from hand.
@@ -891,7 +891,7 @@ impl Object {
             return false;
         }
 
-        self.face_down_cast_state = Some(FaceDownCastState {
+        self.face_down_cast_state = Some(Box::new(FaceDownCastState {
             name: self.name.clone(),
             mana_cost: self.mana_cost.clone(),
             color_override: self.color_override,
@@ -906,7 +906,7 @@ impl Object {
             abilities: self.abilities.clone(),
             spell_effect: self.spell_effect.clone(),
             aura_attach_filter: self.aura_attach_filter.clone(),
-        });
+        }));
 
         self.name = "Face-down creature".to_string();
         self.mana_cost = None;
@@ -937,6 +937,7 @@ impl Object {
         let Some(restore) = self.face_down_cast_state.take() else {
             return false;
         };
+        let restore = *restore;
 
         self.name = restore.name;
         self.mana_cost = restore.mana_cost;

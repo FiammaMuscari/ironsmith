@@ -626,6 +626,7 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
     let is_hand = destination_words.contains(&"hand") || destination_words.contains(&"hands");
     let is_battlefield = destination_words.contains(&"battlefield");
     let tapped = destination_words.contains(&"tapped");
+    let transformed = destination_words_full.contains(&"transformed");
     let return_controller = if destination_words
         .windows(3)
         .any(|window| window == ["under", "your", "control"])
@@ -640,7 +641,6 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
     } else {
         ReturnControllerAst::Preserve
     };
-    destination_words.retain(|word| *word != "transformed");
     let has_delayed_timing_words = destination_words_full.contains(&"beginning")
         || destination_words_full.contains(&"upkeep")
         || destination_words_full
@@ -769,6 +769,7 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
         EffectAst::ReturnToBattlefield {
             target,
             tapped,
+            transformed,
             controller: return_controller,
         }
     } else {

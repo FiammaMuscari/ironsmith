@@ -34,6 +34,7 @@ fn pay_selected_cost(
     cost: &crate::costs::Cost,
     source: ObjectId,
     payer: PlayerId,
+    reason: crate::costs::PaymentReason,
     provenance: crate::provenance::ProvNodeId,
     chosen_id: ObjectId,
     choice_tag: Option<&crate::tag::TagKey>,
@@ -54,6 +55,7 @@ fn pay_selected_cost(
         });
 
     let mut cost_ctx = crate::costs::CostContext::new(source, payer, decision_maker)
+        .with_reason(reason)
         .with_pre_chosen_cards(vec![chosen_id])
         .with_provenance(provenance);
     cost_ctx.tagged_objects = tagged_objects.clone();
@@ -1569,11 +1571,12 @@ pub(super) fn apply_mana_payment_response_mana_ability(
         pending.undo_locked_by_mana |= !mana_ability_is_undo_safe(game, perm_id, ability_index);
 
         // Check if player can now pay
-        let can_pay_now = game.can_pay_mana_cost(
+        let can_pay_now = game.can_pay_mana_cost_with_reason(
             pending.activator,
             Some(pending.source),
             &pending.mana_cost,
             0,
+            crate::costs::PaymentReason::ActivateManaAbility,
         );
 
         if can_pay_now {
@@ -1618,11 +1621,12 @@ pub(super) fn apply_mana_payment_response_mana_ability(
     } else {
         // Player chose to pay mana cost
         // Verify they can actually pay
-        if !game.can_pay_mana_cost(
+        if !game.can_pay_mana_cost_with_reason(
             pending.activator,
             Some(pending.source),
             &pending.mana_cost,
             0,
+            crate::costs::PaymentReason::ActivateManaAbility,
         ) {
             return Err(GameLoopError::InvalidState(
                 "Cannot pay mana cost - insufficient mana".to_string(),
@@ -1647,11 +1651,12 @@ pub(super) fn execute_pending_mana_ability(
     use crate::executor::ExecutionContext;
 
     // Pay the mana cost
-    if !game.try_pay_mana_cost(
+    if !game.try_pay_mana_cost_with_reason(
         pending.activator,
         Some(pending.source),
         &pending.mana_cost,
         0,
+        crate::costs::PaymentReason::ActivateManaAbility,
     ) {
         return Err(GameLoopError::InvalidState(
             "Failed to pay mana cost".to_string(),
@@ -1660,6 +1665,7 @@ pub(super) fn execute_pending_mana_ability(
 
     // Pay other costs from TotalCost
     let mut cost_ctx = CostContext::new(pending.source, pending.activator, decision_maker)
+        .with_reason(crate::costs::PaymentReason::ActivateManaAbility)
         .with_provenance(pending.provenance);
     for c in &pending.other_costs {
         crate::special_actions::pay_cost_component_with_choice(game, c, &mut cost_ctx)
@@ -1761,7 +1767,13 @@ pub(super) fn apply_mana_payment_response_activation(
         // Verify they can actually pay
         let x_value = pending.x_value.unwrap_or(0) as u32;
         if let Some(ref cost) = pending.mana_cost_to_pay
-            && !game.can_pay_mana_cost(pending.activator, Some(pending.source), cost, x_value)
+            && !game.can_pay_mana_cost_with_reason(
+                pending.activator,
+                Some(pending.source),
+                cost,
+                x_value,
+                crate::costs::PaymentReason::ActivateAbility,
+            )
         {
             return Err(GameLoopError::InvalidState(
                 "Cannot pay mana cost - insufficient mana".to_string(),
@@ -2078,8 +2090,13 @@ pub(super) fn apply_sacrifice_target_response(
                     ));
                 }
             };
-            let legal_targets =
-                get_legal_sacrifice_targets(game, pending.activator, pending.source, &filter);
+            let legal_targets = get_legal_sacrifice_targets(
+                game,
+                pending.activator,
+                pending.source,
+                &filter,
+                crate::costs::PaymentReason::ActivateAbility,
+            );
             if !legal_targets.contains(&target_id) {
                 return Err(GameLoopError::InvalidState(
                     "Selected permanent is not a legal sacrifice cost choice".to_string(),
@@ -2096,6 +2113,7 @@ pub(super) fn apply_sacrifice_target_response(
                 &cost,
                 pending.source,
                 pending.activator,
+                crate::costs::PaymentReason::ActivateAbility,
                 pending.provenance,
                 target_id,
                 Some(&choice_tag),
@@ -2143,6 +2161,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         None,
@@ -2172,6 +2191,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         None,
@@ -2197,6 +2217,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         None,
@@ -2231,6 +2252,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         Some(&choice_tag),
@@ -2260,6 +2282,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         None,
@@ -2291,6 +2314,7 @@ pub(super) fn apply_sacrifice_target_response(
                         &cost,
                         pending.source,
                         pending.activator,
+                        crate::costs::PaymentReason::ActivateAbility,
                         pending.provenance,
                         target_id,
                         choice_tag.as_ref(),
@@ -2343,8 +2367,13 @@ pub(super) fn apply_card_cost_choice_response(
                     ));
                 }
             };
-            let legal_targets =
-                get_legal_sacrifice_targets(game, pending.caster, pending.spell_id, &filter);
+            let legal_targets = get_legal_sacrifice_targets(
+                game,
+                pending.caster,
+                pending.spell_id,
+                &filter,
+                crate::costs::PaymentReason::CastSpell,
+            );
             if !legal_targets.contains(&chosen_id) {
                 return Err(GameLoopError::InvalidState(
                     "Selected permanent is not a legal spell sacrifice cost choice".to_string(),
@@ -2361,6 +2390,7 @@ pub(super) fn apply_card_cost_choice_response(
                 &cost,
                 pending.spell_id,
                 pending.caster,
+                crate::costs::PaymentReason::CastSpell,
                 pending.provenance,
                 chosen_id,
                 Some(&choice_tag),
@@ -2415,6 +2445,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         None,
@@ -2445,6 +2476,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         None,
@@ -2471,6 +2503,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         None,
@@ -2505,6 +2538,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         Some(&choice_tag),
@@ -2534,6 +2568,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         None,
@@ -2565,6 +2600,7 @@ pub(super) fn apply_card_cost_choice_response(
                         &cost,
                         pending.spell_id,
                         pending.caster,
+                        crate::costs::PaymentReason::CastSpell,
                         pending.provenance,
                         chosen_id,
                         choice_tag.as_ref(),
@@ -2962,7 +2998,13 @@ pub(super) fn finalize_spell_cast(
     if !mana_already_paid && let Some(cost) = effective_cost {
         let x = x_value.unwrap_or(0);
         let before_pool = game.player(caster).map(|player| player.mana_pool.clone());
-        if !game.try_pay_mana_cost(caster, Some(spell_id), &cost, x) {
+        if !game.try_pay_mana_cost_with_reason(
+            caster,
+            Some(spell_id),
+            &cost,
+            x,
+            crate::costs::PaymentReason::CastSpell,
+        ) {
             return Err(GameLoopError::InvalidState(
                 "Cannot pay mana cost".to_string(),
             ));

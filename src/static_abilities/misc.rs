@@ -228,15 +228,12 @@ impl StaticAbilityKind for EntersTapped {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterBattlefieldMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterBattlefieldMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -258,15 +255,12 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreOtherLands {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -288,15 +282,12 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrFewerOtherLands {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -318,15 +309,12 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreBasicLands {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -348,15 +336,12 @@ impl StaticAbilityKind for EntersTappedUnlessAPlayerHas13OrLessLife {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -378,15 +363,12 @@ impl StaticAbilityKind for EntersTappedUnlessTwoOrMoreOpponents {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher,
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher,
+            ReplacementAction::EnterTapped,
+        ))
     }
 }
 
@@ -414,7 +396,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLands
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -446,7 +428,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLand
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -482,7 +464,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLands
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -510,7 +492,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatc
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -541,7 +523,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher 
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -579,18 +561,15 @@ impl StaticAbilityKind for EntersTappedUnlessCondition {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterTappedUnlessConditionMatcher {
-                    condition: self.condition.clone(),
-                    display: self.display.clone(),
-                },
-                ReplacementAction::EnterTapped,
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterTappedUnlessConditionMatcher {
+                condition: self.condition.clone(),
+                display: self.display.clone(),
+            },
+            ReplacementAction::EnterTapped,
+        ))
     }
 
     fn enters_tapped(&self) -> bool {
@@ -635,7 +614,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessConditionMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -705,19 +684,16 @@ impl StaticAbilityKind for Bloodthirst {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterWithBloodthirstMatcher,
-                ReplacementAction::EnterWithCounters {
-                    counter_type: CounterType::PlusOnePlusOne,
-                    count: Value::Fixed(self.amount as i32),
-                    added_subtypes: Vec::new(),
-                },
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterWithBloodthirstMatcher,
+            ReplacementAction::EnterWithCounters {
+                counter_type: CounterType::PlusOnePlusOne,
+                count: Value::Fixed(self.amount as i32),
+                added_subtypes: Vec::new(),
+            },
+        ))
     }
 }
 
@@ -745,7 +721,7 @@ impl ReplacementMatcher for ThisWouldEnterWithBloodthirstMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -833,19 +809,16 @@ impl StaticAbilityKind for EntersWithCounters {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterBattlefieldMatcher,
-                ReplacementAction::EnterWithCounters {
-                    counter_type: self.counter_type,
-                    count: self.count.clone(),
-                    added_subtypes: Vec::new(),
-                },
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterBattlefieldMatcher,
+            ReplacementAction::EnterWithCounters {
+                counter_type: self.counter_type,
+                count: self.count.clone(),
+                added_subtypes: Vec::new(),
+            },
+        ))
     }
 }
 
@@ -894,22 +867,19 @@ impl StaticAbilityKind for EntersWithCountersIfCondition {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterWithCountersIfConditionMatcher {
-                    condition: self.condition.clone(),
-                    condition_display: self.condition_display.clone(),
-                },
-                ReplacementAction::EnterWithCounters {
-                    counter_type: self.counter_type,
-                    count: self.count.clone(),
-                    added_subtypes: Vec::new(),
-                },
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterWithCountersIfConditionMatcher {
+                condition: self.condition.clone(),
+                condition_display: self.condition_display.clone(),
+            },
+            ReplacementAction::EnterWithCounters {
+                counter_type: self.counter_type,
+                count: self.count.clone(),
+                added_subtypes: Vec::new(),
+            },
+        ))
     }
 }
 
@@ -948,7 +918,7 @@ impl ReplacementMatcher for ThisWouldEnterWithCountersIfConditionMatcher {
     }
 
     fn priority(&self) -> ReplacementPriority {
-        ReplacementPriority::SelfReplacement
+        ReplacementPriority::Other
     }
 
     fn display(&self) -> String {
@@ -2616,18 +2586,15 @@ impl StaticAbilityKind for DiscardOrRedirectReplacement {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterBattlefieldMatcher,
-                ReplacementAction::InteractiveDiscardOrRedirect {
-                    filter: self.filter.clone(),
-                    redirect_zone: self.redirect_zone,
-                },
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterBattlefieldMatcher,
+            ReplacementAction::InteractiveDiscardOrRedirect {
+                filter: self.filter.clone(),
+                redirect_zone: self.redirect_zone,
+            },
+        ))
     }
 }
 
@@ -2667,17 +2634,14 @@ impl StaticAbilityKind for PayLifeOrEnterTappedReplacement {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
-        Some(
-            ReplacementEffect::with_matcher(
-                source,
-                controller,
-                ThisWouldEnterBattlefieldMatcher,
-                ReplacementAction::InteractivePayLifeOrEnterTapped {
-                    life_cost: self.life_cost,
-                },
-            )
-            .self_replacing(),
-        )
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            ThisWouldEnterBattlefieldMatcher,
+            ReplacementAction::InteractivePayLifeOrEnterTapped {
+                life_cost: self.life_cost,
+            },
+        ))
     }
 
     fn enters_tapped(&self) -> bool {

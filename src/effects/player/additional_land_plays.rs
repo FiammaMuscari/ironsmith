@@ -69,4 +69,33 @@ mod tests {
             "effect should increase land plays per turn immediately"
         );
     }
+
+    #[test]
+    fn grant_after_first_land_leaves_one_remaining_land_play() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        game.player_mut(alice).expect("player").record_land_play();
+        assert!(
+            !game.player(alice).expect("player").can_play_land(),
+            "normal land play should be exhausted after the first land"
+        );
+
+        AdditionalLandPlaysEffect::new(1, PlayerFilter::You, Until::EndOfTurn)
+            .execute(&mut game, &mut ctx)
+            .expect("grant additional land play");
+
+        assert!(
+            game.player(alice).expect("player").can_play_land(),
+            "granting an additional land play should reopen land play eligibility"
+        );
+
+        game.player_mut(alice).expect("player").record_land_play();
+        assert!(
+            !game.player(alice).expect("player").can_play_land(),
+            "the second total land play should consume the temporary extra allowance"
+        );
+    }
 }

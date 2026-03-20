@@ -3318,15 +3318,6 @@ pub(crate) fn parse_spells_cost_modifier_line(
     if clause_words.len() < 4 {
         return Ok(None);
     }
-    if clause_words.contains(&"first")
-        && clause_words.contains(&"each")
-        && clause_words.contains(&"turn")
-    {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported first-spell-each-turn cost modifier (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
 
     let Some(spells_token_idx) = tokens
         .iter()
@@ -3334,6 +3325,19 @@ pub(crate) fn parse_spells_cost_modifier_line(
     else {
         return Ok(None);
     };
+
+    if clause_words.contains(&"first")
+        && clause_words.contains(&"each")
+        && clause_words.contains(&"turn")
+        && clause_words
+            .iter()
+            .any(|word| *word == "cost" || *word == "costs")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported first-spell-each-turn cost modifier (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
 
     let (prefix_condition, subject_start) =
         parse_cost_modifier_prefix_condition(tokens, spells_token_idx)?;

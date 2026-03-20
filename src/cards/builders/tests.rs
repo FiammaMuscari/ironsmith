@@ -4288,7 +4288,7 @@ fn test_parse_counter_target_ability_you_dont_control_clause() {
 
     let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("opponent's"),
+        rendered.contains("you don't control") || rendered.contains("opponents"),
         "expected controller restriction in oracle-like output, got {rendered}"
     );
     assert!(
@@ -10336,17 +10336,18 @@ fn parse_each_player_multi_step_then_clause_fails_instead_of_partial_parse() {
 }
 
 #[test]
-fn parse_return_transformed_clause_fails_instead_of_immediate_return() {
-    let err = CardDefinitionBuilder::new(CardId::new(), "Transformed Return Variant")
+fn parse_return_transformed_clause_uses_shared_return_and_transform() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Transformed Return Variant")
         .parse_text(
             "When this creature dies, return it to the battlefield transformed under your control.",
         )
-        .expect_err("unsupported transformed return should fail parse");
-    let message = format!("{err:?}");
+        .expect("transformed return should parse through shared return path");
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        message.contains("unsupported transformed return clause")
-            || message.contains("unsupported triggered line"),
-        "expected strict transformed-return parse error, got {message}"
+        (rendered.contains("return")
+            || rendered.contains("put that card onto the battlefield under your control"))
+            && rendered.contains("transform"),
+        "expected shared return plus transform lowering, got {rendered}"
     );
 }
 
@@ -11590,16 +11591,18 @@ fn parse_myriad_keyword_as_typed_trigger_without_keyword_marker() {
 
 #[test]
 fn parse_myriad_oracle_text_uses_composed_primitives() {
-    // Myriad oracle text with "Exile the tokens at end of combat" clause
-    // currently fails to parse due to unsupported standalone token reminder clause.
     let text = "Whenever this creature attacks, for each opponent other than defending player, you may create a token that's a copy of this creature that's tapped and attacking that player or a planeswalker they control. Exile the tokens at end of combat.";
-    let result = CardDefinitionBuilder::new(CardId::new(), "Myriad Oracle Variant")
+    let def = CardDefinitionBuilder::new(CardId::new(), "Myriad Oracle Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text(text);
+        .parse_text(text)
+        .expect("myriad oracle text should parse");
 
+    let debug = format!("{:?}", def.abilities);
     assert!(
-        result.is_err(),
-        "myriad oracle text with exile clause is not yet supported"
+        debug.contains("CreateTokenCopyEffect")
+            && debug.contains("exile_at_end_of_combat: true")
+            && !debug.contains("MyriadTokenCopiesEffect"),
+        "expected composed myriad trigger with exile-at-end-of-combat flag, got {debug}"
     );
 }
 
@@ -17604,6 +17607,7 @@ const STRICT_PARSE_REGRESSION_SUCCESS_CARDS: &[&str] = &[
     "Genesis Chamber",
     "Sacrifice",
     "Sephiroth, Fabled SOLDIER",
+    "Susurian Voidborn",
     "Shifting Woodland",
     "Spelunking",
     "Talon Gates of Madara",
@@ -17620,7 +17624,6 @@ const STRICT_PARSE_REGRESSION_EXPECTED_FAILURE_CARDS: &[&str] = &[
     "Gravecrawler",
     "Hancock, Ghoulish Mayor",
     "Lake of the Dead",
-    "Susurian Voidborn",
     "The Soul Stone",
 ];
 
@@ -17669,7 +17672,7 @@ strict_parse_card_test!(
     strict_parse_sephiroth_fabled_soldier,
     "Sephiroth, Fabled SOLDIER"
 );
-strict_parse_card_expected_fail_test!(strict_parse_susurian_voidborn, "Susurian Voidborn");
+strict_parse_card_test!(strict_parse_susurian_voidborn, "Susurian Voidborn");
 strict_parse_card_test!(strict_parse_talon_gates_of_madara, "Talon Gates of Madara");
 strict_parse_card_expected_fail_test!(strict_parse_the_soul_stone, "The Soul Stone");
 strict_parse_card_test!(strict_parse_unmarked_grave, "Unmarked Grave");

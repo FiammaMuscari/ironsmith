@@ -306,12 +306,26 @@ export default function InspectorStackTimeline({
     ],
     [pendingTriggerEntries, visibleTimelineEntries]
   );
+  const horizontalTimelineEntries = useMemo(
+    () => [
+      ...pendingTriggerEntries,
+      ...visibleLiveStackObjects.map((entry) => ({
+        ...entry,
+        __timeline_key: `live-${entry.id}`,
+        __leaving: false,
+      })),
+    ],
+    [pendingTriggerEntries, visibleLiveStackObjects]
+  );
   const itemCount = (
     pendingTriggerEntries.length + visibleLiveStackObjects.length
   ) || stackPreview.length;
   const timelineSignature = timelineEntries.map((entry) => entry.__timeline_key).join("|");
+  const horizontalTimelineSignature = horizontalTimelineEntries
+    .map((entry) => entry.__timeline_key)
+    .join("|");
   const isHorizontal = layout === "horizontal";
-  const horizontalEntries = timelineEntries;
+  const horizontalEntries = horizontalTimelineEntries;
   const horizontalPreviewEntries = stackPreview;
   const handleInspectStackObject = useCallback((objectId, meta) => {
     dismissStackStartAlert();
@@ -395,7 +409,7 @@ export default function InspectorStackTimeline({
       if (rafId != null) cancelAnimationFrame(rafId);
       observer?.disconnect();
     };
-  }, [isHorizontal, itemCount, timelineSignature, horizontalPreviewEntries]);
+  }, [isHorizontal, itemCount, horizontalTimelineSignature, horizontalPreviewEntries]);
 
   if (!hasStackEntries && pendingTriggerEntries.length === 0) return null;
 

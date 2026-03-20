@@ -8,7 +8,6 @@ import { isTriggerOrderingDecision } from "@/lib/trigger-ordering";
 const STACK_RAIL_WIDTH = "clamp(240px, 24vw, 360px)";
 const STACK_HORIZONTAL_ENTRY_WIDTH = 230;
 const STACK_HORIZONTAL_GAP = 0;
-const STACK_LEAVE_ANIMATION_MS = 360;
 const STACK_EDGE_MARGIN = 6;
 const STACK_MIN_HEIGHT = 44;
 const STACK_DEFAULT_MAX_HEIGHT = 320;
@@ -35,8 +34,6 @@ export default function StackTimelineRail({
         : rawStackEntryCount,
     [decision, rawStackEntryCount],
   );
-  const [displayStackEntryCount, setDisplayStackEntryCount] =
-    useState(orderingEntryCount);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const previousStackSignatureRef = useRef(stackSignature);
   const [availableHeight, setAvailableHeight] = useState(
@@ -45,22 +42,6 @@ export default function StackTimelineRail({
   const [horizontalTopOffset, setHorizontalTopOffset] = useState(0);
   const [horizontalMaxWidth, setHorizontalMaxWidth] = useState(null);
   const railRef = useRef(null);
-
-  useEffect(() => {
-    if (orderingEntryCount === displayStackEntryCount) return undefined;
-
-    if (orderingEntryCount > displayStackEntryCount) {
-      const timeout = setTimeout(() => {
-        setDisplayStackEntryCount(orderingEntryCount);
-      }, 0);
-      return () => clearTimeout(timeout);
-    }
-
-    const timeout = setTimeout(() => {
-      setDisplayStackEntryCount(orderingEntryCount);
-    }, STACK_LEAVE_ANIMATION_MS);
-    return () => clearTimeout(timeout);
-  }, [orderingEntryCount, displayStackEntryCount]);
 
   useEffect(() => {
     const changed = stackSignature !== previousStackSignatureRef.current;
@@ -217,11 +198,11 @@ export default function StackTimelineRail({
     [stackPanelMaxHeight],
   );
   const horizontalRailWidth = useMemo(() => {
-    const entryCount = Math.max(displayStackEntryCount, stackPreview.length, 1);
+    const entryCount = Math.max(orderingEntryCount, stackPreview.length, 1);
     const entriesWidth = entryCount * STACK_HORIZONTAL_ENTRY_WIDTH;
     const gapsWidth = Math.max(0, entryCount - 1) * STACK_HORIZONTAL_GAP;
     return entriesWidth + gapsWidth + 8;
-  }, [displayStackEntryCount, stackPreview.length]);
+  }, [orderingEntryCount, stackPreview.length]);
   const horizontalVisibleWidth = useMemo(() => {
     if (!Number.isFinite(horizontalMaxWidth) || horizontalMaxWidth == null)
       return horizontalRailWidth;

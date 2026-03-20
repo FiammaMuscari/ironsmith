@@ -1170,6 +1170,7 @@ pub(crate) fn parse_return_with_counters_on_it_sentence(
     let mut effects = vec![EffectAst::ReturnToBattlefield {
         target: parse_target_phrase(&target_tokens)?,
         tapped,
+        transformed: false,
         controller: battlefield_controller,
     }];
     let tagged_target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens));
@@ -1353,6 +1354,7 @@ pub(crate) fn clone_return_effect_with_subtype(
         EffectAst::ReturnToBattlefield {
             target,
             tapped,
+            transformed,
             controller,
         } => {
             let mut cloned_target = target.clone();
@@ -1360,6 +1362,7 @@ pub(crate) fn clone_return_effect_with_subtype(
                 EffectAst::ReturnToBattlefield {
                     target: cloned_target,
                     tapped: *tapped,
+                    transformed: *transformed,
                     controller: *controller,
                 },
             )
@@ -2884,6 +2887,7 @@ pub(crate) fn parse_sentence_return_multiple_targets(
                 effects.push(EffectAst::ReturnToBattlefield {
                     target,
                     tapped,
+                    transformed: false,
                     controller: ReturnControllerAst::Preserve,
                 });
             } else {

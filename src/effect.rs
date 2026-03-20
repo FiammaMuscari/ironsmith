@@ -1262,7 +1262,7 @@ impl Restriction {
 
     pub fn apply(
         &self,
-        game: &crate::game_state::GameState,
+        game: &mut crate::game_state::GameState,
         tracker: &mut crate::game_state::CantEffectTracker,
         controller: crate::ids::PlayerId,
         source: Option<crate::ids::ObjectId>,
@@ -1273,7 +1273,25 @@ impl Restriction {
         let ctx = game.filter_context_for_combat(controller, source, None, None);
 
         match self {
-            Restriction::AdditionalLandPlays(_, _) => {}
+            Restriction::AdditionalLandPlays(filter, count) => {
+                let affected_players: Vec<_> = game
+                    .players
+                    .iter()
+                    .filter(|player| {
+                        player.is_in_game()
+                            && player_matches_filter_with_combat(
+                                player.id, filter, game, controller, combat,
+                            )
+                    })
+                    .map(|player| player.id)
+                    .collect();
+                for player_id in affected_players {
+                    if let Some(player) = game.player_mut(player_id) {
+                        player.land_plays_per_turn =
+                            player.land_plays_per_turn.saturating_add(*count);
+                    }
+                }
+            }
             Restriction::GainLife(filter) => {
                 for player in &game.players {
                     if player.is_in_game()

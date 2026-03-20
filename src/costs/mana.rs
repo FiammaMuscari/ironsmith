@@ -30,18 +30,17 @@ impl ManaPaymentCost {
 
 impl CostPayer for ManaPaymentCost {
     fn can_pay(&self, game: &GameState, ctx: &CostContext) -> Result<(), CostPaymentError> {
-        let player = game
-            .player(ctx.payer)
-            .ok_or(CostPaymentError::PlayerNotFound)?;
-
         let x_value = ctx.x_value.unwrap_or(0);
-
-        let allow_any_color = game.can_spend_mana_as_any_color(ctx.payer, Some(ctx.source));
-
-        if !player
-            .mana_pool
-            .can_pay_with_any_color(&self.cost, x_value, allow_any_color)
-        {
+        if game.player(ctx.payer).is_none() {
+            return Err(CostPaymentError::PlayerNotFound);
+        }
+        if !game.can_pay_mana_cost_with_reason(
+            ctx.payer,
+            Some(ctx.source),
+            &self.cost,
+            x_value,
+            ctx.reason,
+        ) {
             return Err(CostPaymentError::InsufficientMana);
         }
 
@@ -57,10 +56,11 @@ impl CostPayer for ManaPaymentCost {
 
         // Use the existing compute_potential_mana function
         let potential = crate::decision::compute_potential_mana(game, ctx.payer);
-
         let allow_any_color = game.can_spend_mana_as_any_color(ctx.payer, Some(ctx.source));
-
-        if !potential.can_pay_with_any_color(&self.cost, x_value, allow_any_color) {
+        let mut preview_pool = potential.clone();
+        let (can_pay, life_to_pay) =
+            preview_pool.try_pay_tracking_life_with_any_color(&self.cost, x_value, allow_any_color);
+        if !can_pay || !game.can_pay_life_with_reason(ctx.payer, life_to_pay, ctx.reason) {
             return Err(CostPaymentError::InsufficientMana);
         }
 
@@ -75,16 +75,17 @@ impl CostPayer for ManaPaymentCost {
         let x_value = ctx.x_value.unwrap_or(0);
 
         // Try to pay from the player's mana pool
-        let allow_any_color = game.can_spend_mana_as_any_color(ctx.payer, Some(ctx.source));
-        if let Some(player) = game.player_mut(ctx.payer) {
-            if !player
-                .mana_pool
-                .try_pay_with_any_color(&self.cost, x_value, allow_any_color)
-            {
-                return Err(CostPaymentError::InsufficientMana);
-            }
-        } else {
+        if game.player(ctx.payer).is_none() {
             return Err(CostPaymentError::PlayerNotFound);
+        }
+        if !game.try_pay_mana_cost_with_reason(
+            ctx.payer,
+            Some(ctx.source),
+            &self.cost,
+            x_value,
+            ctx.reason,
+        ) {
+            return Err(CostPaymentError::InsufficientMana);
         }
 
         Ok(CostPaymentResult::Paid)

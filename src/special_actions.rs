@@ -77,6 +77,32 @@ fn suspend_spec(object: &crate::object::Object) -> Option<(u32, crate::mana::Man
     })
 }
 
+fn adjust_total_cost_mana_components_for_reason(
+    game: &GameState,
+    payer: PlayerId,
+    source: ObjectId,
+    total_cost: &crate::cost::TotalCost,
+    reason: crate::costs::PaymentReason,
+) -> crate::cost::TotalCost {
+    let costs = total_cost
+        .costs()
+        .iter()
+        .map(|cost| {
+            if let Some(mana_cost) = cost.mana_cost_ref() {
+                crate::costs::Cost::mana(game.adjust_mana_cost_for_payment_reason(
+                    payer,
+                    Some(source),
+                    mana_cost,
+                    reason,
+                ))
+            } else {
+                cost.clone()
+            }
+        })
+        .collect();
+    crate::cost::TotalCost::from_costs(costs)
+}
+
 fn spell_has_suspend_timing(
     game: &GameState,
     player: PlayerId,
@@ -457,8 +483,18 @@ fn can_turn_face_up(
 
     // Check whether the player can currently pay the turn-face-up cost.
     // (Unlike spell casting, this path currently doesn't open a mana-payment subflow.)
-    let check_ctx = CostCheckContext::new(permanent_id, player);
-    for cost in spec.cost.costs() {
+    let adjusted_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        permanent_id,
+        &spec.cost,
+        crate::costs::PaymentReason::TurnFaceUp,
+    );
+    let check_ctx = CostCheckContext::new(permanent_id, player)
+        .with_reason(crate::costs::PaymentReason::TurnFaceUp);
+    for cost in adjusted_cost.costs() {
+        game.validate_cost_for_payment_reason(player, permanent_id, cost, check_ctx.reason)
+            .map_err(cost_error_to_action_error)?;
         can_pay_with_check_context(&*cost.0, game, &check_ctx)
             .map_err(cost_error_to_action_error)?;
     }
@@ -484,9 +520,17 @@ fn perform_turn_face_up(
                 source: permanent_id,
                 controller: player,
             });
-    let mut cost_ctx =
-        CostContext::new(permanent_id, player, decision_maker).with_provenance(action_provenance);
-    for cost in spec.cost.costs() {
+    let adjusted_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        permanent_id,
+        &spec.cost,
+        crate::costs::PaymentReason::TurnFaceUp,
+    );
+    let mut cost_ctx = CostContext::new(permanent_id, player, decision_maker)
+        .with_reason(crate::costs::PaymentReason::TurnFaceUp)
+        .with_provenance(action_provenance);
+    for cost in adjusted_cost.costs() {
         pay_cost_component_with_choice(game, cost, &mut cost_ctx)
             .map_err(cost_error_to_action_error)?;
     }
@@ -547,7 +591,13 @@ fn can_suspend(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<
         return Err(ActionError::InvalidTiming);
     }
 
-    let total_cost = crate::cost::TotalCost::mana(cost);
+    let total_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(cost),
+        crate::costs::PaymentReason::Other,
+    );
     let check_ctx = CostCheckContext::new(card_id, player);
     for component in total_cost.costs() {
         can_pay_with_check_context(&*component.0, game, &check_ctx)
@@ -573,7 +623,13 @@ fn perform_suspend(
                 source: card_id,
                 controller: player,
             });
-    let total_cost = crate::cost::TotalCost::mana(cost);
+    let total_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(cost),
+        crate::costs::PaymentReason::Other,
+    );
     let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
     let mut cost_ctx =
         CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
@@ -637,10 +693,15 @@ fn can_foretell(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result
         return Err(ActionError::InvalidTiming);
     }
 
-    let foretell_action_cost =
-        crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
+    let foretell_action_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
             crate::mana::ManaSymbol::Generic(2),
-        ]]));
+        ]])),
+        crate::costs::PaymentReason::Other,
+    );
     let check_ctx = CostCheckContext::new(card_id, player);
     for cost in foretell_action_cost.costs() {
         can_pay_with_check_context(&*cost.0, game, &check_ctx)
@@ -661,10 +722,15 @@ fn perform_foretell(
                 source: card_id,
                 controller: player,
             });
-    let foretell_action_cost =
-        crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
+    let foretell_action_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(crate::mana::ManaCost::from_pips(vec![vec![
             crate::mana::ManaSymbol::Generic(2),
-        ]]));
+        ]])),
+        crate::costs::PaymentReason::Other,
+    );
     let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
     let mut cost_ctx =
         CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
@@ -712,7 +778,13 @@ fn can_plot(game: &GameState, player: PlayerId, card_id: ObjectId) -> Result<(),
         return Err(ActionError::NoSuchAbility);
     };
 
-    let total_cost = crate::cost::TotalCost::mana(cost);
+    let total_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(cost),
+        crate::costs::PaymentReason::Other,
+    );
     let check_ctx = CostCheckContext::new(card_id, player);
     for component in total_cost.costs() {
         can_pay_with_check_context(&*component.0, game, &check_ctx)
@@ -738,7 +810,13 @@ fn perform_plot(
                 source: card_id,
                 controller: player,
             });
-    let total_cost = crate::cost::TotalCost::mana(cost);
+    let total_cost = adjust_total_cost_mana_components_for_reason(
+        game,
+        player,
+        card_id,
+        &crate::cost::TotalCost::mana(cost),
+        crate::costs::PaymentReason::Other,
+    );
     let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
     let mut cost_ctx =
         CostContext::new(card_id, player, &mut decision_maker).with_provenance(action_provenance);
@@ -861,8 +939,11 @@ fn can_activate_mana_ability(
                 &mana_ability.mana_cost,
             );
             // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
-            let ctx = CostContext::new(permanent_id, player, decision_maker);
+            let ctx = CostContext::new(permanent_id, player, decision_maker)
+                .with_reason(crate::costs::PaymentReason::ActivateManaAbility);
             for cost in total_cost.costs() {
+                game.validate_cost_for_payment_reason(player, permanent_id, cost, ctx.reason)
+                    .map_err(cost_error_to_action_error)?;
                 // For mana costs, use can_potentially_pay to show abilities that could
                 // be activated after tapping mana sources.
                 if cost.processing_mode().is_mana_payment() {
@@ -904,8 +985,11 @@ fn can_activate_mana_ability_check(
                 &mana_ability.mana_cost,
             );
             // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
-            let ctx = CostCheckContext::new(permanent_id, player);
+            let ctx = CostCheckContext::new(permanent_id, player)
+                .with_reason(crate::costs::PaymentReason::ActivateManaAbility);
             for cost in total_cost.costs() {
+                game.validate_cost_for_payment_reason(player, permanent_id, cost, ctx.reason)
+                    .map_err(cost_error_to_action_error)?;
                 // For mana costs, use can_potentially_pay to show abilities that could
                 // be activated after tapping mana sources.
                 if cost.processing_mode().is_mana_payment() {
@@ -992,7 +1076,8 @@ pub fn perform_activate_mana_ability_restricted_colors(
         let source_chosen_creature_type = game.chosen_creature_type(permanent_id);
 
         // Pay mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
-        let mut cost_ctx = CostContext::new(permanent_id, player, decision_maker);
+        let mut cost_ctx = CostContext::new(permanent_id, player, decision_maker)
+            .with_reason(crate::costs::PaymentReason::ActivateManaAbility);
         for cost in total_cost.costs() {
             pay_cost_component_with_choice(game, cost, &mut cost_ctx)
                 .map_err(cost_error_to_action_error)?;
@@ -1047,6 +1132,7 @@ pub(crate) fn pay_cost_component_with_choice(
     cost: &crate::costs::Cost,
     ctx: &mut CostContext,
 ) -> Result<(), CostPaymentError> {
+    game.validate_cost_for_payment_reason(ctx.payer, ctx.source, cost, ctx.reason)?;
     match cost.pay(game, ctx)? {
         CostPaymentResult::Paid => Ok(()),
         CostPaymentResult::NeedsChoice(_) => resolve_cost_choice(game, cost, ctx),
@@ -1062,7 +1148,8 @@ fn resolve_cost_choice(
 
     match cost.processing_mode() {
         CostProcessingMode::SacrificeTarget { filter } => {
-            let candidates = legal_sacrifice_targets(game, ctx.payer, ctx.source, &filter);
+            let candidates =
+                legal_sacrifice_targets(game, ctx.payer, ctx.source, &filter, ctx.reason);
             if candidates.is_empty() {
                 return Err(CostPaymentError::NoValidSacrificeTarget);
             }
@@ -1312,6 +1399,7 @@ fn legal_sacrifice_targets(
     payer: PlayerId,
     source: ObjectId,
     filter: &ObjectFilter,
+    reason: crate::costs::PaymentReason,
 ) -> Vec<ObjectId> {
     let ctx = FilterContext {
         you: Some(payer),
@@ -1322,8 +1410,13 @@ fn legal_sacrifice_targets(
         .iter()
         .copied()
         .filter(|&id| {
-            game.object(id)
-                .is_some_and(|obj| filter.matches(obj, &ctx, game) && game.can_be_sacrificed(id))
+            game.object(id).is_some_and(|obj| {
+                filter.matches(obj, &ctx, game)
+                    && game.can_be_sacrificed(id)
+                    && (!reason.is_cast_or_ability_payment()
+                        || !game.player_cant_sacrifice_nonland_to_cast_or_activate(payer)
+                        || obj.has_card_type(crate::types::CardType::Land))
+            })
         })
         .collect()
 }
@@ -1509,4 +1602,157 @@ fn describe_permanent_filter(filter: &ObjectFilter) -> String {
     }
 
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ability::Ability;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::cards::definitions::blood_celebrant;
+    use crate::decision::SelectFirstDecisionMaker;
+    use crate::game_state::Phase;
+    use crate::ids::{CardId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::static_abilities::StaticAbility;
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn add_payment_replacement_permanent(
+        game: &mut GameState,
+        controller: PlayerId,
+        name: &str,
+        ability: StaticAbility,
+    ) {
+        let source = CardBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let source_id = game.create_object_from_card(&source, controller, Zone::Battlefield);
+        game.object_mut(source_id)
+            .expect("static-ability source should exist")
+            .abilities
+            .push(Ability::static_ability(ability));
+    }
+
+    #[test]
+    fn turn_face_up_can_still_use_krrik_life_under_yasharn() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Krrik Morph Helper",
+            StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+        );
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Yasharn Morph Helper",
+            StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+        );
+
+        let morph_card = CardBuilder::new(CardId::new(), "Morph Life Probe")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let morph_id = game.create_object_from_card(&morph_card, alice, Zone::Battlefield);
+        game.object_mut(morph_id)
+            .expect("morph permanent should exist")
+            .abilities
+            .push(Ability::static_ability(StaticAbility::morph(
+                ManaCost::from_symbols(vec![ManaSymbol::Black]),
+            )));
+        game.set_face_down(morph_id);
+
+        assert!(
+            can_turn_face_up(&game, alice, morph_id).is_ok(),
+            "Yasharn should not stop Krrik life payment for special actions"
+        );
+
+        let mut dm = SelectFirstDecisionMaker;
+        perform_turn_face_up(&mut game, alice, morph_id, &mut dm)
+            .expect("turning face up should succeed");
+
+        assert!(!game.is_face_down(morph_id));
+        assert_eq!(game.player(alice).expect("alice exists").life, 18);
+    }
+
+    #[test]
+    fn krrik_can_pay_black_mana_ability_cost_with_life() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Krrik Mana Helper",
+            StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+        );
+
+        let celebrant_id =
+            game.create_object_from_definition(&blood_celebrant(), alice, Zone::Battlefield);
+        let ability_index = game
+            .object(celebrant_id)
+            .and_then(|object| {
+                object
+                    .abilities
+                    .iter()
+                    .position(|ability| ability.is_mana_ability())
+            })
+            .expect("blood celebrant should have a mana ability");
+
+        assert!(can_activate_mana_ability_check(&game, alice, celebrant_id, ability_index).is_ok());
+
+        let mut dm = SelectFirstDecisionMaker;
+        perform_activate_mana_ability(&mut game, alice, celebrant_id, ability_index, &mut dm)
+            .expect("mana ability should resolve");
+
+        let player = game.player(alice).expect("alice exists");
+        assert_eq!(
+            player.life, 17,
+            "should pay 2 life for {{B}} and 1 life for the ability"
+        );
+        assert_eq!(player.mana_pool.total(), 1);
+    }
+
+    #[test]
+    fn yasharn_blocks_blood_celebrant_mana_ability() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Yasharn Mana Helper",
+            StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+        );
+
+        let celebrant_id =
+            game.create_object_from_definition(&blood_celebrant(), alice, Zone::Battlefield);
+        let ability_index = game
+            .object(celebrant_id)
+            .and_then(|object| {
+                object
+                    .abilities
+                    .iter()
+                    .position(|ability| ability.is_mana_ability())
+            })
+            .expect("blood celebrant should have a mana ability");
+
+        assert_eq!(
+            can_activate_mana_ability_check(&game, alice, celebrant_id, ability_index),
+            Err(ActionError::CantPayCost)
+        );
+    }
 }

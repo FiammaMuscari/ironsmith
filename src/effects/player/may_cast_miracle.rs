@@ -120,7 +120,18 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
         };
 
         // Try to pay now; if payment fails, card stays in hand.
-        if !game.try_pay_mana_cost(owner, None, &miracle_cost, 0) {
+        let Some(card_obj) = game.object(card_id) else {
+            return Ok(EffectOutcome::resolved());
+        };
+        let effective_cost =
+            crate::decision::calculate_effective_mana_cost(game, owner, card_obj, &miracle_cost);
+        if !game.try_pay_mana_cost_with_reason(
+            owner,
+            Some(card_id),
+            &effective_cost,
+            0,
+            crate::costs::PaymentReason::CastSpell,
+        ) {
             return Ok(EffectOutcome::resolved());
         }
 

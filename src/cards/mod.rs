@@ -434,6 +434,7 @@ impl CardRegistry {
         maybe_register!(underworld_breach);
         maybe_register!(frogmite);
         maybe_register!(treasure_cruise);
+        maybe_register!(trinisphere);
         maybe_register!(stoke_the_flames);
         maybe_register!(reverse_engineer);
         maybe_register!(the_birth_of_meletis);
@@ -487,6 +488,7 @@ impl CardRegistry {
         maybe_register!(rebuff_the_wicked);
         maybe_register!(verdant_catacombs);
         maybe_register!(windswept_heath);
+        maybe_register!(yasharn_implacable_earth);
         maybe_register!(lightning_greaves);
         maybe_register!(selfless_spirit);
         maybe_register!(serum_powder);
@@ -495,6 +497,7 @@ impl CardRegistry {
         maybe_register!(selfless_savior);
         maybe_register!(gods_willing);
         maybe_register!(kami_of_false_hope);
+        maybe_register!(krrik_son_of_yawgmoth);
         maybe_register!(shelter);
         maybe_register!(mox_diamond);
         maybe_register!(library_of_leng);

@@ -306,8 +306,6 @@ impl GrantRegistry {
         card_zone: Zone,
         player: PlayerId,
     ) -> Vec<Grant> {
-        use crate::ability::AbilityKind;
-
         let mut result = Vec::new();
 
         // Build filter context once
@@ -315,6 +313,10 @@ impl GrantRegistry {
 
         // 1. Collect stored grants
         for grant in &self.grants {
+            if matches!(grant.source, GrantSource::StaticAbility { .. }) {
+                continue;
+            }
+
             // Check if grant is still valid
             if !grant.source.is_valid(game) {
                 continue;
@@ -350,39 +352,27 @@ impl GrantRegistry {
             }
         }
 
-        // 2. Compute grants from static abilities on the battlefield
+        // 2. Compute grants from static abilities on demand so static and
+        // effect-based grants don't drift apart.
         let card = match game.object(card_id) {
             Some(c) => c,
             None => return result,
         };
-
-        for &perm_id in &game.battlefield {
-            let Some(perm) = game.object(perm_id) else {
-                continue;
-            };
-
-            // Only grants from permanents we control
-            if perm.controller != player {
+        for grant in self.static_grants(game) {
+            if grant.player != player || grant.zone != card_zone {
                 continue;
             }
 
-            for ability in &perm.abilities {
-                if let AbilityKind::Static(s) = &ability.kind {
-                    // Use the unified grant_spec() method
-                    if let Some(spec) = s.grant_spec() {
-                        // Check if zone matches and filter matches
-                        if card_zone == spec.zone && spec.filter.matches(card, &ctx, game) {
-                            result.push(Grant {
-                                target_id: None,
-                                filter: Some(spec.filter.clone()),
-                                zone: spec.zone,
-                                player,
-                                grantable: spec.grantable.clone(),
-                                source: GrantSource::StaticAbility { source_id: perm_id },
-                            });
-                        }
-                    }
-                }
+            let matches = if let Some(target_id) = grant.target_id {
+                target_id == card_id
+            } else if let Some(ref filter) = grant.filter {
+                filter.matches(card, &ctx, game)
+            } else {
+                false
+            };
+
+            if matches {
+                result.push(grant);
             }
         }
 
@@ -470,16 +460,26 @@ impl GrantRegistry {
             .retain(|grant| grant.source.is_valid_raw(turn_number, battlefield));
     }
 
-    /// Register grants from static abilities on the battlefield.
-    /// This should be called when permanents enter/leave the battlefield.
-    pub fn refresh_static_grants(&mut self, game: &crate::game_state::GameState) {
+    /// Snapshot currently active grants, including static grants computed on demand.
+    pub fn active_grants(&self, game: &crate::game_state::GameState) -> Vec<Grant> {
+        let mut active: Vec<Grant> = self
+            .grants
+            .iter()
+            .filter(|grant| {
+                !matches!(grant.source, GrantSource::StaticAbility { .. })
+                    && grant.source.is_valid(game)
+            })
+            .cloned()
+            .collect();
+        active.extend(self.static_grants(game));
+        active
+    }
+
+    fn static_grants(&self, game: &crate::game_state::GameState) -> Vec<Grant> {
         use crate::ability::AbilityKind;
 
-        // Remove all existing static ability grants
-        self.grants
-            .retain(|grant| !matches!(grant.source, GrantSource::StaticAbility { .. }));
+        let mut grants = Vec::new();
 
-        // Re-add grants from all permanents on battlefield
         for &perm_id in &game.battlefield {
             let Some(perm) = game.object(perm_id) else {
                 continue;
@@ -489,42 +489,21 @@ impl GrantRegistry {
 
             for ability in &perm.abilities {
                 if let AbilityKind::Static(s) = &ability.kind {
-                    // Use the unified grant_spec() method to get grant information
                     if let Some(spec) = s.grant_spec() {
-                        self.register_grant_from_spec(
-                            &spec,
-                            controller,
-                            GrantSource::StaticAbility { source_id: perm_id },
-                        );
+                        grants.push(Grant {
+                            target_id: None,
+                            filter: Some(normalize_grant_filter(spec.filter.clone())),
+                            zone: spec.zone,
+                            player: controller,
+                            grantable: spec.grantable.clone(),
+                            source: GrantSource::StaticAbility { source_id: perm_id },
+                        });
                     }
                 }
             }
         }
-    }
 
-    /// Register a grant from a grant specification.
-    fn register_grant_from_spec(
-        &mut self,
-        spec: &crate::grant::GrantSpec,
-        player: PlayerId,
-        source: GrantSource,
-    ) {
-        self.grant_to_filter(
-            normalize_grant_filter(spec.filter.clone()),
-            spec.zone,
-            player,
-            spec.grantable.clone(),
-            source,
-        );
-    }
-
-    /// Snapshot of currently valid grants.
-    pub fn active_grants(&self, game: &crate::game_state::GameState) -> Vec<Grant> {
-        self.grants
-            .iter()
-            .filter(|grant| grant.source.is_valid(game))
-            .cloned()
-            .collect()
+        grants
     }
 }
 

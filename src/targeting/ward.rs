@@ -12,7 +12,6 @@
 
 use crate::ability::AbilityKind;
 use crate::cost::TotalCost;
-use crate::cost::can_pay_cost;
 use crate::costs::CostContext;
 use crate::decision::DecisionMaker;
 use crate::decisions::specs::ChooseObjectsSpec;
@@ -198,15 +197,36 @@ fn pay_ward_cost(
             });
     match cost {
         WardCost::Mana(total_cost) => {
-            if can_pay_cost(game, source, payer, total_cost).is_err() {
+            if crate::cost::can_pay_cost_with_reason(
+                game,
+                source,
+                payer,
+                total_cost,
+                crate::costs::PaymentReason::Effect,
+            )
+            .is_err()
+            {
                 return false;
             }
 
-            let mut cost_ctx =
-                CostContext::new(source, payer, decision_maker).with_provenance(ward_provenance);
+            let mut cost_ctx = CostContext::new(source, payer, decision_maker)
+                .with_reason(crate::costs::PaymentReason::Effect)
+                .with_provenance(ward_provenance);
             for component in total_cost.costs() {
                 if let Some(mana_cost) = component.mana_cost_ref() {
-                    if !game.try_pay_mana_cost(payer, None, mana_cost, 0) {
+                    let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+                        payer,
+                        Some(source),
+                        mana_cost,
+                        crate::costs::PaymentReason::Effect,
+                    );
+                    if !game.try_pay_mana_cost_with_reason(
+                        payer,
+                        Some(source),
+                        &adjusted_cost,
+                        0,
+                        crate::costs::PaymentReason::Effect,
+                    ) {
                         return false;
                     }
                     continue;

@@ -764,7 +764,13 @@ pub fn apply_priority_response_with_dm(
 
                 // Check if we can pay the mana cost from current pool
                 let can_pay_mana = if let Some(ref mc) = mana_cost {
-                    game.can_pay_mana_cost(player, Some(*source), mc, 0)
+                    game.can_pay_mana_cost_with_reason(
+                        player,
+                        Some(*source),
+                        mc,
+                        0,
+                        crate::costs::PaymentReason::ActivateManaAbility,
+                    )
                 } else {
                     true // No mana cost
                 };
@@ -778,11 +784,18 @@ pub fn apply_priority_response_with_dm(
                 if can_pay_mana {
                     // Pay all costs immediately
                     let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker)
+                        .with_reason(crate::costs::PaymentReason::ActivateManaAbility)
                         .with_provenance(mana_ability_provenance);
 
                     // Pay mana cost first
                     if let Some(ref mc) = mana_cost
-                        && !game.try_pay_mana_cost(player, Some(*source), mc, 0)
+                        && !game.try_pay_mana_cost_with_reason(
+                            player,
+                            Some(*source),
+                            mc,
+                            0,
+                            crate::costs::PaymentReason::ActivateManaAbility,
+                        )
                     {
                         return Err(GameLoopError::InvalidState(
                             "Failed to pay mana cost".to_string(),

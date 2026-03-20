@@ -727,10 +727,23 @@ pub(super) fn check_optional_costs_or_continue(
             .map(|(index, opt_cost)| {
                 // Check if player can afford this cost with potential mana
                 let affordable = if let Some(mana_cost) = opt_cost.cost.mana_cost() {
-                    crate::decision::can_potentially_pay(game, player, mana_cost, 0)
+                    let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+                        player,
+                        Some(source),
+                        mana_cost,
+                        crate::costs::PaymentReason::CastSpell,
+                    );
+                    crate::decision::can_potentially_pay(game, player, &adjusted_cost, 0)
                 } else {
                     // For non-mana costs, use the regular check
-                    crate::cost::can_pay_cost(game, source, player, &opt_cost.cost).is_ok()
+                    crate::cost::can_pay_cost_with_reason(
+                        game,
+                        source,
+                        player,
+                        &opt_cost.cost,
+                        crate::costs::PaymentReason::CastSpell,
+                    )
+                    .is_ok()
                 };
 
                 // Format the cost description
@@ -1232,8 +1245,13 @@ pub(super) fn continue_spell_cost_payment(
             description,
             ..
         } => {
-            let legal_targets =
-                get_legal_sacrifice_targets(game, pending.caster, pending.spell_id, &filter);
+            let legal_targets = get_legal_sacrifice_targets(
+                game,
+                pending.caster,
+                pending.spell_id,
+                &filter,
+                crate::costs::PaymentReason::CastSpell,
+            );
             if legal_targets.is_empty() {
                 return Err(GameLoopError::InvalidState(
                     "No valid permanents available for spell sacrifice cost".to_string(),
@@ -1352,7 +1370,7 @@ pub(super) fn continue_to_mana_payment(
         None
     };
 
-    pending.mana_cost_to_pay = effective_cost;
+    pending.mana_cost_to_pay = effective_cost.filter(|cost| !cost.is_empty());
 
     if pending.remaining_cost_steps.is_empty() {
         pending.remaining_cost_steps = collect_spell_cost_steps(
@@ -1547,7 +1565,13 @@ pub(super) fn compute_mana_ability_payment_options(
     }
 
     // Add option to pay if player has enough mana
-    if game.can_pay_mana_cost(player, Some(pending.source), &pending.mana_cost, 0) {
+    if game.can_pay_mana_cost_with_reason(
+        player,
+        Some(pending.source),
+        &pending.mana_cost,
+        0,
+        crate::costs::PaymentReason::ActivateManaAbility,
+    ) {
         options.push(ManaPaymentOption {
             index: options.len(),
             description: "Pay mana cost".to_string(),
@@ -1716,6 +1740,7 @@ pub(super) fn get_legal_sacrifice_targets(
     player: PlayerId,
     source: ObjectId,
     filter: &ObjectFilter,
+    reason: crate::costs::PaymentReason,
 ) -> Vec<ObjectId> {
     let ctx = FilterContext {
         you: Some(player),
@@ -1726,8 +1751,13 @@ pub(super) fn get_legal_sacrifice_targets(
         .iter()
         .copied()
         .filter(|&id| {
-            game.object(id)
-                .is_some_and(|obj| filter.matches(obj, &ctx, game))
+            game.object(id).is_some_and(|obj| {
+                filter.matches(obj, &ctx, game)
+                    && game.can_be_sacrificed(id)
+                    && (!reason.is_cast_or_ability_payment()
+                        || !game.player_cant_sacrifice_nonland_to_cast_or_activate(player)
+                        || obj.has_card_type(crate::types::CardType::Land))
+            })
         })
         .collect()
 }
@@ -2461,8 +2491,13 @@ pub(super) fn continue_activation_cost_payment(
             ref description,
             ..
         } => {
-            let legal_targets =
-                get_legal_sacrifice_targets(game, pending.activator, pending.source, filter);
+            let legal_targets = get_legal_sacrifice_targets(
+                game,
+                pending.activator,
+                pending.source,
+                filter,
+                crate::costs::PaymentReason::ActivateAbility,
+            );
 
             if legal_targets.is_empty() {
                 return Err(GameLoopError::InvalidState(

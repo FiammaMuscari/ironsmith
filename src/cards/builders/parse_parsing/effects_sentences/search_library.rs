@@ -1609,6 +1609,12 @@ pub(crate) fn parse_cant_effect_sentence(
             "restriction clause missing body".to_string(),
         ));
     }
+    if clause_tokens
+        .first()
+        .is_some_and(|token| token.is_word("if"))
+    {
+        return Ok(None);
+    }
     if find_negation_span(&clause_tokens).is_none() {
         return Ok(None);
     }

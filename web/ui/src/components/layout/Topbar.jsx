@@ -134,7 +134,7 @@ export default function Topbar({
                 </span>
                 <span className="topbar-opponent-chip-life">{activeMobileOpponent.life}</span>
                 <span className="topbar-opponent-chip-meta">
-                  H {activeMobileOpponent.hand_size ?? 0} G {activeMobileOpponent.graveyard_size ?? 0} X {Array.isArray(activeMobileOpponent.exile_cards) ? activeMobileOpponent.exile_cards.length : 0}
+                  H {activeMobileOpponent.hand_size ?? 0} G {activeMobileOpponent.graveyard_size ?? 0} D {activeMobileOpponent.library_size ?? 0}
                 </span>
               </button>
               {opponents.length > 1 ? (
@@ -227,7 +227,7 @@ export default function Topbar({
                   </span>
                   <span className="topbar-opponent-chip-life">{activeMobileOpponent.life}</span>
                   <span className="topbar-opponent-chip-meta">
-                    H {activeMobileOpponent.hand_size ?? 0} G {activeMobileOpponent.graveyard_size ?? 0} X {Array.isArray(activeMobileOpponent.exile_cards) ? activeMobileOpponent.exile_cards.length : 0}
+                    H {activeMobileOpponent.hand_size ?? 0} G {activeMobileOpponent.graveyard_size ?? 0} D {activeMobileOpponent.library_size ?? 0}
                   </span>
                 </div>
                 {opponents.length > 1 ? (

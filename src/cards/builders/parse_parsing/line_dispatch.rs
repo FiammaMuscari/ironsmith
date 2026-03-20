@@ -15,9 +15,9 @@ use crate::cards::builders::{
     parse_offspring_line, parse_permission_clause_spec, parse_reinforce_line,
     parse_saga_chapter_prefix, parse_scryfall_mana_cost, parse_squad_line,
     parse_static_ability_ast_line, parse_this_spell_cost_condition, parse_transmute_line,
-    parse_triggered_line, parser_trace, parser_trace_line, split_on_or,
-    starts_with_until_end_of_turn, tokenize_line, trim_commas, unsupported_rule_error_for_view,
-    words,
+    parse_triggered_line, parser_trace, parser_trace_line, preserve_keyword_prefix_for_parse,
+    split_on_or, starts_with_until_end_of_turn, tokenize_line, trim_commas,
+    unsupported_rule_error_for_view, words,
 };
 use crate::costs::Cost;
 use crate::{AlternativeCastingMethod, OptionalCost, TotalCost};
@@ -1679,6 +1679,9 @@ fn parse_static_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, Card
         if let Some((label, rest)) = labeled
             && !label.is_empty()
             && !rest.is_empty()
+            && !trimmed.contains('.')
+            && parse_saga_chapter_prefix(trimmed).is_none()
+            && !preserve_keyword_prefix_for_parse(label)
         {
             let remainder_tokens = tokenize_line(rest, view.line_index.unwrap_or(0));
             if let Some(abilities) = parse_static_ability_ast_line(&remainder_tokens)? {
@@ -1946,8 +1949,18 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
                 .map(|(label, rest)| (label.trim(), rest.trim()))
         });
     if let Some((label, rest)) = labeled
+        && label.eq_ignore_ascii_case("threshold")
+        && !rest.is_empty()
+    {
+        return parse_line(rest, line_index);
+    }
+    if let Some((label, rest)) = labeled
         && !label.is_empty()
         && !rest.is_empty()
+        && !label.eq_ignore_ascii_case("threshold")
+        && !trimmed.contains('.')
+        && parse_saga_chapter_prefix(trimmed).is_none()
+        && !preserve_keyword_prefix_for_parse(label)
     {
         let condition = crate::ConditionExpr::SourceChosenOption(label.to_ascii_lowercase());
         let parsed_rest = parse_line(rest, line_index)?;

@@ -5,12 +5,14 @@ use crate::cards::CardDefinitionBuilder;
 use crate::effect::Effect;
 use crate::effects::{
     DemonicConsultationEffect, SavinesReclamationEffect, TaintedPactEffect, ThassasOracleEffect,
+    YasharnImplacableEarthEffect,
 };
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
+use crate::static_abilities::StaticAbility;
 use crate::target::PlayerFilter;
 use crate::triggers::Trigger;
-use crate::types::{CardType, Subtype};
+use crate::types::{CardType, Subtype, Supertype};
 
 const CHOSEN_NAME_TAG: &str = "chosen_name";
 
@@ -82,5 +84,77 @@ pub(crate) fn savines_reclamation() -> CardDefinition {
             vec![ManaSymbol::Generic(5)],
             vec![ManaSymbol::White],
         ]))
+        .build()
+}
+
+pub(crate) fn krrik_son_of_yawgmoth() -> CardDefinition {
+    CardDefinitionBuilder::new(CardId::new(), "K'rrik, Son of Yawgmoth")
+        .mana_cost(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(4)],
+            vec![ManaSymbol::Black],
+            vec![ManaSymbol::Black],
+            vec![ManaSymbol::Black],
+        ]))
+        .supertypes(vec![Supertype::Legendary])
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Phyrexian, Subtype::Horror, Subtype::Minion])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .oracle_text(
+            "Lifelink\nFor each {B} in a cost, you may pay 2 life rather than pay that mana.",
+        )
+        .with_ability(Ability::static_ability(StaticAbility::lifelink()).with_text("Lifelink"))
+        .with_ability(
+            Ability::static_ability(StaticAbility::krrik_black_mana_may_be_paid_with_life())
+                .with_text("For each {B} in a cost, you may pay 2 life rather than pay that mana."),
+        )
+        .build()
+}
+
+pub(crate) fn trinisphere() -> CardDefinition {
+    CardDefinitionBuilder::new(CardId::new(), "Trinisphere")
+        .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(3)]]))
+        .card_types(vec![CardType::Artifact])
+        .oracle_text(
+            "As long as Trinisphere is untapped, each spell that would cost less than three mana to cast costs three mana to cast.",
+        )
+        .with_ability(
+            Ability::static_ability(StaticAbility::minimum_spell_total_mana(3)).with_text(
+                "As long as Trinisphere is untapped, each spell that would cost less than three mana to cast costs three mana to cast.",
+            ),
+        )
+        .build()
+}
+
+pub(crate) fn yasharn_implacable_earth() -> CardDefinition {
+    CardDefinitionBuilder::new(CardId::new(), "Yasharn, Implacable Earth")
+        .mana_cost(ManaCost::from_pips(vec![
+            vec![ManaSymbol::Generic(2)],
+            vec![ManaSymbol::Green],
+            vec![ManaSymbol::White],
+        ]))
+        .supertypes(vec![Supertype::Legendary])
+        .card_types(vec![CardType::Creature])
+        .subtypes(vec![Subtype::Elemental, Subtype::Boar])
+        .power_toughness(PowerToughness::fixed(4, 4))
+        .oracle_text(
+            "When Yasharn, Implacable Earth enters the battlefield, search your library for a basic Forest card and a basic Plains card, reveal those cards, put them into your hand, then shuffle.\nPlayers can't pay life or sacrifice nonland permanents to cast spells or activate abilities.",
+        )
+        .with_ability(
+            Ability::triggered(
+                Trigger::this_enters_battlefield(),
+                vec![Effect::new(YasharnImplacableEarthEffect::new())],
+            )
+            .with_text(
+                "When Yasharn, Implacable Earth enters the battlefield, search your library for a basic Forest card and a basic Plains card, reveal those cards, put them into your hand, then shuffle.",
+            ),
+        )
+        .with_ability(
+            Ability::static_ability(
+                StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+            )
+            .with_text(
+                "Players can't pay life or sacrifice nonland permanents to cast spells or activate abilities.",
+            ),
+        )
         .build()
 }

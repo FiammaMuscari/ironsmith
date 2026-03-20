@@ -2486,13 +2486,12 @@ pub fn process_etb_with_event_and_dm(
 
     game.update_replacement_effects();
 
-    // Check the object's own abilities for self-ETB effects
-    // Per Rule 616.1a, self-replacement effects apply first
-    let mut enters_tapped = false;
+    // Check the object's own abilities for ETB replacement effects.
+    let enters_tapped = false;
     let mut enters_with_counters: Vec<(CounterType, u32)> = Vec::new();
 
-    // Gather self-replacement effects from the object's abilities
-    // These are effects like shock lands' "pay 2 life or enter tapped"
+    // Gather ETB replacement effects from the object's abilities.
+    // These include effects like shock lands' "pay 2 life or enter tapped".
     let mut self_replacement_effects: Vec<ReplacementEffect> = Vec::new();
 
     if let Some(obj) = game.object(object) {
@@ -2507,9 +2506,6 @@ pub fn process_etb_with_event_and_dm(
         let controller = obj.controller;
         for ability in &obj.abilities {
             if let AbilityKind::Static(s) = &ability.kind {
-                if s.enters_tapped() {
-                    enters_tapped = true;
-                }
                 // Check for unified replacement effects
                 if let Some(effect) = s.generate_replacement_effect(object, controller) {
                     self_replacement_effects.push(effect);

@@ -408,12 +408,39 @@ pub fn can_pay_cost(
     player: PlayerId,
     cost: &TotalCost,
 ) -> Result<(), CostPaymentError> {
+    can_pay_cost_with_reason(
+        game,
+        source_id,
+        player,
+        cost,
+        crate::costs::PaymentReason::Other,
+    )
+}
+
+pub fn can_pay_cost_with_reason(
+    game: &GameState,
+    source_id: ObjectId,
+    player: PlayerId,
+    cost: &TotalCost,
+    reason: crate::costs::PaymentReason,
+) -> Result<(), CostPaymentError> {
     use crate::costs::{CostCheckContext, can_pay_with_check_context};
 
-    let ctx = CostCheckContext::new(source_id, player);
+    let ctx = CostCheckContext::new(source_id, player).with_reason(reason);
 
     for cost_component in cost.costs() {
-        can_pay_with_check_context(&*cost_component.0, game, &ctx)?;
+        let adjusted_component = if let Some(mana_cost) = cost_component.mana_cost_ref() {
+            crate::costs::Cost::mana(game.adjust_mana_cost_for_payment_reason(
+                player,
+                Some(source_id),
+                mana_cost,
+                reason,
+            ))
+        } else {
+            cost_component.clone()
+        };
+        game.validate_cost_for_payment_reason(player, source_id, &adjusted_component, reason)?;
+        can_pay_with_check_context(&*adjusted_component.0, game, &ctx)?;
     }
 
     Ok(())

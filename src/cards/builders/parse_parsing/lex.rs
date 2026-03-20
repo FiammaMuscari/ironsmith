@@ -667,13 +667,16 @@ pub(crate) fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
         // These are full keyword mechanics that carry their own parseable payload
         // after an em dash. Stripping the prefix corrupts the mechanic line.
         "buyback"
+            | "bestow"
             | "cycling"
+            | "echo"
             | "equip"
             | "escape"
             | "flashback"
             | "boast"
             | "modular"
             | "replicate"
+            | "reinforce"
             | "renew"
             | "spectacle"
             | "strive"

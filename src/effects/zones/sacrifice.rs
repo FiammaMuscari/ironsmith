@@ -219,6 +219,42 @@ impl EffectExecutor for SacrificeEffect {
 }
 
 impl CostExecutableEffect for SacrificeEffect {
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), crate::effects::CostValidationError> {
+        use crate::effects::CostValidationError;
+
+        if reason.is_cast_or_ability_payment()
+            && game.player_cant_sacrifice_nonland_to_cast_or_activate(controller)
+        {
+            let filter = self.filter.clone().with_type(crate::types::CardType::Land);
+            let required = match self.count {
+                crate::effect::Value::Fixed(count) => count.max(0) as usize,
+                _ => 1,
+            };
+            let filter_ctx = crate::filter::FilterContext::new(controller).with_source(source);
+            let available_land_targets = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+                .filter(|(id, obj)| {
+                    obj.controller == controller
+                        && filter.matches(obj, &filter_ctx, game)
+                        && game.can_be_sacrificed(*id)
+                })
+                .count();
+            if available_land_targets < required {
+                return Err(CostValidationError::CannotSacrifice);
+            }
+        }
+
+        crate::effects::CostExecutableEffect::can_execute_as_cost(self, game, source, controller)
+    }
+
     fn can_execute_as_cost(
         &self,
         game: &GameState,
@@ -386,6 +422,27 @@ impl EffectExecutor for SacrificeTargetEffect {
 }
 
 impl CostExecutableEffect for SacrificeTargetEffect {
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), crate::effects::CostValidationError> {
+        use crate::effects::CostValidationError;
+
+        if reason.is_cast_or_ability_payment()
+            && game.player_cant_sacrifice_nonland_to_cast_or_activate(controller)
+            && !game
+                .calculated_characteristics(source)
+                .is_some_and(|chars| chars.card_types.contains(&crate::types::CardType::Land))
+        {
+            return Err(CostValidationError::CannotSacrifice);
+        }
+
+        crate::effects::CostExecutableEffect::can_execute_as_cost(self, game, source, controller)
+    }
+
     fn can_execute_as_cost(
         &self,
         game: &GameState,

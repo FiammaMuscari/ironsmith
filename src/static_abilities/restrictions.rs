@@ -263,6 +263,81 @@ impl StaticAbilityKind for Cascade {
     }
 }
 
+/// "For each {B} in a cost, you may pay 2 life rather than pay that mana."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlackManaMayBePaidWithLife;
+
+impl StaticAbilityKind for BlackManaMayBePaidWithLife {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::BlackManaMayBePaidWithLife
+    }
+
+    fn display(&self) -> String {
+        "For each {B} in a cost, you may pay 2 life rather than pay that mana".to_string()
+    }
+
+    fn black_mana_may_be_paid_with_life(&self) -> bool {
+        true
+    }
+}
+
+/// "As long as ~ is untapped, each spell that would cost less than N mana to cast costs N mana to cast."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinimumSpellTotalMana {
+    minimum: u32,
+}
+
+impl MinimumSpellTotalMana {
+    pub fn new(minimum: u32) -> Self {
+        Self { minimum }
+    }
+}
+
+impl StaticAbilityKind for MinimumSpellTotalMana {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MinimumSpellTotalMana
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "As long as this permanent is untapped, each spell that would cost less than {} mana to cast costs {} mana to cast",
+            self.minimum, self.minimum
+        )
+    }
+
+    fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
+        game.object(source).is_some_and(|object| {
+            object.zone == crate::zone::Zone::Battlefield && !game.is_tapped(source)
+        })
+    }
+
+    fn minimum_total_spell_mana(&self) -> Option<u32> {
+        Some(self.minimum)
+    }
+}
+
+/// "Players can't pay life or sacrifice nonland permanents to cast spells or activate abilities."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantPayLifeOrSacrificeNonlandForCastOrActivate;
+
+impl StaticAbilityKind for CantPayLifeOrSacrificeNonlandForCastOrActivate {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantPayLifeOrSacrificeNonlandForCastOrActivate
+    }
+
+    fn display(&self) -> String {
+        "Players can't pay life or sacrifice nonland permanents to cast spells or activate abilities".to_string()
+    }
+
+    fn forbids_paying_life_for_cast_or_activate(&self) -> bool {
+        true
+    }
+
+    fn forbids_sacrificing_nonland_for_cast_or_activate(&self) -> bool {
+        true
+    }
+}
+
 /// "Unleash" static restriction.
 ///
 /// A creature with unleash can't block as long as it has a +1/+1 counter on it.

@@ -32,9 +32,13 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function renderMobileBattlePortal(content) {
+function renderMobileBattlePortal(content, target = null) {
   if (typeof document === "undefined") return content;
-  return createPortal(content, document.body);
+  const candidateTarget = target?.current || target;
+  const resolvedTarget = candidateTarget && typeof candidateTarget.nodeType === "number"
+    ? candidateTarget
+    : document.body;
+  return createPortal(content, resolvedTarget);
 }
 
 function isSingleGenericPip(symbols) {
@@ -1210,8 +1214,41 @@ function MobileDecisionHeader({
   subtitle = "",
   details = null,
   trailing = null,
+  compact = false,
   className = "",
 }) {
+  if (compact) {
+    return (
+      <div className={cn("mobile-decision-header mobile-decision-header--compact", className)}>
+        <div className="mobile-decision-header-copy">
+          {eyebrow ? (
+            <div className="mobile-decision-eyebrow">
+              {eyebrow}
+            </div>
+          ) : null}
+          <div className="mobile-decision-title">
+            {normalizeDecisionText(title || "Decision")}
+          </div>
+          {subtitle ? (
+            <div className="mobile-decision-subtitle">
+              <SymbolText text={normalizeDecisionText(subtitle)} noWrap />
+            </div>
+          ) : null}
+          {details ? (
+            <div className="mobile-decision-header-details">
+              {details}
+            </div>
+          ) : null}
+        </div>
+        {trailing ? (
+          <div className="mobile-decision-header-trailing mobile-decision-header-trailing--compact">
+            {trailing}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className={cn("mobile-decision-header", className)}>
       {trailing ? (
@@ -1241,6 +1278,23 @@ function MobileDecisionHeader({
   );
 }
 
+export function MobileDecisionCloseButton({
+  label = "Close",
+  onClick,
+  className = "",
+}) {
+  return (
+    <button
+      type="button"
+      className={cn("mobile-decision-close", className)}
+      aria-label={label}
+      onClick={onClick}
+    >
+      <X className="size-4" />
+    </button>
+  );
+}
+
 function MobileDecisionDock({
   subtitle = "",
   primaryLabel = "Continue",
@@ -1249,9 +1303,10 @@ function MobileDecisionDock({
   secondaryLabel = "",
   secondaryDisabled = false,
   onSecondary,
+  inline = false,
 }) {
   return (
-    <div className="mobile-decision-dock">
+    <div className={cn("mobile-decision-dock", inline && "mobile-decision-dock--inline")}>
       <div className="mobile-decision-dock-actions">
         {secondaryLabel ? (
           <Button
@@ -1287,7 +1342,7 @@ function MobileDecisionDock({
   );
 }
 
-function MobileDecisionSheet({
+export function MobileDecisionSheet({
   eyebrow = "",
   title = "",
   subtitle = "",
@@ -1297,27 +1352,50 @@ function MobileDecisionSheet({
   children,
   footer = null,
   onBackdropClick = null,
+  onClose = null,
+  closeLabel = "Close panel",
+  inline = false,
+  compactInline = false,
   className = "",
   bodyClassName = "",
 }) {
+  const resolvedHeaderTrailing = headerTrailing || (onClose ? (
+    <MobileDecisionCloseButton
+      label={closeLabel}
+      onClick={onClose}
+    />
+  ) : null);
+
   return (
     <>
-      <div
-        className="mobile-decision-sheet-backdrop"
-        onClick={onBackdropClick || undefined}
-        aria-hidden="true"
-      />
-      <div className="mobile-decision-sheet-shell">
-        <section className={cn("mobile-decision-sheet", className)} aria-modal="true" role="dialog">
+      {!inline ? (
+        <div
+          className="mobile-decision-sheet-backdrop"
+          onClick={onBackdropClick || undefined}
+          aria-hidden="true"
+        />
+      ) : null}
+      <div className={cn("mobile-decision-sheet-shell", inline && "mobile-decision-sheet-shell--inline")}>
+        <section
+          className={cn(
+            "mobile-decision-sheet",
+            inline && "mobile-decision-sheet--inline",
+            inline && compactInline && "mobile-decision-sheet--inline-compact",
+            className
+          )}
+          aria-modal="true"
+          role="dialog"
+        >
           <MobileDecisionHeader
             eyebrow={eyebrow}
             title={title}
             subtitle={subtitle}
             details={headerDetails}
-            trailing={headerTrailing}
+            trailing={resolvedHeaderTrailing}
+            compact={inline && compactInline}
             className={headerClassName}
           />
-          <div className={cn("mobile-decision-sheet-body", bodyClassName)}>
+          <div className={cn("mobile-decision-sheet-body", inline && compactInline && "mobile-decision-sheet-body--inline-compact", bodyClassName)}>
             {children}
           </div>
           {footer ? (
@@ -1375,48 +1453,75 @@ function MobileDecisionOverlay({
   );
 }
 
-function MobilePriorityActionList({
-  groups,
-  canAct,
-  onActionClick,
-  onActionHoverStart,
-  onActionHoverEnd,
+export function MobileDecisionActionList({
+  items = [],
+  emptyText = "No additional actions.",
+  horizontal = false,
 }) {
-  if (!groups.length) {
+  if (!items.length) {
     return (
-      <div className="mobile-decision-empty-state">
-        No additional actions.
+      <div className={cn("mobile-decision-empty-state", horizontal && "mobile-decision-empty-state--inline-strip")}>
+        {emptyText}
       </div>
     );
   }
 
   return (
-    <div className="mobile-decision-action-list">
-      {groups.map((group) => (
+    <div className={cn("mobile-decision-action-list", horizontal && "mobile-decision-action-list--inline-strip")}>
+      {items.map((item) => (
         <button
-          key={group.key}
+          key={item.key}
           type="button"
-          className="mobile-decision-action-row"
-          disabled={!canAct}
-          onClick={() => onActionClick(group.firstAction)}
-          onMouseEnter={() => onActionHoverStart?.(group)}
-          onMouseLeave={() => onActionHoverEnd?.()}
+          className={cn("mobile-decision-action-row", horizontal && "mobile-decision-action-row--inline-strip")}
+          disabled={Boolean(item.disabled)}
+          onClick={item.onClick}
+          onMouseEnter={item.onMouseEnter}
+          onMouseLeave={item.onMouseLeave}
         >
           <span className="mobile-decision-action-text">
-            {normalizeDecisionText(group.label || group.firstAction?.label || "Action")}
+            <SymbolText text={normalizeDecisionText(item.label || "Action")} />
           </span>
-          {group.count > 1 ? (
-            <span className="mobile-decision-action-count">
-              {group.count}
-            </span>
-          ) : null}
+          {item.trailing || null}
         </button>
       ))}
     </div>
   );
 }
 
-function MobileBattleDecisionLayer({ selectedObjectId = null }) {
+function MobilePriorityActionList({
+  groups,
+  canAct,
+  onActionClick,
+  onActionHoverStart,
+  onActionHoverEnd,
+  horizontal = false,
+}) {
+  return (
+    <MobileDecisionActionList
+      horizontal={horizontal}
+      items={groups.map((group) => ({
+        key: group.key,
+        label: group.label || group.firstAction?.label || "Action",
+        disabled: !canAct,
+        onClick: () => onActionClick(group.firstAction),
+        onMouseEnter: () => onActionHoverStart?.(group),
+        onMouseLeave: () => onActionHoverEnd?.(),
+        trailing: group.count > 1 ? (
+          <span className="mobile-decision-action-count">
+            {group.count}
+          </span>
+        ) : null,
+      }))}
+    />
+  );
+}
+
+function MobileBattleDecisionLayer({
+  selectedObjectId = null,
+  portalTarget = null,
+  dockInline = false,
+  dockHidden = false,
+}) {
   const {
     state,
     dispatch,
@@ -1647,6 +1752,10 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
   }
 
   if (isPriorityDecision) {
+    if (dockHidden) {
+      return null;
+    }
+
     const dockTitle = canAct ? "Your Action" : "Opponent Action";
     const singleActionGroup = actionGroups.length === 1 ? actionGroups[0] : null;
     const secondaryAction = showPriorityAdvanceButton
@@ -1696,24 +1805,32 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
       }
     };
 
-    return renderMobileBattlePortal(
+    return (
       <>
-        <MobileDecisionDock
-          title={dockTitle}
-          subtitle={resolvedDockSubtitle}
-          primaryLabel={passLabel}
-          primaryDisabled={primaryDisabled}
-          onPrimary={handlePrimary}
-          secondaryLabel={secondaryAction?.label || ""}
-          secondaryDisabled={secondaryAction?.disabled || false}
-          onSecondary={secondaryAction?.onClick}
-        />
+        {renderMobileBattlePortal(
+          <MobileDecisionDock
+            subtitle={resolvedDockSubtitle}
+            primaryLabel={passLabel}
+            primaryDisabled={primaryDisabled}
+            onPrimary={handlePrimary}
+            secondaryLabel={secondaryAction?.label || ""}
+            secondaryDisabled={secondaryAction?.disabled || false}
+            onSecondary={secondaryAction?.onClick}
+            inline={dockInline}
+          />,
+          portalTarget
+        )}
         {actionsSheetOpen ? (
           <MobileDecisionSheet
             eyebrow={dockTitle}
             title="Available Actions"
             subtitle={`${actionGroups.length} action${actionGroups.length === 1 ? "" : "s"}`}
             onBackdropClick={() => setActionsSheetState({ key: decisionIdentity, open: false })}
+            onClose={() => setActionsSheetState({ key: decisionIdentity, open: false })}
+            closeLabel="Close available actions"
+            inline={false}
+            className="mobile-decision-sheet--action-list"
+            bodyClassName="mobile-decision-sheet-body--action-list"
             footer={canCancelDecision ? (
               <Button
                 type="button"
@@ -1761,7 +1878,7 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
     ) : null;
 
     return renderMobileBattlePortal(
-      <MobileDecisionOverlay
+      <MobileDecisionSheet
         eyebrow={canAct ? "Your Action" : "Opponent Action"}
         title={resolveDecisionTitle(decision)}
         subtitle={decision?.source_name || ""}
@@ -1779,18 +1896,11 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
             </div>
           ) : null
         }
-        headerTrailing={canCancelDecision ? (
-          <button
-            type="button"
-            className="mobile-select-options-close"
-            aria-label="Close option picker"
-            onClick={() => cancelDecision()}
-          >
-            <X className="size-4" />
-          </button>
-        ) : null}
-        className="mobile-decision-overlay--select-options"
-        bodyClassName="mobile-decision-overlay-body--select-options"
+        className="mobile-decision-sheet--select-options"
+        bodyClassName="mobile-decision-sheet-body--select-options"
+        onClose={canCancelDecision ? () => cancelDecision() : null}
+        closeLabel="Close option picker"
+        inline={false}
         onBackdropClick={canCancelDecision ? () => cancelDecision() : null}
         footer={optionFooter}
       >
@@ -1805,7 +1915,8 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
           layout="mobile-overlay"
           showStripSummary={false}
         />
-      </MobileDecisionOverlay>
+      </MobileDecisionSheet>,
+      null
     );
   }
 
@@ -1825,6 +1936,7 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
           secondaryLabel={canCancelDecision ? "Cancel" : ""}
           secondaryDisabled={!canCancelDecision}
           onSecondary={canCancelDecision ? () => cancelDecision() : null}
+          inline={dockInline}
         />
         <div className="hidden" aria-hidden="true">
           <DecisionRouter
@@ -1839,7 +1951,8 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
             showStripSummary={false}
           />
         </div>
-      </>
+      </>,
+      portalTarget
     );
   }
 
@@ -1898,6 +2011,7 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
             : resolveDecisionTitle(decision)
       }
       subtitle={decision?.source_name || ""}
+      inline={false}
       onBackdropClick={canCancelDecision ? () => cancelDecision() : null}
       footer={footer}
     >
@@ -1912,7 +2026,8 @@ function MobileBattleDecisionLayer({ selectedObjectId = null }) {
         layout="panel"
         showStripSummary={false}
       />
-    </MobileDecisionSheet>
+    </MobileDecisionSheet>,
+    null
   );
 }
 
@@ -2704,6 +2819,9 @@ export default function DecisionPopupLayer({
   priorityInline = false,
   selectedObjectId = null,
   mobileBattle = false,
+  mobileBattlePortalTarget = null,
+  mobileBattleDockInline = false,
+  mobileBattleDockHidden = false,
 }) {
   const { state } = useGame();
   const decision = state?.decision || null;
@@ -2711,7 +2829,14 @@ export default function DecisionPopupLayer({
 
   if (!decision) return null;
   if (mobileBattle) {
-    return <MobileBattleDecisionLayer selectedObjectId={selectedObjectId} />;
+    return (
+      <MobileBattleDecisionLayer
+        selectedObjectId={selectedObjectId}
+        portalTarget={mobileBattlePortalTarget}
+        dockInline={mobileBattleDockInline}
+        dockHidden={mobileBattleDockHidden}
+      />
+    );
   }
   if (decision?.kind === "priority") {
     return <PriorityBar anchor={anchor} inline={priorityInline} selectedObjectId={selectedObjectId} />;

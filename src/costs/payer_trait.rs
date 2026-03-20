@@ -12,6 +12,33 @@ use crate::provenance::ProvNodeId;
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 
+/// Why a cost is being paid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaymentReason {
+    /// Casting a spell.
+    CastSpell,
+    /// Activating a non-mana ability.
+    ActivateAbility,
+    /// Activating a mana ability.
+    ActivateManaAbility,
+    /// Turning a face-down permanent face up.
+    TurnFaceUp,
+    /// Paying a cost during effect or triggered-ability resolution.
+    Effect,
+    /// Paying another special-action or generic engine cost.
+    #[default]
+    Other,
+}
+
+impl PaymentReason {
+    pub fn is_cast_or_ability_payment(self) -> bool {
+        matches!(
+            self,
+            Self::CastSpell | Self::ActivateAbility | Self::ActivateManaAbility
+        )
+    }
+}
+
 /// Result of paying a cost.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CostPaymentResult {
@@ -33,6 +60,8 @@ pub struct CostContext<'dm> {
     pub payer: PlayerId,
     /// X value for variable costs.
     pub x_value: Option<u32>,
+    /// Why this cost is being paid.
+    pub reason: PaymentReason,
     /// Decision maker for player choices during cost payment.
     pub decision_maker: &'dm mut dyn crate::decision::DecisionMaker,
     /// Pre-chosen cards for costs that require card selection (e.g., ExileFromHand).
@@ -54,6 +83,7 @@ impl std::fmt::Debug for CostContext<'_> {
             .field("source", &self.source)
             .field("payer", &self.payer)
             .field("x_value", &self.x_value)
+            .field("reason", &self.reason)
             .field("pre_chosen_cards", &self.pre_chosen_cards)
             .field(
                 "tagged_objects",
@@ -75,6 +105,7 @@ impl<'dm> CostContext<'dm> {
             source,
             payer,
             x_value: None,
+            reason: PaymentReason::Other,
             decision_maker,
             pre_chosen_cards: Vec::new(),
             tagged_objects: HashMap::new(),
@@ -85,6 +116,12 @@ impl<'dm> CostContext<'dm> {
     /// Set the X value.
     pub fn with_x(mut self, x: u32) -> Self {
         self.x_value = Some(x);
+        self
+    }
+
+    /// Set the payment reason.
+    pub fn with_reason(mut self, reason: PaymentReason) -> Self {
+        self.reason = reason;
         self
     }
 
@@ -114,6 +151,8 @@ pub struct CostCheckContext {
     pub payer: PlayerId,
     /// X value for variable costs.
     pub x_value: Option<u32>,
+    /// Why this cost would be paid.
+    pub reason: PaymentReason,
     /// Pre-chosen cards (usually empty for checking).
     pub pre_chosen_cards: Vec<ObjectId>,
 }
@@ -125,6 +164,7 @@ impl CostCheckContext {
             source,
             payer,
             x_value: None,
+            reason: PaymentReason::Other,
             pre_chosen_cards: Vec::new(),
         }
     }
@@ -132,6 +172,12 @@ impl CostCheckContext {
     /// Set the X value.
     pub fn with_x(mut self, x: u32) -> Self {
         self.x_value = Some(x);
+        self
+    }
+
+    /// Set the payment reason.
+    pub fn with_reason(mut self, reason: PaymentReason) -> Self {
+        self.reason = reason;
         self
     }
 
@@ -148,6 +194,7 @@ impl CostCheckContext {
             source: self.source,
             payer: self.payer,
             x_value: self.x_value,
+            reason: self.reason,
             decision_maker: dm,
             pre_chosen_cards: self.pre_chosen_cards.clone(),
             tagged_objects: HashMap::new(),

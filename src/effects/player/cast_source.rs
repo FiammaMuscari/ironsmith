@@ -69,9 +69,22 @@ impl EffectExecutor for CastSourceEffect {
 
         if !self.without_paying_mana_cost
             && let Some(cost) = mana_cost.as_ref()
-            && !game.try_pay_mana_cost(ctx.controller, None, cost, 0)
         {
-            return Ok(EffectOutcome::impossible());
+            let effective_cost = crate::decision::calculate_effective_mana_cost(
+                game,
+                ctx.controller,
+                source_obj,
+                cost,
+            );
+            if !game.try_pay_mana_cost_with_reason(
+                ctx.controller,
+                Some(source_id),
+                &effective_cost,
+                0,
+                crate::costs::PaymentReason::CastSpell,
+            ) {
+                return Ok(EffectOutcome::impossible());
+            }
         }
 
         let Some(new_id) = game.move_object_by_effect(source_id, Zone::Stack) else {

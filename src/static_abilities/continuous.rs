@@ -549,7 +549,7 @@ pub(crate) fn resolve_anthem_count_expression(
         AnthemCountExpression::MatchingFilter(filter) => all_game_object_ids(game)
             .into_iter()
             .filter_map(|id| game.object(id))
-            .filter(|obj| filter.matches(obj, &filter_ctx, game))
+            .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, game))
             .count() as i32,
         AnthemCountExpression::AttachedToSource(filter) => game
             .object(source)
@@ -558,7 +558,7 @@ pub(crate) fn resolve_anthem_count_expression(
                     .attachments
                     .iter()
                     .filter_map(|id| game.object(*id))
-                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, game))
                     .count() as i32
             })
             .unwrap_or(0),
@@ -569,7 +569,7 @@ pub(crate) fn resolve_anthem_count_expression(
             for obj in all_game_object_ids(game)
                 .into_iter()
                 .filter_map(|id| game.object(id))
-                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, game))
             {
                 for subtype in &obj.subtypes {
                     if matches!(

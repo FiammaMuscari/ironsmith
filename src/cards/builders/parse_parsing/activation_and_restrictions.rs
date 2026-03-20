@@ -4812,6 +4812,13 @@ pub(crate) fn parse_cant_restriction_clause(
 ) -> Result<Option<ParsedCantRestriction>, CardTextError> {
     use crate::effect::Restriction;
 
+    if let Some((_, remainder)) = parse_restriction_duration(tokens)?
+        && !remainder.is_empty()
+        && remainder.len() < tokens.len()
+    {
+        return parse_cant_restriction_clause(&remainder);
+    }
+
     let normalized = words(tokens)
         .into_iter()
         .map(|word| if word == "cannot" { "cant" } else { word })
@@ -5001,16 +5008,22 @@ fn parse_cast_additional_limit_filter(words: &[&str]) -> Option<ObjectFilter> {
     let (first_filter, first_used) = parse_cast_limit_qualifier(&words[idx..])?;
     idx += first_used;
 
-    if words.get(idx) != Some(&"spell")
-        || words.get(idx + 1) != Some(&"this")
-        || words.get(idx + 2) != Some(&"turn")
-        || words.get(idx + 3) != Some(&"cant")
-        || words.get(idx + 4) != Some(&"cast")
-        || words.get(idx + 5) != Some(&"additional")
+    if words.get(idx) != Some(&"spell") {
+        return None;
+    }
+    idx += 1;
+
+    if words.get(idx) == Some(&"this") && words.get(idx + 1) == Some(&"turn") {
+        idx += 2;
+    }
+
+    if words.get(idx) != Some(&"cant")
+        || words.get(idx + 1) != Some(&"cast")
+        || words.get(idx + 2) != Some(&"additional")
     {
         return None;
     }
-    idx += 6;
+    idx += 3;
 
     let (second_filter, second_used) = parse_cast_limit_qualifier(&words[idx..])?;
     if second_filter != first_filter {
@@ -5214,6 +5227,25 @@ pub(crate) fn parse_negated_object_restriction_clause(
         }
         _ if is_supported_untap_restriction_tail(&remainder_words) => Restriction::untap(filter),
         _ => {
+            if matches!(
+                remainder_words.first().copied(),
+                Some(
+                    "put"
+                        | "draw"
+                        | "reveal"
+                        | "look"
+                        | "search"
+                        | "create"
+                        | "return"
+                        | "exile"
+                        | "sacrifice"
+                        | "discard"
+                        | "gain"
+                        | "lose"
+                )
+            ) {
+                return Ok(None);
+            }
             return Err(CardTextError::ParseError(format!(
                 "unsupported negated restriction tail (clause: '{}')",
                 words(tokens).join(" ")

@@ -157,6 +157,24 @@ impl EffectExecutor for LoseLifeEffect {
 }
 
 impl CostExecutableEffect for LoseLifeEffect {
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), crate::effects::CostValidationError> {
+        use crate::effects::CostValidationError;
+
+        if reason.is_cast_or_ability_payment()
+            && game.player_cant_pay_life_to_cast_or_activate(controller)
+        {
+            return Err(CostValidationError::NotEnoughLife);
+        }
+
+        crate::effects::CostExecutableEffect::can_execute_as_cost(self, game, source, controller)
+    }
+
     fn can_execute_as_cost(
         &self,
         game: &GameState,

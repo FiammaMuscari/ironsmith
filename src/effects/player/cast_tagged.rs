@@ -132,7 +132,15 @@ impl EffectExecutor for CastTaggedEffect {
             if !self.without_paying_mana_cost
                 && let Some(cost) = mana_cost.as_ref()
             {
-                if !game.try_pay_mana_cost(caster, None, cost, 0) {
+                let effective_cost =
+                    crate::decision::calculate_effective_mana_cost(game, caster, &copy_obj, cost);
+                if !game.try_pay_mana_cost_with_reason(
+                    caster,
+                    Some(copy_id),
+                    &effective_cost,
+                    0,
+                    crate::costs::PaymentReason::CastSpell,
+                ) {
                     return Ok(EffectOutcome::impossible());
                 }
             }
@@ -178,7 +186,18 @@ impl EffectExecutor for CastTaggedEffect {
         if !self.without_paying_mana_cost
             && let Some(cost) = mana_cost.as_ref()
         {
-            if !game.try_pay_mana_cost(caster, None, cost, 0) {
+            let Some(cast_object) = game.object(object_id) else {
+                return Ok(EffectOutcome::impossible());
+            };
+            let effective_cost =
+                crate::decision::calculate_effective_mana_cost(game, caster, cast_object, cost);
+            if !game.try_pay_mana_cost_with_reason(
+                caster,
+                Some(object_id),
+                &effective_cost,
+                0,
+                crate::costs::PaymentReason::CastSpell,
+            ) {
                 return Ok(EffectOutcome::impossible());
             }
         }

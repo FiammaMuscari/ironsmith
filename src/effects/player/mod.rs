@@ -44,6 +44,7 @@ mod skip_turn;
 mod tainted_pact;
 mod thassas_oracle;
 mod win_the_game;
+mod yasharn_implacable_earth;
 
 pub use additional_land_plays::AdditionalLandPlaysEffect;
 pub use become_monarch::BecomeMonarchEffect;
@@ -84,3 +85,4 @@ pub use skip_turn::SkipTurnEffect;
 pub use tainted_pact::TaintedPactEffect;
 pub use thassas_oracle::ThassasOracleEffect;
 pub use win_the_game::WinTheGameEffect;
+pub use yasharn_implacable_earth::YasharnImplacableEarthEffect;

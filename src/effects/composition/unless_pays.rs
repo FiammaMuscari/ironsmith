@@ -179,7 +179,19 @@ impl EffectExecutor for UnlessPaysEffect {
             // Check if this player can afford to pay mana/life.
             let can_afford_mana = {
                 let cost = ManaCost::from_symbols(mana_symbols.clone());
-                game.can_pay_mana_cost(paying_player, None, &cost, 0)
+                let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+                    paying_player,
+                    Some(ctx.source),
+                    &cost,
+                    crate::costs::PaymentReason::Effect,
+                );
+                game.can_pay_mana_cost_with_reason(
+                    paying_player,
+                    Some(ctx.source),
+                    &adjusted_cost,
+                    0,
+                    crate::costs::PaymentReason::Effect,
+                )
             };
             let can_afford_life = if life_to_pay == 0 {
                 true
@@ -210,7 +222,19 @@ impl EffectExecutor for UnlessPaysEffect {
             if wants_to_pay {
                 // Pay the mana/life cost; if paid successfully, prevent effects.
                 let cost = ManaCost::from_symbols(mana_symbols.clone());
-                if game.try_pay_mana_cost(paying_player, None, &cost, 0) {
+                let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
+                    paying_player,
+                    Some(ctx.source),
+                    &cost,
+                    crate::costs::PaymentReason::Effect,
+                );
+                if game.try_pay_mana_cost_with_reason(
+                    paying_player,
+                    Some(ctx.source),
+                    &adjusted_cost,
+                    0,
+                    crate::costs::PaymentReason::Effect,
+                ) {
                     let mut outcome = EffectOutcome::declined();
                     if life_to_pay > 0 {
                         if let Some(player) = game.player_mut(paying_player) {
@@ -244,5 +268,73 @@ impl EffectExecutor for UnlessPaysEffect {
 
     fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
         super::target_metadata::first_target_count(&[&self.effects])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ability::Ability;
+    use crate::card::CardBuilder;
+    use crate::decision::SelectFirstDecisionMaker;
+    use crate::effect::Effect;
+    use crate::executor::ExecutionContext;
+    use crate::ids::{CardId, PlayerId};
+    use crate::static_abilities::StaticAbility;
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn add_payment_replacement_permanent(
+        game: &mut GameState,
+        controller: PlayerId,
+        name: &str,
+        ability: StaticAbility,
+    ) {
+        let source = CardBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Creature])
+            .build();
+        let source_id = game.create_object_from_card(&source, controller, Zone::Battlefield);
+        game.object_mut(source_id)
+            .expect("static-ability source should exist")
+            .abilities
+            .push(Ability::static_ability(ability));
+    }
+
+    #[test]
+    fn unless_pays_effect_can_use_krrik_life_for_black_under_yasharn() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Krrik Effect Helper",
+            StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+        );
+        add_payment_replacement_permanent(
+            &mut game,
+            alice,
+            "Yasharn Effect Helper",
+            StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+        );
+
+        let source = game.new_object_id();
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+        let effect = UnlessPaysEffect::new(
+            vec![Effect::lose_life(3)],
+            PlayerFilter::You,
+            vec![ManaSymbol::Black],
+        );
+
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("unless pays effect should execute");
+
+        assert_eq!(result.status, crate::effect::OutcomeStatus::Declined);
+        assert_eq!(game.player(alice).expect("alice exists").life, 18);
     }
 }

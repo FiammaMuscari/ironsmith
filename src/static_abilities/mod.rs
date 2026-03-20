@@ -706,6 +706,28 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         false
     }
 
+    /// Returns true if this ability lets its controller pay {B} with 2 life.
+    fn black_mana_may_be_paid_with_life(&self) -> bool {
+        false
+    }
+
+    /// Returns the minimum total mana value a spell must cost to cast.
+    fn minimum_total_spell_mana(&self) -> Option<u32> {
+        None
+    }
+
+    /// Returns true if this ability stops a player from paying life to cast spells
+    /// or activate abilities.
+    fn forbids_paying_life_for_cast_or_activate(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this ability stops a player from sacrificing nonland permanents
+    /// to cast spells or activate abilities.
+    fn forbids_sacrificing_nonland_for_cast_or_activate(&self) -> bool {
+        false
+    }
+
     /// Returns true if this is affinity for artifacts.
     fn has_affinity(&self) -> bool {
         false
@@ -1254,6 +1276,22 @@ impl StaticAbility {
 
     pub fn modifies_costs(&self) -> bool {
         self.0.modifies_costs()
+    }
+
+    pub fn black_mana_may_be_paid_with_life(&self) -> bool {
+        self.0.black_mana_may_be_paid_with_life()
+    }
+
+    pub fn minimum_total_spell_mana(&self) -> Option<u32> {
+        self.0.minimum_total_spell_mana()
+    }
+
+    pub fn forbids_paying_life_for_cast_or_activate(&self) -> bool {
+        self.0.forbids_paying_life_for_cast_or_activate()
+    }
+
+    pub fn forbids_sacrificing_nonland_for_cast_or_activate(&self) -> bool {
+        self.0.forbids_sacrificing_nonland_for_cast_or_activate()
     }
 
     pub fn has_affinity(&self) -> bool {
@@ -1842,6 +1880,18 @@ impl StaticAbility {
 
     pub fn spend_mana_as_any_color_activation_costs() -> Self {
         Self::new(SpendManaAsAnyColorForSourceActivation)
+    }
+
+    pub fn krrik_black_mana_may_be_paid_with_life() -> Self {
+        Self::new(BlackManaMayBePaidWithLife)
+    }
+
+    pub fn minimum_spell_total_mana(amount: u32) -> Self {
+        Self::new(MinimumSpellTotalMana::new(amount))
+    }
+
+    pub fn cant_pay_life_or_sacrifice_nonland_for_cast_or_activate() -> Self {
+        Self::new(CantPayLifeOrSacrificeNonlandForCastOrActivate)
     }
 
     pub fn with_level_abilities(levels: Vec<crate::ability::LevelAbility>) -> Self {

@@ -1698,6 +1698,22 @@ impl GameState {
             && self.player(player).is_some_and(|p| p.life >= amount as i32)
     }
 
+    /// Returns true if a player can currently pay life for the given reason.
+    pub fn can_pay_life_with_reason(
+        &self,
+        player: PlayerId,
+        amount: u32,
+        reason: crate::costs::PaymentReason,
+    ) -> bool {
+        if reason.is_cast_or_ability_payment()
+            && self.player_cant_pay_life_to_cast_or_activate(player)
+            && amount > 0
+        {
+            return false;
+        }
+        self.can_pay_life(player, amount)
+    }
+
     /// Makes a player lose life if their life total can change.
     ///
     /// Returns the amount of life actually lost.
@@ -3327,38 +3343,12 @@ impl GameState {
 
         let mut restriction_tracker = CantEffectTracker::default();
         for effect in active_restrictions {
-            match effect.restriction {
-                crate::effect::Restriction::AdditionalLandPlays(player_filter, count) => {
-                    let combat = self.combat.as_ref();
-                    let affected_players: Vec<_> = self
-                        .players
-                        .iter()
-                        .filter(|player| {
-                            player.is_in_game()
-                                && crate::game_loop::player_matches_filter_with_combat(
-                                    player.id,
-                                    &player_filter,
-                                    self,
-                                    effect.controller,
-                                    combat,
-                                )
-                        })
-                        .map(|player| player.id)
-                        .collect();
-                    for player_id in affected_players {
-                        if let Some(player) = self.player_mut(player_id) {
-                            player.land_plays_per_turn =
-                                player.land_plays_per_turn.saturating_add(count);
-                        }
-                    }
-                }
-                _ => effect.restriction.apply(
-                    self,
-                    &mut restriction_tracker,
-                    effect.controller,
-                    Some(effect.source),
-                ),
-            }
+            effect.restriction.apply(
+                self,
+                &mut restriction_tracker,
+                effect.controller,
+                Some(effect.source),
+            );
         }
         self.cant_effects.merge(restriction_tracker);
 
@@ -3458,6 +3448,193 @@ impl GameState {
             .is_some_and(|obj| obj.controller == payer)
     }
 
+    fn with_active_battlefield_static_abilities<T>(
+        &self,
+        mut f: impl FnMut(ObjectId, PlayerId, &crate::static_abilities::StaticAbility) -> Option<T>,
+    ) -> Option<T> {
+        let all_effects = self.all_continuous_effects();
+        for &perm_id in &self.battlefield {
+            let Some(object) = self.object(perm_id) else {
+                continue;
+            };
+            let static_abilities = self
+                .calculated_characteristics_with_effects(perm_id, &all_effects)
+                .map(|chars| chars.static_abilities)
+                .unwrap_or_default();
+            for static_ability in static_abilities {
+                if !static_ability.is_active(self, perm_id) {
+                    continue;
+                }
+                if let Some(result) = f(perm_id, object.controller, &static_ability) {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn player_can_pay_black_with_life(
+        &self,
+        payer: PlayerId,
+        _source: Option<ObjectId>,
+    ) -> bool {
+        self.with_active_battlefield_static_abilities(|_, controller, ability| {
+            (controller == payer && ability.black_mana_may_be_paid_with_life()).then_some(true)
+        })
+        .unwrap_or(false)
+    }
+
+    pub fn minimum_total_spell_mana_payment(&self) -> Option<u32> {
+        let all_effects = self.all_continuous_effects();
+        let mut minimum = None;
+        for &perm_id in &self.battlefield {
+            let Some(_object) = self.object(perm_id) else {
+                continue;
+            };
+            let static_abilities = self
+                .calculated_characteristics_with_effects(perm_id, &all_effects)
+                .map(|chars| chars.static_abilities)
+                .unwrap_or_default();
+            for static_ability in static_abilities {
+                if !static_ability.is_active(self, perm_id) {
+                    continue;
+                }
+                if let Some(candidate) = static_ability.minimum_total_spell_mana() {
+                    minimum =
+                        Some(minimum.map_or(candidate, |current: u32| current.max(candidate)));
+                }
+            }
+        }
+        minimum
+    }
+
+    pub fn player_cant_pay_life_to_cast_or_activate(&self, player: PlayerId) -> bool {
+        self.with_active_battlefield_static_abilities(|_, _, ability| {
+            ability
+                .forbids_paying_life_for_cast_or_activate()
+                .then_some(true)
+        })
+        .unwrap_or(false)
+            && self.player(player).is_some()
+    }
+
+    pub fn player_cant_sacrifice_nonland_to_cast_or_activate(&self, player: PlayerId) -> bool {
+        self.with_active_battlefield_static_abilities(|_, _, ability| {
+            ability
+                .forbids_sacrificing_nonland_for_cast_or_activate()
+                .then_some(true)
+        })
+        .unwrap_or(false)
+            && self.player(player).is_some()
+    }
+
+    fn object_is_land_for_cost_restrictions(&self, object_id: ObjectId) -> bool {
+        let Some(object) = self.object(object_id) else {
+            return false;
+        };
+        if object.zone == Zone::Battlefield {
+            return self
+                .calculated_characteristics(object_id)
+                .is_some_and(|chars| chars.card_types.contains(&crate::types::CardType::Land));
+        }
+        object.card_types.contains(&crate::types::CardType::Land)
+    }
+
+    fn required_sacrifice_count_for_cost(&self, cost: &crate::costs::Cost) -> usize {
+        if cost.is_sacrifice_self() {
+            return 1;
+        }
+        cost.effect_ref()
+            .and_then(|effect| effect.downcast_ref::<crate::effects::SacrificeEffect>())
+            .and_then(|effect| match effect.count {
+                crate::effect::Value::Fixed(count) => Some(count.max(0) as usize),
+                _ => None,
+            })
+            .unwrap_or(1)
+    }
+
+    fn legal_land_sacrifice_targets_for_cost(
+        &self,
+        payer: PlayerId,
+        source: ObjectId,
+        filter: &crate::filter::ObjectFilter,
+    ) -> usize {
+        let filter_ctx = crate::filter::FilterContext::new(payer).with_source(source);
+        self.battlefield
+            .iter()
+            .filter_map(|&id| self.object(id).map(|obj| (id, obj)))
+            .filter(|(id, obj)| {
+                obj.controller == payer
+                    && self.object_is_land_for_cost_restrictions(*id)
+                    && filter.matches(obj, &filter_ctx, self)
+                    && self.can_be_sacrificed(*id)
+            })
+            .count()
+    }
+
+    pub fn validate_cost_for_payment_reason(
+        &self,
+        payer: PlayerId,
+        source: ObjectId,
+        cost: &crate::costs::Cost,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), crate::cost::CostPaymentError> {
+        if !reason.is_cast_or_ability_payment() {
+            return Ok(());
+        }
+
+        if self.player_cant_pay_life_to_cast_or_activate(payer) && cost.is_life_cost() {
+            return Err(crate::cost::CostPaymentError::InsufficientLife);
+        }
+
+        if !self.player_cant_sacrifice_nonland_to_cast_or_activate(payer) {
+            return Ok(());
+        }
+
+        if cost.is_sacrifice_self() && !self.object_is_land_for_cost_restrictions(source) {
+            return Err(crate::cost::CostPaymentError::NoValidSacrificeTarget);
+        }
+
+        if let Some(filter) = cost.sacrifice_filter() {
+            let required = self.required_sacrifice_count_for_cost(cost);
+            if self.legal_land_sacrifice_targets_for_cost(payer, source, filter) < required {
+                return Err(crate::cost::CostPaymentError::NoValidSacrificeTarget);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn adjust_mana_cost_for_payment_reason(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        cost: &crate::mana::ManaCost,
+        reason: crate::costs::PaymentReason,
+    ) -> crate::mana::ManaCost {
+        use crate::mana::ManaSymbol;
+
+        let mut pips = cost.pips().to_vec();
+
+        if self.player_can_pay_black_with_life(payer, source) {
+            for pip in &mut pips {
+                if pip.len() == 1 && pip[0] == ManaSymbol::Black {
+                    pip.push(ManaSymbol::Life(2));
+                }
+            }
+        }
+
+        if reason.is_cast_or_ability_payment()
+            && self.player_cant_pay_life_to_cast_or_activate(payer)
+        {
+            for pip in &mut pips {
+                pip.retain(|symbol| !matches!(symbol, ManaSymbol::Life(_)));
+            }
+        }
+
+        crate::mana::ManaCost::from_pips(pips)
+    }
+
     /// Check if a player can pay a mana cost, accounting for "spend as though any color".
     pub fn can_pay_mana_cost(
         &self,
@@ -3466,14 +3643,33 @@ impl GameState {
         cost: &crate::mana::ManaCost,
         x_value: u32,
     ) -> bool {
+        self.can_pay_mana_cost_with_reason(
+            payer,
+            source,
+            cost,
+            x_value,
+            crate::costs::PaymentReason::Other,
+        )
+    }
+
+    /// Check if a player can pay a mana cost for a specific reason.
+    pub fn can_pay_mana_cost_with_reason(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        cost: &crate::mana::ManaCost,
+        x_value: u32,
+        reason: crate::costs::PaymentReason,
+    ) -> bool {
         let Some(player) = self.player(payer) else {
             return false;
         };
 
         let allow_any_color = self.can_spend_mana_as_any_color(payer, source);
-        player
-            .mana_pool
-            .can_pay_with_any_color(cost, x_value, allow_any_color)
+        let mut preview_pool = player.mana_pool.clone();
+        let (can_pay, life_to_pay) =
+            preview_pool.try_pay_tracking_life_with_any_color(cost, x_value, allow_any_color);
+        can_pay && self.can_pay_life_with_reason(payer, life_to_pay, reason)
     }
 
     /// Attempt to pay a mana cost, accounting for "spend as though any color".
@@ -3484,14 +3680,50 @@ impl GameState {
         cost: &crate::mana::ManaCost,
         x_value: u32,
     ) -> bool {
-        let allow_any_color = self.can_spend_mana_as_any_color(payer, source);
-        let Some(player) = self.player_mut(payer) else {
-            return false;
-        };
+        self.try_pay_mana_cost_with_reason(
+            payer,
+            source,
+            cost,
+            x_value,
+            crate::costs::PaymentReason::Other,
+        )
+    }
 
-        player
-            .mana_pool
-            .try_pay_with_any_color(cost, x_value, allow_any_color)
+    /// Attempt to pay a mana cost for a specific reason.
+    pub fn try_pay_mana_cost_with_reason(
+        &mut self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        cost: &crate::mana::ManaCost,
+        x_value: u32,
+        reason: crate::costs::PaymentReason,
+    ) -> bool {
+        let allow_any_color = self.can_spend_mana_as_any_color(payer, source);
+        let original_pool = self.player(payer).map(|player| player.mana_pool.clone());
+        let (paid, life_to_pay) = {
+            let Some(player) = self.player_mut(payer) else {
+                return false;
+            };
+            player
+                .mana_pool
+                .try_pay_tracking_life_with_any_color(cost, x_value, allow_any_color)
+        };
+        if !paid {
+            return false;
+        }
+        if !self.can_pay_life_with_reason(payer, life_to_pay, reason) {
+            if let (Some(original_pool), Some(player)) = (original_pool, self.player_mut(payer)) {
+                player.mana_pool = original_pool;
+            }
+            return false;
+        }
+        if life_to_pay > 0 && !self.pay_life(payer, life_to_pay) {
+            if let (Some(original_pool), Some(player)) = (original_pool, self.player_mut(payer)) {
+                player.mana_pool = original_pool;
+            }
+            return false;
+        }
+        true
     }
 
     /// Gets a reference to a player by ID.
@@ -5062,6 +5294,9 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cards::CardDefinitionBuilder;
+    use crate::ids::CardId;
+    use crate::types::CardType;
 
     #[test]
     fn shuffle_slice_marks_irreversible_random_usage() {
@@ -5148,5 +5383,65 @@ mod tests {
         assert_eq!(game.current_power(land_id), Some(8));
         assert_eq!(game.current_toughness(land_id), Some(8));
         assert!(game.current_has_static_ability_id(land_id, StaticAbilityId::Haste));
+    }
+
+    #[test]
+    fn azusa_after_first_land_grants_two_remaining_land_plays() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let azusa = CardDefinitionBuilder::new(CardId::new(), "Azusa, Lost but Seeking")
+            .card_types(vec![CardType::Creature])
+            .parse_text("You may play two additional lands on each of your turns.")
+            .expect("Azusa text should parse");
+
+        game.player_mut(alice)
+            .expect("alice should exist")
+            .record_land_play();
+        assert!(
+            !game
+                .player(alice)
+                .expect("alice should exist")
+                .can_play_land(),
+            "a player who already played a land should be out of normal land plays"
+        );
+
+        game.create_object_from_definition(&azusa, alice, Zone::Battlefield);
+        game.refresh_continuous_state();
+
+        assert_eq!(
+            game.player(alice)
+                .expect("alice should exist")
+                .land_plays_per_turn,
+            3,
+            "Azusa should raise the land-play limit to three total for the turn"
+        );
+        assert!(
+            game.player(alice)
+                .expect("alice should exist")
+                .can_play_land(),
+            "after Azusa enters, the player should still have two land plays remaining"
+        );
+
+        game.player_mut(alice)
+            .expect("alice should exist")
+            .record_land_play();
+        assert!(
+            game.player(alice)
+                .expect("alice should exist")
+                .can_play_land(),
+            "the second land play after Azusa should still leave one more available"
+        );
+
+        game.player_mut(alice)
+            .expect("alice should exist")
+            .record_land_play();
+        assert!(
+            !game
+                .player(alice)
+                .expect("alice should exist")
+                .can_play_land(),
+            "the third total land play should exhaust Azusa's extra allowance"
+        );
     }
 }

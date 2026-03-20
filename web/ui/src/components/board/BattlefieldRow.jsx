@@ -5,12 +5,16 @@ import { useCombatArrows } from "@/context/useCombatArrows";
 import { useGame } from "@/context/GameContext";
 import useNewCards from "@/hooks/useNewCards";
 import { cancelMotion, createTimeline, uiSpring } from "@/lib/motion/anime";
+import {
+  ALL_PAPER_LANES,
+  PAPER_BACK_LANES,
+  PAPER_FRONT_LANES,
+  normalizeBattlefieldLane,
+} from "@/lib/battlefield-layout";
+import { isTriggerOrderingDecision } from "@/lib/trigger-ordering";
 import GameCard from "@/components/cards/GameCard";
 import { Button } from "@/components/ui/button";
 
-const PAPER_FRONT_LANES = ["creatures", "enchantments", "planeswalkers", "battles"];
-const PAPER_BACK_LANES = ["artifacts", "lands", "other"];
-const ALL_PAPER_LANES = [...PAPER_FRONT_LANES, ...PAPER_BACK_LANES];
 const BOTTOM_BATTLEFIELD_SAFE_INSET = 60;
 const LIVE_DAMAGE_ANIMATION_MS = 300;
 const GHOST_BASE_ANIMATION_MS = 520;
@@ -25,11 +29,6 @@ const MOBILE_BOTTOM_BACK_ROW_TRANSLATE_Y_PX = 32;
 const MOBILE_BOTTOM_MIN_VISIBLE_BACK_ROW_RATIO = 0.6;
 const MOBILE_BOTTOM_BACK_ROW_SCALE = 0.96;
 const MOBILE_BOTTOM_DOCK_CLEARANCE_PX = 10;
-
-function normalizeBattlefieldLane(lane) {
-  const normalized = String(lane || "").toLowerCase();
-  return ALL_PAPER_LANES.includes(normalized) ? normalized : "other";
-}
 
 function buildPaperRowGroups(battlefieldSide, buckets, options = {}) {
   const singleRow = options.singleRow === true;
@@ -194,6 +193,30 @@ function cloneLeavingCard(card, stableId) {
     member_stable_ids: [Number(stableId)],
     count: 1,
   };
+}
+
+function normalizeNumericId(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isTriggeredDecision(decision) {
+  if (!decision) return false;
+  if (isTriggerOrderingDecision(decision)) return true;
+
+  const description = String(decision.description || "").toLowerCase();
+  const reason = String(decision.reason || "").toLowerCase();
+  const contextText = String(decision.context_text || "").toLowerCase();
+  const consequenceText = String(decision.consequence_text || "").toLowerCase();
+  const sourceName = String(decision.source_name || "").toLowerCase();
+
+  return (
+    description.includes("trigger")
+    || reason.includes("trigger")
+    || contextText.includes("trigger")
+    || consequenceText.includes("trigger")
+    || sourceName.includes("triggered ability")
+  );
 }
 
 function resetLiveCardFxVars(node) {
@@ -403,6 +426,7 @@ export default function BattlefieldRow({
   alignStart = false,
   paperLayoutMode = "default",
   paperMinSlotsPerRow = null,
+  layoutOverride = null,
   bottomSafeInset = BOTTOM_BATTLEFIELD_SAFE_INSET,
   bottomOcclusionViewportTop = null,
   selectedObjectId,
@@ -428,8 +452,26 @@ export default function BattlefieldRow({
   const isPaperBattlefieldLayout = !compact;
   const isMobileBattleTopLayout = paperLayoutMode === "mobile-battle-top";
   const isMobileBattleBottomLayout = paperLayoutMode === "mobile-battle-bottom";
-  const suppressTooltip = isMobileBattleTopLayout || isMobileBattleBottomLayout;
   const canShowBattlefieldUndo = isPaperBattlefieldLayout && battlefieldSide === "bottom";
+  const normalizedLayoutOverride = useMemo(() => {
+    if (!layoutOverride || typeof layoutOverride !== "object") return null;
+    const cols = Math.max(1, Math.floor(Number(layoutOverride.cols) || 1));
+    const rows = Math.max(1, Math.floor(Number(layoutOverride.rows) || 1));
+    const cardWidth = Math.max(ABSOLUTE_MIN_CARD_WIDTH, Math.floor(Number(layoutOverride.cardWidth) || 0));
+    const cardHeight = Math.max(ABSOLUTE_MIN_CARD_HEIGHT, Math.floor(Number(layoutOverride.cardHeight) || 0));
+    const overlapPx = Math.max(0, Math.floor(Number(layoutOverride.overlapPx) || 0));
+    if (cardWidth <= 0 || cardHeight <= 0) return null;
+    return {
+      rows,
+      cols,
+      cardWidth,
+      cardHeight,
+      overlapPx,
+      centerOffset: Math.floor(Number(layoutOverride.centerOffset) || 0),
+    };
+  }, [layoutOverride]);
+  const isMobileBattleSingleRowLayout = paperLayoutMode === "single-row" && normalizedLayoutOverride != null;
+  const suppressTooltip = isMobileBattleTopLayout || isMobileBattleBottomLayout || isMobileBattleSingleRowLayout;
   const paperLayout = useMemo(
     () => buildPaperBattlefieldLayout(cards, battlefieldSide, alignStart, {
       singleRow: paperLayoutMode === "single-row",
@@ -463,6 +505,14 @@ export default function BattlefieldRow({
     }
     return ids;
   }, [state?.decision, state?.perspective]);
+  const decisionSourceObjectId = useMemo(
+    () => normalizeNumericId(state?.decision?.source_id),
+    [state?.decision?.source_id]
+  );
+  const decisionSourceIsTriggered = useMemo(
+    () => isTriggeredDecision(state?.decision),
+    [state?.decision]
+  );
   const undoTargetStableId = canShowBattlefieldUndo
     && state?.cancelable
     && state?.undo_land_stable_id != null
@@ -490,7 +540,18 @@ export default function BattlefieldRow({
     layoutSignature: "",
     bottomOcclusionViewportTop: null,
     selectedObjectId: null,
+    layoutOverrideSignature: "",
   });
+  const layoutOverrideSignature = normalizedLayoutOverride
+    ? [
+      normalizedLayoutOverride.rows,
+      normalizedLayoutOverride.cols,
+      normalizedLayoutOverride.cardWidth,
+      normalizedLayoutOverride.cardHeight,
+      normalizedLayoutOverride.overlapPx,
+      normalizedLayoutOverride.centerOffset,
+    ].join(":")
+    : "";
   const syncOverflowMode = useCallback((layout) => {
     const row = rowRef.current;
     if (!row) return;
@@ -508,7 +569,7 @@ export default function BattlefieldRow({
     setGhosts((existing) => existing.filter((entry) => entry.key !== ghostKey));
   }, []);
   const mobileObjectGesturesEnabled = (
-    (isMobileBattleTopLayout || isMobileBattleBottomLayout)
+    (isMobileBattleTopLayout || isMobileBattleBottomLayout || isMobileBattleSingleRowLayout)
     && (typeof onMobileCardActionMenu === "function" || typeof onMobileCardLongPress === "function")
   );
 
@@ -532,6 +593,29 @@ export default function BattlefieldRow({
   const fitCards = useCallback(() => {
     const row = rowRef.current;
     if (!row) return;
+
+    if (normalizedLayoutOverride) {
+      row.style.setProperty("--bf-cols", String(normalizedLayoutOverride.cols));
+      row.style.setProperty("--bf-rows", String(normalizedLayoutOverride.rows));
+      row.style.setProperty("--bf-card-width", `${normalizedLayoutOverride.cardWidth}px`);
+      row.style.setProperty("--bf-card-height", `${normalizedLayoutOverride.cardHeight}px`);
+      row.style.setProperty("--bf-card-overlap", `${normalizedLayoutOverride.overlapPx}px`);
+      if (normalizedLayoutOverride.centerOffset > 0) {
+        row.style.setProperty(
+          "--mobile-battle-bottom-inline-offset",
+          `${normalizedLayoutOverride.centerOffset}px`
+        );
+      } else {
+        row.style.removeProperty("--mobile-battle-bottom-inline-offset");
+      }
+      syncOverflowMode({
+        rows: normalizedLayoutOverride.rows,
+        cardHeight: normalizedLayoutOverride.cardHeight,
+        gap: BATTLEFIELD_GRID_GAP_PX,
+        viewportHeight: row.clientHeight,
+      });
+      return;
+    }
 
     const width = row.clientWidth;
     const height = row.clientHeight;
@@ -736,6 +820,7 @@ export default function BattlefieldRow({
     isPaperBattlefieldLayout,
     isMobileBattleBottomLayout,
     isMobileBattleTopLayout,
+    normalizedLayoutOverride,
     paperLayout.maxCols,
     paperLayout.rowCount,
     syncOverflowMode,
@@ -762,6 +847,7 @@ export default function BattlefieldRow({
         || prev.layoutSignature !== paperLayout.signature
         || prev.bottomOcclusionViewportTop !== bottomOcclusionViewportTop
         || prev.selectedObjectId !== selectedObjectId
+        || prev.layoutOverrideSignature !== layoutOverrideSignature
       );
       const forceNow = pendingForceFitRef.current;
       pendingForceFitRef.current = false;
@@ -777,6 +863,7 @@ export default function BattlefieldRow({
         layoutSignature: paperLayout.signature,
         bottomOcclusionViewportTop,
         selectedObjectId,
+        layoutOverrideSignature,
       };
       fitCards();
     });
@@ -787,6 +874,7 @@ export default function BattlefieldRow({
     compact,
     fitCards,
     forceSingleColumn,
+    layoutOverrideSignature,
     paperLayout.signature,
     selectedObjectId,
   ]);
@@ -1148,6 +1236,11 @@ export default function BattlefieldRow({
         }
         const isLegalTarget = cardObjectIds.some((id) => legalTargetObjectIds.has(id));
         const hasLinkedPriorityAction = cardObjectIds.some((id) => priorityActionObjectIds.has(String(id)));
+        const isTriggeredSource = (
+          decisionSourceIsTriggered
+          && decisionSourceObjectId != null
+          && cardObjectIds.some((id) => id === decisionSourceObjectId)
+        );
         const isNew = newIds.has(card.id);
         const isBumped = bumpedIds.has(card.id);
         let bumpDir = 0;
@@ -1217,7 +1310,7 @@ export default function BattlefieldRow({
             ? "spell"
             : isCombatHoverTarget
               ? "attack-selected"
-              : (isCombatCandidate ? combatGlowKind : abilityGlow);
+              : (isCombatCandidate ? combatGlowKind : (isTriggeredSource ? "ability" : abilityGlow));
         const paperGridPosition = isPaperBattlefieldLayout
           ? paperLayout.gridPositionById.get(String(card.id))
           : null;

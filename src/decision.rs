@@ -1050,6 +1050,22 @@ pub(crate) fn can_activate_ability_with_restrictions(
         return false;
     }
 
+    let total_cost =
+        calculate_effective_activation_total_cost(game, controller, source, &activated.mana_cost);
+    for cost in total_cost.costs() {
+        if game
+            .validate_cost_for_payment_reason(
+                controller,
+                source,
+                cost,
+                crate::costs::PaymentReason::ActivateAbility,
+            )
+            .is_err()
+        {
+            return false;
+        }
+    }
+
     for condition in &activated.activation_restrictions {
         if !crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx) {
             return false;
@@ -1205,7 +1221,7 @@ pub fn calculate_effective_activation_mana_cost(
 
 fn calculate_effective_activation_mana_cost_with_view(
     game: &GameState,
-    _activator: PlayerId,
+    activator: PlayerId,
     ability_source: ObjectId,
     base_cost: &crate::mana::ManaCost,
     chosen_targets: &[Target],
@@ -1311,7 +1327,13 @@ fn calculate_effective_activation_mana_cost_with_view(
         }
     }
 
-    adjusted
+    apply_payment_reason_mana_adjustments(
+        game,
+        activator,
+        Some(ability_source),
+        &adjusted,
+        crate::costs::PaymentReason::ActivateAbility,
+    )
 }
 
 /// Resolve an alternative method index for `CastingMethod::PlayFrom`.
@@ -1736,7 +1758,7 @@ pub fn spell_mana_cost_for_cast(
                 ) {
                     Some(crate::mana::ManaCost::new())
                 } else if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
+                    Some(method.mana_cost().cloned().unwrap_or_default())
                 } else {
                     method
                         .mana_cost()
@@ -1767,7 +1789,7 @@ pub fn spell_mana_cost_for_cast(
                 ) {
                     Some(crate::mana::ManaCost::new())
                 } else if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
+                    Some(method.mana_cost().cloned().unwrap_or_default())
                 } else {
                     method
                         .mana_cost()
@@ -1865,7 +1887,13 @@ fn can_cast_spell_with_view(
         // For X spells, check if they can pay at least X=0
         // For non-X spells, check if they can pay the full cost (x_value=0)
         // Use potential mana (current pool + untapped mana sources)
-        if !view.can_potentially_pay(player, &effective_cost, 0) {
+        if !view.can_potentially_pay_with_reason(
+            player,
+            Some(spell.id),
+            &effective_cost,
+            0,
+            crate::costs::PaymentReason::CastSpell,
+        ) {
             return false;
         }
     }
@@ -1952,10 +1980,26 @@ fn can_cast_with_cost_with_view(
     }
 
     // Check mana availability (using potential mana from untapped sources)
-    if let Some(cost) = mana_cost
-        && !view.can_potentially_pay(player, cost, 0)
-    {
-        return false;
+    if let Some(cost) = mana_cost {
+        let adjusted = apply_minimum_spell_total_mana(
+            game,
+            &apply_payment_reason_mana_adjustments(
+                game,
+                player,
+                Some(spell_id),
+                cost,
+                crate::costs::PaymentReason::CastSpell,
+            ),
+        );
+        if !view.can_potentially_pay_with_reason(
+            player,
+            Some(spell_id),
+            &adjusted,
+            0,
+            crate::costs::PaymentReason::CastSpell,
+        ) {
+            return false;
+        }
     }
 
     // Check additional cost requirements
@@ -2164,8 +2208,15 @@ fn can_cast_with_alternative_with_view(
         return false;
     }
 
-    let check_ctx = crate::costs::CostCheckContext::new(spell.id, player);
+    let check_ctx = crate::costs::CostCheckContext::new(spell.id, player)
+        .with_reason(crate::costs::PaymentReason::CastSpell);
     for cost in method.non_mana_costs() {
+        if game
+            .validate_cost_for_payment_reason(player, spell.id, &cost, check_ctx.reason)
+            .is_err()
+        {
+            return false;
+        }
         if crate::costs::can_pay_with_check_context(&*cost.0, game, &check_ctx).is_err() {
             return false;
         }
@@ -2198,6 +2249,7 @@ fn can_cast_with_alternative_from_hand_with_view(
 
     match method {
         method if method.is_composed_cost() => {
+            let zero_cost = crate::mana::ManaCost::new();
             if let Some(condition) = method.cast_condition()
                 && !crate::static_abilities::this_spell_cost_condition_is_active_for_cast(
                     game,
@@ -2214,7 +2266,7 @@ fn can_cast_with_alternative_from_hand_with_view(
                 player,
                 spell,
                 spell_id,
-                method.mana_cost(),
+                method.mana_cost().or(Some(&zero_cost)),
                 None,
                 &AdditionalCastRequirements::default(),
                 view,
@@ -2222,8 +2274,15 @@ fn can_cast_with_alternative_from_hand_with_view(
                 return false;
             }
 
-            let check_ctx = crate::costs::CostCheckContext::new(spell_id, player);
+            let check_ctx = crate::costs::CostCheckContext::new(spell_id, player)
+                .with_reason(crate::costs::PaymentReason::CastSpell);
             for cost in method.non_mana_costs() {
+                if game
+                    .validate_cost_for_payment_reason(player, spell_id, &cost, check_ctx.reason)
+                    .is_err()
+                {
+                    return false;
+                }
                 if crate::costs::can_pay_with_check_context(&*cost.0, game, &check_ctx).is_err() {
                     return false;
                 }
@@ -2260,8 +2319,15 @@ fn can_cast_with_alternative_from_hand_with_view(
                 return false;
             }
 
-            let check_ctx = crate::costs::CostCheckContext::new(spell_id, player);
+            let check_ctx = crate::costs::CostCheckContext::new(spell_id, player)
+                .with_reason(crate::costs::PaymentReason::CastSpell);
             for cost in method.non_mana_costs() {
+                if game
+                    .validate_cost_for_payment_reason(player, spell_id, &cost, check_ctx.reason)
+                    .is_err()
+                {
+                    return false;
+                }
                 if crate::costs::can_pay_with_check_context(&*cost.0, game, &check_ctx).is_err() {
                     return false;
                 }
@@ -2368,7 +2434,14 @@ fn can_pay_cost_with_spell_exclusion(
     };
 
     let mut dm = crate::decision::CliDecisionMaker;
-    let ctx = crate::costs::CostContext::new(source, player, &mut dm);
+    let ctx = crate::costs::CostContext::new(source, player, &mut dm)
+        .with_reason(crate::costs::PaymentReason::CastSpell);
+    if game
+        .validate_cost_for_payment_reason(player, source, cost, ctx.reason)
+        .is_err()
+    {
+        return false;
+    }
 
     match cost.processing_mode() {
         CostProcessingMode::ManaPayment { .. } => cost.can_potentially_pay(game, &ctx).is_ok(),
@@ -2381,6 +2454,29 @@ fn can_pay_cost_with_spell_exclusion(
         | CostProcessingMode::RevealFromHand { .. }
         | CostProcessingMode::ReturnToHandTarget { .. } => cost.can_pay(game, &ctx).is_ok(),
     }
+}
+
+fn apply_payment_reason_mana_adjustments(
+    game: &GameState,
+    payer: PlayerId,
+    source: Option<ObjectId>,
+    cost: &crate::mana::ManaCost,
+    reason: crate::costs::PaymentReason,
+) -> crate::mana::ManaCost {
+    game.adjust_mana_cost_for_payment_reason(payer, source, cost, reason)
+}
+
+fn apply_minimum_spell_total_mana(
+    game: &GameState,
+    cost: &crate::mana::ManaCost,
+) -> crate::mana::ManaCost {
+    if let Some(minimum) = game.minimum_total_spell_mana_payment()
+        && cost.mana_value() < minimum
+    {
+        return cost.add_generic(minimum - cost.mana_value());
+    }
+
+    cost.clone()
 }
 
 // ============================================================================
@@ -2594,7 +2690,15 @@ fn calculate_effective_mana_cost_with_targets_internal(
         }
     }
 
-    current_cost
+    let current_cost = apply_payment_reason_mana_adjustments(
+        game,
+        player,
+        Some(spell.id),
+        &current_cost,
+        crate::costs::PaymentReason::CastSpell,
+    );
+
+    apply_minimum_spell_total_mana(game, &current_cost)
 }
 
 fn apply_spell_cost_modifiers(
@@ -3167,7 +3271,8 @@ pub fn compute_potential_mana(game: &GameState, player: PlayerId) -> crate::play
                 // could be activated. We intentionally skip mana cost checks here
                 // to avoid infinite recursion (mana ability with mana cost would
                 // call compute_potential_mana again).
-                let ctx = CostCheckContext::new(perm_id, player);
+                let ctx = CostCheckContext::new(perm_id, player)
+                    .with_reason(crate::costs::PaymentReason::ActivateManaAbility);
 
                 let can_activate = mana_ability.mana_cost.costs().iter().all(|cost| {
                     // Skip mana cost check to avoid recursion - we only check
@@ -3177,6 +3282,12 @@ pub fn compute_potential_mana(game: &GameState, player: PlayerId) -> crate::play
                         // This is an approximation but prevents infinite recursion
                         true
                     } else {
+                        if game
+                            .validate_cost_for_payment_reason(player, perm_id, cost, ctx.reason)
+                            .is_err()
+                        {
+                            return false;
+                        }
                         can_pay_with_check_context(&*cost.0, game, &ctx).is_ok()
                     }
                 });
@@ -7281,7 +7392,9 @@ mod tests {
     use super::*;
     use crate::ability::Ability;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::cards::definitions::{basic_island, counterspell, force_of_will, lightning_bolt};
     use crate::color::ColorSet;
+    use crate::costs::PaymentReason;
     use crate::decisions::context::{TargetRequirementContext, TargetsContext};
     use crate::effect::{Effect, Value};
     use crate::filter::Comparison;
@@ -7346,6 +7459,271 @@ mod tests {
             crate::provenance::ProvNodeId::default(),
         );
         game.stage_turn_history_event(&event);
+    }
+
+    #[test]
+    fn krrik_rewrites_black_spell_costs_as_phyrexian_choices() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let source = CardBuilder::new(CardId::from_raw(7000), "Krrik Cost Helper")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let source_id = game.create_object_from_card(&source, alice, Zone::Battlefield);
+        game.object_mut(source_id)
+            .expect("helper permanent should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+            ));
+
+        let spell = CardBuilder::new(CardId::from_raw(7001), "Black Cost Probe")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Black],
+                vec![ManaSymbol::Black],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell, alice, Zone::Hand);
+        let spell_obj = game.object(spell_id).expect("spell should exist");
+        let base_cost = spell_obj
+            .mana_cost
+            .as_ref()
+            .expect("spell should have a cost");
+
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{1}{B/P}{B/P}");
+    }
+
+    #[test]
+    fn trinisphere_raises_single_black_spell_to_three_total_mana() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let source = CardBuilder::new(CardId::from_raw(7002), "Trinisphere Helper")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let source_id = game.create_object_from_card(&source, alice, Zone::Battlefield);
+        game.object_mut(source_id)
+            .expect("helper permanent should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::minimum_spell_total_mana(3),
+            ));
+
+        let spell = CardBuilder::new(CardId::from_raw(7003), "Cheap Black Spell")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Black]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell, alice, Zone::Hand);
+        let spell_obj = game.object(spell_id).expect("spell should exist");
+        let base_cost = spell_obj
+            .mana_cost
+            .as_ref()
+            .expect("spell should have a cost");
+
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{B}{2}");
+        assert_eq!(effective.mana_value(), 3);
+    }
+
+    #[test]
+    fn trinisphere_counts_krrik_life_paid_black_pips_toward_floor() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let krrik = CardBuilder::new(CardId::from_raw(7004), "Krrik Cost Helper")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let krrik_id = game.create_object_from_card(&krrik, alice, Zone::Battlefield);
+        game.object_mut(krrik_id)
+            .expect("krrik helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+            ));
+
+        let trini = CardBuilder::new(CardId::from_raw(7005), "Trinisphere Helper")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let trini_id = game.create_object_from_card(&trini, alice, Zone::Battlefield);
+        game.object_mut(trini_id)
+            .expect("trinisphere helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::minimum_spell_total_mana(3),
+            ));
+
+        let spell = CardBuilder::new(CardId::from_raw(7006), "Necro Probe")
+            .card_types(vec![CardType::Enchantment])
+            .mana_cost(ManaCost::from_symbols(vec![
+                ManaSymbol::Black,
+                ManaSymbol::Black,
+                ManaSymbol::Black,
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell, alice, Zone::Hand);
+        let effective = {
+            let spell_obj = game.object(spell_id).expect("spell should exist");
+            let base_cost = spell_obj
+                .mana_cost
+                .as_ref()
+                .expect("spell should have a cost");
+            calculate_effective_mana_cost(&game, alice, spell_obj, base_cost)
+        };
+
+        assert_eq!(effective.to_oracle(), "{B/P}{B/P}{B/P}");
+        assert_eq!(effective.mana_value(), 3);
+        assert!(
+            game.try_pay_mana_cost_with_reason(
+                alice,
+                Some(spell_id),
+                &effective,
+                0,
+                PaymentReason::CastSpell
+            ),
+            "three black pips should already satisfy Trinisphere even when Krrik pays them with life"
+        );
+        assert_eq!(game.player(alice).expect("alice exists").life, 14);
+    }
+
+    #[test]
+    fn yasharn_removes_krrik_life_choices_from_spell_costs() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let krrik = CardBuilder::new(CardId::from_raw(7007), "Krrik Cost Helper")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let krrik_id = game.create_object_from_card(&krrik, alice, Zone::Battlefield);
+        game.object_mut(krrik_id)
+            .expect("krrik helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::krrik_black_mana_may_be_paid_with_life(),
+            ));
+
+        let yasharn = CardBuilder::new(CardId::from_raw(7008), "Yasharn Cost Helper")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let yasharn_id = game.create_object_from_card(&yasharn, alice, Zone::Battlefield);
+        game.object_mut(yasharn_id)
+            .expect("yasharn helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+            ));
+
+        let spell = CardBuilder::new(CardId::from_raw(7009), "Yasharn Probe")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(ManaCost::from_symbols(vec![
+                ManaSymbol::Black,
+                ManaSymbol::Black,
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell, alice, Zone::Hand);
+        let spell_obj = game.object(spell_id).expect("spell should exist");
+        let base_cost = spell_obj
+            .mana_cost
+            .as_ref()
+            .expect("spell should have a cost");
+
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{B}{B}");
+        assert!(
+            !game.can_pay_mana_cost_with_reason(
+                alice,
+                Some(spell_id),
+                &effective,
+                0,
+                PaymentReason::CastSpell
+            ),
+            "without black mana in the pool, Yasharn should remove Krrik's life-payment option"
+        );
+    }
+
+    #[test]
+    fn yasharn_blocks_force_of_will_alternative_cost() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let bolt_id = game.create_object_from_definition(&lightning_bolt(), bob, Zone::Stack);
+        game.stack.push(crate::StackEntry::new(bolt_id, bob));
+
+        let yasharn = CardBuilder::new(CardId::from_raw(7010), "Yasharn Cost Helper")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let yasharn_id = game.create_object_from_card(&yasharn, alice, Zone::Battlefield);
+        game.object_mut(yasharn_id)
+            .expect("yasharn helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::cant_pay_life_or_sacrifice_nonland_for_cast_or_activate(),
+            ));
+
+        let fow_id = game.create_object_from_definition(&force_of_will(), alice, Zone::Hand);
+        game.create_object_from_definition(&counterspell(), alice, Zone::Hand);
+
+        let fow_obj = game.object(fow_id).expect("force of will should exist");
+        let method = &fow_obj.alternative_casts[0];
+        assert!(
+            !can_cast_with_alternative_from_hand(&game, alice, fow_obj, fow_id, method),
+            "Yasharn should stop Force of Will's alternative cost because it includes paying life"
+        );
+    }
+
+    #[test]
+    fn trinisphere_requires_three_mana_for_force_of_will_alternative_cost() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let bolt_id = game.create_object_from_definition(&lightning_bolt(), bob, Zone::Stack);
+        game.stack.push(crate::StackEntry::new(bolt_id, bob));
+
+        let trini = CardBuilder::new(CardId::from_raw(7011), "Trinisphere Helper")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let trini_id = game.create_object_from_card(&trini, alice, Zone::Battlefield);
+        game.object_mut(trini_id)
+            .expect("trinisphere helper should exist")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::minimum_spell_total_mana(3),
+            ));
+
+        let fow_id = game.create_object_from_definition(&force_of_will(), alice, Zone::Hand);
+        game.create_object_from_definition(&counterspell(), alice, Zone::Hand);
+
+        for _ in 0..2 {
+            game.create_object_from_definition(&basic_island(), alice, Zone::Battlefield);
+        }
+        let fow_obj = game.object(fow_id).expect("force of will should exist");
+        let method = &fow_obj.alternative_casts[0];
+        assert!(
+            !can_cast_with_alternative_from_hand(&game, alice, fow_obj, fow_id, method),
+            "Trinisphere should make Force of Will's free alternative cost require three mana"
+        );
+
+        game.create_object_from_definition(&basic_island(), alice, Zone::Battlefield);
+        let fow_obj = game.object(fow_id).expect("force of will should exist");
+        let method = &fow_obj.alternative_casts[0];
+        assert!(
+            can_cast_with_alternative_from_hand(&game, alice, fow_obj, fow_id, method),
+            "with three Islands available, the alternative cost should become legal again"
+        );
     }
 
     fn stage_noncombat_damage_to_player_for_test(

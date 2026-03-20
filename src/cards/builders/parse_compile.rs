@@ -8010,6 +8010,7 @@ fn try_compile_object_zone_and_exchange_effect(
         EffectAst::ReturnToBattlefield {
             target,
             tapped,
+            transformed,
             controller,
         } => {
             let (spec, choices) =
@@ -8095,6 +8096,14 @@ fn try_compile_object_zone_and_exchange_effect(
                 effect = effect.tag(tag);
             }
             effects.push(effect);
+            if *transformed {
+                let transform_spec = if let Some(tag) = ctx.last_object_tag.clone() {
+                    ChooseSpec::tagged(tag)
+                } else {
+                    resolved_spec.clone()
+                };
+                effects.push(Effect::transform(transform_spec));
+            }
             (effects, choices)
         }
         EffectAst::MoveToLibraryNthFromTop { target, position } => {

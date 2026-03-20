@@ -9,6 +9,8 @@ import MobileBattleScene from "./MobileBattleScene";
 export default function TableCore({
   selectedObjectId,
   onInspect,
+  focusedStackObjectId = null,
+  onFocusStackObject = null,
   zoneViews,
   zoneActivityByPlayer = {},
   deckLoadingMode,
@@ -75,6 +77,8 @@ export default function TableCore({
         opponents={opponents}
         selectedObjectId={selectedObjectId}
         onInspect={onInspect}
+        focusedStackObjectId={focusedStackObjectId}
+        onFocusStackObject={onFocusStackObject}
         zoneViews={zoneViews}
         zoneActivityByPlayer={zoneActivityByPlayer}
         legalTargetPlayerIds={legalTargetPlayerIds}

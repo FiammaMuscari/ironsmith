@@ -98,8 +98,17 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
         && matches!(all_words.last().copied(), Some("target") | Some("targets"))
         && let Some((value, _)) = parse_number_or_x_value(&tokens[2..])
     {
+        let target_words = words(&tokens[3..]);
+        let target = if matches!(
+            target_words.as_slice(),
+            ["other", "target"] | ["other", "targets"]
+        ) {
+            TargetAst::AnyOtherTarget(span)
+        } else {
+            TargetAst::AnyTarget(span)
+        };
         return Ok(TargetAst::WithCount(
-            Box::new(TargetAst::AnyTarget(span)),
+            Box::new(target),
             choice_count_from_value(&value, true),
         ));
     }

@@ -7009,10 +7009,23 @@ textarea,
 
   .mobile-battle-scene {
     --mobile-battle-lower-lift: 28px;
-    --mobile-battle-opponent-bottom-inset: 34%;
-    --mobile-battle-self-top: 36%;
-    --mobile-battle-opponent-end: calc(100% - var(--mobile-battle-opponent-bottom-inset));
-    --mobile-battle-divider-top: calc((var(--mobile-battle-opponent-end) + var(--mobile-battle-self-top)) / 2);
+    --mobile-battle-top-status-height: 42px;
+    --mobile-battle-control-height: 30px;
+    --mobile-battle-bottom-band-height: 58px;
+    --mobile-battle-opponent-band-height: 110px;
+    --mobile-battle-self-back-visible-height: 34px;
+    --mobile-battle-scene-padding: 8px;
+    --mobile-battle-section-gap: 6px;
+    --mobile-battle-row-gap: 6px;
+    --mobile-battle-runeband-height: 9px;
+    --mobile-battle-inline-dock-overlap: min(20px, calc((var(--mobile-battle-control-height) + var(--mobile-battle-runeband-height)) / 2));
+    --mobile-battle-back-row-footer-overlap: min(40px, calc(var(--mobile-battle-bottom-band-height) * 0.98));
+    --mobile-battle-divider-top: calc(
+      var(--mobile-battle-top-status-height)
+      + var(--mobile-battle-section-gap)
+      + var(--mobile-battle-opponent-band-height)
+      + (var(--mobile-battle-section-gap) / 2)
+    );
     min-height: 100%;
     background:
       radial-gradient(110% 88% at 50% -4%, rgba(252, 218, 168, 0.12), transparent 40%),
@@ -7037,7 +7050,7 @@ textarea,
     left: 0;
     right: 0;
     top: var(--mobile-battle-divider-top);
-    height: 9px;
+    height: var(--mobile-battle-runeband-height);
     transform: translateY(-50%);
     pointer-events: none;
     background:
@@ -7677,7 +7690,7 @@ textarea,
     position: absolute;
     left: 102px;
     right: 190px;
-    bottom: calc(2px - 20vh);
+    bottom: clamp(-36px, calc(2px - 8vh), -18px);
     height: 154px;
     overflow: visible;
   }
@@ -7799,18 +7812,526 @@ textarea,
     height: 100% !important;
   }
 
-  .mobile-battle-scene-action-dock {
+  .mobile-battle-scene-layout {
+    position: relative;
+    z-index: 5;
+    display: grid;
+    grid-template-rows:
+      var(--mobile-battle-top-status-height)
+      var(--mobile-battle-opponent-band-height)
+      var(--mobile-battle-control-height)
+      minmax(0, 1fr);
+    gap: var(--mobile-battle-section-gap);
+    width: 100%;
+    height: 100%;
+    padding-inline: var(--mobile-battle-scene-padding);
+    padding-bottom: 0;
+    box-sizing: border-box;
+  }
+
+  .mobile-battle-top-spacer {
+    min-height: var(--mobile-battle-top-status-height);
+    pointer-events: none;
+  }
+
+  .mobile-battle-opponent-band,
+  .mobile-battle-self-band {
+    display: grid;
+    gap: var(--mobile-battle-row-gap);
+    min-width: 0;
+    min-height: 0;
+    align-content: start;
+  }
+
+  .mobile-battle-control-band {
+    position: relative;
+    z-index: 12;
+    display: grid;
+    align-content: center;
+    align-items: center;
+    min-width: 0;
+    min-height: 100%;
+    height: 100%;
+    width: calc(100% + (var(--mobile-battle-scene-padding) * 2));
+    margin-inline: calc(var(--mobile-battle-scene-padding) * -1);
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .mobile-battle-control-band > * {
+    pointer-events: auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .mobile-battle-control-band-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    pointer-events: none;
+  }
+
+  .mobile-battle-control-band-inner > * {
+    pointer-events: auto;
+  }
+
+  .mobile-battle-control-band-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .mobile-battle-control-band-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 100%;
+    margin-left: auto;
+  }
+
+  .mobile-battle-stack-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    max-width: min(56vw, 420px);
+    min-height: max(24px, calc(var(--mobile-battle-control-height) - 2px));
+    padding: 1px 8px 1px max(8px, env(safe-area-inset-left));
+    border: 1px solid rgba(132, 187, 255, 0.22);
+    border-left: none;
+    border-radius: 0 14px 14px 0;
+    background:
+      linear-gradient(180deg, rgba(22, 30, 44, 0.96), rgba(10, 14, 22, 0.94));
+    color: #dcecff;
+    box-shadow:
+      0 8px 16px rgba(0, 0, 0, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .mobile-battle-stack-button.is-active {
+    box-shadow:
+      0 0 0 1px rgba(111, 192, 255, 0.34),
+      0 0 18px rgba(100, 169, 255, 0.14),
+      0 8px 16px rgba(0, 0, 0, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .mobile-battle-stack-button-art {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    overflow: hidden;
+    border-radius: 7px;
+    background: rgba(8, 12, 18, 0.9);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+
+  .mobile-battle-stack-button-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.92;
+  }
+
+  .mobile-battle-stack-button-copy {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-battle-stack-button-title,
+  .mobile-battle-stack-button-subtitle,
+  .mobile-battle-stack-button-count {
+    display: block;
+    line-height: 1;
+  }
+
+  .mobile-battle-stack-button-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #edf5ff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+
+  .mobile-battle-stack-button-subtitle {
+    min-width: 0;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #8ec4ff;
+    font-size: 7px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .mobile-battle-stack-button-count {
+    flex: 0 0 auto;
+    min-width: 16px;
+    padding: 0 0 0 2px;
+    color: #f5d08b;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .mobile-battle-self-band {
+    position: relative;
+    z-index: 6;
+    min-height: 0;
+    align-content: start;
+    overflow: visible;
+    margin-top: calc((var(--mobile-battle-control-height) - 8px) * -1);
+  }
+
+  .mobile-battle-lane {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, rgba(255, 240, 214, 0.03), rgba(8, 10, 14, 0.08));
+    box-shadow: inset 0 0 0 1px rgba(255, 245, 214, 0.04);
+  }
+
+  .mobile-battle-lane-track {
+    min-width: 0;
+  }
+
+  .mobile-battle-lane .battlefield-row {
+    padding: 0 !important;
+    min-height: 100%;
+    height: 100%;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .mobile-battle-lane .battlefield-row::before,
+  .mobile-battle-lane .battlefield-row::after {
+    content: none !important;
+  }
+
+  .mobile-battle-lane .battlefield-slot {
+    opacity: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  .mobile-battle-lane .battlefield-row-card {
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-frame {
+    background:
+      linear-gradient(180deg, rgba(255, 245, 214, 0.04), rgba(255, 245, 214, 0) 18%, rgba(4, 8, 14, 0.04) 66%, rgba(4, 8, 14, 0.16) 100%),
+      linear-gradient(90deg, rgba(222, 193, 134, 0.08), rgba(222, 193, 134, 0) 12%, rgba(117, 160, 210, 0) 86%, rgba(117, 160, 210, 0.08) 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(225, 236, 248, 0.06),
+      inset 0 0 0 2px rgba(7, 14, 21, 0.5);
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-frame::before,
+  .mobile-battle-lane .battlefield-row-card .battlefield-frame::after {
+    display: none;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-card-shade {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.08), transparent 22%, transparent 64%, rgba(0, 0, 0, 0.28)),
+      linear-gradient(90deg, rgba(4, 7, 12, 0.12), transparent 18%, transparent 82%, rgba(4, 7, 12, 0.16));
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-header {
+    top: 3px;
+    left: 3px;
+    right: 3px;
+    gap: 2px;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-nameplate {
+    padding: 1px 5px;
+    border: 0;
+    border-radius: 999px;
+    clip-path: none;
+    background: rgba(8, 12, 18, 0.72);
+    box-shadow: none;
+    font-size: 8px;
+    line-height: 1.1;
+    font-weight: 700;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-mana-rack,
+  .mobile-battle-lane .battlefield-row-card .battlefield-counter-rail {
+    display: none;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-footer {
+    left: 3px;
+    right: 3px;
+    bottom: 3px;
+  }
+
+  .mobile-battle-lane .battlefield-row-card .battlefield-group-badge,
+  .mobile-battle-lane .battlefield-row-card .battlefield-pt-badge {
+    min-height: 14px;
+    padding: 1px 5px;
+    font-size: 9px;
+    letter-spacing: 0;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .mobile-battle-lane--self-back {
+    align-self: start;
+    transform: none;
+  }
+
+  .mobile-battle-bottom-utility {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--mobile-battle-back-row-footer-overlap);
+    z-index: 14;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0;
+    align-items: end;
+    min-width: 0;
+    min-height: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .mobile-battle-bottom-utility > * {
+    pointer-events: auto;
+  }
+
+  .mobile-battle-self-identity-bar {
+    display: inline-grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 6px;
+    min-width: 0;
+    min-height: 26px;
+    padding: 1px 8px 1px 10px;
+    border: 1px solid rgba(255, 225, 170, 0.16);
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, rgba(16, 19, 25, 0.88), rgba(6, 8, 12, 0.82));
+    box-shadow:
+      0 12px 28px rgba(0, 0, 0, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    justify-self: start;
+    margin: 0;
+    padding-left: max(10px, var(--mobile-battle-scene-padding));
+    border-bottom-left-radius: 0;
+    text-align: left;
+  }
+
+  .mobile-battle-self-identity-bar.is-targetable,
+  .mobile-battle-opponent-target-chip.is-targetable {
+    box-shadow:
+      0 0 0 1px rgba(111, 192, 255, 0.34),
+      0 0 18px rgba(100, 169, 255, 0.16),
+      0 10px 24px rgba(0, 0, 0, 0.26);
+  }
+
+  .mobile-battle-self-identity-name,
+  .mobile-battle-opponent-target-name {
+    min-width: 0;
+    color: #f1e6c8;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-battle-self-identity-meta,
+  .mobile-battle-opponent-target-meta {
+    grid-column: 1 / 2;
+    min-width: 0;
+    color: #bfae8d;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-battle-self-identity-bar .mobile-battle-inline-life,
+  .mobile-battle-opponent-target-chip .mobile-battle-inline-life {
+    grid-column: 2 / 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .mobile-battle-hand-rail {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    min-width: 0;
+    min-height: 24px;
+    margin-left: -6px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .mobile-battle-hand-rail-viewport {
     position: absolute;
     inset: 0;
-    z-index: 90;
-    pointer-events: none;
+    overflow: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobile-battle-hand-rail-viewport .hand-zone-surface-mobile-fan {
+    overflow: visible;
+    background: transparent;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .mobile-battle-hand-rail-viewport .hand-zone-viewport-mobile-fan,
+  .mobile-battle-hand-rail-viewport .hand-zone-scroll-mobile-fan {
+    overflow: visible;
+  }
+
+  .mobile-battle-hand-rail-viewport .hand-zone-row-mobile-fan {
+    padding: 0 6px 0;
+    align-items: flex-start;
+    justify-content: center;
+    overflow: visible;
+  }
+
+  .mobile-battle-hand-rail-viewport .game-card.hand-card {
+    transform-origin: 50% 100%;
+  }
+
+  .mobile-battle-hand-overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 164;
+    background: linear-gradient(180deg, rgba(4, 6, 10, 0.08), rgba(4, 6, 10, 0.28) 60%, rgba(2, 4, 8, 0.5));
+  }
+
+  .mobile-battle-hand-overlay {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 10px);
+    z-index: 165;
+    display: grid;
+    gap: 8px;
+    min-height: 182px;
+    padding: 10px 10px 8px;
+    border: 1px solid rgba(245, 214, 162, 0.18);
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, rgba(14, 19, 28, 0.97), rgba(7, 10, 16, 0.95)),
+      radial-gradient(circle at 18% 16%, rgba(107, 171, 255, 0.12), transparent 34%);
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.34),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .mobile-battle-hand-overlay-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid rgba(191, 148, 124, 0.22);
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, rgba(47, 34, 31, 0.96), rgba(16, 12, 13, 0.96));
+    color: #efd4c7;
+  }
+
+  .mobile-battle-hand-overlay-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding-right: 30px;
+  }
+
+  .mobile-battle-hand-overlay-title {
+    color: #f1e6c8;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .mobile-battle-hand-overlay-count {
+    color: #bfae8d;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .mobile-battle-hand-overlay-body {
+    min-height: 0;
+  }
+
+  .mobile-battle-opponent-target-chip {
+    position: absolute;
+    top: calc(var(--mobile-battle-top-status-height) - 2px);
+    right: calc(var(--mobile-battle-scene-padding) + 2px);
+    z-index: 15;
+    display: inline-grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 6px;
+    min-width: 120px;
+    max-width: min(32vw, 188px);
+    padding: 6px 8px 6px 10px;
+    border: 1px solid rgba(255, 225, 170, 0.16);
+    border-radius: 14px;
+    background:
+      linear-gradient(180deg, rgba(16, 19, 25, 0.88), rgba(6, 8, 12, 0.82));
+    box-shadow:
+      0 12px 28px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    text-align: left;
   }
 
   .mobile-decision-dock {
     position: fixed;
     right: 0;
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 24px);
-    z-index: 150;
+    z-index: 170;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
@@ -7818,23 +8339,64 @@ textarea,
     pointer-events: none;
   }
 
-  .mobile-decision-dock-label {
-    max-width: min(38vw, 180px);
-    padding: 4px 10px;
-    border: 1px solid rgba(245, 214, 162, 0.16);
-    border-radius: 999px;
-    background:
-      linear-gradient(180deg, rgba(15, 19, 25, 0.88), rgba(6, 9, 14, 0.84));
-    color: #d8c5a2;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+  .mobile-decision-dock--inline {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    width: auto;
+    height: 100%;
+    max-width: calc(100% - 4px);
+    margin-left: auto;
+    margin-top: calc(var(--mobile-battle-inline-dock-overlap) * -1);
+    align-items: flex-end;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-dock-actions {
+    flex-direction: row;
+    width: auto;
+    max-width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-primary-button,
+  .mobile-decision-dock--inline .mobile-decision-secondary-button {
+    min-width: 0;
+    flex: 0 0 auto;
+    min-height: max(24px, calc(var(--mobile-battle-control-height) - 2px));
+    align-self: center;
+    border-radius: 14px 0 0 14px;
+    border-right: none;
+    justify-content: flex-start;
+    text-align: left;
     box-shadow:
-      0 10px 26px rgba(0, 0, 0, 0.26),
+      0 8px 16px rgba(0, 0, 0, 0.22),
       inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    backdrop-filter: blur(14px);
-    pointer-events: auto;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-primary-button {
+    padding: 2px max(10px, env(safe-area-inset-right)) 2px 8px;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-secondary-button {
+    min-width: 72px;
+    padding: 2px 10px 2px 8px;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-primary-label,
+  .mobile-decision-dock--inline .mobile-decision-secondary-button {
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .mobile-decision-dock--inline .mobile-decision-primary-subtitle {
+    margin-top: 0;
+    font-size: 6px;
+    line-height: 1;
   }
 
   .mobile-decision-dock-actions {
@@ -7914,6 +8476,43 @@ textarea,
     justify-content: center;
   }
 
+  .mobile-battle-stack-tray--inline {
+    position: static;
+    left: auto;
+    bottom: auto;
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 4px;
+    padding: 7px 8px 9px;
+  }
+
+  .mobile-battle-stack-tray--inline .mobile-battle-stack-tray-row {
+    min-width: max-content;
+  }
+
+  .mobile-battle-stack-tray--embedded {
+    position: static;
+    left: auto;
+    bottom: auto;
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .mobile-battle-stack-tray--embedded .mobile-battle-stack-tray-header {
+    margin-bottom: 8px;
+    padding: 0;
+  }
+
+  .mobile-battle-stack-tray--embedded .mobile-battle-stack-tray-scroll {
+    padding-bottom: 4px;
+  }
+
   .mobile-decision-sheet-backdrop,
   .mobile-decision-overlay-backdrop {
     position: fixed;
@@ -7931,6 +8530,19 @@ textarea,
     display: flex;
     justify-content: center;
     pointer-events: none;
+  }
+
+  .mobile-decision-sheet-shell--inline {
+    position: static;
+    inset: auto;
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    padding-inline: 0;
+    pointer-events: none;
+    overflow: hidden;
   }
 
   .mobile-decision-sheet {
@@ -7953,6 +8565,35 @@ textarea,
       inset 0 1px 0 rgba(255, 255, 255, 0.05);
     backdrop-filter: blur(18px);
     pointer-events: auto;
+  }
+
+  .mobile-decision-sheet--inline {
+    width: 100%;
+    min-height: 0;
+    max-height: none;
+    height: 100%;
+    border-bottom: 1px solid rgba(214, 183, 129, 0.14);
+    border-radius: 24px;
+    box-shadow:
+      0 24px 48px rgba(0, 0, 0, 0.44),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .mobile-decision-sheet--inline-compact {
+    display: grid;
+    grid-template-columns: minmax(104px, 168px) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .mobile-decision-sheet--inline.mobile-decision-sheet--action-list,
+  .mobile-decision-sheet--inline.mobile-decision-sheet--select-options {
+    width: min(100%, 980px);
+    max-height: none;
+    height: 100%;
   }
 
   .mobile-decision-overlay-shell {
@@ -8007,6 +8648,27 @@ textarea,
     right: 0;
   }
 
+  .mobile-decision-header--compact {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .mobile-decision-header-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+  }
+
+  .mobile-decision-header-trailing--compact {
+    position: static;
+    align-self: center;
+  }
+
   .mobile-decision-eyebrow {
     color: #d1b17b;
     font-size: 11px;
@@ -8040,6 +8702,11 @@ textarea,
     overscroll-behavior: contain;
   }
 
+  .mobile-decision-sheet-body--inline-compact {
+    overflow: hidden;
+    align-self: stretch;
+  }
+
   .mobile-decision-overlay-body--select-options {
     display: flex;
     min-height: 0;
@@ -8059,7 +8726,7 @@ textarea,
     gap: 6px;
   }
 
-  .mobile-select-options-close {
+  .mobile-decision-close {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -8073,6 +8740,59 @@ textarea,
     box-shadow:
       0 10px 20px rgba(0, 0, 0, 0.24),
       inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .mobile-decision-sheet--action-list,
+  .mobile-decision-sheet--stack,
+  .mobile-decision-sheet--select-options {
+    width: min(calc(100vw - 18px), 980px);
+    max-height: min(calc(100vh - 18px), 680px);
+    height: min(calc(100vh - 18px), 680px);
+    padding: 16px 16px calc(14px + env(safe-area-inset-bottom));
+    gap: 10px;
+  }
+
+  .mobile-decision-sheet-body--action-list,
+  .mobile-decision-sheet-body--stack,
+  .mobile-decision-sheet-body--select-options {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-decision-sheet-body--action-list {
+    overflow: auto;
+    max-height: min(28vh, 220px);
+  }
+
+  .mobile-decision-sheet-body--stack {
+    overflow: hidden;
+    max-height: min(34vh, 280px);
+  }
+
+  .mobile-decision-sheet-body--action-list .mobile-decision-action-list {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-decision-sheet-body--stack .mobile-battle-stack-tray--embedded {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-decision-sheet-body--inline-strip {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .mobile-decision-sheet-body--inline-strip::-webkit-scrollbar {
+    display: none;
   }
 
   .mobile-select-options-summary {
@@ -8094,7 +8814,16 @@ textarea,
   .mobile-decision-action-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+  }
+
+  .mobile-decision-action-list--inline-strip {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    min-width: 100%;
+    min-height: 0;
   }
 
   .mobile-decision-action-row {
@@ -8103,8 +8832,8 @@ textarea,
     justify-content: space-between;
     gap: 12px;
     width: 100%;
-    min-height: 54px;
-    padding: 0 16px;
+    min-height: 48px;
+    padding: 0 14px;
     border: 1px solid rgba(211, 181, 129, 0.16);
     border-radius: 18px;
     background:
@@ -8114,6 +8843,19 @@ textarea,
     font-weight: 700;
     text-align: left;
     transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+  }
+
+  .mobile-decision-action-row--inline-strip {
+    width: auto;
+    min-width: min(44vw, 220px);
+    max-width: min(52vw, 280px);
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .mobile-decision-action-row:hover {
@@ -8147,6 +8889,12 @@ textarea,
     color: #ccb894;
     font-size: 14px;
     font-style: italic;
+  }
+
+  .mobile-decision-empty-state--inline-strip {
+    padding: 0 6px;
+    font-size: 11px;
+    white-space: nowrap;
   }
 
   .mobile-decision-sheet .decision-panel-header {
@@ -8205,6 +8953,81 @@ textarea,
     border: 0;
     background: transparent;
     pointer-events: auto;
+  }
+
+  @media (orientation: landscape) and (max-height: 480px) {
+    .mobile-decision-dock--inline {
+      max-width: 100%;
+    }
+
+    .mobile-decision-sheet--action-list,
+    .mobile-decision-sheet--stack,
+    .mobile-decision-sheet--select-options {
+      width: min(calc(100vw - 12px), 1120px);
+      max-height: calc(100vh - 10px);
+      height: calc(100vh - 10px);
+      padding: 12px 12px calc(10px + env(safe-area-inset-bottom));
+      gap: 8px;
+    }
+
+    .mobile-decision-sheet--inline {
+      max-height: none;
+    }
+
+    .mobile-decision-sheet--inline.mobile-decision-sheet--action-list,
+    .mobile-decision-sheet--inline.mobile-decision-sheet--select-options {
+      width: min(100%, 1120px);
+      max-height: none;
+      height: 100%;
+    }
+
+    .mobile-decision-sheet-body--action-list {
+      max-height: min(24vh, 180px);
+    }
+
+    .mobile-decision-sheet--inline-compact {
+      grid-template-columns: minmax(96px, 150px) minmax(0, 1fr);
+      gap: 6px;
+      padding: 3px 5px;
+    }
+
+    .mobile-decision-eyebrow {
+      font-size: 8px;
+      letter-spacing: 0.12em;
+    }
+
+    .mobile-decision-header--compact .mobile-decision-title {
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .mobile-decision-header--compact .mobile-decision-subtitle {
+      font-size: 9px;
+      line-height: 1.1;
+    }
+
+    .mobile-decision-header--compact .mobile-decision-close {
+      width: 26px;
+      height: 26px;
+    }
+
+    .mobile-decision-title {
+      font-size: 20px;
+    }
+
+    .mobile-decision-subtitle {
+      font-size: 11px;
+    }
+
+    .mobile-select-options-summary {
+      font-size: clamp(11px, 1vw, 15px);
+    }
+
+    .mobile-decision-action-row {
+      min-height: 44px;
+      padding-inline: 12px;
+      font-size: 15px;
+    }
   }
 
   .mobile-battle-inspect-overlay {

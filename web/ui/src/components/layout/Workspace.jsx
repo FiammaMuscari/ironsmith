@@ -205,6 +205,7 @@ export default function Workspace({
   setMobileOpponentIndex,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
+  const [focusedStackObjectId, setFocusedStackObjectId] = useState(null);
   const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
@@ -267,8 +268,8 @@ export default function Workspace({
     return ids;
   }, [decision]);
   const stackTargetPresentation = useMemo(
-    () => buildStackTargetPresentation(state, zoneViews, selectedObjectId),
-    [selectedObjectId, state, zoneViews]
+    () => buildStackTargetPresentation(state, zoneViews, focusedStackObjectId ?? selectedObjectId),
+    [focusedStackObjectId, selectedObjectId, state, zoneViews]
   );
   const temporaryZoneViews = useMemo(
     () => (combatDeclarationActive ? [] : stackTargetPresentation.temporaryZoneViews),
@@ -326,6 +327,19 @@ export default function Workspace({
 
     previousStackIdsRef.current = currentStackIds;
   }, [state, selectedObjectId, combatDeclarationActive]);
+
+  useEffect(() => {
+    if (focusedStackObjectId == null) return;
+    const visibleStackKeys = new Set(
+      getVisibleStackObjects(state).flatMap((entry) => stackSelectionKeys(entry))
+    );
+    if (visibleStackKeys.has(String(focusedStackObjectId))) return;
+    queueMicrotask(() => {
+      setFocusedStackObjectId((currentFocused) => (
+        String(currentFocused) === String(focusedStackObjectId) ? null : currentFocused
+      ));
+    });
+  }, [focusedStackObjectId, state]);
 
   useEffect(() => {
     const currentSnapshot = buildZoneActivitySnapshot(players);
@@ -455,6 +469,7 @@ export default function Workspace({
   useEffect(() => {
     if (!combatDeclarationActive) return;
     queueMicrotask(() => {
+      setFocusedStackObjectId(null);
       setSelectedObjectId(null);
       setPinnedInspectorObjectId(null);
     });
@@ -639,6 +654,7 @@ export default function Workspace({
         }
       }
       setSelectedObjectId(objectId);
+      setFocusedStackObjectId(stackEntry?.id != null ? String(stackEntry.id) : null);
       setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
       setSuppressFallbackInspector(false);
       if (objectId != null) hoverCard(objectId);
@@ -655,6 +671,20 @@ export default function Workspace({
       state?.perspective,
     ]
   );
+
+  const handleFocusStackObject = useCallback((stackEntry) => {
+    const stackObjectId = stackEntry?.id;
+    if (stackObjectId == null) return;
+    clearHover();
+    setSelectedObjectId(null);
+    setPinnedInspectorObjectId(null);
+    setSuppressFallbackInspector(false);
+    setFocusedStackObjectId((currentFocused) => (
+      String(currentFocused) === String(stackObjectId)
+        ? null
+        : String(stackObjectId)
+    ));
+  }, [clearHover]);
 
   const mobileZoneHeaderControls = null;
 
@@ -945,6 +975,8 @@ export default function Workspace({
         <TableCore
           selectedObjectId={selectedObjectId}
           onInspect={handleInspectObject}
+          focusedStackObjectId={focusedStackObjectId}
+          onFocusStackObject={handleFocusStackObject}
           zoneViews={effectiveZoneViews}
           zoneActivityByPlayer={zoneActivityByPlayer}
           deckLoadingMode={deckLoadingMode}
