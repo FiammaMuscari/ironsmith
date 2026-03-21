@@ -14,8 +14,7 @@ use crate::{ObjectFilter, PlayerFilter, Value};
 use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
 #[cfg(test)]
 use crate::cards::builders::{
-    NewTargetRestrictionAst, ObjectRefAst, PredicateAst, PreventNextTimeDamageSourceAst,
-    RetargetModeAst,
+    ObjectRefAst, PredicateAst, PreventNextTimeDamageSourceAst, RetargetModeAst,
 };
 #[cfg(test)]
 use crate::{ChooseSpec, TagKey};
@@ -555,8 +554,7 @@ fn advance_reference_frame_for_effect(
                 frame.last_object_tag = Some(next_reference_tag(id_gen, "sacrificed"));
             }
         }
-        EffectAst::CreateToken { player, .. }
-        | EffectAst::CreateTokenCopy { player, .. }
+        EffectAst::CreateTokenCopy { player, .. }
         | EffectAst::CreateTokenCopyFromSource { player, .. } => {
             track_effect_player(player.clone(), frame, true, true)?;
             if frame.auto_tag_object_targets {
@@ -659,9 +657,6 @@ fn advance_reference_frame_for_effect(
             advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
             track_effect_player(player.clone(), frame, true, true)?;
         }
-        EffectAst::MayByTaggedController { effects, .. } => {
-            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
-        }
         EffectAst::DelayedUntilNextUpkeep { player, effects }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
             advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
@@ -760,7 +755,6 @@ fn advance_reference_frame_for_effect(
         | EffectAst::Bolster { .. }
         | EffectAst::Support { .. }
         | EffectAst::Adapt { .. }
-        | EffectAst::CounterActivatedOrTriggeredAbility
         | EffectAst::AddManaImprintedColors
         | EffectAst::BecomeBasicLandType { .. }
         | EffectAst::BecomeBasicLandTypeChoice { .. }
@@ -1133,7 +1127,6 @@ fn resolve_effect_result_values_in_fields(
         | EffectAst::PayEnergy { amount, .. }
         | EffectAst::LookAtTopCards { count: amount, .. }
         | EffectAst::CopySpell { count: amount, .. }
-        | EffectAst::CreateToken { count: amount, .. }
         | EffectAst::Investigate { count: amount }
         | EffectAst::Proliferate { count: amount }
         | EffectAst::CreateTokenCopy { count: amount, .. }
@@ -1462,7 +1455,6 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
         | EffectAst::CastTagged { tag, .. }
         | EffectAst::RevealTagged { tag }
         | EffectAst::ReorderTopOfLibrary { tag }
-        | EffectAst::MayByTaggedController { tag, .. }
         | EffectAst::ForEachTagged { tag, .. }
         | EffectAst::ForEachTaggedPlayer { tag, .. } => bind_unresolved_it_in_tag(tag, seed_tag),
         EffectAst::DrawForEachTaggedMatching { tag, filter, .. } => {
@@ -1490,18 +1482,10 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_target(target, seed_tag)
                 + bind_unresolved_it_in_value(count, seed_tag)
         }
-        EffectAst::RetargetStackObject {
-            target,
-            mode,
-            new_target_restriction,
-            ..
-        } => {
+        EffectAst::RetargetStackObject { target, mode, .. } => {
             let mut replacements = bind_unresolved_it_in_target(target, seed_tag);
             if let RetargetModeAst::OneToFixed { target } = mode {
                 replacements += bind_unresolved_it_in_target(target, seed_tag);
-            }
-            if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction.as_mut() {
-                replacements += bind_unresolved_it_in_filter(filter, seed_tag);
             }
             replacements
         }
@@ -1551,8 +1535,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             }
             replacements
         }
-        EffectAst::CreateToken { count, .. }
-        | EffectAst::Investigate { count }
+        EffectAst::Investigate { count }
         | EffectAst::Proliferate { count } => bind_unresolved_it_in_value(count, seed_tag),
         EffectAst::CreateTokenCopy { object, count, .. } => {
             bind_unresolved_it_in_object_ref_ast(object, seed_tag)

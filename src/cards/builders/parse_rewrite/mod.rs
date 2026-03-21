@@ -17,7 +17,6 @@ mod restriction_support;
 mod util;
 
 pub(crate) use ir::*;
-pub(crate) use leaf::*;
 pub(crate) use lexer::{OwnedLexToken, lex_line};
 pub(crate) use lower::*;
 pub(crate) use parse::*;
@@ -26,6 +25,8 @@ pub(crate) use ported_activation_and_restrictions::*;
 pub(crate) use ported_effects_sentences::*;
 pub(crate) use ported_keyword_static::*;
 pub(crate) use ported_object_filters::*;
+#[cfg(test)]
+pub(crate) use leaf::*;
 
 #[cfg(test)]
 mod tests;

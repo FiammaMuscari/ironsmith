@@ -1,8 +1,6 @@
-#![allow(dead_code)]
+use crate::cards::builders::{LineInfo, MetadataLine};
 
-use crate::cards::builders::{LineInfo, MetadataLine, TextSpan};
-
-use super::leaf::{ActivationCostCst, TypeLineCst};
+use super::leaf::ActivationCostCst;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteDocumentCst {
@@ -25,9 +23,7 @@ pub(crate) enum RewriteLineCst {
 
 #[derive(Debug, Clone)]
 pub(crate) struct MetadataLineCst {
-    pub(crate) info: LineInfo,
     pub(crate) value: MetadataLine,
-    pub(crate) type_line: Option<TypeLineCst>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +63,6 @@ pub(crate) struct ActivatedLineCst {
     pub(crate) info: LineInfo,
     pub(crate) cost: ActivationCostCst,
     pub(crate) effect_text: String,
-    pub(crate) colon_span: TextSpan,
     pub(crate) chosen_option_label: Option<String>,
 }
 
@@ -81,27 +76,17 @@ pub(crate) enum TriggerIntroCst {
 #[derive(Debug, Clone)]
 pub(crate) struct TriggeredLineCst {
     pub(crate) info: LineInfo,
-    pub(crate) intro: TriggerIntroCst,
     pub(crate) full_text: String,
     pub(crate) trigger_text: String,
     pub(crate) effect_text: String,
-    pub(crate) separator_span: TextSpan,
     pub(crate) max_triggers_per_turn: Option<u32>,
     pub(crate) chosen_option_label: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StaticLineKindCst {
-    KeywordActions,
-    StaticAbilities,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct StaticLineCst {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
-    pub(crate) kind: StaticLineKindCst,
-    pub(crate) item_count: usize,
     pub(crate) chosen_option_label: Option<String>,
 }
 
@@ -109,7 +94,6 @@ pub(crate) struct StaticLineCst {
 pub(crate) struct StatementLineCst {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
-    pub(crate) sentence_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +110,6 @@ pub(crate) struct ModalModeCst {
 
 #[derive(Debug, Clone)]
 pub(crate) struct LevelHeaderCst {
-    pub(crate) info: LineInfo,
     pub(crate) min_level: u32,
     pub(crate) max_level: Option<u32>,
     pub(crate) pt: Option<(i32, i32)>,
@@ -144,7 +127,6 @@ pub(crate) struct LevelItemCst {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
     pub(crate) kind: LevelItemKindCst,
-    pub(crate) item_count: usize,
 }
 
 #[derive(Debug, Clone)]

@@ -598,16 +598,6 @@ pub(super) fn normalize_third_person_verb_phrase(text: &str) -> String {
     text.to_string()
 }
 
-#[allow(dead_code)]
-pub(super) fn normalize_you_subject_phrase(text: &str) -> String {
-    if let Some(rest) = text.strip_prefix("you ") {
-        return format!("you {}", normalize_you_verb_phrase(rest));
-    }
-    if let Some(rest) = text.strip_prefix("You ") {
-        return format!("You {}", normalize_you_verb_phrase(rest));
-    }
-    text.to_string()
-}
 
 pub(super) fn normalize_cost_amount_token(text: &str) -> String {
     let cleaned = text.trim().trim_end_matches('.').trim_matches('"').trim();
@@ -624,6 +614,33 @@ pub(super) fn normalize_cost_amount_token(text: &str) -> String {
 }
 
 pub(super) fn small_number_word(n: u32) -> Option<&'static str> {
+    match n {
+        0 => Some("zero"),
+        1 => Some("one"),
+        2 => Some("two"),
+        3 => Some("three"),
+        4 => Some("four"),
+        5 => Some("five"),
+        6 => Some("six"),
+        7 => Some("seven"),
+        8 => Some("eight"),
+        9 => Some("nine"),
+        10 => Some("ten"),
+        11 => Some("eleven"),
+        12 => Some("twelve"),
+        13 => Some("thirteen"),
+        14 => Some("fourteen"),
+        15 => Some("fifteen"),
+        16 => Some("sixteen"),
+        17 => Some("seventeen"),
+        18 => Some("eighteen"),
+        19 => Some("nineteen"),
+        20 => Some("twenty"),
+        _ => None,
+    }
+}
+
+pub(super) fn number_word(n: i32) -> Option<&'static str> {
     match n {
         0 => Some("zero"),
         1 => Some("one"),
@@ -4184,133 +4201,6 @@ pub(super) fn strip_parenthetical_segments(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-#[allow(dead_code)]
-pub(super) fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
-    match word {
-        "w" => Some("{W}"),
-        "u" => Some("{U}"),
-        "b" => Some("{B}"),
-        "r" => Some("{R}"),
-        "g" => Some("{G}"),
-        "c" => Some("{C}"),
-        _ => None,
-    }
-}
-
-#[allow(dead_code)]
-pub(super) fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
-    let rest = strip_parenthetical_segments(rest);
-    let rest = rest.trim().trim_matches('"').trim();
-    let subject_prefix = if subject.eq_ignore_ascii_case("all slivers") {
-        "All Slivers"
-    } else {
-        "All Sliver creatures"
-    };
-    let words = rest
-        .split_whitespace()
-        .map(|word| {
-            word.trim_matches(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '{' || ch == '}'))
-        })
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
-    if words.is_empty() {
-        return None;
-    }
-
-    let mut idx = 0usize;
-    let mut costs = Vec::new();
-    while idx < words.len() {
-        let word = words[idx];
-        if word.chars().all(|ch| ch.is_ascii_digit()) {
-            costs.push(format!("{{{word}}}"));
-            idx += 1;
-            continue;
-        }
-        if word == "t" {
-            costs.push("{T}".to_string());
-            idx += 1;
-            continue;
-        }
-        break;
-    }
-    if idx + 2 < words.len()
-        && words[idx] == "sacrifice"
-        && words[idx + 1] == "this"
-        && words[idx + 2] == "permanent"
-    {
-        costs.push("Sacrifice this permanent".to_string());
-        idx += 3;
-    }
-
-    let mut effect_words = words[idx..].to_vec();
-    if effect_words.is_empty() {
-        return None;
-    }
-
-    let effect = if effect_words[0] == "add" && effect_words.len() > 1 {
-        let mut mana_parts = Vec::new();
-        for word in &effect_words[1..] {
-            if let Some(symbol) = mana_word_to_symbol(word) {
-                mana_parts.push(symbol.to_string());
-                continue;
-            }
-            let lower = word.to_ascii_lowercase();
-            if lower.len() > 1
-                && lower
-                    .chars()
-                    .all(|ch| matches!(ch, 'w' | 'u' | 'b' | 'r' | 'g' | 'c'))
-            {
-                for ch in lower.chars() {
-                    if let Some(symbol) = mana_word_to_symbol(&ch.to_string()) {
-                        mana_parts.push(symbol.to_string());
-                    }
-                }
-                continue;
-            }
-            let mut idx = 0usize;
-            let bytes = lower.as_bytes();
-            while idx + 2 < bytes.len() {
-                if bytes[idx] == b'{' && bytes[idx + 2] == b'}' {
-                    let candidate = &lower[idx + 1..idx + 2];
-                    if let Some(symbol) = mana_word_to_symbol(candidate) {
-                        mana_parts.push(symbol.to_string());
-                    }
-                    idx += 3;
-                } else {
-                    idx += 1;
-                }
-            }
-        }
-        let mana = mana_parts.join("");
-        if mana.is_empty() {
-            capitalize_first(&effect_words.join(" "))
-        } else {
-            format!("Add {mana}")
-        }
-    } else {
-        if effect_words.len() >= 2 && effect_words[0] == "target" && effect_words[1] == "sliver" {
-            effect_words[1] = "Sliver";
-        }
-        normalize_zero_pt_prefix(&capitalize_first(&effect_words.join(" ")))
-    };
-
-    let effect_lower = effect.to_ascii_lowercase();
-    let is_simple_keyword = is_keyword_phrase(&effect_lower)
-        || effect_lower.starts_with("absorb ")
-        || effect_lower.starts_with("frenzy ")
-        || effect_lower.starts_with("poisonous ");
-
-    if costs.is_empty() && is_simple_keyword {
-        Some(format!("{subject_prefix} have {effect_lower}"))
-    } else if costs.is_empty() {
-        Some(format!("{subject_prefix} have \"{effect}.\""))
-    } else {
-        Some(format!(
-            "{subject_prefix} have \"{}: {effect}.\"",
-            costs.join(", ")
-        ))
-    }
-}
 
 pub(super) fn describe_card_count(value: &Value) -> String {
     match value {
@@ -5215,38 +5105,6 @@ pub(super) fn ensure_trailing_period(text: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn normalize_modal_text(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-#[allow(dead_code)]
-pub(super) fn modal_text_equivalent(description: &str, compiled: &str) -> bool {
-    normalize_modal_text(description) == normalize_modal_text(compiled)
-}
-
-pub(super) fn number_word(value: i32) -> Option<&'static str> {
-    match value {
-        1 => Some("one"),
-        2 => Some("two"),
-        3 => Some("three"),
-        4 => Some("four"),
-        5 => Some("five"),
-        _ => None,
-    }
-}
-
 pub(super) fn describe_search_selection_with_cards(selection: &str) -> String {
     let selection = selection.trim();
     if selection.is_empty() {
@@ -5393,40 +5251,6 @@ pub(super) fn normalize_split_search_battlefield_then_hand_clause(text: &str) ->
     Some(format!(
         "Search your library for up to two {second_subject} cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
     ))
-}
-
-#[allow(dead_code)]
-pub(super) fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
-    let (prefix, rest) = if let Some(rest) = text.strip_prefix("Choose between ") {
-        ("", rest)
-    } else if let Some((prefix, rest)) = text.split_once("Choose between ") {
-        (prefix, rest)
-    } else {
-        return None;
-    };
-    let (range, modes) = rest.split_once(" mode(s) - ")?;
-    let (min_raw, max_raw) = range.split_once(" and ")?;
-    let min = min_raw.trim().parse::<u32>().ok()?;
-    let max = max_raw.trim().parse::<u32>().ok()?;
-    let modes = modes.replace("• ", "");
-    let count_word = |n: u32| {
-        number_word(n as i32)
-            .map(str::to_string)
-            .unwrap_or_else(|| n.to_string())
-    };
-    let header = match (min, max) {
-        (0, 1) => "Choose up to one —".to_string(),
-        (1, 1) => "Choose one —".to_string(),
-        (1, n) if n > 1 => "Choose one or more —".to_string(),
-        (0, n) => format!("Choose up to {} —", count_word(n)),
-        (n, m) if n == m => format!("Choose {} —", count_word(n)),
-        _ => format!("Choose between {min} and {max} —"),
-    };
-    if prefix.is_empty() {
-        Some(format!("{header} {modes}"))
-    } else {
-        Some(format!("{prefix}{header} {modes}"))
-    }
 }
 
 pub(super) fn describe_mode_choice_header(max: &Value, min: Option<&Value>) -> String {

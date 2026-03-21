@@ -12,10 +12,6 @@ macro_rules! nested_effects_variants {
                 effects: $effects,
                 ..
             }
-            | EffectAst::MayByTaggedController {
-                effects: $effects,
-                ..
-            }
             | EffectAst::ResolvedIfResult {
                 effects: $effects,
                 ..
@@ -152,7 +148,6 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::Bolster { .. } => {}
         EffectAst::Support { .. } => {}
         EffectAst::Adapt { .. } => {}
-        EffectAst::CounterActivatedOrTriggeredAbility => {}
         EffectAst::AddMana { .. } => {}
         EffectAst::AddManaScaled { .. } => {}
         EffectAst::AddManaAnyColor { .. } => {}
@@ -251,7 +246,6 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::RepeatThisProcessOnce => {}
         EffectAst::May { .. } => {}
         EffectAst::MayByPlayer { .. } => {}
-        EffectAst::MayByTaggedController { .. } => {}
         EffectAst::ResolvedIfResult { .. } => {}
         EffectAst::ResolvedWhenResult { .. } => {}
         EffectAst::IfResult { .. } => {}
@@ -286,7 +280,6 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ExileAll { .. } => {}
         EffectAst::LookAtHand { .. } => {}
         EffectAst::TargetOnly { .. } => {}
-        EffectAst::CreateToken { .. } => {}
         EffectAst::CreateTokenCopy { .. } => {}
         EffectAst::CreateTokenCopyFromSource { .. } => {}
         EffectAst::CreateTokenWithMods { .. } => {}

@@ -7486,10 +7486,6 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
     })
 }
 
-fn format_type_line(obj: &crate::object::Object) -> String {
-    format_type_line_parts(&obj.supertypes, &obj.card_types, &obj.subtypes)
-}
-
 fn format_type_line_parts(
     supertypes: &[crate::types::Supertype],
     card_types: &[crate::types::CardType],

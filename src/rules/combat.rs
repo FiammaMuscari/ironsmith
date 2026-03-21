@@ -25,15 +25,6 @@ pub enum EvasionType {
     Menace,
     Unblockable,
 }
-
-/// Check if an object has any of the specified static abilities.
-#[allow(dead_code)]
-fn has_any_ability_id(object: &Object, ability_ids: &[StaticAbilityId]) -> bool {
-    ability_ids
-        .iter()
-        .any(|ability_id| object.has_static_ability_id(*ability_id))
-}
-
 /// Check if a creature has an evasion ability.
 pub fn has_evasion(object: &Object, evasion: EvasionType) -> bool {
     match evasion {

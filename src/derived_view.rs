@@ -159,22 +159,6 @@ impl<'a> DerivedGameView<'a> {
         pool
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn can_potentially_pay(
-        &self,
-        player: PlayerId,
-        cost: &ManaCost,
-        x_value: u32,
-    ) -> bool {
-        self.can_potentially_pay_with_reason(
-            player,
-            None,
-            cost,
-            x_value,
-            crate::costs::PaymentReason::Other,
-        )
-    }
-
     pub(crate) fn can_potentially_pay_with_reason(
         &self,
         player: PlayerId,

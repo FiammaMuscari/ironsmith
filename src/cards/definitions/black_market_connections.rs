@@ -1,11 +1,15 @@
 //! Black Market Connections card definition.
 
 use super::CardDefinitionBuilder;
-use crate::card::PowerToughness;
 use crate::cards::CardDefinition;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
-use crate::types::{CardType, Subtype};
+use crate::types::CardType;
+
+#[cfg(test)]
+use crate::card::PowerToughness;
+#[cfg(test)]
+use crate::types::Subtype;
 
 /// Black Market Connections - {2}{B}
 /// Enchantment
@@ -31,7 +35,8 @@ pub fn black_market_connections() -> CardDefinition {
 }
 
 /// Creates a 3/2 colorless Shapeshifter creature token with changeling.
-#[allow(dead_code)]
+
+#[cfg(test)]
 fn shapeshifter_mercenary_token() -> CardDefinition {
     CardDefinitionBuilder::new(CardId::new(), "Shapeshifter")
         .token()

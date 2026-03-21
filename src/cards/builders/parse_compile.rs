@@ -26,7 +26,7 @@ use crate::cards::builders::{
     AnnotatedEffect, AnnotatedEffectSequence, CardDefinitionBuilder, CardTextError,
     ClashOpponentAst, ControlDurationAst, DamageBySpec, EffectAst, ExtraTurnAnchorAst,
     EffectLoweringContext, GrantedAbilityAst, IT_TAG, IdGenContext, IfResultPredicate, LineAst,
-    LoweredEffects, LoweringFrame, NewTargetRestrictionAst, NormalizedLine, ObjectRefAst,
+    LoweredEffects, LoweringFrame, NormalizedLine, ObjectRefAst,
     ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
     PreventNextTimeDamageTargetAst, ReferenceEnv, ReferenceExports, ReferenceImports,
     RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
@@ -281,13 +281,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             Trigger::keyword_action_from_source(action, player)
         }
         TriggerSpec::Expend { player, amount } => Trigger::expend(amount, player),
-        TriggerSpec::Custom(description) => {
-            debug_assert!(
-                false,
-                "unsupported custom trigger spec compiled: {description}"
-            );
-            Trigger::custom("unsupported_custom_trigger", description)
-        }
         TriggerSpec::SagaChapter(chapters) => Trigger::saga_chapter(chapters),
         TriggerSpec::HauntedCreatureDies => Trigger::custom(
             "haunted_creature_dies",
@@ -301,10 +294,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
 
 pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), CardTextError> {
     match trigger {
-        TriggerSpec::Custom(description) => Err(CardTextError::ParseError(format!(
-            "unsupported trigger clause (clause: '{}')",
-            description
-        ))),
         TriggerSpec::Either(left, right) => {
             ensure_concrete_trigger_spec(left)?;
             ensure_concrete_trigger_spec(right)?;
@@ -314,7 +303,7 @@ pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), 
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn compile_statement_effects(
     effects: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
@@ -325,7 +314,6 @@ pub(crate) fn compile_statement_effects(
     )
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn compile_statement_effects_with_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
@@ -790,7 +778,6 @@ pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<Pl
                 Some(PlayerFilter::IteratedPlayer)
             }
         }
-        TriggerSpec::Custom(_) => None,
         TriggerSpec::Either(left, right) => {
             let left_filter = inferred_trigger_player_filter(left);
             let right_filter = inferred_trigger_player_filter(right);
@@ -1497,25 +1484,14 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
             filter,
             ..
         } => effect_tag.as_str() == tag || filter_references_tag(filter, tag),
-        EffectAst::RetargetStackObject {
-            new_target_restriction,
-            ..
-        } => {
-            if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                filter_references_tag(filter, tag)
-            } else {
-                false
-            }
-        }
+        EffectAst::RetargetStackObject { .. } => false,
         EffectAst::PutIntoHand { object, .. } => match object {
             ObjectRefAst::Tagged(found) => found.as_str() == tag,
         },
         EffectAst::CreateTokenCopy { object, .. } => match object {
             ObjectRefAst::Tagged(found) => found.as_str() == tag,
         },
-        EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
-            value_references_tag(count, tag)
-        }
+        EffectAst::CreateTokenWithMods { count, .. } => value_references_tag(count, tag),
         EffectAst::ForEachObject { filter, effects } => {
             filter
                 .tagged_constraints
@@ -1675,7 +1651,6 @@ pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool
         | EffectAst::PayEnergy { amount, .. }
         | EffectAst::LookAtTopCards { count: amount, .. }
         | EffectAst::CopySpell { count: amount, .. }
-        | EffectAst::CreateToken { count: amount, .. }
         | EffectAst::Investigate { count: amount }
         | EffectAst::CreateTokenCopy { count: amount, .. }
         | EffectAst::CreateTokenCopyFromSource { count: amount, .. }
@@ -1786,7 +1761,6 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::SkipDrawStep { player }
         | EffectAst::PoisonCounters { player, .. }
         | EffectAst::EnergyCounters { player, .. }
-        | EffectAst::CreateToken { player, .. }
         | EffectAst::CreateTokenCopy { player, .. }
         | EffectAst::CreateTokenCopyFromSource { player, .. }
         | EffectAst::CreateTokenWithMods { player, .. }
@@ -1900,16 +1874,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
             ..
         } => true,
         EffectAst::PutRestOnBottomOfLibrary => true,
-        EffectAst::RetargetStackObject {
-            new_target_restriction,
-            ..
-        } => {
-            if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                filter_references_tag(filter, IT_TAG)
-            } else {
-                false
-            }
-        }
+        EffectAst::RetargetStackObject { .. } => false,
         EffectAst::CreateTokenCopy { object, .. } => {
             matches!(object, ObjectRefAst::Tagged(tag) if tag.as_str() == IT_TAG)
         }
@@ -1920,9 +1885,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, .. }
         | EffectAst::CastTagged { tag, .. }
         | EffectAst::ReorderTopOfLibrary { tag } => tag.as_str() == IT_TAG,
-        EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
-            value_references_tag(count, IT_TAG)
-        }
+        EffectAst::CreateTokenWithMods { count, .. } => value_references_tag(count, IT_TAG),
         EffectAst::ForEachTagged { tag, effects } => {
             tag.as_str() == IT_TAG || effects_reference_it_tag(effects)
         }
@@ -3022,8 +2985,7 @@ pub(crate) fn compile_effects_in_iterated_player_context(
 pub(crate) fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]) {
     for effect in effects {
         match effect {
-            EffectAst::CreateToken { player, .. }
-            | EffectAst::CreateTokenWithMods { player, .. }
+            EffectAst::CreateTokenWithMods { player, .. }
             | EffectAst::CreateTokenCopy { player, .. }
             | EffectAst::CreateTokenCopyFromSource { player, .. } => {
                 if matches!(player, PlayerAst::Implicit) {
@@ -4221,10 +4183,6 @@ fn try_compile_board_state_effect(
         EffectAst::Bolster { amount } => (vec![Effect::bolster(*amount)], Vec::new()),
         EffectAst::Support { amount } => (vec![Effect::support(*amount)], Vec::new()),
         EffectAst::Adapt { amount } => (vec![Effect::adapt(*amount)], Vec::new()),
-        EffectAst::CounterActivatedOrTriggeredAbility => (
-            vec![Effect::counter_activated_or_triggered_ability()],
-            Vec::new(),
-        ),
         _ => return Ok(None),
     };
 
@@ -4916,12 +4874,6 @@ fn try_compile_timing_and_control_effect(
                 crate::cards::builders::ZoneReplacementDurationAst::OneShot => {
                     crate::effects::ReplacementApplyMode::OneShot
                 }
-                crate::cards::builders::ZoneReplacementDurationAst::UntilEndOfTurn => {
-                    crate::effects::ReplacementApplyMode::UntilEndOfTurn
-                }
-                crate::cards::builders::ZoneReplacementDurationAst::Resolution => {
-                    crate::effects::ReplacementApplyMode::Resolution
-                }
             };
             let effect = Effect::new(crate::effects::RegisterZoneReplacementEffect::new(
                 spec,
@@ -5312,26 +5264,6 @@ fn try_compile_flow_and_iteration_effect(
             let mut choices = inner_choices;
             choices.extend(alt_choices);
             (vec![effect], choices)
-        }
-        EffectAst::MayByTaggedController { tag, effects } => {
-            if effects.is_empty() {
-                return Err(CardTextError::ParseError(
-                    "empty may-by-tagged-controller effect branch is unsupported".to_string(),
-                ));
-            }
-            let (inner_effects, inner_choices) =
-                compile_effects_preserving_last_effect(effects, ctx)?;
-            if inner_effects.is_empty() {
-                return Err(CardTextError::ParseError(
-                    "empty compiled may-by-tagged-controller effect branch is unsupported"
-                        .to_string(),
-                ));
-            }
-            let effect = Effect::for_each_controller_of_tagged(
-                tag.clone(),
-                vec![Effect::may(inner_effects)],
-            );
-            (vec![effect], inner_choices)
         }
         EffectAst::IfResult { predicate, effects } => {
             let condition = ctx.last_effect_id.ok_or_else(|| {
@@ -6497,7 +6429,6 @@ fn try_compile_stack_and_condition_effect(
             mode,
             chooser,
             require_change,
-            new_target_restriction,
         } => {
             let (spec, mut choices) =
                 resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
@@ -6512,21 +6443,6 @@ fn try_compile_stack_and_condition_effect(
 
             if *require_change {
                 effect = effect.require_change();
-            }
-
-            if let Some(restriction) = new_target_restriction {
-                let restriction = match restriction {
-                    NewTargetRestrictionAst::Player(player) => {
-                        let (filter, _) =
-                            resolve_effect_player_filter(*player, ctx, false, false, false)?;
-                        crate::effects::NewTargetRestriction::Player(filter)
-                    }
-                    NewTargetRestrictionAst::Object(filter) => {
-                        let resolved = resolve_it_tag(filter, &current_reference_env(ctx))?;
-                        crate::effects::NewTargetRestriction::Object(resolved)
-                    }
-                };
-                effect = effect.with_restriction(restriction);
             }
 
             let compiled_mode = match mode {
@@ -6773,29 +6689,6 @@ fn try_compile_token_generation_effect(
                 compiled.push(Effect::attach_objects(objects, target_spec));
             }
             (compiled, choices)
-        }
-        EffectAst::CreateToken {
-            name,
-            count,
-            player,
-        } => {
-            let token = token_definition_for(name.as_str())
-                .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
-            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
-            let (player_filter, choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let effect = if matches!(player_filter, PlayerFilter::You) {
-                Effect::create_tokens(token, count.clone())
-            } else {
-                Effect::create_tokens_player(token, count, player_filter)
-            };
-            let mut effect = effect;
-            if ctx.auto_tag_object_targets {
-                let tag = ctx.next_tag("created");
-                ctx.last_object_tag = Some(tag.clone());
-                effect = effect.tag(tag);
-            }
-            (vec![effect], choices)
         }
         EffectAst::CreateTokenCopy {
             object,

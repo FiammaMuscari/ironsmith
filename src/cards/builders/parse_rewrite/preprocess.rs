@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::cards::builders::{
     CardDefinitionBuilder, CardTextError, LineInfo, MetadataLine, NormalizedLine, OwnedLexToken,
     ParseAnnotations, is_ignorable_unparsed_line, lex_line, normalize_line_for_parse,

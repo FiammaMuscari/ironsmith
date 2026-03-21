@@ -1179,8 +1179,6 @@ pub(crate) enum TriggerSpec {
         player: PlayerFilter,
         amount: u32,
     },
-    #[allow(dead_code)]
-    Custom(String),
     SagaChapter(Vec<u32>),
     Either(Box<TriggerSpec>, Box<TriggerSpec>),
 }
@@ -1342,7 +1340,7 @@ pub(crate) enum PredicateAst {
     YouHaveNoCardsInHand,
     SourceIsTapped,
     SourceIsSaddled,
-    #[allow(dead_code)]
+    
     SourceHasNoCounter(CounterType),
     TriggeringObjectHadNoCounter(CounterType),
     SourceHasCounterAtLeast {
@@ -1377,12 +1375,10 @@ pub(crate) enum PredicateAst {
     And(Box<PredicateAst>, Box<PredicateAst>),
 }
 
-#[allow(dead_code)]
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ZoneReplacementDurationAst {
     OneShot,
-    UntilEndOfTurn,
-    Resolution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1403,13 +1399,6 @@ pub(crate) enum ExtraTurnAnchorAst {
 pub(crate) enum SharedTypeConstraintAst {
     CardType,
     PermanentType,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub(crate) enum NewTargetRestrictionAst {
-    Player(PlayerAst),
-    Object(ObjectFilter),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1616,8 +1605,6 @@ pub(crate) enum EffectAst {
     Adapt {
         amount: u32,
     },
-    #[allow(dead_code)]
-    CounterActivatedOrTriggeredAbility,
     AddMana {
         mana: Vec<ManaSymbol>,
         player: PlayerAst,
@@ -1851,7 +1838,6 @@ pub(crate) enum EffectAst {
         mode: RetargetModeAst,
         chooser: PlayerAst,
         require_change: bool,
-        new_target_restriction: Option<NewTargetRestrictionAst>,
     },
     Conditional {
         predicate: PredicateAst,
@@ -2024,11 +2010,6 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
         effects: Vec<EffectAst>,
     },
-    #[allow(dead_code)]
-    MayByTaggedController {
-        tag: TagKey,
-        effects: Vec<EffectAst>,
-    },
     ResolvedIfResult {
         condition: EffectId,
         predicate: IfResultPredicate,
@@ -2153,12 +2134,6 @@ pub(crate) enum EffectAst {
     },
     TargetOnly {
         target: TargetAst,
-    },
-    #[allow(dead_code)]
-    CreateToken {
-        name: String,
-        count: Value,
-        player: PlayerAst,
     },
     CreateTokenCopy {
         object: ObjectRefAst,
@@ -2371,7 +2346,7 @@ pub(crate) enum EffectAst {
     ReorderTopOfLibrary {
         tag: TagKey,
     },
-    #[allow(dead_code)]
+    
     ShuffleLibrary {
         player: PlayerAst,
     },

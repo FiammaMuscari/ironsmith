@@ -157,12 +157,6 @@ impl DelayedTriggerTemplate {
         self
     }
 
-    #[allow(dead_code)]
-    pub fn with_choices(mut self, choices: Vec<crate::target::ChooseSpec>) -> Self {
-        self.choices = choices;
-        self
-    }
-
     pub fn with_tagged_objects(
         mut self,
         tagged_objects: HashMap<TagKey, Vec<ObjectSnapshot>>,

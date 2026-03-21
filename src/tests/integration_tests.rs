@@ -15,10 +15,8 @@
 //!     .run();
 //! ```
 
-#![allow(dead_code)]
-
 use crate::cards::CardRegistry;
-use crate::combat_state::{AttackTarget, CombatState};
+use crate::combat_state::CombatState;
 use crate::decision::{
     AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress, LegalAction,
 };
@@ -46,41 +44,8 @@ pub enum Action {
     /// Cast a spell by name from hand.
     CastSpell(&'static str),
 
-    /// Cast a spell with specific targets.
-    CastSpellTargeting {
-        spell: &'static str,
-        targets: Vec<TargetChoice>,
-    },
-
     /// Activate a mana ability on a permanent by name.
     TapForMana(&'static str),
-
-    /// Activate an ability on a permanent.
-    ActivateAbility {
-        source: &'static str,
-        ability_index: usize,
-    },
-
-    /// Declare attackers (creature names attacking the opponent).
-    DeclareAttackers(Vec<&'static str>),
-
-    /// Declare blockers (blocker name, attacker name pairs).
-    DeclareBlockers(Vec<(&'static str, &'static str)>),
-
-    /// No attackers this combat.
-    DeclareNoAttackers,
-
-    /// No blockers this combat.
-    DeclareNoBlockers,
-}
-
-/// A target choice for spells/abilities.
-#[derive(Debug, Clone)]
-pub enum TargetChoice {
-    /// Target a player by name ("Alice", "Bob") or "Opponent".
-    Player(&'static str),
-    /// Target a permanent by name.
-    Permanent(&'static str),
 }
 
 /// Result of running a scripted turn.
@@ -290,18 +255,6 @@ impl GameScript {
         self
     }
 
-    /// Add multiple actions at once.
-    pub fn actions(mut self, actions: impl IntoIterator<Item = Action>) -> Self {
-        self.actions.extend(actions);
-        self
-    }
-
-    /// Set starting life total.
-    pub fn starting_life(mut self, life: i32) -> Self {
-        self.starting_life = life;
-        self
-    }
-
     /// Run the game script and return the final game state.
     pub fn run(self) -> Result<GameState, ScriptError> {
         let mut needed_cards = std::collections::HashSet::new();
@@ -313,27 +266,7 @@ impl GameScript {
                 Action::PlayLand(name) | Action::CastSpell(name) | Action::TapForMana(name) => {
                     needed_cards.insert(*name);
                 }
-                Action::CastSpellTargeting { spell, targets } => {
-                    needed_cards.insert(*spell);
-                    for target in targets {
-                        if let TargetChoice::Permanent(name) = target {
-                            needed_cards.insert(*name);
-                        }
-                    }
-                }
-                Action::ActivateAbility { source, .. } => {
-                    needed_cards.insert(*source);
-                }
-                Action::DeclareAttackers(names) => {
-                    needed_cards.extend(names.iter().copied());
-                }
-                Action::DeclareBlockers(pairs) => {
-                    for (blocker, attacker) in pairs {
-                        needed_cards.insert(*blocker);
-                        needed_cards.insert(*attacker);
-                    }
-                }
-                Action::Pass | Action::DeclareNoAttackers | Action::DeclareNoBlockers => {}
+                Action::Pass => {}
             }
         }
 
@@ -414,28 +347,33 @@ impl Default for GameScript {
 pub enum ScriptError {
     /// A card name was not found in the registry.
     CardNotFound(String),
-    /// A permanent was not found on the battlefield.
-    PermanentNotFound(String),
-    /// The action doesn't match the current decision.
-    ActionMismatch { expected: String, action: String },
     /// Game loop error.
     GameLoopError(String),
 }
+
+impl std::fmt::Display for ScriptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScriptError::CardNotFound(name) => write!(f, "card not found: {name}"),
+            ScriptError::GameLoopError(message) => write!(f, "game loop error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ScriptError {}
 
 /// A decision maker that executes scripted actions.
 struct ScriptedGameDecisionMaker {
     actions: Vec<Action>,
     index: usize,
-    player_names: Vec<String>,
 }
 
 impl ScriptedGameDecisionMaker {
     fn new(game: &GameState, actions: Vec<Action>) -> Self {
-        let player_names = game.players.iter().map(|p| p.name.clone()).collect();
+        let _ = game;
         Self {
             actions,
             index: 0,
-            player_names,
         }
     }
 
@@ -451,11 +389,6 @@ impl ScriptedGameDecisionMaker {
         } else {
             None
         }
-    }
-
-    /// Peek at the next action without consuming it.
-    fn peek_action(&self) -> Option<&Action> {
-        self.actions.get(self.index)
     }
 
     /// Find an object on the battlefield by name.
@@ -497,7 +430,7 @@ impl ScriptedGameDecisionMaker {
                     .cloned()
             }
 
-            Action::CastSpell(name) | Action::CastSpellTargeting { spell: name, .. } => {
+            Action::CastSpell(name) => {
                 let spell_id = self.find_in_hand(game, player, name)?;
                 legal_actions
                     .iter()
@@ -516,25 +449,6 @@ impl ScriptedGameDecisionMaker {
                     })
                     .cloned()
             }
-
-            Action::ActivateAbility {
-                source: name,
-                ability_index,
-            } => {
-                let source = self.find_permanent(game, name)?;
-                legal_actions
-                    .iter()
-                    .find(|la| {
-                        matches!(
-                            la,
-                            LegalAction::ActivateAbility { source: id, ability_index: idx }
-                            if *id == source && *idx == *ability_index
-                        )
-                    })
-                    .cloned()
-            }
-
-            _ => None, // Non-priority actions handled elsewhere
         }
     }
 }
@@ -562,32 +476,12 @@ impl DecisionMaker for ScriptedGameDecisionMaker {
 
     fn decide_attackers(
         &mut self,
-        game: &GameState,
-        ctx: &crate::decisions::context::AttackersContext,
+        _game: &GameState,
+        _ctx: &crate::decisions::context::AttackersContext,
     ) -> Vec<crate::decisions::spec::AttackerDeclaration> {
         if let Some(action) = self.next_action() {
-            match action {
-                Action::DeclareNoAttackers => {
-                    return vec![];
-                }
-                Action::DeclareAttackers(names) => {
-                    let mut declarations = Vec::new();
-                    for name in names {
-                        if let Some(creature_id) = self.find_permanent(game, name) {
-                            // Default to attacking the opponent
-                            let opponent =
-                                PlayerId::from_index(
-                                    if ctx.player.index() == 0 { 1 } else { 0 } as u8
-                                );
-                            declarations.push(crate::decisions::spec::AttackerDeclaration {
-                                creature: creature_id,
-                                target: AttackTarget::Player(opponent),
-                            });
-                        }
-                    }
-                    return declarations;
-                }
-                _ => {}
+            if let Action::Pass = action {
+                return vec![];
             }
         }
         // Default: no attackers
@@ -596,30 +490,12 @@ impl DecisionMaker for ScriptedGameDecisionMaker {
 
     fn decide_blockers(
         &mut self,
-        game: &GameState,
+        _game: &GameState,
         _ctx: &crate::decisions::context::BlockersContext,
     ) -> Vec<crate::decisions::spec::BlockerDeclaration> {
         if let Some(action) = self.next_action() {
-            match action {
-                Action::DeclareNoBlockers => {
-                    return vec![];
-                }
-                Action::DeclareBlockers(pairs) => {
-                    let mut declarations = Vec::new();
-                    for (blocker_name, attacker_name) in pairs {
-                        if let (Some(blocker_id), Some(attacker_id)) = (
-                            self.find_permanent(game, blocker_name),
-                            self.find_permanent(game, attacker_name),
-                        ) {
-                            declarations.push(crate::decisions::spec::BlockerDeclaration {
-                                blocker: blocker_id,
-                                blocking: attacker_id,
-                            });
-                        }
-                    }
-                    return declarations;
-                }
-                _ => {}
+            if let Action::Pass = action {
+                return vec![];
             }
         }
         // Default: no blockers
@@ -735,8 +611,6 @@ pub struct ReplayTestConfig {
     pub commanders_on_battlefield: Vec<Vec<&'static str>>,
     /// Starting life total (default 20).
     pub starting_life: i32,
-    /// Maximum turns to run before stopping.
-    pub max_turns: u32,
 }
 
 impl Default for ReplayTestConfig {
@@ -749,7 +623,6 @@ impl Default for ReplayTestConfig {
             commanders: vec![vec![], vec![]],
             commanders_on_battlefield: vec![vec![], vec![]],
             starting_life: 20,
-            max_turns: 100,
         }
     }
 }
@@ -820,13 +693,6 @@ impl ReplayTestConfig {
         self
     }
 
-    /// Set player 3's starting battlefield.
-    pub fn p3_battlefield(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.battlefields, 3);
-        self.battlefields[2] = cards;
-        self
-    }
-
     /// Set player 1's starting graveyard.
     pub fn p1_graveyard(mut self, cards: Vec<&'static str>) -> Self {
         Self::ensure_len(&mut self.graveyards, 1);
@@ -838,13 +704,6 @@ impl ReplayTestConfig {
     pub fn p2_graveyard(mut self, cards: Vec<&'static str>) -> Self {
         Self::ensure_len(&mut self.graveyards, 2);
         self.graveyards[1] = cards;
-        self
-    }
-
-    /// Set player 3's starting graveyard.
-    pub fn p3_graveyard(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.graveyards, 3);
-        self.graveyards[2] = cards;
         self
     }
 
@@ -862,31 +721,10 @@ impl ReplayTestConfig {
         self
     }
 
-    /// Set player 3's starting deck.
-    pub fn p3_deck(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.decks, 3);
-        self.decks[2] = cards;
-        self
-    }
-
     /// Set player 1's commander(s).
     pub fn p1_commander(mut self, cards: Vec<&'static str>) -> Self {
         Self::ensure_len(&mut self.commanders, 1);
         self.commanders[0] = cards;
-        self
-    }
-
-    /// Set player 2's commander(s).
-    pub fn p2_commander(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.commanders, 2);
-        self.commanders[1] = cards;
-        self
-    }
-
-    /// Set player 3's commander(s).
-    pub fn p3_commander(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.commanders, 3);
-        self.commanders[2] = cards;
         self
     }
 
@@ -899,19 +737,6 @@ impl ReplayTestConfig {
         self
     }
 
-    /// Set player 2's commander(s) starting on the battlefield.
-    pub fn p2_commander_on_battlefield(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.commanders_on_battlefield, 2);
-        self.commanders_on_battlefield[1] = cards;
-        self
-    }
-
-    /// Set player 3's commander(s) starting on the battlefield.
-    pub fn p3_commander_on_battlefield(mut self, cards: Vec<&'static str>) -> Self {
-        Self::ensure_len(&mut self.commanders_on_battlefield, 3);
-        self.commanders_on_battlefield[2] = cards;
-        self
-    }
 }
 
 /// Input source for replay tests - either a file path or inline inputs.

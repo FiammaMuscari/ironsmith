@@ -2252,8 +2252,7 @@ pub(crate) fn replace_unbound_x_in_effect_anywhere(
         | EffectAst::AddManaCommanderIdentity { amount, .. } => {
             replace_value(amount, replacement, clause)?;
         }
-        EffectAst::CreateToken { count, .. }
-        | EffectAst::CreateTokenCopy { count, .. }
+        EffectAst::CreateTokenCopy { count, .. }
         | EffectAst::CreateTokenCopyFromSource { count, .. } => {
             replace_value(count, replacement, clause)?;
         }
@@ -2640,7 +2639,6 @@ fn token_copy_followup_container_effects_mut(
     match effect {
         EffectAst::May { effects }
         | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::WhenResult { effects, .. }
         | EffectAst::ResolvedIfResult { effects, .. }

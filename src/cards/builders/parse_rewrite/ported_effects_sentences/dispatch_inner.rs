@@ -1509,13 +1509,6 @@ pub(crate) fn parse_sentence_delayed_trigger_this_turn(
     } else {
         parse_trigger_clause(&trigger_core_tokens)?
     };
-    if matches!(trigger, TriggerSpec::Custom(_)) {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported delayed trigger clause (clause: '{}')",
-            words(tokens).join(" ")
-        )));
-    }
-
     let remainder = trim_commas(&tokens[comma_idx + 1..]);
     if remainder.is_empty() {
         return Err(CardTextError::ParseError(format!(

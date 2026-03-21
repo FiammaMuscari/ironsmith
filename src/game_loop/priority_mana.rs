@@ -2849,13 +2849,6 @@ pub(super) fn propose_spell_cast(
 ///
 /// Per MTG rules, if casting fails at any point before completion,
 /// the game state returns to before the cast was proposed.
-#[allow(dead_code)]
-pub(super) fn revert_spell_cast(game: &mut GameState, stack_id: ObjectId, original_zone: Zone) {
-    // Move spell back to original zone
-    game.move_object_by_effect(stack_id, original_zone);
-    // Note: Mana abilities activated during casting are NOT reverted per rules
-    // (they happen in a special window and their effects stay)
-}
 
 /// Result of finalizing a spell cast, containing info needed for triggers.
 pub(super) struct SpellCastResult {

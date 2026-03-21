@@ -72,16 +72,6 @@ fn subject_text(filter: &ObjectFilter) -> String {
     attached_subject(filter).unwrap_or_else(|| filter.description())
 }
 
-#[allow(dead_code)]
-fn strip_indefinite_article(text: &str) -> &str {
-    if let Some(rest) = text.strip_prefix("a ") {
-        return rest;
-    }
-    if let Some(rest) = text.strip_prefix("an ") {
-        return rest;
-    }
-    text
-}
 
 fn split_subject_suffix(subject: &str) -> (&str, &str) {
     const SUFFIXES: &[&str] = &[
@@ -109,50 +99,6 @@ fn split_subject_suffix(subject: &str) -> (&str, &str) {
     (subject, "")
 }
 
-#[allow(dead_code)]
-fn pluralize_terminal_noun(base: &str) -> Option<String> {
-    const NOUNS: &[&str] = &[
-        "permanent",
-        "creature",
-        "artifact",
-        "enchantment",
-        "land",
-        "planeswalker",
-        "battle",
-        "spell",
-        "card",
-        "token",
-    ];
-    let pluralize_word = |word: &str| {
-        let lower = word.to_ascii_lowercase();
-        if lower.ends_with('y')
-            && lower.len() > 1
-            && !matches!(
-                lower.chars().nth(lower.len() - 2),
-                Some('a' | 'e' | 'i' | 'o' | 'u')
-            )
-        {
-            return format!("{}ies", &word[..word.len() - 1]);
-        }
-        if lower.ends_with('s')
-            || lower.ends_with('x')
-            || lower.ends_with('z')
-            || lower.ends_with("ch")
-            || lower.ends_with("sh")
-        {
-            return format!("{word}es");
-        }
-        format!("{word}s")
-    };
-    for noun in NOUNS {
-        if let Some(stem) = base.strip_suffix(noun) {
-            if stem.is_empty() || stem.ends_with(' ') {
-                return Some(format!("{stem}{}", pluralize_word(noun)));
-            }
-        }
-    }
-    None
-}
 
 fn pluralized_subject_text(filter: &ObjectFilter) -> String {
     let mut subject = subject_text(filter);

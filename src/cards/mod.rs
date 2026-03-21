@@ -16,7 +16,7 @@ pub use definitions::*;
 #[cfg(test)]
 mod parse_snapshots;
 
-#[allow(dead_code)]
+
 mod generated_registry {
     include!(concat!(env!("OUT_DIR"), "/generated_registry.rs"));
 }
@@ -314,6 +314,7 @@ impl CardRegistry {
 
     /// Number of generated registry parse entries available for chunked preload.
     pub fn generated_parser_entry_count() -> usize {
+        let _ = generated_registry::GENERATED_PARSER_CARD_SOURCE_COUNT;
         generated_registry::generated_parser_entry_count()
     }
 
@@ -740,10 +741,10 @@ pub fn linked_face_definition_by_name_or_id(
 }
 
 const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line fallback:";
-#[allow(dead_code)]
+
 const GENERATED_SUPPORT_ISSUE_MAX_LEN: usize = 180;
 
-#[allow(dead_code)]
+
 fn truncate_generated_support_issue(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.chars().count() <= GENERATED_SUPPORT_ISSUE_MAX_LEN {
@@ -760,13 +761,13 @@ fn truncate_generated_support_issue(raw: &str) -> String {
     out
 }
 
-#[allow(dead_code)]
+
 fn compact_generated_support_text(raw: &str) -> String {
     let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_generated_support_issue(&compact)
 }
 
-#[allow(dead_code)]
+
 fn extract_fallback_reason(display: &str) -> String {
     let body = display
         .strip_prefix(UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX)
@@ -803,7 +804,7 @@ fn extract_fallback_reason(display: &str) -> String {
     compact_generated_support_text(body)
 }
 
-#[allow(dead_code)]
+
 pub(crate) fn generated_definition_support_issues(definition: &CardDefinition) -> Vec<String> {
     let mut issues: Vec<String> = Vec::new();
 
@@ -855,7 +856,7 @@ pub(crate) fn generated_definition_support_issues(definition: &CardDefinition) -
     issues
 }
 
-#[allow(dead_code)]
+
 pub(crate) fn generated_definition_unsupported_mechanics_message(
     definition: &CardDefinition,
 ) -> Option<String> {

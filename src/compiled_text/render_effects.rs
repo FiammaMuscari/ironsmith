@@ -8884,60 +8884,6 @@ pub(super) fn describe_mana_activation_condition(condition: &crate::ConditionExp
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn collapse_redundant_keyword_tail(line: &str) -> String {
-    let mut normalized = line.trim().to_string();
-    loop {
-        let lower = normalized.to_ascii_lowercase();
-        let Some(split_idx) = lower.rfind(" and ") else {
-            break;
-        };
-        let prefix = normalized[..split_idx].trim_end();
-        let tail = normalized[split_idx + 5..].trim_start();
-
-        // Only collapse trailing keyword duplication that appears as a second
-        // sentence/clause after punctuation (e.g. ". and haste." or
-        // "). and vigilance.").
-        let Some(last_prefix_char) = prefix.chars().rev().find(|ch| !ch.is_whitespace()) else {
-            break;
-        };
-        if !matches!(last_prefix_char, '.' | ')' | '"') {
-            break;
-        }
-
-        let tail_no_reminder = tail
-            .split_once('(')
-            .map(|(head, _)| head.trim())
-            .unwrap_or(tail)
-            .trim_end_matches('.')
-            .trim();
-        let keyword_tail = if is_keyword_phrase(tail_no_reminder) {
-            Some(tail_no_reminder.to_ascii_lowercase())
-        } else {
-            normalize_keyword_list_phrase(tail_no_reminder)
-        };
-
-        let Some(keyword_tail) = keyword_tail else {
-            break;
-        };
-
-        let prefix_lower = strip_parenthetical_segments(prefix).to_ascii_lowercase();
-        let duplicate = prefix_lower.contains(&format!(" has {keyword_tail}"))
-            || prefix_lower.contains(&format!(" gain {keyword_tail}"))
-            || prefix_lower.contains(&format!(" gains {keyword_tail}"));
-        if !duplicate {
-            break;
-        }
-
-        let collapsed = prefix.trim_end_matches('.').trim_end();
-        normalized = if collapsed.ends_with('"') || collapsed.ends_with(')') {
-            collapsed.to_string()
-        } else {
-            format!("{collapsed}.")
-        };
-    }
-    normalized
-}
 
 pub(super) fn describe_enchant_filter(filter: &ObjectFilter) -> String {
     let aura_creature_gate = filter.card_types.len() == 1

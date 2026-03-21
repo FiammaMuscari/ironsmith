@@ -590,8 +590,7 @@ pub(crate) fn parse_get_modifier_values_with_tail(
 pub(crate) fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
     for effect in effects {
         match effect {
-            EffectAst::CreateToken { player, .. }
-            | EffectAst::CreateTokenWithMods { player, .. }
+            EffectAst::CreateTokenWithMods { player, .. }
             | EffectAst::CreateTokenCopy { player, .. }
             | EffectAst::CreateTokenCopyFromSource { player, .. } => {
                 if matches!(player, PlayerAst::Implicit) {

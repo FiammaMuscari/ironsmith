@@ -11432,20 +11432,6 @@ fn oracle_like_equipped_sacrifice_uses_card_name() {
     );
 }
 
-#[allow(dead_code)]
-fn assert_partial_parse_rejected(name: &str, text: &str) {
-    let err = CardDefinitionBuilder::new(CardId::new(), name)
-        .parse_text(text)
-        .expect_err("unsupported partial-parse-prone clause should fail parse");
-    let message = format!("{err:?}");
-    assert!(
-        message.contains("unsupported partial-parse-prone clause")
-            || message.contains("unsupported standalone token mana reminder clause")
-            || message.contains("could not find verb in effect clause"),
-        "expected partial-parse rejection, got {message}"
-    );
-}
-
 #[test]
 fn render_search_library_for_card_uses_card_noun() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Search Variant")

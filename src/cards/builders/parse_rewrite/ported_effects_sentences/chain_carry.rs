@@ -1034,7 +1034,6 @@ pub(crate) fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryConte
         | EffectAst::AddManaChosenColor { player, .. }
         | EffectAst::AddManaFromLandCouldProduce { player, .. }
         | EffectAst::AddManaCommanderIdentity { player, .. }
-        | EffectAst::CreateToken { player, .. }
         | EffectAst::CreateTokenCopy { player, .. }
         | EffectAst::CreateTokenCopyFromSource { player, .. }
         | EffectAst::CreateTokenWithMods { player, .. } => *player,
@@ -1073,7 +1072,6 @@ pub(crate) fn effect_uses_implicit_player(effect: &EffectAst) -> bool {
         | EffectAst::AddManaChosenColor { player, .. }
         | EffectAst::AddManaFromLandCouldProduce { player, .. }
         | EffectAst::AddManaCommanderIdentity { player, .. }
-        | EffectAst::CreateToken { player, .. }
         | EffectAst::CreateTokenCopy { player, .. }
         | EffectAst::CreateTokenCopyFromSource { player, .. }
         | EffectAst::CreateTokenWithMods { player, .. } => {
@@ -1117,7 +1115,6 @@ pub(crate) fn maybe_apply_carried_player(effect: &mut EffectAst, carried_context
                 | EffectAst::AddManaChosenColor { player, .. }
                 | EffectAst::AddManaFromLandCouldProduce { player, .. }
                 | EffectAst::AddManaCommanderIdentity { player, .. }
-                | EffectAst::CreateToken { player, .. }
                 | EffectAst::CreateTokenCopy { player, .. }
                 | EffectAst::CreateTokenCopyFromSource { player, .. }
                 | EffectAst::CreateTokenWithMods { player, .. } => {
@@ -1323,10 +1320,6 @@ pub(crate) fn bind_implicit_player_context(effect: &mut EffectAst, player: Playe
             player: effect_player,
         }
         | EffectAst::AdditionalLandPlays {
-            player: effect_player,
-            ..
-        }
-        | EffectAst::CreateToken {
             player: effect_player,
             ..
         }
@@ -1595,7 +1588,6 @@ pub(crate) fn parse_choose_new_targets_clause(
             mode: RetargetModeAst::All,
             chooser: PlayerAst::Implicit,
             require_change: false,
-            new_target_restriction: None,
         }));
     }
 
@@ -1631,7 +1623,6 @@ pub(crate) fn parse_choose_new_targets_clause(
         mode: RetargetModeAst::All,
         chooser: PlayerAst::Implicit,
         require_change: false,
-        new_target_restriction: None,
     }))
 }
 
@@ -1757,7 +1748,6 @@ pub(crate) fn parse_change_target_clause_inner(
         mode,
         chooser: PlayerAst::Implicit,
         require_change: true,
-        new_target_restriction: None,
     }))
 }
 

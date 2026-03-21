@@ -276,7 +276,6 @@ fn replace_modal_header_x_in_effect_ast(
         | EffectAst::AddManaChosenColor { amount, .. }
         | EffectAst::AddManaFromLandCouldProduce { amount, .. }
         | EffectAst::AddManaCommanderIdentity { amount, .. }
-        | EffectAst::CreateToken { count: amount, .. }
         | EffectAst::CreateTokenCopy { count: amount, .. }
         | EffectAst::CreateTokenCopyFromSource { count: amount, .. }
         | EffectAst::Monstrosity { amount, .. } => {

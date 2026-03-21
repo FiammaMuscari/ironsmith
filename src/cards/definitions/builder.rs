@@ -1,9 +1,8 @@
 use crate::card::{LinkedFaceLayout, PowerToughness};
 use crate::cards::{
-    CardDefinition, ParseAnnotations,
+    CardDefinition,
     builders::{CardDefinitionBuilder as RawCardDefinitionBuilder, CardTextError},
 };
-use crate::color::ColorSet;
 use crate::ids::CardId;
 use crate::mana::ManaCost;
 use crate::types::{CardType, Subtype, Supertype};
@@ -16,7 +15,7 @@ use crate::types::{CardType, Subtype, Supertype};
 #[derive(Debug, Clone)]
 pub(crate) struct CardDefinitionBuilder(RawCardDefinitionBuilder);
 
-#[allow(dead_code)]
+
 impl CardDefinitionBuilder {
     pub(crate) fn new(id: CardId, name: impl Into<String>) -> Self {
         Self(RawCardDefinitionBuilder::new(id, name))
@@ -24,10 +23,6 @@ impl CardDefinitionBuilder {
 
     pub(crate) fn mana_cost(self, cost: ManaCost) -> Self {
         Self(self.0.mana_cost(cost))
-    }
-
-    pub(crate) fn color_indicator(self, colors: ColorSet) -> Self {
-        Self(self.0.color_indicator(colors))
     }
 
     pub(crate) fn supertypes(self, supertypes: Vec<Supertype>) -> Self {
@@ -40,10 +35,6 @@ impl CardDefinitionBuilder {
 
     pub(crate) fn subtypes(self, subtypes: Vec<Subtype>) -> Self {
         Self(self.0.subtypes(subtypes))
-    }
-
-    pub(crate) fn oracle_text(self, text: impl Into<String>) -> Self {
-        Self(self.0.oracle_text(text))
     }
 
     pub(crate) fn other_face(self, face: CardId) -> Self {
@@ -66,14 +57,7 @@ impl CardDefinitionBuilder {
         Self(self.0.power_toughness(pt))
     }
 
-    pub(crate) fn loyalty(self, loyalty: u32) -> Self {
-        Self(self.0.loyalty(loyalty))
-    }
-
-    pub(crate) fn defense(self, defense: u32) -> Self {
-        Self(self.0.defense(defense))
-    }
-
+    #[cfg(test)]
     pub(crate) fn token(self) -> Self {
         Self(self.0.token())
     }
@@ -87,45 +71,6 @@ impl CardDefinitionBuilder {
         text: impl Into<String>,
     ) -> Result<CardDefinition, CardTextError> {
         self.0.parse_text(text)
-    }
-
-    pub(crate) fn parse_text_allow_unsupported(
-        self,
-        text: impl Into<String>,
-    ) -> Result<CardDefinition, CardTextError> {
-        self.0.parse_text_allow_unsupported(text)
-    }
-
-    pub(crate) fn parse_text_with_annotations(
-        self,
-        text: impl Into<String>,
-    ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        self.0.parse_text_with_annotations(text)
-    }
-
-    pub(crate) fn parse_text_with_annotations_allow_unsupported(
-        self,
-        text: impl Into<String>,
-    ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        self.0.parse_text_with_annotations_allow_unsupported(text)
-    }
-
-    pub(crate) fn from_text_with_metadata(
-        self,
-        text: impl Into<String>,
-    ) -> Result<CardDefinition, CardTextError> {
-        self.0.from_text_with_metadata(text)
-    }
-
-    pub(crate) fn text_box(self, text: impl Into<String>) -> Result<CardDefinition, CardTextError> {
-        self.0.text_box(text)
-    }
-
-    pub(crate) fn from_text_with_metadata_oracle_only(
-        self,
-        text: impl Into<String>,
-    ) -> CardDefinition {
-        self.0.from_text_with_metadata_oracle_only(text)
     }
 
     pub(crate) fn build(self) -> CardDefinition {

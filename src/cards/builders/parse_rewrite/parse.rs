@@ -1,14 +1,12 @@
-#![allow(dead_code)]
-
 use crate::PtValue;
 use crate::ability::ActivationTiming;
-use crate::cards::builders::{CardDefinitionBuilder, CardTextError, ParseAnnotations, TextSpan, TriggerSpec};
+use crate::cards::builders::{CardDefinitionBuilder, CardTextError, ParseAnnotations};
 
 use super::cst::{
     ActivatedLineCst, KeywordLineCst, KeywordLineKindCst, LevelHeaderCst, LevelItemCst,
     LevelItemKindCst, MetadataLineCst, ModalBlockCst, ModalModeCst, RewriteDocumentCst,
-    RewriteLineCst, SagaChapterLineCst, StatementLineCst, StaticLineCst, StaticLineKindCst,
-    TriggerIntroCst, TriggeredLineCst, UnsupportedLineCst,
+    RewriteLineCst, SagaChapterLineCst, StatementLineCst, StaticLineCst, TriggerIntroCst,
+    TriggeredLineCst, UnsupportedLineCst,
 };
 use super::clause_support::{
     rewrite_parse_ability_line, rewrite_parse_effect_sentences,
@@ -17,13 +15,12 @@ use super::clause_support::{
 };
 use super::ir::{
     RewriteActivatedLine, RewriteKeywordLine, RewriteKeywordLineKind, RewriteLevelHeader,
-    RewriteLevelItem, RewriteLevelItemKind, RewriteMetadataLine, RewriteModalBlock,
-    RewriteModalMode, RewriteSagaChapterLine, RewriteSemanticDocument, RewriteSemanticItem,
-    RewriteStatementLine, RewriteStaticLine, RewriteStaticLineKind, RewriteTriggerIntro,
-    RewriteTriggeredLine, RewriteUnsupportedLine,
+    RewriteLevelItem, RewriteLevelItemKind, RewriteModalBlock, RewriteModalMode,
+    RewriteSagaChapterLine, RewriteSemanticDocument, RewriteSemanticItem, RewriteStatementLine,
+    RewriteStaticLine, RewriteTriggeredLine, RewriteUnsupportedLine,
 };
 use super::leaf::{
-    lower_activation_cost_cst, metadata_type_line_cst, parse_activation_cost_rewrite,
+    lower_activation_cost_cst, parse_activation_cost_rewrite,
 };
 use super::lexer::TokenKind;
 use super::ported_activation_and_restrictions::{parse_channel_line, parse_cycling_line, parse_equip_line};
@@ -100,7 +97,7 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
             line.info.raw_line
         )));
     };
-    let Some(intro) = parse_trigger_intro(first_token.slice.as_str()) else {
+    let Some(_intro) = parse_trigger_intro(first_token.slice.as_str()) else {
         return Err(CardTextError::ParseError(format!(
             "rewrite triggered parser expected trigger intro for '{}'",
             line.info.raw_line
@@ -153,13 +150,11 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
             rewrite_parse_trigger_clause(&tokenize_line(trigger_text.as_str(), line.info.line_index));
         let effect_probe =
             rewrite_parse_effect_sentences(&tokenize_line(effect_candidate, line.info.line_index));
-        let trigger_is_supported =
-            matches!(trigger_probe, Ok(trigger) if !matches!(trigger, TriggerSpec::Custom(_)));
+        let trigger_is_supported = trigger_probe.is_ok();
         if trigger_is_supported && effect_probe.is_ok() {
             if best_supported_split.is_none() {
                 best_supported_split = Some(TriggeredLineCst {
                     info: line.info.clone(),
-                    intro,
                     full_text: format!(
                         "{} {}, {}",
                         first_token.slice.as_str(),
@@ -168,7 +163,6 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
                     ),
                     trigger_text,
                     effect_text: effect_candidate.to_string(),
-                    separator_span: separator.span,
                     max_triggers_per_turn,
                     chosen_option_label: None,
                 });
@@ -186,11 +180,9 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
         if rewrite_parse_triggered_line(&full_tokens).is_ok() && best_fallback_split.is_none() {
             best_fallback_split = Some(TriggeredLineCst {
                 info: line.info.clone(),
-                intro,
                 full_text,
                 trigger_text,
                 effect_text: effect_candidate.to_string(),
-                separator_span: separator.span,
                 max_triggers_per_turn,
                 chosen_option_label: None,
             });
@@ -205,11 +197,9 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
     match rewrite_parse_triggered_line(&full_tokens) {
         Ok(_) => Ok(TriggeredLineCst {
             info: line.info.clone(),
-            intro,
             full_text: normalized.to_string(),
             trigger_text: normalized[condition_start..].trim().to_string(),
             effect_text: String::new(),
-            separator_span: first_token.span,
             max_triggers_per_turn: trailing_cap,
             chosen_option_label: None,
         }),
@@ -228,8 +218,6 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count: 1,
             chosen_option_label: None,
         }));
     }
@@ -238,8 +226,6 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count: 1,
             chosen_option_label: None,
         }));
     }
@@ -248,8 +234,6 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count: 1,
             chosen_option_label: None,
         }));
     }
@@ -258,8 +242,6 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count: 1,
             chosen_option_label: None,
         }));
     }
@@ -268,31 +250,25 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count: 2,
             chosen_option_label: None,
         }));
     }
 
     if !should_skip_keyword_action_static_probe(normalized)
-        && let Some(actions) = rewrite_parse_ability_line(&legacy_tokens)
+        && let Some(_actions) = rewrite_parse_ability_line(&legacy_tokens)
     {
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::KeywordActions,
-            item_count: actions.len(),
             chosen_option_label: None,
         }));
     }
 
     match rewrite_parse_static_ability_ast_line(&legacy_tokens) {
-        Ok(Some(abilities)) => {
+        Ok(Some(_abilities)) => {
             return Ok(Some(StaticLineCst {
                 info: line.info.clone(),
                 text: normalized.to_string(),
-                kind: StaticLineKindCst::StaticAbilities,
-                item_count: abilities.len(),
                 chosen_option_label: None,
             }));
         }
@@ -300,12 +276,10 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         Err(err) => deferred_error = Some(err),
     }
 
-    if let Some(item_count) = parse_split_static_item_count(normalized, line.info.line_index)? {
+    if parse_split_static_item_count(normalized, line.info.line_index)?.is_some() {
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            kind: StaticLineKindCst::StaticAbilities,
-            item_count,
             chosen_option_label: None,
         }));
     }
@@ -489,22 +463,20 @@ fn parse_level_item_cst(line: &PreprocessedLine) -> Result<Option<LevelItemCst>,
     let legacy_tokens = tokenize_line(normalized, line.info.line_index);
 
     if !should_skip_keyword_action_static_probe(normalized)
-        && let Some(actions) = rewrite_parse_ability_line(&legacy_tokens)
+        && let Some(_actions) = rewrite_parse_ability_line(&legacy_tokens)
     {
         return Ok(Some(LevelItemCst {
             info: line.info.clone(),
             text: normalized.to_string(),
             kind: LevelItemKindCst::KeywordActions,
-            item_count: actions.len(),
         }));
     }
 
-    if let Some(abilities) = rewrite_parse_static_ability_ast_line(&legacy_tokens)? {
+    if let Some(_abilities) = rewrite_parse_static_ability_ast_line(&legacy_tokens)? {
         return Ok(Some(LevelItemCst {
             info: line.info.clone(),
             text: normalized.to_string(),
             kind: LevelItemKindCst::StaticAbilities,
-            item_count: abilities.len(),
         }));
     }
 
@@ -519,7 +491,6 @@ fn parse_statement_line_cst(
         return Ok(Some(StatementLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            sentence_count: 1,
         }));
     }
     if normalized
@@ -528,7 +499,6 @@ fn parse_statement_line_cst(
         return Ok(Some(StatementLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
-            sentence_count: 3,
         }));
     }
     let parse_text = rewrite_statement_parse_text(normalized);
@@ -552,7 +522,6 @@ fn parse_statement_line_cst(
     Ok(Some(StatementLineCst {
         info: line.info.clone(),
         text: normalized.to_string(),
-        sentence_count: effects.len(),
     }))
 }
 
@@ -1315,7 +1284,6 @@ pub(crate) fn parse_document_cst(
                         )));
                     }
                     lines.push(RewriteLineCst::LevelHeader(LevelHeaderCst {
-                        info: line.info.clone(),
                         min_level,
                         max_level,
                         pt,
@@ -1417,17 +1385,10 @@ pub(crate) fn parse_document_cst(
                         )));
                     };
                     let cost = parse_activation_cost_rewrite(cost_raw)?;
-                    let colon_start = cost_raw.len();
-                    let colon_span = TextSpan {
-                        line: line.info.line_index,
-                        start: colon_start,
-                        end: colon_start + 1,
-                    };
                     lines.push(RewriteLineCst::Activated(ActivatedLineCst {
                         info: suffix_line.info.clone(),
                         cost,
                         effect_text: effect_raw.trim().to_string(),
-                        colon_span,
                         chosen_option_label: None,
                     }));
                     idx += 1;
@@ -1490,17 +1451,10 @@ pub(crate) fn parse_document_cst(
                         {
                             match parse_activation_cost_rewrite(cost_raw) {
                                 Ok(cost) => {
-                                    let colon_start = cost_raw.len();
-                                    let colon_span = TextSpan {
-                                        line: line.info.line_index,
-                                        start: colon_start,
-                                        end: colon_start + 1,
-                                    };
                                     lines.push(RewriteLineCst::Activated(ActivatedLineCst {
                                         info: line.info.clone(),
                                         cost,
                                         effect_text: effect_raw.trim().to_string(),
-                                        colon_span,
                                         chosen_option_label: preserve_as_choice_label
                                             .then(|| label.to_ascii_lowercase()),
                                     }));
@@ -1588,8 +1542,6 @@ pub(crate) fn parse_document_cst(
                     lines.push(RewriteLineCst::Static(StaticLineCst {
                         info: line.info.clone(),
                         text: normalized.to_string(),
-                        kind: StaticLineKindCst::KeywordActions,
-                        item_count: 1,
                         chosen_option_label: None,
                     }));
                     idx += 1;
@@ -1607,17 +1559,10 @@ pub(crate) fn parse_document_cst(
                 {
                     match parse_activation_cost_rewrite(cost_raw) {
                         Ok(cost) => {
-                            let colon_start = cost_raw.len();
-                            let colon_span = TextSpan {
-                                line: line.info.line_index,
-                                start: colon_start,
-                                end: colon_start + 1,
-                            };
                             lines.push(RewriteLineCst::Activated(ActivatedLineCst {
                                 info: line.info.clone(),
                                 cost,
                                 effect_text: effect_raw.trim().to_string(),
-                                colon_span,
                                 chosen_option_label: None,
                             }));
                             idx += 1;
@@ -1694,16 +1639,9 @@ fn lower_document_cst(
 
     for line in cst.lines {
         match line {
-            RewriteLineCst::Metadata(MetadataLineCst {
-                info,
-                value,
-                type_line: _,
-            }) => {
+            RewriteLineCst::Metadata(MetadataLineCst { value }) => {
                 builder = builder.apply_metadata(value.clone())?;
-                items.push(RewriteSemanticItem::Metadata(RewriteMetadataLine {
-                    info,
-                    value,
-                }));
+                items.push(RewriteSemanticItem::Metadata);
             }
             RewriteLineCst::Keyword(keyword) => {
                 let kind = match keyword.kind {
@@ -1762,14 +1700,8 @@ fn lower_document_cst(
                 }));
             }
             RewriteLineCst::Triggered(triggered) => {
-                let intro = match triggered.intro {
-                    TriggerIntroCst::When => RewriteTriggerIntro::When,
-                    TriggerIntroCst::Whenever => RewriteTriggerIntro::Whenever,
-                    TriggerIntroCst::At => RewriteTriggerIntro::At,
-                };
                 items.push(RewriteSemanticItem::Triggered(RewriteTriggeredLine {
                     info: triggered.info,
-                    intro,
                     full_text: triggered.full_text,
                     trigger_text: triggered.trigger_text,
                     effect_text: triggered.effect_text,
@@ -1778,15 +1710,9 @@ fn lower_document_cst(
                 }));
             }
             RewriteLineCst::Static(static_line) => {
-                let kind = match static_line.kind {
-                    StaticLineKindCst::KeywordActions => RewriteStaticLineKind::KeywordActions,
-                    StaticLineKindCst::StaticAbilities => RewriteStaticLineKind::StaticAbilities,
-                };
                 items.push(RewriteSemanticItem::Static(RewriteStaticLine {
                     info: static_line.info,
                     text: static_line.text,
-                    kind,
-                    item_count: static_line.item_count,
                     chosen_option_label: static_line.chosen_option_label,
                 }));
             }
@@ -1794,7 +1720,6 @@ fn lower_document_cst(
                 items.push(RewriteSemanticItem::Statement(RewriteStatementLine {
                     info: statement_line.info,
                     text: statement_line.text,
-                    sentence_count: statement_line.sentence_count,
                 }));
             }
             RewriteLineCst::Modal(modal) => {
@@ -1812,7 +1737,6 @@ fn lower_document_cst(
             }
             RewriteLineCst::LevelHeader(level) => {
                 items.push(RewriteSemanticItem::LevelHeader(RewriteLevelHeader {
-                    info: level.info,
                     min_level: level.min_level,
                     max_level: level.max_level,
                     pt: level.pt,
@@ -1830,7 +1754,6 @@ fn lower_document_cst(
                                     RewriteLevelItemKind::StaticAbilities
                                 }
                             },
-                            item_count: item.item_count,
                         })
                         .collect(),
                 }));
@@ -1863,11 +1786,8 @@ pub(crate) fn metadata_line_cst(
     info: crate::cards::builders::LineInfo,
     value: crate::cards::builders::MetadataLine,
 ) -> Result<MetadataLineCst, CardTextError> {
-    Ok(MetadataLineCst {
-        info,
-        type_line: metadata_type_line_cst(&value)?,
-        value,
-    })
+    let _ = info;
+    Ok(MetadataLineCst { value })
 }
 
 fn normalized_first_word(line: &str) -> &str {

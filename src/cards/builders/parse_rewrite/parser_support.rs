@@ -94,23 +94,6 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
     sentences
 }
 
-fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool {
-    let tokens = tokenize_line(sentence, line_index);
-    if looks_like_delayed_next_turn_intro(&tokens) {
-        return false;
-    }
-    if looks_like_when_one_or_more_this_way_followup(&tokens) {
-        return false;
-    }
-    if looks_like_when_you_do_followup(&tokens) {
-        return false;
-    }
-    tokens
-        .first()
-        .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
-        || is_at_trigger_intro(&tokens, 0)
-}
-
 pub(crate) fn is_at_trigger_intro(tokens: &[Token], idx: usize) -> bool {
     if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
         return false;
@@ -202,31 +185,6 @@ fn looks_like_otherwise_followup(tokens: &[Token]) -> bool {
     tokens.first().is_some_and(|token| token.is_word("otherwise"))
 }
 
-#[allow(dead_code)]
-fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = Vec::new();
-    let mut current_starts_with_trigger = false;
-
-    for sentence in sentences {
-        let sentence_starts_with_trigger = sentence_starts_with_trigger_intro(sentence, line_index);
-        if !current.is_empty() && current_starts_with_trigger && sentence_starts_with_trigger {
-            chunks.push(current.join(". "));
-            current.clear();
-            current_starts_with_trigger = false;
-        }
-        if current.is_empty() {
-            current_starts_with_trigger = sentence_starts_with_trigger;
-        }
-        current.push(sentence.clone());
-    }
-
-    if !current.is_empty() {
-        chunks.push(current.join(". "));
-    }
-
-    chunks
-}
 
 fn queue_restriction(
     restriction: &str,

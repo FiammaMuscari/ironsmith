@@ -1,9 +1,5 @@
-#![allow(dead_code)]
-
 use crate::ability::ActivationTiming;
-use crate::cards::builders::{
-    CardDefinitionBuilder, LineInfo, MetadataLine, ParseAnnotations, TotalCost,
-};
+use crate::cards::builders::{CardDefinitionBuilder, LineInfo, ParseAnnotations, TotalCost};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteSemanticDocument {
@@ -15,7 +11,7 @@ pub(crate) struct RewriteSemanticDocument {
 
 #[derive(Debug, Clone)]
 pub(crate) enum RewriteSemanticItem {
-    Metadata(RewriteMetadataLine),
+    Metadata,
     Keyword(RewriteKeywordLine),
     Activated(RewriteActivatedLine),
     Triggered(RewriteTriggeredLine),
@@ -60,12 +56,6 @@ pub(crate) enum RewriteKeywordLineKind {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct RewriteMetadataLine {
-    pub(crate) info: LineInfo,
-    pub(crate) value: MetadataLine,
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct RewriteActivatedLine {
     pub(crate) info: LineInfo,
     pub(crate) cost: TotalCost,
@@ -74,17 +64,9 @@ pub(crate) struct RewriteActivatedLine {
     pub(crate) chosen_option_label: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RewriteTriggerIntro {
-    When,
-    Whenever,
-    At,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteTriggeredLine {
     pub(crate) info: LineInfo,
-    pub(crate) intro: RewriteTriggerIntro,
     pub(crate) full_text: String,
     pub(crate) trigger_text: String,
     pub(crate) effect_text: String,
@@ -92,18 +74,10 @@ pub(crate) struct RewriteTriggeredLine {
     pub(crate) chosen_option_label: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RewriteStaticLineKind {
-    KeywordActions,
-    StaticAbilities,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteStaticLine {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
-    pub(crate) kind: RewriteStaticLineKind,
-    pub(crate) item_count: usize,
     pub(crate) chosen_option_label: Option<String>,
 }
 
@@ -111,7 +85,6 @@ pub(crate) struct RewriteStaticLine {
 pub(crate) struct RewriteStatementLine {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
-    pub(crate) sentence_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -128,7 +101,6 @@ pub(crate) struct RewriteModalMode {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteLevelHeader {
-    pub(crate) info: LineInfo,
     pub(crate) min_level: u32,
     pub(crate) max_level: Option<u32>,
     pub(crate) pt: Option<(i32, i32)>,
@@ -146,7 +118,6 @@ pub(crate) struct RewriteLevelItem {
     pub(crate) info: LineInfo,
     pub(crate) text: String,
     pub(crate) kind: RewriteLevelItemKind,
-    pub(crate) item_count: usize,
 }
 
 #[derive(Debug, Clone)]

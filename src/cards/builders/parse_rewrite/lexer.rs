@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use logos::Logos;
 
 use crate::cards::builders::{CardTextError, TextSpan};
@@ -45,28 +43,11 @@ pub(crate) enum TokenKind {
     Word,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LexToken<'a> {
-    pub(crate) kind: TokenKind,
-    pub(crate) slice: &'a str,
-    pub(crate) span: TextSpan,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OwnedLexToken {
     pub(crate) kind: TokenKind,
     pub(crate) slice: String,
     pub(crate) span: TextSpan,
-}
-
-impl OwnedLexToken {
-    pub(crate) fn as_borrowed(&self) -> LexToken<'_> {
-        LexToken {
-            kind: self.kind,
-            slice: self.slice.as_str(),
-            span: self.span,
-        }
-    }
 }
 
 pub(crate) fn lex_line(line: &str, line_index: usize) -> Result<Vec<OwnedLexToken>, CardTextError> {

@@ -21,7 +21,7 @@ impl ReorderGraveyardEffect {
         Self { player }
     }
 
-    #[allow(dead_code)]
+    
     pub fn you() -> Self {
         Self::new(PlayerFilter::You)
     }

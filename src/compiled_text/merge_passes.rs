@@ -131,49 +131,6 @@ pub(super) fn subject_is_plural(subject: &str) -> bool {
         || lower.ends_with('s')
 }
 
-#[allow(dead_code)]
-pub(super) fn normalize_activation_cost_add_punctuation(line: &str) -> String {
-    if line.contains(':') {
-        return line.to_string();
-    }
-    if let Some(idx) = line.find(", Add ") {
-        let (cost, rest) = line.split_at(idx);
-        return format!("{cost}:{}", rest.trim_start_matches(','));
-    }
-    if let Some(idx) = line.find(", add ") {
-        let (cost, rest) = line.split_at(idx);
-        return format!("{cost}:{}", rest.trim_start_matches(','));
-    }
-    line.to_string()
-}
-
-#[allow(dead_code)]
-pub(super) fn normalize_cost_payment_wording(line: &str) -> String {
-    let Some((cost, effect)) = line.split_once(": ") else {
-        return line.to_string();
-    };
-    let lower_cost = cost.trim().to_ascii_lowercase();
-    if lower_cost.starts_with("when ")
-        || lower_cost.starts_with("whenever ")
-        || lower_cost.starts_with("at the beginning ")
-    {
-        return line.to_string();
-    }
-    let normalized_cost = cost.replace("Lose ", "Pay ");
-    let mut normalized_effect = effect.replace(" to your mana pool", "");
-    normalized_effect = normalize_you_subject_phrase(&normalized_effect);
-    if normalized_effect.starts_with("you ") {
-        normalized_effect = capitalize_first(&normalized_effect);
-    }
-    if normalized_effect
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase())
-    {
-        normalized_effect = capitalize_first(&normalized_effect);
-    }
-    format!("{normalized_cost}: {normalized_effect}")
-}
 
 pub(super) fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, &str)> {
     for verb in [

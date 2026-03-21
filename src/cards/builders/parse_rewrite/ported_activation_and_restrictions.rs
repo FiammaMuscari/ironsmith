@@ -5873,9 +5873,7 @@ pub(crate) fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardText
             }
         }
 
-        if let Ok(trigger) = parse_trigger_clause(trigger_tokens)
-            && !matches!(trigger, TriggerSpec::Custom(_))
-        {
+        if let Ok(trigger) = parse_trigger_clause(trigger_tokens) {
             let effects_tokens = rewrite_attached_controller_trigger_effect_tokens(
                 trigger_tokens,
                 &tokens[split_idx + 1..],
@@ -5922,9 +5920,7 @@ pub(crate) fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardText
                 break;
             }
         }
-        if let Ok(trigger) = parse_trigger_clause(trigger_tokens)
-            && !matches!(trigger, TriggerSpec::Custom(_))
-        {
+        if let Ok(trigger) = parse_trigger_clause(trigger_tokens) {
             let rewritten_effects_tokens =
                 rewrite_attached_controller_trigger_effect_tokens(trigger_tokens, effects_tokens);
             if let Ok(effects) = parse_effect_sentences(&rewritten_effects_tokens) {
@@ -6628,8 +6624,6 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                     parse_trigger_clause(left_tokens),
                     parse_trigger_clause(&right_tokens),
                 )
-                && !matches!(left, TriggerSpec::Custom(_))
-                && !matches!(right, TriggerSpec::Custom(_))
             {
                 return Ok(TriggerSpec::Either(Box::new(left), Box::new(right)));
             }
@@ -6645,8 +6639,6 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                 parse_trigger_clause(left_tokens),
                 parse_trigger_clause(right_tokens),
             )
-            && !matches!(left, TriggerSpec::Custom(_))
-            && !matches!(right, TriggerSpec::Custom(_))
         {
             return Ok(TriggerSpec::Either(Box::new(left), Box::new(right)));
         }
@@ -6664,8 +6656,6 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                 parse_trigger_clause(left_tokens),
                 parse_trigger_clause(right_tokens),
             )
-            && !matches!(left, TriggerSpec::Custom(_))
-            && !matches!(right, TriggerSpec::Custom(_))
         {
             return Ok(TriggerSpec::Either(Box::new(left), Box::new(right)));
         }
@@ -8990,9 +8980,7 @@ pub(crate) fn token_name_mentions_eldrazi_spawn_or_scion(name: &str) -> bool {
 
 pub(crate) fn effect_creates_eldrazi_spawn_or_scion(effect: &EffectAst) -> bool {
     match effect {
-        EffectAst::CreateToken { name, .. } | EffectAst::CreateTokenWithMods { name, .. } => {
-            token_name_mentions_eldrazi_spawn_or_scion(name)
-        }
+        EffectAst::CreateTokenWithMods { name, .. } => token_name_mentions_eldrazi_spawn_or_scion(name),
         _ => {
             let mut found = false;
             for_each_nested_effects(effect, false, |nested| {
@@ -9007,8 +8995,7 @@ pub(crate) fn effect_creates_eldrazi_spawn_or_scion(effect: &EffectAst) -> bool 
 
 pub(crate) fn effect_creates_any_token(effect: &EffectAst) -> bool {
     match effect {
-        EffectAst::CreateToken { .. }
-        | EffectAst::CreateTokenWithMods { .. }
+        EffectAst::CreateTokenWithMods { .. }
         | EffectAst::CreateTokenCopy { .. }
         | EffectAst::CreateTokenCopyFromSource { .. } => true,
         _ => {
@@ -9034,8 +9021,7 @@ pub(crate) fn last_created_token_info(effects: &[EffectAst]) -> Option<(String, 
 
 pub(crate) fn created_token_info_from_effect(effect: &EffectAst) -> Option<(String, PlayerAst)> {
     match effect {
-        EffectAst::CreateToken { name, player, .. }
-        | EffectAst::CreateTokenWithMods { name, player, .. } => Some((name.clone(), *player)),
+        EffectAst::CreateTokenWithMods { name, player, .. } => Some((name.clone(), *player)),
         _ => {
             let mut found = None;
             for_each_nested_effects(effect, true, |nested| {
@@ -9261,13 +9247,6 @@ pub(crate) fn append_token_reminder_to_effect(
                 || *sacrifice_at_next_end_step
                 || *exile_at_next_end_step
                 || *exile_at_end_of_combat
-        }
-        EffectAst::CreateToken { name, .. } => {
-            if !name.ends_with(' ') {
-                name.push(' ');
-            }
-            name.push_str(reminder);
-            true
         }
         EffectAst::CreateTokenWithMods {
             name,

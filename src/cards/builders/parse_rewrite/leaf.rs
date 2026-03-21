@@ -4,7 +4,7 @@ use winnow::error::{ContextError, Result as WResult};
 use winnow::prelude::*;
 use winnow::token::{one_of, take_while};
 
-use crate::cards::builders::{CardTextError, ChoiceCount, MetadataLine, parse_subtype_word};
+use crate::cards::builders::{CardTextError, ChoiceCount, parse_subtype_word};
 use crate::color::Color;
 use crate::color::ColorSet;
 use crate::cost::TotalCost;
@@ -1205,6 +1205,7 @@ pub(crate) fn parse_count_word_rewrite(raw: &str) -> Result<u32, CardTextError> 
     finish_parse(raw, spaced(parse_count_inner), "count-word")
 }
 
+#[cfg(test)]
 pub(crate) fn parse_mana_symbol_group_rewrite(raw: &str) -> Result<Vec<ManaSymbol>, CardTextError> {
     let trimmed = raw.trim().trim_matches('{').trim_matches('}');
     finish_parse(
@@ -1759,14 +1760,4 @@ pub(crate) fn lower_activation_cost_cst(
     }
     flush_pending_mana(&mut costs, &mut pending_mana_pips);
     Ok(TotalCost::from_costs(costs))
-}
-
-#[allow(dead_code)]
-pub(crate) fn metadata_type_line_cst(
-    value: &MetadataLine,
-) -> Result<Option<TypeLineCst>, CardTextError> {
-    match value {
-        MetadataLine::TypeLine(raw) => parse_type_line_rewrite(raw).map(Some),
-        _ => Ok(None),
-    }
 }

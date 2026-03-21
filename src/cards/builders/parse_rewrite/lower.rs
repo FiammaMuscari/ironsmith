@@ -1522,9 +1522,7 @@ fn lower_rewrite_triggered_to_chunk(
             line.effect_text.as_str(),
             line.info.line_index,
         ));
-        if let (Ok(trigger), Ok(effects)) = (direct_trigger, direct_effects)
-            && !matches!(trigger, TriggerSpec::Custom(_))
-        {
+        if let (Ok(trigger), Ok(effects)) = (direct_trigger, direct_effects) {
             return apply_chosen_option_to_triggered_chunk(
                 LineAst::Triggered {
                     trigger,
@@ -2143,7 +2141,6 @@ fn rewrite_copy_count_to_times_paid_label_rewrite(effects: &mut [EffectAst], lab
             EffectAst::UnlessPays { effects, .. }
             | EffectAst::May { effects }
             | EffectAst::MayByPlayer { effects, .. }
-            | EffectAst::MayByTaggedController { effects, .. }
             | EffectAst::ResolvedIfResult { effects, .. }
             | EffectAst::ResolvedWhenResult { effects, .. }
             | EffectAst::IfResult { effects, .. }
@@ -3289,7 +3286,7 @@ fn rewrite_item_to_normalized_item(
     state: &mut RewriteNormalizationState,
 ) -> Result<Option<NormalizedCardItem>, CardTextError> {
     match item {
-        RewriteSemanticItem::Metadata(_) => Ok(None),
+        RewriteSemanticItem::Metadata => Ok(None),
         RewriteSemanticItem::Keyword(line) => {
             Ok(Some(NormalizedCardItem::Line(normalize_rewrite_line_ast(
                 line.info.clone(),
