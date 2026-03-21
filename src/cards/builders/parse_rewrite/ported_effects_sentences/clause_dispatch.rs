@@ -1,31 +1,52 @@
-use super::zones::parse_half_starting_life_total_value;
-use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, TargetAst, Token, Verb, bind_implicit_player_context,
-    contains_until_end_of_turn, extract_subject_player, find_negation_span, find_verb,
+use super::{
+    Verb, bind_implicit_player_context, find_verb, parse_effect_chain_with_sentence_primitives,
+    parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subtype_word,
+};
+use super::super::ported_keyword_static::{
+    keyword_action_to_static_ability, parse_ability_line, parse_pt_modifier, parse_pt_modifier_values,
+};
+use super::super::ported_activation_and_restrictions::{
+    find_negation_span, parse_cant_restrictions, parse_choose_color_phrase_words,
+    parse_choose_creature_type_phrase_words, parse_choose_player_phrase_words,
+    parse_target_player_choose_objects_clause, parse_you_choose_objects_clause,
+    parse_you_choose_player_clause,
+};
+use super::super::ported_object_filters::parse_object_filter;
+use super::for_each_helpers::{
     has_demonstrative_object_reference, is_mana_replacement_clause_words,
     is_mana_trigger_additional_clause_words, is_target_player_dealt_damage_by_this_turn_subject,
-    keyword_action_to_static_ability, parse_ability_line, parse_cant_restrictions, parse_card_type,
-    parse_choose_color_phrase_words, parse_choose_creature_type_phrase_words,
-    parse_choose_player_phrase_words, parse_color, parse_effect_chain_with_sentence_primitives,
-    parse_effect_with_verb, parse_for_each_object_subject, parse_get_for_each_count_value,
+    parse_for_each_object_subject, parse_get_for_each_count_value,
     parse_get_modifier_values_with_tail, parse_has_base_power_clause,
-    parse_has_base_power_toughness_clause, parse_leading_player_may, parse_object_filter,
-    parse_pt_modifier, parse_pt_modifier_values, parse_put_counters, parse_restriction_duration,
-    parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subject,
-    parse_subtype_word, parse_target_phrase, parse_target_player_choose_objects_clause,
-    parse_value, parse_you_choose_objects_clause, parse_you_choose_player_clause, parser_trace,
-    parser_trace_stack, remove_first_word, remove_through_first_word, run_clause_primitives,
-    span_from_tokens, starts_with_until_end_of_turn, strip_leading_instead_prefix,
-    token_index_for_word_index, trim_commas, words,
+    parse_has_base_power_toughness_clause,
 };
-use crate::{ChooseSpec, ObjectFilter, Subtype, TagKey, Until, Value};
+use super::search_library::parse_restriction_duration;
+use super::zone_counter_helpers::{
+    parse_half_starting_life_total_value, parse_put_counters,
+};
+use super::super::util::{
+    contains_until_end_of_turn, parse_card_type, parse_color, parse_subject, parse_target_phrase,
+    parse_value, parser_trace, parser_trace_stack, span_from_tokens,
+    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
+};
+use super::chain_carry::{
+    parse_leading_player_may, remove_first_word, remove_through_first_word, run_clause_primitives,
+};
+use super::clause_pattern_helpers::extract_subject_player;
+use super::verb_dispatch::parse_effect_with_verb;
+use crate::cards::builders::{
+    CardTextError, EffectAst, IT_TAG, TargetAst, Token,
+};
+use crate::effect::{Until, Value};
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
+use crate::types::{CardType, Subtype};
+use crate::TagKey;
 
 pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
         return Err(CardTextError::ParseError("empty effect clause".to_string()));
     }
 
-    let stripped_instead = strip_leading_instead_prefix(tokens);
+    let stripped_instead = super::strip_leading_instead_prefix(tokens);
     let tokens = stripped_instead.as_deref().unwrap_or(tokens);
 
     if let Some(player) = parse_leading_player_may(tokens) {
@@ -93,13 +114,12 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
 
     if let Some((consumed, excluded_subtypes)) =
         parse_choose_creature_type_phrase_words(choice_words)?
+        && consumed == choice_words.len()
     {
-        if consumed == choice_words.len() {
-            return Ok(EffectAst::ChooseCreatureType {
-                player: crate::cards::builders::PlayerAst::Implicit,
-                excluded_subtypes,
-            });
-        }
+        return Ok(EffectAst::ChooseCreatureType {
+            player: crate::cards::builders::PlayerAst::Implicit,
+            excluded_subtypes,
+        });
     }
 
     if let Some(consumed) = parse_choose_player_phrase_words(choice_words)
@@ -107,7 +127,7 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     {
         return Ok(EffectAst::ChoosePlayer {
             chooser: crate::cards::builders::PlayerAst::Implicit,
-            filter: crate::target::PlayerFilter::Any,
+            filter: PlayerFilter::Any,
             tag: TagKey::from(IT_TAG),
             random: false,
             exclude_previous_choices: 0,
@@ -146,8 +166,6 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
         });
     }
 
-    // "This creature assigns no combat damage this turn."
-    // Used in Laccolith-style effects: "If you do, this creature assigns no combat damage this turn."
     if clause_words
         .windows(4)
         .any(|window| window == ["assigns", "no", "combat", "damage"])
@@ -277,11 +295,10 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     if matches!(verb, Verb::Counter)
         && verb_idx > 0
         && tokens.iter().any(|token| token.is_word("on"))
+        && let Ok(effect) = parse_put_counters(tokens)
     {
-        if let Ok(effect) = parse_put_counters(tokens) {
-            parser_trace("parse_effect_clause:counter-noun-treated-as-put", tokens);
-            return Ok(effect);
-        }
+        parser_trace("parse_effect_clause:counter-noun-treated-as-put", tokens);
+        return Ok(effect);
     }
 
     if matches!(verb, Verb::Get) {
@@ -467,12 +484,9 @@ pub(crate) fn parse_become_clause(
     subject_tokens: &[Token],
     rest_tokens: &[Token],
 ) -> Result<EffectAst, CardTextError> {
-    use crate::effect::Until;
-
     let subject_words = words(subject_tokens);
     let subject = parse_subject(subject_tokens);
 
-    // Split off trailing duration, if present.
     let (duration, become_tokens) =
         if let Some((duration, remainder)) = parse_restriction_duration(rest_tokens)? {
             (duration, remainder)
@@ -491,7 +505,6 @@ pub(crate) fn parse_become_clause(
     let become_words_vec = words(become_body_tokens);
     let become_words = &become_words_vec[..];
 
-    // Player "life total becomes N"
     if let Some(player) = extract_subject_player(Some(subject)) {
         if become_words == ["monarch"] {
             return Ok(EffectAst::BecomeMonarch { player });
@@ -510,7 +523,6 @@ pub(crate) fn parse_become_clause(
         }
     }
 
-    // Resolve object target.
     let target = if subject_words.is_empty()
         || subject_words == ["it"]
         || subject_words == ["they"]
@@ -527,7 +539,6 @@ pub(crate) fn parse_become_clause(
         parse_target_phrase(subject_tokens)?
     };
 
-    // "the/a basic land type of your choice"
     if become_words == ["basic", "land", "type", "of", "your", "choice"] {
         return Ok(EffectAst::BecomeBasicLandTypeChoice { target, duration });
     }
@@ -550,7 +561,6 @@ pub(crate) fn parse_become_clause(
         });
     }
 
-    // "the color of your choice" / "color of your choice"
     if become_words == ["color", "of", "your", "choice"]
         || become_words == ["color", "or", "colors", "of", "your", "choice"]
         || become_words == ["colors", "of", "your", "choice"]
@@ -558,7 +568,6 @@ pub(crate) fn parse_become_clause(
         return Ok(EffectAst::BecomeColorChoice { target, duration });
     }
 
-    // "the creature type of your choice" / "creature type of your choice"
     if become_words == ["creature", "type", "of", "your", "choice"] {
         return Ok(EffectAst::BecomeCreatureTypeChoice {
             target,
@@ -567,7 +576,6 @@ pub(crate) fn parse_become_clause(
         });
     }
 
-    // "copy of <target>"
     if become_words.starts_with(&["copy", "of"]) {
         let Some(source_start) = token_index_for_word_index(become_body_tokens, 2) else {
             return Err(CardTextError::ParseError(format!(
@@ -590,12 +598,10 @@ pub(crate) fn parse_become_clause(
         });
     }
 
-    // "colorless"
     if become_words == ["colorless"] {
         return Ok(EffectAst::MakeColorless { target, duration });
     }
 
-    // "equal to this's power and toughness"
     if become_words.starts_with(&["equal", "to"]) {
         let rhs = &become_words[2..];
         if rhs == ["this", "power", "and", "toughness"]
@@ -611,14 +617,13 @@ pub(crate) fn parse_become_clause(
         }
     }
 
-    // "<N>/<M> ... creature" animation-like clauses.
     if let Some(pt_word) = become_words.first().copied()
         && let Ok((power, toughness)) = parse_pt_modifier(pt_word)
         && let Some(creature_idx) = become_words
             .iter()
             .position(|word| *word == "creature" || *word == "creatures")
     {
-        let mut card_types = vec![crate::types::CardType::Creature];
+        let mut card_types = vec![CardType::Creature];
         let mut subtypes = Vec::new();
         let mut colors = crate::color::ColorSet::new();
         let mut all_prefix_words_supported = true;
@@ -628,8 +633,7 @@ pub(crate) fn parse_become_clause(
                 continue;
             }
             if let Some(card_type) = parse_card_type(word) {
-                if card_type != crate::types::CardType::Creature && !card_types.contains(&card_type)
-                {
+                if card_type != CardType::Creature && !card_types.contains(&card_type) {
                     card_types.push(card_type);
                 }
                 continue;
@@ -664,7 +668,7 @@ pub(crate) fn parse_become_clause(
                 .map(|actions| {
                     abilities = actions
                         .into_iter()
-                        .filter_map(keyword_action_to_static_ability)
+                        .filter_map(|action| keyword_action_to_static_ability(action))
                         .collect::<Vec<_>>();
                     !abilities.is_empty()
                 })
@@ -683,7 +687,7 @@ pub(crate) fn parse_become_clause(
                 power: Value::Fixed(power),
                 toughness: Value::Fixed(toughness),
                 target,
-                card_types: vec![crate::types::CardType::Creature],
+                card_types: vec![CardType::Creature],
                 subtypes: Vec::new(),
                 colors: None,
                 abilities: Vec::new(),
@@ -702,7 +706,6 @@ pub(crate) fn parse_become_clause(
         });
     }
 
-    // "<card type>[ ... ]" and "<card type> in addition to its/their other types"
     let addition_tail_len =
         if become_words.ends_with(&["in", "addition", "to", "its", "other", "types"]) {
             Some(6usize)
@@ -766,7 +769,6 @@ pub(crate) fn parse_become_clause(
         }
     }
 
-    // "<color>" / "<color> and <color>" / "<color> and or <color>"
     let color_tokens = become_words
         .iter()
         .copied()

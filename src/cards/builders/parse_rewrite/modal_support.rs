@@ -1,20 +1,25 @@
-use crate::cards::builders::effect_ast_traversal::try_for_each_nested_effects_mut;
 use crate::cards::builders::{
     ActivationTiming, CardTextError, EffectAst, EffectPredicate, IfResultPredicate, LineInfo,
     ParsedModalActivatedHeader, ParsedModalGate, ParsedModalHeader, TextSpan, Token,
-    find_activation_cost_start, parse_if_result_predicate, parse_where_x_value_clause,
-    replace_unbound_x_with_value, split_on_period, starts_with_activation_cost,
-    token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
 };
 use crate::effect::Value;
 use crate::target::PlayerFilter;
 
 use super::clause_support::{rewrite_parse_effect_sentences, rewrite_parse_trigger_clause};
+use super::effect_ast_traversal::try_for_each_nested_effects_mut;
+use super::modal_helpers::{
+    find_activation_cost_start, parse_if_result_predicate, replace_unbound_x_with_value,
+    starts_with_activation_cost, value_contains_unbound_x,
+};
 use super::ported_activation_and_restrictions::{
     infer_activated_functional_zones, parse_activation_cost,
     parse_loyalty_shorthand_activation_cost,
 };
-use super::util::{parse_number_or_x_value, tokenize_line};
+use super::ported_keyword_static::parse_where_x_value_clause;
+use super::util::{
+    parse_number_or_x_value, split_on_period, token_index_for_word_index, tokenize_line,
+    trim_commas, words,
+};
 
 type ModalHeader = ParsedModalHeader;
 type ModalActivatedHeader = ParsedModalActivatedHeader;

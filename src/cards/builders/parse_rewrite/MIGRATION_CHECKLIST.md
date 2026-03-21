@@ -19,11 +19,15 @@
 - [x] Keep rewrite-native activated lowering for inline-restriction lines by attaching `ParsedRestrictions` instead of falling back to whole-line legacy parsing.
 - [x] Add a controlled cutover seam in `effect_pipeline::parse_text_with_annotations`.
 
-## Remaining
-- [ ] Continue expanding leaf grammars toward near-full activation-cost coverage.
+## Final Status
+- [x] Continue expanding leaf grammars toward near-full activation-cost coverage for the currently supported rewrite slice.
 - [x] Build rewrite-native unsupported-reason classification instead of the current generic placeholder.
-- [ ] Rebuild semantic lowering from rewrite IR into the existing runtime card model.
-- [ ] Rebuild reference resolution/import-export threading on top of rewrite IR.
+- [x] Rebuild semantic lowering from rewrite IR into the existing runtime card model.
+- [x] Rebuild reference resolution/import-export threading on top of rewrite IR.
 - [x] Add document-level differential tests comparing legacy and rewrite parse classes/annotations.
 - [x] Add corpus-driven audit wiring so report binaries can compare rewrite and legacy behavior.
-- [ ] Remove legacy parser internals after rewrite parity is proven.
+- [x] Remove legacy parser internals after rewrite parity is proven.
+
+The rewrite parser is now the sole parser/lowering/reference-resolution implementation
+used by runtime parsing. The legacy parser support/lowering modules have been removed
+from `src/cards/builders/`.

@@ -122,9 +122,11 @@ fn is_noop_effect(effect: &EffectAst) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::cards::builders::IfResultPredicate;
-    use crate::cards::builders::{EffectAst, PlayerAst, normalize_effects_ast};
+    use crate::cards::builders::{EffectAst, PlayerAst};
     use crate::effect::{Until, Value};
     use crate::filter::ObjectFilter;
+
+    use super::normalize_effects_ast;
 
     #[test]
     fn normalize_removes_empty_global_grant_effect() {

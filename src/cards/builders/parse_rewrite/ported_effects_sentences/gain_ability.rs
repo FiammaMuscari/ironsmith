@@ -1,13 +1,18 @@
 #[allow(unused_imports)]
 use super::{Verb, find_verb, parse_effect_chain};
+use super::legacy_helpers::*;
+use super::dispatch_inner::trim_edge_punctuation;
+use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
+use super::super::compile_support::compile_statement_effects;
+use super::super::ported_activation_and_restrictions::parse_triggered_line;
+use super::super::ported_object_filters::{parse_object_filter, split_on_or};
+use super::super::util::{
+    is_article, is_source_reference_words, parse_mana_symbol, parse_target_phrase, span_from_tokens,
+    token_index_for_word_index, trim_commas, words,
+};
 use crate::cards::builders::{
     CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ReferenceImports,
-    TagKey, TargetAst, Token, is_article, is_source_reference_words,
-    is_until_end_of_turn, parse_ability_line, parse_ability_phrase, parse_activated_line,
-    parse_object_filter, parse_pt_modifier_values, parse_target_phrase,
-    parse_triggered_line, parsed_triggered_ability, reject_unimplemented_keyword_actions,
-    span_from_tokens, split_on_or, starts_with_until_end_of_turn, token_index_for_word_index,
-    trim_commas, try_build_unless, words,
+    TagKey, TargetAst, Token,
 };
 use crate::effect::Until;
 use crate::mana::ManaCost;
@@ -32,7 +37,7 @@ fn display_text_for_tokens(tokens: &[Token]) -> String {
                     "t" => "{T}".to_string(),
                     "q" => "{Q}".to_string(),
                     _ if in_effect_text && numeric_like => word.clone(),
-                    _ => crate::cards::builders::parse_mana_symbol(word)
+                    _ => parse_mana_symbol(word)
                         .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
                         .unwrap_or_else(|_| word.clone()),
                 };
@@ -660,7 +665,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
     ability_tokens: &[Token],
     clause_words: &[&str],
 ) -> Result<Option<GrantedAbilityAst>, CardTextError> {
-    let ability_tokens = crate::cards::builders::trim_edge_punctuation(ability_tokens);
+    let ability_tokens = trim_edge_punctuation(ability_tokens);
     if ability_tokens.is_empty() {
         return Ok(None);
     }
@@ -803,7 +808,7 @@ pub(crate) fn parse_gain_ability_to_source_sentence(
         return Ok(None);
     }
 
-    let ability_tokens = crate::cards::builders::trim_edge_punctuation(&tokens[gain_idx + 1..]);
+    let ability_tokens = trim_edge_punctuation(&tokens[gain_idx + 1..]);
     if let Some(parsed) = parse_activated_line(&ability_tokens)? {
         return Ok(Some(EffectAst::GrantAbilityToSource { ability: parsed }));
     }
@@ -816,7 +821,8 @@ mod tests {
     use super::*;
     use crate::CardId;
     use crate::ability::AbilityKind;
-    use crate::cards::builders::{CardDefinitionBuilder, tokenize_line};
+    use crate::cards::builders::CardDefinitionBuilder;
+    use super::super::super::util::tokenize_line;
 
     #[test]
     fn gain_ability_to_source_keeps_parsed_ability_until_lowering() {
@@ -835,7 +841,7 @@ mod tests {
             "expected parsed ability to remain unlowered in the AST, got {debug}"
         );
 
-        let compiled = crate::cards::builders::compile_statement_effects(&[effect])
+        let compiled = compile_statement_effects(&[effect])
             .expect("grant-to-source effect should lower");
         assert!(
             format!("{compiled:?}").contains("GrantObjectAbilityEffect"),
@@ -863,7 +869,7 @@ mod tests {
             "expected granted ability to remain unlowered in AST, got {debug}"
         );
 
-        let compiled = crate::cards::builders::compile_statement_effects(&[effect])
+        let compiled = compile_statement_effects(&[effect])
             .expect("target gain clause should lower");
         let compiled_debug = format!("{compiled:?}");
         assert!(
@@ -894,7 +900,7 @@ mod tests {
             "expected removed ability to remain unlowered in AST, got {debug}"
         );
 
-        let compiled = crate::cards::builders::compile_statement_effects(&[effect])
+        let compiled = compile_statement_effects(&[effect])
             .expect("target lose clause should lower");
         let compiled_debug = format!("{compiled:?}");
         assert!(

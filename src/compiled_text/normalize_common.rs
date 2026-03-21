@@ -1305,13 +1305,22 @@ pub(super) fn normalize_singular_tagged_play_permission(line: &str) -> Option<St
     let rewrites = [
         ("you may play tagged 'exiled_", "play"),
         ("you may cast tagged 'exiled_", "cast"),
+        ("you may play that card until end of turn", "play"),
+        ("you may cast that card until end of turn", "cast"),
         ("you may play tagged 'revealed_", "play"),
         ("you may cast tagged 'revealed_", "cast"),
+        ("you may play tagged '__sentence_helper_exiled_", "play"),
+        ("you may cast tagged '__sentence_helper_exiled_", "cast"),
+        ("you may play tagged '__sentence_helper_revealed_", "play"),
+        ("you may cast tagged '__sentence_helper_revealed_", "cast"),
     ];
     for (needle, verb) in rewrites {
         let Some((prefix, rest)) = split_once_ascii_ci(line, needle) else {
             continue;
         };
+        if needle.contains("that card until end of turn") {
+            return Some(format!("{prefix}you may {verb} that card until end of turn"));
+        }
         let Some((_, tail)) = rest.split_once('\'') else {
             continue;
         };

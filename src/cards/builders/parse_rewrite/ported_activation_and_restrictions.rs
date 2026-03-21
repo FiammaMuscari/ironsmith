@@ -1,34 +1,35 @@
-#[allow(unused_imports)]
-use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
-use crate::cards::builders::effect_ast_traversal::{
-    for_each_nested_effects, for_each_nested_effects_mut,
-};
 use super::ported_effects_sentences::{
     is_beginning_of_end_step_words, is_end_of_combat_words, is_negated_untap_clause,
-    parse_effect_sentence, parse_mana_symbol, parse_mana_symbol_group, parse_restriction_duration,
-    parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word,
+    parse_effect_sentence, parse_effect_sentences, parse_mana_symbol, parse_mana_symbol_group,
+    parse_restriction_duration, parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word,
     replace_unbound_x_in_effect_anywhere, strip_leading_articles, trim_edge_punctuation,
+};
+use super::ported_activation_helpers::{
+    contains_discard_source_phrase, contains_source_from_your_graveyard_phrase,
+    contains_source_from_your_hand_phrase, find_activation_cost_start, is_article,
+    is_basic_color_word, is_comparison_or_delimiter, is_source_from_your_graveyard_words,
+    join_sentences_with_period, parse_add_mana, parse_filter_comparison_tokens,
+    parse_next_end_step_token_delay_flags, parse_subtype_flexible, split_cost_segments,
+    token_index_for_word_index, value_contains_unbound_x,
 };
 use super::ported_keyword_static::{
     parse_add_mana_equal_amount_value, parse_cost_modifier_amount, parse_cost_modifier_mana_cost,
-    parse_dynamic_cost_modifier_value,
+    parse_dynamic_cost_modifier_value, parse_where_x_value_clause,
 };
-use super::ported_object_filters::parse_object_filter;
+use super::ported_effects_sentences::find_verb;
+use super::ported_object_filters::{parse_object_filter, parse_spell_filter};
+use super::effect_ast_traversal::{for_each_nested_effects, for_each_nested_effects_mut};
+use super::util::{
+    is_source_reference_words, parse_card_type, parse_color, parse_counter_type_from_tokens,
+    parse_non_type, parse_number, parse_number_word_u32, parse_target_count_range_prefix,
+    parse_target_phrase, span_from_tokens, split_on_and, split_on_period, trim_commas, words,
+};
+#[allow(unused_imports)]
+use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
 use crate::cards::builders::{
     CardTextError, DamageBySpec, EffectAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
     PlayerAst, ReferenceImports, ReturnControllerAst, StaticAbilityAst, TagKey, TargetAst,
-    TextSpan, Token, TriggerSpec, contains_discard_source_phrase,
-    contains_source_from_your_graveyard_phrase, contains_source_from_your_hand_phrase,
-    find_activation_cost_start, find_verb, is_article,
-    is_basic_color_word, is_comparison_or_delimiter, is_source_from_your_graveyard_words,
-    is_source_reference_words, join_sentences_with_period, parse_add_mana, parse_card_type,
-    parse_color,
-    parse_counter_type_from_tokens, parse_effect_sentences, parse_filter_comparison_tokens,
-    parse_next_end_step_token_delay_flags, parse_non_type, parse_number,
-    parse_number_word_u32, parse_spell_filter, parse_subtype_flexible,
-    parse_target_count_range_prefix, parse_target_phrase, parse_where_x_value_clause,
-    span_from_tokens, split_cost_segments, split_on_and, split_on_period,
-    token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
+    TextSpan, Token, TriggerSpec,
 };
 use crate::color::ColorSet;
 use crate::cost::TotalCost;
@@ -602,11 +603,11 @@ pub(crate) fn loyalty_additional_restrictions(is_loyalty_shorthand: bool) -> Vec
 pub(crate) fn first_sacrifice_cost_choice_tag(
     mana_cost: &crate::cost::TotalCost,
 ) -> Option<TagKey> {
-    crate::cards::builders::find_first_sacrifice_cost_choice_tag(mana_cost)
+    super::util::find_first_sacrifice_cost_choice_tag(mana_cost)
 }
 
 pub(crate) fn last_exile_cost_choice_tag(mana_cost: &crate::cost::TotalCost) -> Option<TagKey> {
-    crate::cards::builders::find_last_exile_cost_choice_tag(mana_cost)
+    super::util::find_last_exile_cost_choice_tag(mana_cost)
 }
 
 pub(crate) fn infer_activated_functional_zones(
@@ -1136,7 +1137,7 @@ pub(crate) fn parse_cycling_keyword_group_text(tokens: &[Token]) -> Option<Strin
         if keyword.is_empty() {
             continue;
         }
-        let cost_words = crate::cards::builders::words(&cost_tokens);
+        let cost_words = super::util::words(&cost_tokens);
         let cost = if cost_words.len() >= 3 && cost_words[0] == "pay" && cost_words[2] == "life" {
             format!("pay {} life", cost_words[1])
         } else {
@@ -5063,7 +5064,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             .position(|token| matches!(token, Token::Period(_)))
             .unwrap_or(tokens.len());
         let cost_tokens = trim_commas(&tokens[2..reminder_start]).to_vec();
-        let cost_words = crate::cards::builders::words(&cost_tokens);
+        let cost_words = super::util::words(&cost_tokens);
 
         if cost_words.len() == 3
             && cost_words[0] == "pay"
@@ -6240,7 +6241,9 @@ pub(crate) fn strip_leading_one_or_more(tokens: &[Token]) -> &[Token] {
 
 fn parse_leading_or_more_quantifier(tokens: &[Token]) -> Option<(u32, &[Token])> {
     let (count, used) = parse_number(tokens)?;
-    if tokens.get(used).is_some_and(|token: &Token| token.is_word("or"))
+    if tokens
+        .get(used)
+        .is_some_and(|token: &Token| token.is_word("or"))
         && tokens
             .get(used + 1)
             .is_some_and(|token: &Token| token.is_word("more"))
@@ -8980,7 +8983,9 @@ pub(crate) fn token_name_mentions_eldrazi_spawn_or_scion(name: &str) -> bool {
 
 pub(crate) fn effect_creates_eldrazi_spawn_or_scion(effect: &EffectAst) -> bool {
     match effect {
-        EffectAst::CreateTokenWithMods { name, .. } => token_name_mentions_eldrazi_spawn_or_scion(name),
+        EffectAst::CreateTokenWithMods { name, .. } => {
+            token_name_mentions_eldrazi_spawn_or_scion(name)
+        }
         _ => {
             let mut found = false;
             for_each_nested_effects(effect, false, |nested| {
@@ -9785,9 +9790,9 @@ pub(crate) fn parse_target_player_chooses_then_other_cant_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cards::builders::tokenize_line;
     use crate::effect::Restriction;
     use crate::zone::Zone;
+    use super::super::util::tokenize_line;
 
     #[test]
     fn parse_negated_object_restriction_clause_supports_attack_or_block_alone() {

@@ -2274,7 +2274,7 @@ pub(crate) fn parse_soulbond_shared_line(
             reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
             let abilities: Vec<StaticAbility> = actions
                 .into_iter()
-                .filter_map(keyword_action_to_static_ability)
+                .filter_map(|action| keyword_action_to_static_ability(action))
                 .collect();
             if abilities.is_empty() {
                 return Err(CardTextError::ParseError(format!(
@@ -2834,7 +2834,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
             let removed = actions
                 .into_iter()
-                .filter_map(keyword_action_to_static_ability)
+                .filter_map(|action| keyword_action_to_static_ability(action))
                 .collect::<Vec<_>>();
             if removed.is_empty() {
                 return Ok(None);
@@ -2946,7 +2946,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                 reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
                 let granted = actions
                     .into_iter()
-                    .filter_map(keyword_action_to_static_ability)
+                    .filter_map(|action| keyword_action_to_static_ability(action))
                     .collect::<Vec<_>>();
                 if granted.is_empty() {
                     return Ok(None);

@@ -1,23 +1,8 @@
 use crate::ability::{Ability, AbilityKind, TriggeredAbility};
 use crate::cards::ParseAnnotations;
-use crate::cards::builders::effect_ast_normalization::normalize_effects_ast;
-use crate::cards::builders::parse_compile::{
-    compile_trigger_spec, effects_reference_it_tag, effects_reference_its_controller,
-    effects_reference_tag, ensure_concrete_trigger_spec, inferred_trigger_player_filter,
-    materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
-    materialize_prepared_triggered_effects, trigger_binds_player_reference_context,
-    trigger_supports_event_value,
-};
-use crate::cards::builders::reference_resolution::{
-    EffectReferenceResolutionConfig, annotate_effect_sequence,
-};
 use crate::cards::builders::{
-    CardDefinitionBuilder, CardTextError, EffectAst, EffectPreludeTag, KeywordAction, LineInfo,
-    LoweredEffects, NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility,
-    NormalizedPreparedAbility, ParsedAbility, PreparedEffectsForLowering,
-    PreparedPredicateForLowering, PreparedTriggeredEffectsForLowering, ReferenceEnv,
-    ReferenceExports, ReferenceImports, StaticAbilityAst, TriggerSpec,
-    classify_instead_followup_text, collect_tag_spans_from_effects_with_context,
+    CardDefinitionBuilder, CardTextError, EffectAst, KeywordAction, LineInfo, ParsedAbility,
+    StaticAbilityAst, TriggerSpec,
 };
 use crate::effect::{Condition, Effect, EffectMode, EventValueSpec};
 use crate::filter::ObjectFilter;
@@ -25,6 +10,26 @@ use crate::mana::{ManaCost, ManaSymbol};
 use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, PlayerFilter};
 use crate::zone::Zone;
+
+use super::compile_support::{
+    collect_tag_spans_from_effects_with_context,
+    compile_trigger_spec, effects_reference_it_tag, effects_reference_its_controller,
+    effects_reference_tag, ensure_concrete_trigger_spec, inferred_trigger_player_filter,
+    materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
+    materialize_prepared_triggered_effects, trigger_binds_player_reference_context,
+    trigger_supports_event_value,
+};
+use super::effect_ast_normalization::normalize_effects_ast;
+use super::effect_pipeline::{
+    EffectPreludeTag, NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility,
+    NormalizedPreparedAbility, PreparedEffectsForLowering, PreparedPredicateForLowering,
+    PreparedTriggeredEffectsForLowering,
+};
+use super::reference_model::{LoweredEffects, ReferenceEnv, ReferenceExports, ReferenceImports};
+use super::reference_resolution::{
+    EffectReferenceResolutionConfig, annotate_effect_sequence,
+};
+use super::util::classify_instead_followup_text;
 
 fn rewrite_prepare_effects_from_normalized(
     semantic_effects: Vec<EffectAst>,
@@ -108,8 +113,9 @@ fn rewrite_prepare_effects_from_normalized(
 
 pub(crate) fn rewrite_prepare_effects_for_lowering(
     effects: &[EffectAst],
-    imports: ReferenceImports,
+    imports: impl Into<ReferenceImports>,
 ) -> Result<PreparedEffectsForLowering, CardTextError> {
+    let imports = imports.into();
     let normalized = normalize_effects_ast(effects);
     rewrite_prepare_effects_from_normalized(
         normalized.clone(),
@@ -128,8 +134,9 @@ pub(crate) fn rewrite_prepare_effects_for_lowering(
 pub(crate) fn rewrite_prepare_effects_with_trigger_context_for_lowering(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
-    imports: ReferenceImports,
+    imports: impl Into<ReferenceImports>,
 ) -> Result<PreparedEffectsForLowering, CardTextError> {
+    let imports = imports.into();
     let normalized = normalize_effects_ast(effects);
     let default_last_object_tag = if imports.last_object_tag.is_none()
         && (effects_reference_it_tag(&normalized) || effects_reference_its_controller(&normalized))
@@ -171,8 +178,9 @@ pub(crate) fn rewrite_prepare_effects_with_trigger_context_for_lowering(
 pub(crate) fn rewrite_prepare_triggered_effects_for_lowering(
     trigger: &TriggerSpec,
     effects: &[EffectAst],
-    imports: ReferenceImports,
+    imports: impl Into<ReferenceImports>,
 ) -> Result<PreparedTriggeredEffectsForLowering, CardTextError> {
+    let imports = imports.into();
     ensure_concrete_trigger_spec(trigger)?;
 
     let normalized = normalize_effects_ast(effects);
@@ -468,8 +476,9 @@ pub(crate) fn rewrite_parsed_triggered_ability(
     functional_zones: Vec<Zone>,
     text: Option<String>,
     intervening_if: Option<crate::ConditionExpr>,
-    reference_imports: ReferenceImports,
+    reference_imports: impl Into<ReferenceImports>,
 ) -> ParsedAbility {
+    let reference_imports = reference_imports.into();
     ParsedAbility {
         ability: Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
@@ -483,7 +492,7 @@ pub(crate) fn rewrite_parsed_triggered_ability(
         },
         effects_ast: Some(effects_ast),
         trigger_spec: Some(trigger),
-        reference_imports,
+        reference_imports: reference_imports.into(),
     }
 }
 

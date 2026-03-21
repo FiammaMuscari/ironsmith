@@ -33,9 +33,6 @@ use crate::filter::TaggedOpbjectRelation;
 use crate::static_abilities::StaticAbilityId;
 
 use super::CardDefinition;
-mod effect_ast_normalization;
-mod effect_ast_traversal;
-mod effect_pipeline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardTextError {
@@ -190,7 +187,7 @@ fn finalize_overload_definitions(
 
     let overload_builder = original_builder.clone();
     let (overloaded_definition, _) =
-        effect_pipeline::parse_text_with_annotations(overload_builder, rewritten_text, false)?;
+        parse_rewrite::parse_text_with_annotations(overload_builder, rewritten_text, false)?;
     let overloaded_effects = overloaded_definition.spell_effect.unwrap_or_default();
 
     for method in &mut definition.alternative_casts {
@@ -2402,38 +2399,14 @@ pub(crate) enum IfResultPredicate {
 
 const IT_TAG: &str = "__it__";
 
-mod ability_lowering;
-pub(crate) use ability_lowering::*;
-
-mod static_ability_lowering;
-pub(crate) use static_ability_lowering::*;
-
 mod cost_components;
 pub(crate) use cost_components::*;
 
 mod parse_rewrite;
 pub(crate) use parse_rewrite::*;
 
-mod parse_support;
-pub(crate) use parse_support::*;
-
-mod reference_model;
-pub(crate) use reference_model::*;
-
-mod reference_lowering;
-pub(crate) use reference_lowering::*;
-
 mod card_ast;
 pub(crate) use card_ast::*;
-
-pub(crate) use effect_ast_normalization::*;
-pub(crate) use effect_pipeline::*;
-
-mod reference_resolution;
-pub(crate) use reference_resolution::*;
-
-mod parse_compile;
-pub(crate) use parse_compile::*;
 
 /// Builder for creating CardDefinitions with abilities.
 #[derive(Debug, Clone)]
@@ -2880,7 +2853,7 @@ impl CardDefinitionBuilder {
         let text = text.into();
         let original_builder = self.clone();
         let (definition, annotations) =
-            effect_pipeline::parse_text_with_annotations(self, text.clone(), false)?;
+            parse_rewrite::parse_text_with_annotations(self, text.clone(), false)?;
         let definition = finalize_definition(definition, &original_builder, &text)?;
         Ok((definition, annotations))
     }
@@ -2894,7 +2867,7 @@ impl CardDefinitionBuilder {
         let text = text.into();
         let original_builder = self.clone();
         let (definition, annotations) =
-            effect_pipeline::parse_text_with_annotations(self, text.clone(), true)?;
+            parse_rewrite::parse_text_with_annotations(self, text.clone(), true)?;
         let definition = finalize_definition(definition, &original_builder, &text)?;
         Ok((definition, annotations))
     }

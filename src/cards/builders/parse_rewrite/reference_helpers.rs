@@ -1,8 +1,10 @@
-use crate::cards::builders::{CardTextError, IT_TAG, PlayerAst, ReferenceEnv, TagKey, TargetAst};
+use crate::cards::builders::{CardTextError, IT_TAG, PlayerAst, TagKey, TargetAst};
 use crate::effect::{EventValueSpec, Restriction, Value};
 use crate::filter::{ObjectFilter, ObjectRef, PlayerFilter, TaggedOpbjectRelation};
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
+
+use super::reference_model::ReferenceEnv;
 
 pub(crate) fn is_you_player_filter(filter: &PlayerFilter) -> bool {
     match filter {
@@ -536,13 +538,13 @@ pub(crate) fn resolve_value_it_tag(
 }
 
 pub(crate) fn choose_spec_targets_object(spec: &ChooseSpec) -> bool {
-    match spec.base() {
+    matches!(
+        spec.base(),
         ChooseSpec::Object(_)
-        | ChooseSpec::Tagged(_)
-        | ChooseSpec::SpecificObject(_)
-        | ChooseSpec::Source => true,
-        _ => false,
-    }
+            | ChooseSpec::Tagged(_)
+            | ChooseSpec::SpecificObject(_)
+            | ChooseSpec::Source
+    )
 }
 
 pub(crate) fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
@@ -648,66 +650,5 @@ pub(crate) fn resolve_attach_object_spec(
         _ => Err(CardTextError::ParseError(
             "unsupported attach object reference".to_string(),
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolve_it_tag_rewrites_contextual_owner_filters() {
-        let refs = ReferenceEnv {
-            last_player_filter: crate::cards::builders::RefState::Known(
-                PlayerFilter::ControllerOf(ObjectRef::tagged("exiled_1")),
-            ),
-            ..ReferenceEnv::default()
-        };
-        let filter = ObjectFilter {
-            owner: Some(PlayerFilter::IteratedPlayer),
-            any_of: vec![
-                ObjectFilter::default().in_zone(Zone::Hand),
-                ObjectFilter::default().in_zone(Zone::Graveyard),
-            ],
-            ..Default::default()
-        };
-
-        let resolved = resolve_it_tag(&filter, &refs).expect("resolve contextual owner filter");
-        assert_eq!(
-            resolved.owner,
-            Some(PlayerFilter::ControllerOf(ObjectRef::tagged("exiled_1")))
-        );
-    }
-
-    #[test]
-    fn resolve_choose_spec_it_tag_rewrites_contextual_player_specs() {
-        let refs = ReferenceEnv {
-            last_player_filter: crate::cards::builders::RefState::Known(
-                PlayerFilter::ControllerOf(ObjectRef::tagged("exiled_1")),
-            ),
-            ..ReferenceEnv::default()
-        };
-
-        let resolved =
-            resolve_choose_spec_it_tag(&ChooseSpec::Player(PlayerFilter::IteratedPlayer), &refs)
-                .expect("resolve player choose spec");
-
-        assert_eq!(
-            resolved,
-            ChooseSpec::Player(PlayerFilter::ControllerOf(ObjectRef::tagged("exiled_1")))
-        );
-    }
-
-    #[test]
-    fn resolve_choose_spec_it_tag_uses_iterated_object_in_loop_context() {
-        let refs = ReferenceEnv {
-            last_object_tag: crate::cards::builders::RefState::Known(TagKey::from(IT_TAG)),
-            ..ReferenceEnv::default()
-        };
-
-        let resolved = resolve_choose_spec_it_tag(&ChooseSpec::Tagged(TagKey::from(IT_TAG)), &refs)
-            .expect("resolve iterated choose spec");
-
-        assert_eq!(resolved, ChooseSpec::Iterated);
     }
 }

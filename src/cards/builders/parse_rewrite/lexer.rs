@@ -50,6 +50,105 @@ pub(crate) struct OwnedLexToken {
     pub(crate) span: TextSpan,
 }
 
+impl OwnedLexToken {
+    pub(crate) fn as_word(&self) -> Option<&str> {
+        (self.kind == TokenKind::Word).then_some(self.slice.as_str())
+    }
+
+    pub(crate) fn is_word(&self, expected: &str) -> bool {
+        self.as_word()
+            .is_some_and(|word| word.eq_ignore_ascii_case(expected))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LexCursor<'a> {
+    tokens: &'a [OwnedLexToken],
+    pos: usize,
+}
+
+impl<'a> LexCursor<'a> {
+    pub(crate) fn new(tokens: &'a [OwnedLexToken]) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    pub(crate) fn peek(&self) -> Option<&'a OwnedLexToken> {
+        self.tokens.get(self.pos)
+    }
+
+    pub(crate) fn peek_n(&self, offset: usize) -> Option<&'a OwnedLexToken> {
+        self.tokens.get(self.pos + offset)
+    }
+
+    pub(crate) fn advance(&mut self) -> Option<&'a OwnedLexToken> {
+        let token = self.peek()?;
+        self.pos += 1;
+        Some(token)
+    }
+
+    pub(crate) fn remaining(&self) -> &'a [OwnedLexToken] {
+        self.tokens.get(self.pos..).unwrap_or_default()
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.pos
+    }
+}
+
+pub(crate) fn lexed_words(tokens: &[OwnedLexToken]) -> Vec<&str> {
+    tokens.iter().filter_map(OwnedLexToken::as_word).collect()
+}
+
+#[allow(dead_code)]
+pub(crate) fn trim_lexed_commas(tokens: &[OwnedLexToken]) -> &[OwnedLexToken] {
+    let mut start = 0usize;
+    let mut end = tokens.len();
+    while start < end && tokens[start].kind == TokenKind::Comma {
+        start += 1;
+    }
+    while end > start && tokens[end - 1].kind == TokenKind::Comma {
+        end -= 1;
+    }
+    &tokens[start..end]
+}
+
+pub(crate) fn split_lexed_sentences(tokens: &[OwnedLexToken]) -> Vec<&[OwnedLexToken]> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    let mut quote_depth = 0u32;
+
+    for (idx, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::Quote => {
+                let closing_quote = quote_depth != 0;
+                quote_depth = if quote_depth == 0 { 1 } else { 0 };
+                if closing_quote
+                    && idx > start
+                    && tokens
+                        .get(idx.saturating_sub(1))
+                        .is_some_and(|previous| previous.kind == TokenKind::Period)
+                {
+                    segments.push(&tokens[start..=idx]);
+                    start = idx + 1;
+                }
+            }
+            TokenKind::Period if quote_depth == 0 => {
+                if start < idx {
+                    segments.push(&tokens[start..idx]);
+                }
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+
+    if start < tokens.len() {
+        segments.push(&tokens[start..]);
+    }
+
+    segments
+}
+
 pub(crate) fn lex_line(line: &str, line_index: usize) -> Result<Vec<OwnedLexToken>, CardTextError> {
     let mut lexer = TokenKind::lexer(line);
     let mut tokens = Vec::new();

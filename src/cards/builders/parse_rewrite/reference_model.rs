@@ -1,8 +1,9 @@
 use crate::ChooseSpec;
 use crate::cards::builders::EffectAst;
-use crate::cards::builders::LoweringFrame;
 use crate::effect::EffectId;
 use crate::{PlayerFilter, TagKey};
+
+use super::shared_types::LoweringFrame;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RefState<T> {

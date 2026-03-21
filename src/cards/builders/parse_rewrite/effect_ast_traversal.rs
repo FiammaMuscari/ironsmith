@@ -1,4 +1,4 @@
-use super::EffectAst;
+use crate::cards::builders::EffectAst;
 
 // Keep the list of wrapper variants with `effects: Vec<EffectAst>` in one place.
 // This avoids drift between immutable/mutable/fallible traversal helpers.
@@ -98,7 +98,7 @@ macro_rules! nested_effects_variants {
     };
 }
 
-pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
+pub(crate) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
     match effect {
         EffectAst::DealDamage { .. } => {}
         EffectAst::DealDistributedDamage { .. } => {}
@@ -198,9 +198,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::PutSomeIntoHandRestOnBottomOfLibrary { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary { .. } => {}
-        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
-            ..
-        } => {}
+        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary { .. } => {}
         EffectAst::PutRestOnBottomOfLibrary => {}
         EffectAst::CopySpell { .. } => {}
         EffectAst::RetargetStackObject { .. } => {}
@@ -319,7 +317,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
     }
 }
 
-pub(super) fn for_each_nested_effects(
+pub(crate) fn for_each_nested_effects(
     effect: &EffectAst,
     include_unless_action_alternative: bool,
     mut visit: impl FnMut(&[EffectAst]),
@@ -352,7 +350,7 @@ pub(super) fn for_each_nested_effects(
     }
 }
 
-pub(super) fn for_each_nested_effects_mut(
+pub(crate) fn for_each_nested_effects_mut(
     effect: &mut EffectAst,
     include_unless_action_alternative: bool,
     mut visit: impl FnMut(&mut [EffectAst]),
@@ -385,7 +383,7 @@ pub(super) fn for_each_nested_effects_mut(
     }
 }
 
-pub(super) fn try_for_each_nested_effects_mut<E>(
+pub(crate) fn try_for_each_nested_effects_mut<E>(
     effect: &mut EffectAst,
     include_unless_action_alternative: bool,
     mut visit: impl FnMut(&mut [EffectAst]) -> Result<(), E>,

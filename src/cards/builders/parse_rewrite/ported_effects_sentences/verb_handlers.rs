@@ -1,28 +1,8 @@
-use crate::cards::builders::{
-    parse_add_mana, parse_become, parse_create, parse_delayed_return_timing_words, parse_destroy,
-    parse_discard, parse_equal_to_aggregate_filter_value,
-    parse_equal_to_number_of_counters_on_reference_value,
-    parse_equal_to_number_of_filter_plus_or_minus_fixed_value,
-    parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
-    parse_exchange, parse_exile, parse_flip, parse_get, parse_graveyard_owner_prefix,
-    parse_investigate, parse_mill, parse_pay, parse_put_counters, parse_regenerate, parse_remove,
-    parse_return, parse_sacrifice, parse_scry, parse_skip, parse_surveil, parse_switch, parse_tap,
-    parse_transform, parse_untap, parse_who_did_this_way_predicate,
-    wrap_return_with_delayed_timing,
-};
-use crate::cards::builders::{
-    extract_subject_player, parse_add_mana_equal_amount_value,
-    parse_devotion_value_from_add_clause, parse_dynamic_cost_modifier_value, parse_mana_symbol,
-    parse_number, parse_target_count_range_prefix, try_build_unless, wrap_target_count,
-};
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, ControlDurationAst, DelayedReturnTimingAst, EffectAst, EventValueSpec, IT_TAG,
-    ObjectRefAst, PlayerAst, PredicateAst, ReturnControllerAst, SubjectAst, TagKey, TargetAst,
-    TextSpan, Token, Verb, is_article, is_source_reference_words, parse_card_type, parse_color,
-    parse_object_filter, parse_predicate, parse_target_phrase, parse_value,
-    parse_where_x_value_clause, replace_unbound_x_with_value, span_from_tokens,
-    token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
+    CardTextError, ControlDurationAst, EffectAst, EventValueSpec, IT_TAG, ObjectRefAst,
+    PlayerAst, PredicateAst, ReturnControllerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token,
+    Verb,
 };
 use crate::effect::{ChoiceCount, Until, Value};
 use crate::mana::ManaSymbol;
@@ -31,6 +11,38 @@ use crate::target::{
 };
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
+
+use super::super::ported_activation_and_restrictions::{
+    parse_cycling_line, parse_devotion_value_from_add_clause,
+};
+use super::super::ported_activation_helpers::parse_add_mana;
+use super::super::ported_keyword_static::{
+    parse_add_mana_equal_amount_value, parse_dynamic_cost_modifier_value,
+    parse_where_x_value_clause,
+};
+use super::super::ported_object_filters::parse_object_filter;
+use super::super::util::{
+    is_article, is_source_reference_words, parse_card_type, parse_color, parse_mana_symbol,
+    parse_number, parse_number_word_u32, parse_target_count_range_prefix, parse_target_phrase,
+    parse_value, replace_unbound_x_with_value, span_from_tokens, token_index_for_word_index,
+    trim_commas, value_contains_unbound_x, words, wrap_target_count,
+};
+use super::clause_pattern_helpers::extract_subject_player;
+use super::conditionals::parse_predicate;
+use super::creation_handlers::{parse_create, parse_investigate};
+use super::for_each_helpers::parse_who_did_this_way_predicate;
+use super::sentence_primitives::try_build_unless;
+use super::zone_counter_helpers::{parse_put_counters, parse_transform};
+use super::zone_handlers::{
+    parse_become, parse_delayed_return_timing_words, parse_destroy, parse_discard,
+    parse_equal_to_aggregate_filter_value, parse_equal_to_number_of_counters_on_reference_value,
+    parse_equal_to_number_of_filter_plus_or_minus_fixed_value,
+    parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
+    parse_exchange, parse_exile, parse_flip, parse_get, parse_graveyard_owner_prefix, parse_mill,
+    parse_pay, parse_regenerate, parse_remove, parse_return, parse_sacrifice, parse_scry,
+    parse_skip, parse_surveil, parse_switch, parse_tap, parse_untap,
+    wrap_return_with_delayed_timing, DelayedReturnTimingAst,
+};
 
 pub(crate) fn parse_effect_with_verb(
     verb: Verb,
@@ -1028,7 +1040,7 @@ fn parse_divided_damage_target(target_tokens: &[Token]) -> Result<TargetAst, Car
 
     let max_targets = among_words[..target_idx]
         .iter()
-        .filter_map(|word| crate::cards::builders::parse_number_word_u32(word))
+        .filter_map(|word| parse_number_word_u32(word))
         .max()
         .unwrap_or(0);
     if max_targets == 0 && !among_words.starts_with(&["any", "number", "of"]) {
@@ -1191,7 +1203,7 @@ pub(crate) fn parse_deal_damage_with_amount(
         if matches!(
             each_of_words.as_slice(),
             ["up", "to", _, "target"] | ["up", "to", _, "targets"]
-        ) && let Some(count) = crate::cards::builders::parse_number_word_u32(each_of_words[2])
+        ) && let Some(count) = parse_number_word_u32(each_of_words[2])
         {
             let target = TargetAst::WithCount(
                 Box::new(TargetAst::AnyTarget(span_from_tokens(each_of_tokens))),

@@ -59,10 +59,7 @@ pub(crate) fn apply_pending_activation_restriction(
     ability: &mut ActivatedAbility,
     restriction: &str,
 ) {
-    fn push_restriction_condition(
-        ability: &mut ActivatedAbility,
-        condition: crate::ConditionExpr,
-    ) {
+    fn push_restriction_condition(ability: &mut ActivatedAbility, condition: crate::ConditionExpr) {
         if !ability
             .activation_restrictions
             .iter()
@@ -153,10 +150,7 @@ fn apply_pending_trigger_restriction(ability: &mut TriggeredAbility, restriction
     }
 }
 
-pub(crate) fn apply_pending_mana_restriction(
-    ability: &mut ActivatedAbility,
-    restriction: &str,
-) {
+pub(crate) fn apply_pending_mana_restriction(ability: &mut ActivatedAbility, restriction: &str) {
     let normalized_restriction = normalize_restriction_text(restriction);
     if normalized_restriction.is_empty() {
         return;

@@ -10498,7 +10498,9 @@ fn parse_target_opponent_exiles_card_from_their_hand_uses_hand_choice() {
         "expected target opponent chooser, got {debug}"
     );
     assert!(
-        debug.contains("ExileEffect") && debug.contains("Tagged(TagKey(\"exiled_0\"))"),
+        debug.contains("ExileEffect")
+            && (debug.contains("Tagged(TagKey(\"exiled_0\"))")
+                || debug.contains("Tagged(TagKey(\"__sentence_helper_exiled_")),
         "expected exile of chosen tagged card, got {debug}"
     );
 }

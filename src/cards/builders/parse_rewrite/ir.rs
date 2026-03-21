@@ -1,5 +1,8 @@
 use crate::ability::ActivationTiming;
-use crate::cards::builders::{CardDefinitionBuilder, LineInfo, ParseAnnotations, TotalCost};
+use crate::cards::builders::{CardDefinitionBuilder, ParseAnnotations};
+use crate::cost::TotalCost;
+
+use super::shared_types::LineInfo;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteSemanticDocument {

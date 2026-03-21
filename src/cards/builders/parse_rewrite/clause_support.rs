@@ -1,7 +1,11 @@
 use crate::cards::builders::{
     CardTextError, EffectAst, KeywordAction, LineAst, StaticAbilityAst, Token, TriggerSpec,
-    parse_ability_phrase, parse_card_type, parse_color, parse_flashback_keyword_line,
-    parse_subtype_flexible, split_on_and, split_on_comma_or_semicolon, words,
+};
+
+use super::ported_activation_and_restrictions::parse_ability_phrase;
+use super::util::{
+    parse_card_type, parse_color, parse_flashback_keyword_line, parse_subtype_flexible,
+    split_on_and, split_on_comma_or_semicolon, words,
 };
 
 fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
@@ -20,8 +24,9 @@ fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
     let parse_from_target = |words: &[&str], idx: usize| -> Option<KeywordAction> {
         let value = *words.get(idx + 1)?;
         match value {
-            "the" if words.get(idx + 2).copied() == Some("chosen")
-                && words.get(idx + 3).copied() == Some("player") =>
+            "the"
+                if words.get(idx + 2).copied() == Some("chosen")
+                    && words.get(idx + 3).copied() == Some("player") =>
             {
                 Some(KeywordAction::ProtectionFromChosenPlayer)
             }
@@ -112,7 +117,9 @@ pub(crate) fn rewrite_parse_ability_line(tokens: &[Token]) -> Option<Vec<Keyword
     }
 }
 
-pub(crate) fn rewrite_parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
+pub(crate) fn rewrite_parse_effect_sentences(
+    tokens: &[Token],
+) -> Result<Vec<EffectAst>, CardTextError> {
     super::ported_effects_sentences::parse_effect_sentences(tokens)
 }
 
@@ -120,9 +127,7 @@ pub(crate) fn rewrite_parse_triggered_line(tokens: &[Token]) -> Result<LineAst, 
     super::ported_activation_and_restrictions::parse_triggered_line(tokens)
 }
 
-pub(crate) fn rewrite_parse_trigger_clause(
-    tokens: &[Token],
-) -> Result<TriggerSpec, CardTextError> {
+pub(crate) fn rewrite_parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> {
     super::ported_activation_and_restrictions::parse_trigger_clause(tokens)
 }
 

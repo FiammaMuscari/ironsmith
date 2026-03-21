@@ -1,14 +1,9 @@
 use crate::ability::{Ability, AbilityKind, ActivatedAbility};
 use crate::cards::builders::{
     CardDefinition, CardDefinitionBuilder, CardTextError, EffectAst, IT_TAG, InsteadSemantics,
-    LineAst, NormalizedAdditionalCostChoiceOptionAst, NormalizedCardAst, NormalizedCardItem,
-    NormalizedLineAst, NormalizedLineChunk, NormalizedModalAst, NormalizedModalModeAst,
-    NormalizedParsedAbility, NormalizedPreparedAbility, OptionalCost, ParseAnnotations,
-    ParsedAbility, ParsedCardItem, ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst,
-    ParsedModalAst, ParsedModalModeAst, ParsedRestrictions, ReferenceExports, ReferenceImports,
-    TriggerSpec, classify_instead_followup_text, collect_tag_spans_from_effects_with_context,
-    find_first_sacrifice_cost_choice_tag, find_last_exile_cost_choice_tag,
-    token_index_for_word_index,
+    LineAst, OptionalCost, ParseAnnotations, ParsedAbility, ParsedCardItem,
+    ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst, ParsedModalAst,
+    ParsedModalModeAst, ParsedRestrictions, ReferenceImports, TriggerSpec,
 };
 use crate::color::ColorSet;
 use crate::cost::TotalCost;
@@ -20,6 +15,20 @@ use crate::target::{ChooseSpec, PlayerFilter};
 use crate::types::CardType;
 use crate::zone::Zone;
 
+use super::clause_support::{
+    rewrite_parse_ability_line, rewrite_parse_effect_sentences,
+    rewrite_parse_static_ability_ast_line, rewrite_parse_trigger_clause,
+    rewrite_parse_triggered_line,
+};
+use super::compile_support::{
+    collect_tag_spans_from_effects_with_context,
+    trigger_binds_player_reference_context as rewrite_trigger_binds_player_reference_context,
+};
+use super::effect_pipeline::{
+    NormalizedAdditionalCostChoiceOptionAst, NormalizedCardAst, NormalizedCardItem,
+    NormalizedLineAst, NormalizedLineChunk, NormalizedModalAst, NormalizedModalModeAst,
+    NormalizedParsedAbility, NormalizedPreparedAbility,
+};
 use super::lowering_support::{
     rewrite_apply_instead_followup_statement_to_last_ability, rewrite_lower_prepared_ability,
     rewrite_lower_prepared_additional_cost_choice_modes_with_exports,
@@ -30,34 +39,32 @@ use super::lowering_support::{
     rewrite_prepare_triggered_effects_for_lowering, rewrite_static_ability_for_keyword_action,
     rewrite_validate_iterated_player_bindings_in_lowered_effects,
 };
-use super::clause_support::{
-    rewrite_parse_ability_line, rewrite_parse_effect_sentences,
-    rewrite_parse_static_ability_ast_line, rewrite_parse_trigger_clause,
-    rewrite_parse_triggered_line,
-};
+use super::reference_model::{LoweredEffects, ReferenceExports};
 use super::modal_support::{parse_modal_header, replace_modal_header_x_in_effects_ast};
 use super::parser_support::split_text_for_parse;
 use super::ported_activation_and_restrictions::{
     infer_activated_functional_zones, is_any_player_may_activate_sentence,
     parse_mana_usage_restriction_sentence,
 };
+use super::ported_activation_and_restrictions::{
+    parse_channel_line, parse_cycling_line, parse_equip_line,
+};
+use super::ported_keyword_static::parse_if_this_spell_costs_less_to_cast_line;
 use super::ported_object_filters::parse_spell_filter;
 use super::restriction_support::{
-    apply_pending_mana_restriction, apply_pending_restrictions_to_ability,
-    is_restrictable_ability,
+    apply_pending_mana_restriction, apply_pending_restrictions_to_ability, is_restrictable_ability,
 };
-use super::ported_activation_and_restrictions::{parse_channel_line, parse_cycling_line, parse_equip_line};
-use super::ported_keyword_static::parse_if_this_spell_costs_less_to_cast_line;
 use super::util::{
     parse_additional_cost_choice_options, parse_bestow_line, parse_buyback_line,
-    parse_cast_this_spell_only_line, parse_entwine_line, parse_escape_line,
-    parse_flashback_line, parse_if_conditional_alternative_cost_line, parse_kicker_line,
-    parse_level_up_line, parse_madness_line, parse_mana_symbol, parse_morph_keyword_line,
-    parse_multikicker_line, parse_number_or_x_value, parse_offspring_line,
-    parse_reinforce_line, parse_scryfall_mana_cost, parse_self_free_cast_alternative_cost_line,
-    parse_squad_line, parse_transmute_line, parse_warp_line,
-    parse_you_may_rather_than_spell_cost_line, preserve_keyword_prefix_for_parse, split_on_period,
-    tokenize_line, trim_commas, words,
+    parse_cast_this_spell_only_line, parse_entwine_line, parse_escape_line, parse_flashback_line,
+    classify_instead_followup_text, find_first_sacrifice_cost_choice_tag,
+    find_last_exile_cost_choice_tag,
+    parse_if_conditional_alternative_cost_line, parse_kicker_line, parse_level_up_line,
+    parse_madness_line, parse_mana_symbol, parse_morph_keyword_line, parse_multikicker_line,
+    parse_number_or_x_value, parse_offspring_line, parse_reinforce_line, parse_scryfall_mana_cost,
+    parse_self_free_cast_alternative_cost_line, parse_squad_line, parse_transmute_line,
+    parse_warp_line, parse_you_may_rather_than_spell_cost_line, preserve_keyword_prefix_for_parse,
+    split_on_period, token_index_for_word_index, tokenize_line, trim_commas, words,
 };
 use super::{RewriteSemanticDocument, RewriteSemanticItem, parse_text_with_annotations_rewrite};
 
@@ -153,9 +160,9 @@ impl RewriteNormalizationState {
     fn statement_reference_imports(&self) -> ReferenceImports {
         let additional_cost_imports = self.latest_additional_cost_exports.to_imports();
         if !additional_cost_imports.is_empty() {
-            return additional_cost_imports;
+            return additional_cost_imports.into();
         }
-        self.latest_spell_exports.to_imports()
+        self.latest_spell_exports.to_imports().into()
     }
 }
 
@@ -1052,7 +1059,7 @@ fn rewrite_apply_line_ast(
                 parsed,
                 prepared: Some(NormalizedPreparedAbility::Triggered {
                     trigger: TriggerSpec::YouCastThisSpell,
-                    prepared: crate::cards::builders::PreparedTriggeredEffectsForLowering {
+                    prepared: super::effect_pipeline::PreparedTriggeredEffectsForLowering {
                         prepared,
                         intervening_if: None,
                     },
@@ -1615,8 +1622,10 @@ fn lower_special_rewrite_triggered_chunk(
         ))?;
         let effect_text =
             format!("it deals {amount} damage to each creature it blocked this combat.");
-        let effects =
-            rewrite_parse_effect_sentences(&tokenize_line(effect_text.as_str(), line.info.line_index))?;
+        let effects = rewrite_parse_effect_sentences(&tokenize_line(
+            effect_text.as_str(),
+            line.info.line_index,
+        ))?;
         return Ok(Some(LineAst::Triggered {
             trigger,
             effects,
@@ -1725,7 +1734,8 @@ fn lower_compound_buff_and_unblockable_static_chunk(
     let Some(mut abilities) = rewrite_parse_static_ability_ast_line(&buff_tokens)? else {
         return Ok(None);
     };
-    let Some(unblockable_abilities) = rewrite_parse_static_ability_ast_line(&unblockable_tokens)? else {
+    let Some(unblockable_abilities) = rewrite_parse_static_ability_ast_line(&unblockable_tokens)?
+    else {
         return Ok(None);
     };
     abilities.extend(unblockable_abilities);
@@ -1804,6 +1814,7 @@ fn rewrite_statement_parse_text_for_lowering(text: &str) -> String {
             }
         })
         .map(str::trim)
+        .map(rewrite_statement_followup_intro_for_lowering)
         .filter(|sentence| !sentence.is_empty())
         .collect::<Vec<_>>();
 
@@ -1812,6 +1823,17 @@ fn rewrite_statement_parse_text_for_lowering(text: &str) -> String {
     } else {
         format!("{}.", sentences.join(". "))
     }
+}
+
+fn rewrite_statement_followup_intro_for_lowering(sentence: &str) -> String {
+    let trimmed = sentence.trim();
+    if let Some(rest) = trimmed.strip_prefix("when you do,") {
+        return format!("if you do, {}", rest.trim_start());
+    }
+    if let Some(rest) = trimmed.strip_prefix("whenever you do,") {
+        return format!("if you do, {}", rest.trim_start());
+    }
+    trimmed.to_string()
 }
 
 fn group_statement_sentences_for_lowering(text: &str) -> Vec<String> {
@@ -2276,7 +2298,7 @@ fn strip_modal_mode_label_for_parse(text: &str) -> &str {
     if label.is_empty() || body.is_empty() {
         return trimmed;
     }
-    if crate::cards::builders::preserve_keyword_prefix_for_parse(label) {
+    if preserve_keyword_prefix_for_parse(label) {
         trimmed
     } else {
         body
@@ -2354,7 +2376,8 @@ fn lower_rewrite_level_to_item(
 fn lower_rewrite_saga_to_item(
     saga: super::RewriteSagaChapterLine,
 ) -> Result<ParsedCardItem, CardTextError> {
-    let effects = rewrite_parse_effect_sentences(&tokenize_line(saga.text.as_str(), saga.info.line_index))?;
+    let effects =
+        rewrite_parse_effect_sentences(&tokenize_line(saga.text.as_str(), saga.info.line_index))?;
     Ok(ParsedCardItem::Line(ParsedLineAst {
         info: saga.info,
         chunks: vec![LineAst::Triggered {
@@ -2405,10 +2428,7 @@ fn normalize_legacy_style_mana_effect_text(effect_text: &str) -> String {
 }
 
 fn activation_cost_defines_x_for_mana_ability(cost: &TotalCost) -> bool {
-    if cost
-        .mana_cost()
-        .is_some_and(crate::mana::ManaCost::has_x)
-    {
+    if cost.mana_cost().is_some_and(crate::mana::ManaCost::has_x) {
         return true;
     }
 
@@ -2424,31 +2444,29 @@ fn activation_cost_defines_x_for_mana_ability(cost: &TotalCost) -> bool {
     }
 
     cost.costs().iter().any(|component| {
-        component
-            .effect_ref()
-            .is_some_and(|effect| {
-                effect
-                    .downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
-                    .is_some_and(|effect| effect.display_x)
-                    || effect
-                        .downcast_ref::<crate::effects::ChooseObjectsEffect>()
-                        .is_some_and(|effect| effect.count.is_dynamic_x())
-                    || effect
-                        .downcast_ref::<crate::effects::SacrificeEffect>()
-                        .is_some_and(|effect| value_uses_x(&effect.count))
-                    || effect
-                        .downcast_ref::<crate::effects::DiscardEffect>()
-                        .is_some_and(|effect| value_uses_x(&effect.count))
-                    || effect
-                        .downcast_ref::<crate::effects::MillEffect>()
-                        .is_some_and(|effect| value_uses_x(&effect.count))
-                    || effect
-                        .downcast_ref::<crate::effects::PayEnergyEffect>()
-                        .is_some_and(|effect| value_uses_x(&effect.amount))
-                    || effect
-                        .downcast_ref::<crate::effects::RemoveCountersEffect>()
-                        .is_some_and(|effect| value_uses_x(&effect.count))
-            })
+        component.effect_ref().is_some_and(|effect| {
+            effect
+                .downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+                .is_some_and(|effect| effect.display_x)
+                || effect
+                    .downcast_ref::<crate::effects::ChooseObjectsEffect>()
+                    .is_some_and(|effect| effect.count.is_dynamic_x())
+                || effect
+                    .downcast_ref::<crate::effects::SacrificeEffect>()
+                    .is_some_and(|effect| value_uses_x(&effect.count))
+                || effect
+                    .downcast_ref::<crate::effects::DiscardEffect>()
+                    .is_some_and(|effect| value_uses_x(&effect.count))
+                || effect
+                    .downcast_ref::<crate::effects::MillEffect>()
+                    .is_some_and(|effect| value_uses_x(&effect.count))
+                || effect
+                    .downcast_ref::<crate::effects::PayEnergyEffect>()
+                    .is_some_and(|effect| value_uses_x(&effect.amount))
+                || effect
+                    .downcast_ref::<crate::effects::RemoveCountersEffect>()
+                    .is_some_and(|effect| value_uses_x(&effect.count))
+        })
     })
 }
 
@@ -2618,7 +2636,7 @@ fn parse_next_spell_cost_reduction_sentence_rewrite(
     let reduction_symbols = reduction_tokens
         .iter()
         .filter_map(crate::cards::builders::Token::as_word)
-        .map(crate::cards::builders::parse_mana_symbol)
+        .map(parse_mana_symbol)
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     if reduction_symbols.is_empty() {
@@ -3483,9 +3501,10 @@ fn try_merge_modal_into_remove_mode(
     let remove_mode = &mut modes[remove_mode_idx];
     let gate_id = crate::effect::EffectId(1_000_000_000);
     if let Some(last_remove_effect) = remove_mode.effects.pop() {
-        remove_mode
-            .effects
-            .push(crate::effect::Effect::with_id(gate_id.0, last_remove_effect));
+        remove_mode.effects.push(crate::effect::Effect::with_id(
+            gate_id.0,
+            last_remove_effect,
+        ));
         remove_mode.effects.push(crate::effect::Effect::if_then(
             gate_id,
             predicate,
@@ -3495,15 +3514,17 @@ fn try_merge_modal_into_remove_mode(
         remove_mode.effects.push(modal_effect);
     }
 
-    effects.push(crate::effect::Effect::new(crate::effects::ChooseModeEffect {
-        modes,
-        choose_count: choose_mode.choose_count.clone(),
-        min_choose_count: choose_mode.min_choose_count.clone(),
-        allow_repeated_modes: choose_mode.allow_repeated_modes,
-        disallow_previously_chosen_modes: choose_mode.disallow_previously_chosen_modes,
-        disallow_previously_chosen_modes_this_turn: choose_mode
-            .disallow_previously_chosen_modes_this_turn,
-    }));
+    effects.push(crate::effect::Effect::new(
+        crate::effects::ChooseModeEffect {
+            modes,
+            choose_count: choose_mode.choose_count.clone(),
+            min_choose_count: choose_mode.min_choose_count.clone(),
+            allow_repeated_modes: choose_mode.allow_repeated_modes,
+            disallow_previously_chosen_modes: choose_mode.disallow_previously_chosen_modes,
+            disallow_previously_chosen_modes_this_turn: choose_mode
+                .disallow_previously_chosen_modes_this_turn,
+        },
+    ));
     true
 }
 
@@ -3535,7 +3556,7 @@ pub(crate) fn rewrite_lower_parsed_modal(
     let (prefix_effects, prefix_choices) = if prepared_prefix.is_none() {
         (crate::resolution::ResolutionProgram::default(), Vec::new())
     } else if trigger.is_some() || activated.is_some() {
-        match crate::cards::builders::materialize_prepared_effects_with_trigger_context(
+        match super::compile_support::materialize_prepared_effects_with_trigger_context(
             prepared_prefix
                 .as_ref()
                 .expect("prepared prefix exists when checked above"),
@@ -3567,8 +3588,11 @@ pub(crate) fn rewrite_lower_parsed_modal(
         let effects = match rewrite_lower_prepared_statement_effects(&mode.prepared) {
             Ok(lowered) => lowered.effects,
             Err(err) if allow_unsupported => {
-                builder =
-                    push_unsupported_marker(builder, mode.info.raw_line.as_str(), format!("{err:?}"));
+                builder = push_unsupported_marker(
+                    builder,
+                    mode.info.raw_line.as_str(),
+                    format!("{err:?}"),
+                );
                 continue;
             }
             Err(err) => return Err(err),
@@ -3587,7 +3611,8 @@ pub(crate) fn rewrite_lower_parsed_modal(
     let default_max = crate::effect::Value::Fixed(mode_count);
     let max = header_max.unwrap_or_else(|| default_max.clone());
     let min = header_min;
-    let is_fixed_one = |value: &crate::effect::Value| matches!(value, crate::effect::Value::Fixed(1));
+    let is_fixed_one =
+        |value: &crate::effect::Value| matches!(value, crate::effect::Value::Fixed(1));
     let with_unchosen_requirement = |effect: crate::effect::Effect| {
         if !mode_must_be_unchosen {
             return effect;
@@ -3630,7 +3655,10 @@ pub(crate) fn rewrite_lower_parsed_modal(
     } else if is_fixed_one(&min) && is_fixed_one(&max) {
         with_unchosen_requirement(crate::effect::Effect::choose_one(compiled_modes))
     } else if min == max {
-        with_unchosen_requirement(crate::effect::Effect::choose_exactly(max.clone(), compiled_modes))
+        with_unchosen_requirement(crate::effect::Effect::choose_exactly(
+            max.clone(),
+            compiled_modes,
+        ))
     } else {
         with_unchosen_requirement(crate::effect::Effect::choose_up_to(
             max.clone(),
@@ -3663,7 +3691,7 @@ pub(crate) fn rewrite_lower_parsed_modal(
         combined_effects.push(modal_effect);
     }
 
-    let modal_lowered = crate::cards::builders::LoweredEffects {
+    let modal_lowered = LoweredEffects {
         effects: combined_effects.clone(),
         choices: prefix_choices.clone(),
         exports: ReferenceExports::default(),
@@ -3672,7 +3700,7 @@ pub(crate) fn rewrite_lower_parsed_modal(
         &modal_lowered,
         trigger
             .as_ref()
-            .is_some_and(crate::cards::builders::trigger_binds_player_reference_context),
+            .is_some_and(rewrite_trigger_binds_player_reference_context),
         if trigger.is_some() {
             "triggered modal ability effects"
         } else if activated.is_some() {

@@ -1,8 +1,7 @@
-use crate::cards::builders::{
-    CardDefinitionBuilder, ParsedRestrictions, Token, parse_if_result_predicate,
-};
+use crate::cards::builders::{CardDefinitionBuilder, ParsedRestrictions, Token};
 use crate::types::CardType;
 
+use super::lexer::OwnedLexToken;
 use super::ported_activation_and_restrictions::{
     is_activate_only_restriction_sentence, is_trigger_only_restriction_sentence,
 };
@@ -43,12 +42,11 @@ pub(crate) fn spell_card_prefers_resolution_line_merge(builder: &CardDefinitionB
         .any(|card_type| matches!(card_type, CardType::Instant | CardType::Sorcery))
 }
 
-pub(crate) fn looks_like_spell_resolution_followup_intro(tokens: &[Token]) -> bool {
-    looks_like_delayed_next_turn_intro(tokens)
-        || looks_like_when_one_or_more_this_way_followup(tokens)
-        || looks_like_when_you_do_followup(tokens)
-        || looks_like_if_result_followup(tokens)
-        || looks_like_otherwise_followup(tokens)
+pub(crate) fn looks_like_spell_resolution_followup_intro_lexed(tokens: &[OwnedLexToken]) -> bool {
+    looks_like_delayed_next_turn_intro_lexed(tokens)
+        || looks_like_when_one_or_more_this_way_followup_lexed(tokens)
+        || looks_like_when_you_do_followup_lexed(tokens)
+        || looks_like_otherwise_followup_lexed(tokens)
 }
 
 fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
@@ -110,7 +108,7 @@ pub(crate) fn is_at_trigger_intro(tokens: &[Token], idx: usize) -> bool {
     )
 }
 
-fn looks_like_delayed_next_turn_intro(tokens: &[Token]) -> bool {
+fn looks_like_delayed_next_turn_intro_lexed(tokens: &[OwnedLexToken]) -> bool {
     let mut idx = 0usize;
     if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
         return false;
@@ -120,7 +118,10 @@ fn looks_like_delayed_next_turn_intro(tokens: &[Token]) -> bool {
     if tokens.get(idx).is_some_and(|token| token.is_word("the")) {
         idx += 1;
     }
-    if !tokens.get(idx).is_some_and(|token| token.is_word("beginning")) {
+    if !tokens
+        .get(idx)
+        .is_some_and(|token| token.is_word("beginning"))
+    {
         return false;
     }
     idx += 1;
@@ -140,51 +141,47 @@ fn looks_like_delayed_next_turn_intro(tokens: &[Token]) -> bool {
         return false;
     }
 
-    if tokens.get(idx + 1).is_some_and(|token| token.is_word("end"))
-        && tokens.get(idx + 2).is_some_and(|token| token.is_word("step"))
+    if tokens
+        .get(idx + 1)
+        .is_some_and(|token| token.is_word("end"))
+        && tokens
+            .get(idx + 2)
+            .is_some_and(|token| token.is_word("step"))
     {
         return true;
     }
 
-    tokens.get(idx + 1).is_some_and(|token| token.is_word("upkeep"))
+    tokens
+        .get(idx + 1)
+        .is_some_and(|token| token.is_word("upkeep"))
 }
 
-fn looks_like_when_one_or_more_this_way_followup(tokens: &[Token]) -> bool {
-    let clause_words = words(tokens);
-    (clause_words.starts_with(&["when", "one", "or", "more"])
-        || clause_words.starts_with(&["whenever", "one", "or", "more"]))
-        && clause_words.windows(2).any(|window| window == ["this", "way"])
+fn looks_like_when_one_or_more_this_way_followup_lexed(tokens: &[OwnedLexToken]) -> bool {
+    (starts_with_lexed_words(tokens, &["when", "one", "or", "more"])
+        || starts_with_lexed_words(tokens, &["whenever", "one", "or", "more"]))
+        && tokens
+            .windows(2)
+            .any(|window| window[0].is_word("this") && window[1].is_word("way"))
 }
 
-fn looks_like_when_you_do_followup(tokens: &[Token]) -> bool {
-    let clause_words = words(tokens);
-    clause_words.starts_with(&["when", "you", "do"])
-        || clause_words.starts_with(&["whenever", "you", "do"])
+fn looks_like_when_you_do_followup_lexed(tokens: &[OwnedLexToken]) -> bool {
+    starts_with_lexed_words(tokens, &["when", "you", "do"])
+        || starts_with_lexed_words(tokens, &["whenever", "you", "do"])
 }
 
-fn looks_like_if_result_followup(tokens: &[Token]) -> bool {
-    let Some(first) = tokens.first() else {
-        return false;
-    };
-    if !first.is_word("if") {
-        return false;
-    }
-
-    let comma_idx = tokens
-        .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
-        .unwrap_or(tokens.len());
-    if comma_idx <= 1 {
-        return false;
-    }
-
-    parse_if_result_predicate(&tokens[1..comma_idx]).is_some()
+fn looks_like_otherwise_followup_lexed(tokens: &[OwnedLexToken]) -> bool {
+    tokens
+        .first()
+        .is_some_and(|token| token.is_word("otherwise"))
 }
 
-fn looks_like_otherwise_followup(tokens: &[Token]) -> bool {
-    tokens.first().is_some_and(|token| token.is_word("otherwise"))
+fn starts_with_lexed_words(tokens: &[OwnedLexToken], expected: &[&str]) -> bool {
+    tokens.len() >= expected.len()
+        && tokens
+            .iter()
+            .zip(expected.iter())
+            .all(|(token, expected)| token.is_word(expected))
 }
-
 
 fn queue_restriction(
     restriction: &str,
@@ -245,8 +242,4 @@ fn extract_parenthetical_restrictions(line: &str) -> Vec<String> {
 
 fn normalize_restriction_text(text: &str) -> String {
     text.trim().trim_end_matches('.').trim().to_string()
-}
-
-fn words(tokens: &[Token]) -> Vec<&str> {
-    tokens.iter().filter_map(Token::as_word).collect()
 }

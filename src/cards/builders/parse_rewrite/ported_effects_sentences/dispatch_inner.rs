@@ -1,24 +1,19 @@
-use super::{LeadingResultPrefixKind, TokenCopyFollowup, split_leading_result_prefix};
-use crate::cards::builders::{
-    ClauseView, POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-    PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
-    RULE_SHAPE_STARTS_IF, RuleDef, RuleIndex, UnsupportedDiagnoser, UnsupportedRuleDef,
-    apply_where_x_to_damage_amounts, find_verb, helper_tag_for_tokens,
-    is_activate_only_restriction_sentence, is_trigger_only_restriction_sentence,
-    is_until_end_of_turn, normalize_cant_words, parse_conditional_sentence, parse_effect_chain,
-    parse_effect_chain_inner, parse_number, parse_prevent_next_time_damage_sentence,
-    parse_pt_modifier, parse_redirect_next_damage_sentence, parse_search_library_sentence,
-    parse_simple_gain_ability_clause, parse_trigger_clause, parse_where_x_value_clause,
-    parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives, split_on_and,
-    split_on_comma, split_on_comma_or_semicolon, split_until_source_leaves_tail,
-    target_object_filter_mut,
+use super::{
+    LeadingResultPrefixKind, TokenCopyFollowup, parse_search_library_sentence,
+    parse_simple_gain_ability_clause, split_leading_result_prefix,
+};
+use super::legacy_helpers::*;
+use super::super::ported_keyword_static::parse_pt_modifier;
+use super::super::ported_keyword_static::parse_where_x_value_clause;
+use super::super::ported_object_filters::parse_object_filter;
+use super::super::util::{
+    is_article, is_source_reference_words, parse_card_type, parse_subject, parse_value,
+    parse_target_phrase, split_on_and, token_index_for_word_index, words,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, LineAst, PlayerAst, SubjectAst, TagKey,
-    TargetAst, TextSpan, Token, TriggerSpec, Verb, is_article, is_source_reference_words,
-    parse_card_type, parse_object_filter, parse_subject, parse_target_phrase, parse_value,
-    target_ast_to_object_filter, token_index_for_word_index, words,
+    TargetAst, TextSpan, Token, TriggerSpec, Verb,
 };
 use crate::effect::{ChoiceCount, EventValueSpec, Until, Value};
 use crate::target::{
@@ -1094,18 +1089,14 @@ pub(crate) fn parse_effect_sentence_inner(
     if let Some((kind, predicate, stripped)) = split_leading_result_prefix(tokens) {
         parser_trace("parse_effect_sentence:leading-result-gate", &stripped);
         return Ok(vec![match kind {
-            LeadingResultPrefixKind::If => {
-                EffectAst::IfResult {
-                    predicate,
-                    effects: parse_effect_sentence(&stripped)?,
-                }
-            }
-            LeadingResultPrefixKind::When => {
-                EffectAst::WhenResult {
-                    predicate,
-                    effects: parse_effect_sentence(&stripped)?,
-                }
-            }
+            LeadingResultPrefixKind::If => EffectAst::IfResult {
+                predicate,
+                effects: parse_effect_sentence(&stripped)?,
+            },
+            LeadingResultPrefixKind::When => EffectAst::WhenResult {
+                predicate,
+                effects: parse_effect_sentence(&stripped)?,
+            },
         }]);
     }
     if tokens

@@ -4,6 +4,37 @@ use crate::filter::ObjectFilter;
 use crate::target::ChooseSpec;
 
 pub fn is_generated_internal_tag(tag: &str) -> bool {
+    if let Some(rest) = tag.strip_prefix("__sentence_helper_") {
+        let mut parts = rest.split("_l");
+        let Some(_prefix) = parts.next() else {
+            return false;
+        };
+        let Some(rest) = parts.next() else {
+            return false;
+        };
+        let mut parts = rest.split("_s");
+        let Some(line) = parts.next() else {
+            return false;
+        };
+        let Some(rest) = parts.next() else {
+            return false;
+        };
+        let mut parts = rest.split("_e");
+        let Some(start) = parts.next() else {
+            return false;
+        };
+        let Some(end) = parts.next() else {
+            return false;
+        };
+        return parts.next().is_none()
+            && !line.is_empty()
+            && !start.is_empty()
+            && !end.is_empty()
+            && line.chars().all(|ch| ch.is_ascii_digit())
+            && start.chars().all(|ch| ch.is_ascii_digit())
+            && end.chars().all(|ch| ch.is_ascii_digit());
+    }
+
     let Some((_, suffix)) = tag.rsplit_once('_') else {
         return false;
     };

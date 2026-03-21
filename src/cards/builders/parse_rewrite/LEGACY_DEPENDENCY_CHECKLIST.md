@@ -229,7 +229,7 @@ Completed note:
   module. The remaining sentence-splitting and spell-followup helpers were moved into
   [parser_support.rs](/Users/chiplis/ironsmith/src/cards/builders/parse_rewrite/parser_support.rs),
   and the old audit-only parser adapters were deleted after the shared support
-  pieces were moved into `parse_support` and `parse_rewrite`.
+  pieces were moved into rewrite-owned modules under `parse_rewrite`.
 
 ## 9. Exit Criteria For “Fully Migrated”
 
@@ -250,7 +250,11 @@ Completed note:
   - `rg -n "parse_parsing::|mod parse_parsing|parse_text_with_annotations_legacy_for_tooling|parse_card_ast_with_annotations\\(|audit_rewrite_parse_diff|inspect_rewrite_card|src/cards/builders/parser.rs|mod parser;" src Cargo.toml`
 - Final cleanup state:
   - `cargo test --lib -q` is green
-  - `src/cards/builders/parse_parsing` has been removed
-  - `src/cards/builders/parser.rs` has been removed
-  - the old audit binaries have been removed
+  - `src/cards/builders/parse_support*.rs` has been removed
+  - `src/cards/builders/parse_compile.rs` has been removed
+  - `src/cards/builders/reference_resolution.rs` has been removed
+  - `src/cards/builders/effect_pipeline.rs` has been removed
+  - `src/cards/builders/reference_model.rs` has been removed
+  - `src/cards/builders/ability_lowering.rs` has been removed
+  - `src/cards/builders/static_ability_lowering.rs` has been removed
   - remaining references in this checklist are historical notes only

@@ -1,43 +1,24 @@
-use crate::cards::builders::ability_lowering::parsed_triggered_ability;
-use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
-use crate::cards::builders::parse_compile::effects_reference_it_tag;
 use super::{
-    parse_cant_effect_sentence, parse_mana_symbol, parse_restriction_duration,
-    parse_search_library_sentence, parse_simple_gain_ability_clause,
+    parse_cant_effect_sentence, parse_effect_clause, parse_effect_sentence, parse_mana_symbol,
+    parse_restriction_duration, parse_search_library_sentence, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_token_copy_followup_sentence,
     split_leading_result_prefix, try_apply_token_copy_followup,
 };
-use crate::cards::builders::{
-    POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-    PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
-    has_effect_head_without_verb, is_token_creation_context, parse_additional_land_plays_clause,
-    parse_can_attack_as_though_no_defender_clause,
-    parse_can_block_additional_creature_this_turn_clause,
-    parse_cast_or_play_tagged_clause, parse_cast_spells_as_though_they_had_flash_clause,
-    parse_choose_target_and_verb_clause, parse_connive_clause, parse_copy_spell_clause,
-    parse_distribute_counters_clause, parse_double_counters_clause, parse_for_each_object_subject,
-    parse_for_each_opponent_clause, parse_for_each_player_clause,
-    parse_for_each_target_players_clause, parse_number, parse_object_filter,
-    parse_permission_clause_spec, parse_prevent_all_damage_clause,
-    parse_prevent_next_damage_clause, parse_until_end_of_turn_may_play_tagged_clause,
-    parse_until_your_next_turn_may_play_tagged_clause,
-    parse_sentence_exile_source_with_counters,
-    parse_sentence_put_onto_battlefield_with_counters_on_it,
-    parse_sentence_return_with_counters_on_it, parse_subject_object_filter,
-    parse_unsupported_play_cast_permission_clause, parse_verb_first_clause,
-    parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
-    split_effect_chain_on_and, split_on_comma_or_semicolon, split_segments_on_comma_effect_head,
-    split_segments_on_comma_then, starts_with_inline_token_rules_tail,
-    starts_with_target_indicator, starts_with_until_end_of_turn, strip_leading_instead_prefix,
-    target_ast_to_object_filter,
+use super::legacy_helpers::*;
+use super::super::ported_activation_and_restrictions::parse_triggered_line;
+use super::super::compile_support::effects_reference_it_tag;
+use super::super::effect_ast_traversal::for_each_nested_effects_mut;
+use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
+use super::super::ported_object_filters::{parse_object_filter, split_on_or};
+use super::super::util::{
+    is_article, parse_subject, parse_target_phrase, parse_value, span_from_tokens,
+    split_on_comma_or_semicolon, trim_commas, words,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, ClashOpponentAst, EffectAst, GrantedAbilityAst, IT_TAG, LineAst, PlayerAst,
     PredicateAst, ReferenceImports, RetargetModeAst, SubjectAst, TagKey, TargetAst, TextSpan,
-    Token, TriggerSpec, is_article, parse_effect_clause, parse_effect_sentence,
-    parse_keyword_mechanic_clause, parse_predicate, parse_subject, parse_target_phrase,
-    parse_triggered_line, parse_value, span_from_tokens, split_on_or, trim_commas, words,
+    Token, TriggerSpec,
 };
 use crate::effect::ChoiceCount;
 use crate::mana::ManaSymbol;

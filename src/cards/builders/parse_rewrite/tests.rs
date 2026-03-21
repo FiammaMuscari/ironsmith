@@ -5,9 +5,10 @@ use crate::object::CounterType;
 use crate::types::{CardType, Subtype, Supertype};
 
 use super::{
-    lex_line, lower_activation_cost_cst, parse_activation_cost_rewrite, parse_count_word_rewrite,
-    parse_mana_symbol_group_rewrite, parse_text_with_annotations_rewrite_lowered,
-    parse_type_line_rewrite,
+    LexCursor, RewriteKeywordLineKind, RewriteSemanticItem, lex_line, lexed_words,
+    lower_activation_cost_cst, parse_activation_cost_rewrite, parse_count_word_rewrite,
+    parse_mana_symbol_group_rewrite, parse_text_with_annotations_rewrite,
+    parse_text_with_annotations_rewrite_lowered, parse_type_line_rewrite, split_lexed_sentences,
 };
 
 #[test]
@@ -26,6 +27,51 @@ fn rewrite_lexer_accepts_plus_prefixed_counter_words() {
     let tokens = lex_line("Put a +1/+1 counter on target creature.", 0)
         .expect("rewrite lexer should accept +1/+1 words");
     assert!(tokens.iter().any(|token| token.slice == "+1/+1"));
+}
+
+#[test]
+fn rewrite_lex_cursor_supports_peek_and_advance() {
+    let tokens = lex_line("Whenever this creature attacks, draw a card.", 2)
+        .expect("rewrite lexer should classify triggered line");
+    let mut cursor = LexCursor::new(&tokens);
+    assert_eq!(
+        cursor.peek().and_then(|token| token.as_word()),
+        Some("Whenever")
+    );
+    assert_eq!(
+        cursor.peek_n(1).and_then(|token| token.as_word()),
+        Some("this")
+    );
+    assert_eq!(
+        cursor.advance().and_then(|token| token.as_word()),
+        Some("Whenever")
+    );
+    assert_eq!(cursor.position(), 1);
+    assert_eq!(
+        lexed_words(cursor.remaining()).first().copied(),
+        Some("this")
+    );
+}
+
+#[test]
+fn rewrite_sentence_splitter_respects_quotes() {
+    let tokens = lex_line("Choose one. \"Draw a card.\" Create a token.", 0)
+        .expect("rewrite lexer should classify modal text");
+    let sentences = split_lexed_sentences(&tokens);
+    let rendered = sentences
+        .into_iter()
+        .map(|sentence| {
+            sentence
+                .iter()
+                .map(|token| token.slice.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rendered,
+        vec!["Choose one", "\" Draw a card . \"", "Create a token"]
+    );
 }
 
 #[test]
@@ -76,6 +122,8 @@ fn rewrite_activation_cost_parses_sacrifice_segments() {
 fn rewrite_activation_cost_parses_energy_and_counter_variants() {
     let energy = parse_activation_cost_rewrite("Pay {E}{E}")
         .expect("rewrite activation-cost parser should parse energy payment");
+    let bare_energy = parse_activation_cost_rewrite("{E}{E}")
+        .expect("rewrite activation-cost parser should parse bare energy payment");
     let counter_add = parse_activation_cost_rewrite("Put a +1/+1 counter on this creature")
         .expect("rewrite parser should parse add-counter cost");
     let counter_remove = parse_activation_cost_rewrite("Remove a +1/+1 counter from this creature")
@@ -85,6 +133,10 @@ fn rewrite_activation_cost_parses_energy_and_counter_variants() {
 
     assert!(matches!(
         energy.segments.as_slice(),
+        [super::ActivationCostSegmentCst::Energy(2)]
+    ));
+    assert!(matches!(
+        bare_energy.segments.as_slice(),
         [super::ActivationCostSegmentCst::Energy(2)]
     ));
     assert!(matches!(
@@ -111,11 +163,86 @@ fn rewrite_activation_cost_parses_energy_and_counter_variants() {
 }
 
 #[test]
+fn rewrite_activation_cost_parses_loyalty_shorthand_without_legacy_escape_hatch() {
+    let plus = parse_activation_cost_rewrite("+1")
+        .expect("rewrite activation-cost parser should parse +1 loyalty shorthand");
+    let minus = parse_activation_cost_rewrite("-2")
+        .expect("rewrite activation-cost parser should parse -2 loyalty shorthand");
+    let minus_x = parse_activation_cost_rewrite("-X")
+        .expect("rewrite activation-cost parser should parse -X loyalty shorthand");
+    let zero = parse_activation_cost_rewrite("0")
+        .expect("rewrite activation-cost parser should parse zero loyalty shorthand");
+
+    assert!(matches!(
+        plus.segments.as_slice(),
+        [super::ActivationCostSegmentCst::PutCounters {
+            counter_type: CounterType::Loyalty,
+            count: 1
+        }]
+    ));
+    assert!(matches!(
+        minus.segments.as_slice(),
+        [super::ActivationCostSegmentCst::RemoveCounters {
+            counter_type: CounterType::Loyalty,
+            count: 2
+        }]
+    ));
+    assert!(matches!(
+        minus_x.segments.as_slice(),
+        [super::ActivationCostSegmentCst::RemoveCountersDynamic {
+            counter_type: Some(CounterType::Loyalty),
+            display_x: true
+        }]
+    ));
+    assert!(
+        zero.segments.is_empty(),
+        "zero loyalty shorthand should lower as a free cost"
+    );
+    assert!(
+        lower_activation_cost_cst(&zero)
+            .expect("zero loyalty shorthand should lower")
+            .is_free()
+    );
+}
+
+#[test]
 fn rewrite_lowered_simple_card_parses() -> Result<(), CardTextError> {
     let text = "Type: Creature — Spirit\n{1}: This creature gets +1/+1 until end of turn.";
     let builder = CardDefinitionBuilder::new(CardId::new(), "Shared Spirit");
     let (definition, _) =
         parse_text_with_annotations_rewrite_lowered(builder, text.to_string(), false)?;
     assert_eq!(definition.abilities.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn rewrite_semantic_parse_merges_multiline_spell_when_you_do_followup() -> Result<(), CardTextError> {
+    let builder = CardDefinitionBuilder::new(CardId::new(), "Followup Variant")
+        .card_types(vec![CardType::Instant]);
+    let (doc, _) = parse_text_with_annotations_rewrite(
+        builder,
+        "Sacrifice a creature.\nWhen you do, draw two cards.".to_string(),
+        false,
+    )?;
+
+    assert!(matches!(doc.items.as_slice(), [RewriteSemanticItem::Statement(_)]));
+    Ok(())
+}
+
+#[test]
+fn rewrite_semantic_parse_marks_plumb_additional_cost_as_non_choice() -> Result<(), CardTextError> {
+    let builder = CardDefinitionBuilder::new(CardId::new(), "Plumb Variant")
+        .card_types(vec![CardType::Instant]);
+    let (doc, _) = parse_text_with_annotations_rewrite(
+        builder,
+        "As an additional cost to cast this spell, you may sacrifice one or more creatures. When you do, copy this spell for each creature sacrificed this way.\nYou draw a card and you lose 1 life.".to_string(),
+        false,
+    )?;
+
+    assert!(matches!(
+        doc.items.first(),
+        Some(RewriteSemanticItem::Keyword(keyword))
+            if keyword.kind == RewriteKeywordLineKind::AdditionalCost
+    ));
     Ok(())
 }

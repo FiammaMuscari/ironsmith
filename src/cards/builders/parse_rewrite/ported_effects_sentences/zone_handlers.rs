@@ -1,21 +1,7 @@
-use crate::cards::builders::find_color_choice_phrase;
-use crate::cards::builders::{
-    controller_filter_for_token_player, extract_subject_player, intern_counter_name,
-    parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
-    parse_devotion_value_from_add_clause,
-    parse_dynamic_cost_modifier_value, parse_get_modifier_values_with_tail, parse_mana_symbol,
-    parse_mana_symbol_group, parse_number, parse_number_word_i32, parse_pt_modifier,
-    parse_pt_modifier_values, parse_restriction_duration, parse_subtype_word,
-    parse_value_expr_words, parse_where_x_is_number_of_filter_value, parse_zone_word,
-    parser_trace_stack, trim_edge_punctuation,
-};
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, PredicateAst, ReturnControllerAst,
-    SharedTypeConstraintAst, SubjectAst, TagKey, TargetAst, Token, is_article, parse_color,
-    parse_counter_type_word, parse_object_filter, parse_predicate, parse_target_phrase,
-    parse_value, span_from_tokens, target_ast_to_object_filter, token_index_for_word_index,
-    trim_commas, words,
+    SharedTypeConstraintAst, SubjectAst, TagKey, TargetAst, Token,
 };
 use crate::effect::{EventValueSpec, Until, Value};
 use crate::mana::{ManaCost, ManaSymbol};
@@ -25,6 +11,29 @@ use crate::target::{
 };
 use crate::types::Subtype;
 use crate::zone::Zone;
+
+use super::super::ported_activation_and_restrictions::{
+    controller_filter_for_token_player, parse_devotion_value_from_add_clause,
+    target_ast_to_object_filter,
+};
+use super::super::ported_keyword_static::{
+    parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
+    parse_dynamic_cost_modifier_value, parse_pt_modifier, parse_pt_modifier_values,
+};
+use super::super::ported_object_filters::parse_object_filter;
+use super::super::ported_keyword_static::parse_where_x_is_number_of_filter_value;
+use super::super::util::{
+    intern_counter_name, is_article, parse_color, parse_counter_type_word, parse_mana_symbol,
+    parse_number, parse_number_word_i32, parse_target_phrase, parse_value,
+    parse_value_expr_words, parse_zone_word, parser_trace_stack, span_from_tokens,
+    token_index_for_word_index, trim_commas, words,
+};
+use super::clause_pattern_helpers::extract_subject_player;
+use super::conditionals::{parse_mana_symbol_group, parse_predicate, parse_subtype_word};
+use super::dispatch_inner::trim_edge_punctuation;
+use super::for_each_helpers::parse_get_modifier_values_with_tail;
+use super::search_library::parse_restriction_duration;
+use super::sentence_primitives::find_color_choice_phrase;
 
 fn split_chosen_creature_type_qualifier(tokens: &[Token]) -> Option<(Vec<Token>, bool, bool)> {
     let words = words(tokens);
@@ -3271,7 +3280,7 @@ pub(crate) fn apply_exile_subject_hand_owner_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cards::builders::tokenize_line;
+    use crate::cards::builders::parse_rewrite::util::tokenize_line;
 
     #[test]
     fn parse_graveyard_owner_prefix_handles_shared_phrases() {

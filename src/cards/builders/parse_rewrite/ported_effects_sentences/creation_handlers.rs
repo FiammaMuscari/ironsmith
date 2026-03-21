@@ -1,9 +1,6 @@
 use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, SubjectAst, TagKey, TargetAst,
-    Token, extract_subject_player, is_article, parse_card_type, parse_color, parse_number,
-    parse_object_filter, parse_subtype_word, parse_target_phrase, parse_value,
-    starts_with_inline_token_rules_tail, target_references_it, token_index_for_word_index,
-    trim_commas, words,
+    Token,
 };
 use crate::color::ColorSet;
 use crate::effect::{EventValueSpec, Value};
@@ -11,6 +8,16 @@ use crate::static_abilities::{Anthem, AnthemCountExpression, AnthemValue, Static
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
+
+use super::super::ported_object_filters::parse_object_filter;
+use super::super::util::{
+    is_article, parse_card_type, parse_color, parse_number, parse_target_phrase, parse_value,
+    token_index_for_word_index, trim_commas, words,
+};
+use super::clause_pattern_helpers::extract_subject_player;
+use super::conditionals::parse_subtype_word;
+use super::dispatch_entry::target_references_it;
+use super::lex_chain_helpers::starts_with_inline_token_rules_tail;
 
 pub(crate) fn looks_like_pt_word(word: &str) -> bool {
     let Some((power, toughness)) = word.split_once('/') else {

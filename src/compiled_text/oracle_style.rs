@@ -1329,7 +1329,6 @@ pub(super) fn normalize_ward_cost_surface(text: &str) -> String {
     trimmed.to_string()
 }
 
-
 pub(super) fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
     def.abilities.iter().any(|ability| {
         let is_activated = matches!(ability.kind, AbilityKind::Activated(_));
@@ -1638,7 +1637,6 @@ pub(super) fn normalize_granted_beginning_trigger_clause(text: &str) -> Option<S
     ))
 }
 
-
 /// Render compiled output in a near-oracle style for semantic diffing.
 pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
     let _ = def;
@@ -1730,9 +1728,9 @@ mod tests {
         compiled_lines, describe_additional_costs, describe_for_each_filter,
         merge_adjacent_static_heading_lines, merge_adjacent_subject_predicate_lines,
         normalize_common_semantic_phrasing, normalize_compiled_post_pass_effect,
-        normalize_create_under_control_clause, normalize_gain_life_plus_phrase,
-        normalize_known_low_tail_phrase, normalize_rendered_line_for_card,
-        normalize_sentence_surface_style, normalize_spell_self_exile, pluralize_noun_phrase,
+        normalize_gain_life_plus_phrase, normalize_known_low_tail_phrase,
+        normalize_rendered_line_for_card, normalize_sentence_surface_style,
+        normalize_spell_self_exile, pluralize_noun_phrase,
     };
     use crate::cards::CardDefinitionBuilder;
     use crate::filter::{ObjectFilter, PlayerFilter};

@@ -4,7 +4,7 @@ use winnow::error::{ContextError, Result as WResult};
 use winnow::prelude::*;
 use winnow::token::{one_of, take_while};
 
-use crate::cards::builders::{CardTextError, ChoiceCount, parse_subtype_word};
+use crate::cards::builders::{CardTextError, ChoiceCount};
 use crate::color::Color;
 use crate::color::ColorSet;
 use crate::cost::TotalCost;
@@ -16,8 +16,8 @@ use crate::object::CounterType;
 use crate::target::PlayerFilter;
 use crate::types::{CardType, Subtype, Supertype};
 
-use super::ported_activation_and_restrictions::parse_activation_cost;
 use super::ported_object_filters::parse_object_filter;
+use super::ported_effects_sentences::parse_subtype_word;
 use super::util::tokenize_line;
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,6 @@ pub(crate) struct TypeLineCst {
 pub(crate) struct ActivationCostCst {
     pub(crate) raw: String,
     pub(crate) segments: Vec<ActivationCostSegmentCst>,
-    pub(crate) legacy_lowered: Option<TotalCost>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -552,7 +551,9 @@ fn parse_counter_type_descriptor(raw: &str) -> Result<CounterType, CardTextError
     })
 }
 
-fn parse_loyalty_shorthand_activation_cost_rewrite(raw: &str) -> Option<TotalCost> {
+fn parse_loyalty_shorthand_activation_cost_rewrite(
+    raw: &str,
+) -> Option<Vec<ActivationCostSegmentCst>> {
     let normalized = raw.trim().replace('−', "-");
     let prefix = normalized
         .split_once(':')
@@ -563,28 +564,31 @@ fn parse_loyalty_shorthand_activation_cost_rewrite(raw: &str) -> Option<TotalCos
         && let Ok(amount) = rest.parse::<u32>()
     {
         return Some(if amount == 0 {
-            TotalCost::free()
+            Vec::new()
         } else {
-            TotalCost::from_cost(Cost::add_counters(CounterType::Loyalty, amount))
+            vec![ActivationCostSegmentCst::PutCounters {
+                counter_type: CounterType::Loyalty,
+                count: amount,
+            }]
         });
     }
 
     if let Some(rest) = prefix.strip_prefix('-') {
         if rest.eq_ignore_ascii_case("x") {
-            return Some(TotalCost::from_cost(Cost::remove_any_counters_from_source(
-                Some(CounterType::Loyalty),
-                true,
-            )));
+            return Some(vec![ActivationCostSegmentCst::RemoveCountersDynamic {
+                counter_type: Some(CounterType::Loyalty),
+                display_x: true,
+            }]);
         }
         if let Ok(amount) = rest.parse::<u32>() {
-            return Some(TotalCost::from_cost(Cost::remove_counters(
-                CounterType::Loyalty,
-                amount,
-            )));
+            return Some(vec![ActivationCostSegmentCst::RemoveCounters {
+                counter_type: CounterType::Loyalty,
+                count: amount,
+            }]);
         }
     }
 
-    (prefix == "0").then(TotalCost::free)
+    (prefix == "0").then(Vec::new)
 }
 
 fn parse_discard_segment_rewrite(raw: &str) -> Result<ActivationCostSegmentCst, CardTextError> {
@@ -1029,7 +1033,9 @@ fn parse_remove_counter_segment_rewrite(
     }
     if parts.starts_with(&["any", "number", "of"]) {
         let counter_descriptor = parts[3..].join(" ");
-        let counter_type = (!counter_descriptor.is_empty())
+        let counter_type = (!counter_descriptor.is_empty()
+            && counter_descriptor != "counter"
+            && counter_descriptor != "counters")
             .then(|| parse_counter_type_descriptor(counter_descriptor.as_str()))
             .transpose()?;
         return if let Some(filter_text) = target.strip_prefix("among ") {
@@ -1065,7 +1071,9 @@ fn parse_remove_counter_segment_rewrite(
     }
 
     let counter_descriptor = parts[idx..].join(" ");
-    let counter_type = (!counter_descriptor.is_empty())
+    let counter_type = (!counter_descriptor.is_empty()
+        && counter_descriptor != "counter"
+        && counter_descriptor != "counters")
         .then(|| parse_counter_type_descriptor(counter_descriptor.as_str()))
         .transpose()?;
     if let Some(filter_text) = target.strip_prefix("among ") {
@@ -1167,6 +1175,22 @@ fn parse_pay_energy_segment_rewrite(raw: &str) -> Result<ActivationCostSegmentCs
     Ok(ActivationCostSegmentCst::Energy(parse_count_word_rewrite(
         count_text.trim(),
     )?))
+}
+
+fn parse_bare_energy_segment_rewrite(raw: &str) -> Option<ActivationCostSegmentCst> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut rest = trimmed.as_str();
+    let mut count = 0u32;
+    while let Some(next) = rest.strip_prefix("{e}") {
+        count += 1;
+        rest = next.trim_start();
+    }
+
+    (count > 0 && rest.is_empty()).then_some(ActivationCostSegmentCst::Energy(count))
 }
 
 fn parse_activation_cost_segment_inner(input: &mut &str) -> WResult<ActivationCostSegmentCst> {
@@ -1315,7 +1339,6 @@ pub(crate) fn parse_activation_cost_rewrite(raw: &str) -> Result<ActivationCostC
                     ActivationCostSegmentCst::Mana(ManaCost::from_pips(vec![vec![left, right]])),
                     ActivationCostSegmentCst::Tap,
                 ],
-                legacy_lowered: None,
             });
         }
 
@@ -1345,6 +1368,10 @@ pub(crate) fn parse_activation_cost_rewrite(raw: &str) -> Result<ActivationCostC
             }
             let parsed = if normalized_segment.starts_with("exile ") {
                 parse_exile_segment_rewrite(normalized_segment.as_str())
+            } else if let Some(parsed) =
+                parse_bare_energy_segment_rewrite(normalized_segment.as_str())
+            {
+                Ok(parsed)
             } else if normalized_segment.starts_with("pay ")
                 && (normalized_segment.contains("{e}") || normalized_segment.ends_with(" e"))
             {
@@ -1382,26 +1409,16 @@ pub(crate) fn parse_activation_cost_rewrite(raw: &str) -> Result<ActivationCostC
         Ok(ActivationCostCst {
             raw: raw.trim().to_string(),
             segments,
-            legacy_lowered: None,
         })
     };
 
     match parse_rewrite_only() {
         Ok(cst) => Ok(cst),
         Err(rewrite_err) => {
-            if let Some(total_cost) = parse_loyalty_shorthand_activation_cost_rewrite(raw) {
+            if let Some(segments) = parse_loyalty_shorthand_activation_cost_rewrite(raw) {
                 return Ok(ActivationCostCst {
                     raw: raw.trim().to_string(),
-                    segments: Vec::new(),
-                    legacy_lowered: Some(total_cost),
-                });
-            }
-            let legacy_tokens = tokenize_line(raw, 0);
-            if let Ok(total_cost) = parse_activation_cost(&legacy_tokens) {
-                return Ok(ActivationCostCst {
-                    raw: raw.trim().to_string(),
-                    segments: Vec::new(),
-                    legacy_lowered: Some(total_cost),
+                    segments,
                 });
             }
             Err(rewrite_err)
@@ -1412,10 +1429,6 @@ pub(crate) fn parse_activation_cost_rewrite(raw: &str) -> Result<ActivationCostC
 pub(crate) fn lower_activation_cost_cst(
     cst: &ActivationCostCst,
 ) -> Result<TotalCost, CardTextError> {
-    if let Some(total_cost) = &cst.legacy_lowered {
-        return Ok(total_cost.clone());
-    }
-
     fn flush_pending_mana(costs: &mut Vec<Cost>, pending: &mut Vec<Vec<ManaSymbol>>) {
         if pending.is_empty() {
             return;

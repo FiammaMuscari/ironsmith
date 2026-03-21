@@ -52,7 +52,7 @@ pub(crate) fn display_text_for_tokens(
                     "t" => "{T}".to_string(),
                     "q" => "{Q}".to_string(),
                     _ if in_effect_text && numeric_like => word.clone(),
-                    _ => crate::cards::builders::parse_mana_symbol(word)
+                    _ => crate::cards::builders::parse_rewrite::util::parse_mana_symbol(word)
                         .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
                         .unwrap_or_else(|_| word.clone()),
                 };

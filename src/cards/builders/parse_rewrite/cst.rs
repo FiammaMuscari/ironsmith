@@ -1,6 +1,5 @@
-use crate::cards::builders::{LineInfo, MetadataLine};
-
 use super::leaf::ActivationCostCst;
+use super::shared_types::{LineInfo, MetadataLine};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RewriteDocumentCst {

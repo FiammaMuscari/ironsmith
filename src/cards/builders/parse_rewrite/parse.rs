@@ -2,16 +2,16 @@ use crate::PtValue;
 use crate::ability::ActivationTiming;
 use crate::cards::builders::{CardDefinitionBuilder, CardTextError, ParseAnnotations};
 
+use super::clause_support::{
+    rewrite_parse_ability_line, rewrite_parse_effect_sentences,
+    rewrite_parse_static_ability_ast_line, rewrite_parse_trigger_clause,
+    rewrite_parse_triggered_line,
+};
 use super::cst::{
     ActivatedLineCst, KeywordLineCst, KeywordLineKindCst, LevelHeaderCst, LevelItemCst,
     LevelItemKindCst, MetadataLineCst, ModalBlockCst, ModalModeCst, RewriteDocumentCst,
     RewriteLineCst, SagaChapterLineCst, StatementLineCst, StaticLineCst, TriggerIntroCst,
     TriggeredLineCst, UnsupportedLineCst,
-};
-use super::clause_support::{
-    rewrite_parse_ability_line, rewrite_parse_effect_sentences,
-    rewrite_parse_static_ability_ast_line, rewrite_parse_trigger_clause,
-    rewrite_parse_triggered_line,
 };
 use super::ir::{
     RewriteActivatedLine, RewriteKeywordLine, RewriteKeywordLineKind, RewriteLevelHeader,
@@ -19,24 +19,24 @@ use super::ir::{
     RewriteSagaChapterLine, RewriteSemanticDocument, RewriteSemanticItem, RewriteStatementLine,
     RewriteStaticLine, RewriteTriggeredLine, RewriteUnsupportedLine,
 };
-use super::leaf::{
-    lower_activation_cost_cst, parse_activation_cost_rewrite,
-};
+use super::leaf::{lower_activation_cost_cst, parse_activation_cost_rewrite};
 use super::lexer::TokenKind;
-use super::ported_activation_and_restrictions::{parse_channel_line, parse_cycling_line, parse_equip_line};
+use super::ported_activation_and_restrictions::{
+    parse_channel_line, parse_cycling_line, parse_equip_line,
+};
 use super::ported_keyword_static::parse_if_this_spell_costs_less_to_cast_line;
 use super::preprocess::{
     PreprocessedDocument, PreprocessedItem, PreprocessedLine, preprocess_document,
 };
 use super::util::{
     parse_additional_cost_choice_options, parse_bestow_line, parse_buyback_line,
-    parse_cast_this_spell_only_line, parse_entwine_line, parse_escape_line,
-    parse_flashback_line, parse_if_conditional_alternative_cost_line, parse_kicker_line,
-    parse_level_header, parse_level_up_line, parse_madness_line, parse_morph_keyword_line,
-    parse_multikicker_line, parse_offspring_line, parse_power_toughness, parse_reinforce_line,
-    parse_saga_chapter_prefix, parse_self_free_cast_alternative_cost_line, parse_squad_line,
-    parse_transmute_line, parse_warp_line, parse_you_may_rather_than_spell_cost_line,
-    preserve_keyword_prefix_for_parse, tokenize_line, words,
+    parse_cast_this_spell_only_line, parse_entwine_line, parse_escape_line, parse_flashback_line,
+    parse_if_conditional_alternative_cost_line, parse_kicker_line, parse_level_header,
+    parse_level_up_line, parse_madness_line, parse_morph_keyword_line, parse_multikicker_line,
+    parse_offspring_line, parse_power_toughness, parse_reinforce_line, parse_saga_chapter_prefix,
+    parse_self_free_cast_alternative_cost_line, parse_squad_line, parse_transmute_line,
+    parse_warp_line, parse_you_may_rather_than_spell_cost_line, preserve_keyword_prefix_for_parse,
+    tokenize_line, words,
 };
 
 fn is_bullet_line(line: &str) -> bool {
@@ -146,8 +146,10 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
             continue;
         }
 
-        let trigger_probe =
-            rewrite_parse_trigger_clause(&tokenize_line(trigger_text.as_str(), line.info.line_index));
+        let trigger_probe = rewrite_parse_trigger_clause(&tokenize_line(
+            trigger_text.as_str(),
+            line.info.line_index,
+        ));
         let effect_probe =
             rewrite_parse_effect_sentences(&tokenize_line(effect_candidate, line.info.line_index));
         let trigger_is_supported = trigger_probe.is_ok();
@@ -604,6 +606,7 @@ fn rewrite_statement_parse_text(text: &str) -> String {
         .filter(|sentence| !sentence.is_empty())
         .map(strip_non_keyword_label_prefix)
         .map(str::trim)
+        .map(rewrite_statement_followup_intro)
         .filter(|sentence| !sentence.is_empty())
         .collect::<Vec<_>>();
     if sentences.is_empty() {
@@ -611,6 +614,17 @@ fn rewrite_statement_parse_text(text: &str) -> String {
     } else {
         format!("{}.", sentences.join(". "))
     }
+}
+
+fn rewrite_statement_followup_intro(sentence: &str) -> String {
+    let trimmed = sentence.trim();
+    if let Some(rest) = trimmed.strip_prefix("when you do,") {
+        return format!("if you do, {}", rest.trim_start());
+    }
+    if let Some(rest) = trimmed.strip_prefix("whenever you do,") {
+        return format!("if you do, {}", rest.trim_start());
+    }
+    trimmed.to_string()
 }
 
 fn looks_like_activation_cost_prefix(raw: &str) -> bool {
@@ -955,7 +969,7 @@ fn sentence_starts_with_trigger_intro_rewrite(sentence: &str, line_index: usize)
     tokens
         .first()
         .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
-        || crate::cards::builders::is_at_trigger_intro(&tokens, 0)
+        || super::parser_support::is_at_trigger_intro(&tokens, 0)
 }
 
 fn looks_like_delayed_next_turn_intro_rewrite(tokens: &[crate::cards::builders::Token]) -> bool {

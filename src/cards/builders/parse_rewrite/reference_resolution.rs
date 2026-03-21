@@ -1,23 +1,31 @@
-use crate::cards::builders::effect_ast_traversal::try_for_each_nested_effects_mut;
 use crate::cards::builders::{
-    AnnotatedEffect, AnnotatedEffectSequence, CardTextError, EffectAst, IT_TAG, IdGenContext,
-    PlayerAst, RefState, ReferenceEnv, ReferenceFrame, ReferenceImports, TargetAst,
-    choose_spec_targets_object, effect_references_event_derived_amount, effects_reference_it_tag,
-    effects_reference_its_controller, infer_player_filter_from_object_filter, resolve_it_tag,
-    resolve_non_target_player_filter, resolve_target_spec_with_choices,
+    CardTextError, EffectAst, IT_TAG, IdGenContext, PlayerAst, TargetAst, TriggerSpec,
 };
 use crate::effect::{EffectId, EventValueSpec};
 use crate::target::ObjectRef;
 use crate::{ObjectFilter, PlayerFilter, Value};
 
 #[cfg(test)]
-use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
-#[cfg(test)]
 use crate::cards::builders::{
     ObjectRefAst, PredicateAst, PreventNextTimeDamageSourceAst, RetargetModeAst,
 };
 #[cfg(test)]
 use crate::{ChooseSpec, TagKey};
+
+use super::effect_ast_traversal::try_for_each_nested_effects_mut;
+#[cfg(test)]
+use super::effect_ast_traversal::for_each_nested_effects_mut;
+use super::compile_support::{
+    effect_references_event_derived_amount, effects_reference_it_tag, effects_reference_its_controller,
+};
+use super::reference_helpers::{
+    choose_spec_targets_object, infer_player_filter_from_object_filter, resolve_it_tag,
+    resolve_non_target_player_filter, resolve_target_spec_with_choices,
+};
+use super::reference_model::{
+    AnnotatedEffect, AnnotatedEffectSequence, RefState, ReferenceEnv, ReferenceFrame,
+    ReferenceImports,
+};
 
 #[cfg(test)]
 #[derive(Debug, Clone)]
@@ -44,29 +52,29 @@ struct EffectReferenceResolutionState {
     bind_unbound_x_to_last_effect: bool,
 }
 
-fn trigger_supports_event_amount(trigger: &crate::cards::builders::TriggerSpec) -> bool {
+fn trigger_supports_event_amount(trigger: &TriggerSpec) -> bool {
     matches!(
         trigger,
-        crate::cards::builders::TriggerSpec::YouGainLife
-            | crate::cards::builders::TriggerSpec::YouGainLifeDuringTurn(_)
-            | crate::cards::builders::TriggerSpec::PlayerLosesLife(_)
-            | crate::cards::builders::TriggerSpec::PlayerLosesLifeDuringTurn { .. }
-            | crate::cards::builders::TriggerSpec::ThisIsDealtDamage
-            | crate::cards::builders::TriggerSpec::IsDealtDamage(_)
-            | crate::cards::builders::TriggerSpec::ThisDealsDamage
-            | crate::cards::builders::TriggerSpec::ThisDealsDamageTo(_)
-            | crate::cards::builders::TriggerSpec::DealsDamage(_)
-            | crate::cards::builders::TriggerSpec::ThisDealsCombatDamage
-            | crate::cards::builders::TriggerSpec::ThisDealsCombatDamageTo(_)
-            | crate::cards::builders::TriggerSpec::DealsCombatDamage(_)
-            | crate::cards::builders::TriggerSpec::DealsCombatDamageTo { .. }
-            | crate::cards::builders::TriggerSpec::ThisDealsCombatDamageToPlayer
-            | crate::cards::builders::TriggerSpec::DealsCombatDamageToPlayer { .. }
-            | crate::cards::builders::TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. }
-            | crate::cards::builders::TriggerSpec::CounterPutOn { .. }
+        TriggerSpec::YouGainLife
+            | TriggerSpec::YouGainLifeDuringTurn(_)
+            | TriggerSpec::PlayerLosesLife(_)
+            | TriggerSpec::PlayerLosesLifeDuringTurn { .. }
+            | TriggerSpec::ThisIsDealtDamage
+            | TriggerSpec::IsDealtDamage(_)
+            | TriggerSpec::ThisDealsDamage
+            | TriggerSpec::ThisDealsDamageTo(_)
+            | TriggerSpec::DealsDamage(_)
+            | TriggerSpec::ThisDealsCombatDamage
+            | TriggerSpec::ThisDealsCombatDamageTo(_)
+            | TriggerSpec::DealsCombatDamage(_)
+            | TriggerSpec::DealsCombatDamageTo { .. }
+            | TriggerSpec::ThisDealsCombatDamageToPlayer
+            | TriggerSpec::DealsCombatDamageToPlayer { .. }
+            | TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. }
+            | TriggerSpec::CounterPutOn { .. }
     ) || matches!(
         trigger,
-        crate::cards::builders::TriggerSpec::Either(left, right)
+        TriggerSpec::Either(left, right)
             if trigger_supports_event_amount(left) && trigger_supports_event_amount(right)
     )
 }
@@ -93,7 +101,14 @@ fn lowering_reference_frame(frame: &ReferenceFrame) -> ReferenceEnv {
 }
 
 fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
-    let tag = format!("{prefix}_{}", id_gen.next_tag_id);
+    let tag = if matches!(prefix, "exiled" | "looked" | "chosen" | "revealed") {
+        format!(
+            "__sentence_helper_{prefix}_l0_s0_e{}",
+            id_gen.next_tag_id
+        )
+    } else {
+        format!("{prefix}_{}", id_gen.next_tag_id)
+    };
     id_gen.next_tag_id += 1;
     tag
 }

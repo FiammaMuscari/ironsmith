@@ -1,8 +1,10 @@
-use crate::cards::builders::{CardTextError, GrantedAbilityAst, KeywordAction, lower_parsed_ability};
+use crate::cards::builders::{CardTextError, GrantedAbilityAst, KeywordAction};
 use crate::cost::TotalCost;
 use crate::filter::ObjectFilter;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::static_abilities::StaticAbility;
+
+use super::lowering_support::rewrite_lower_parsed_ability;
 
 pub(crate) fn static_ability_for_keyword_action(action: KeywordAction) -> Option<StaticAbility> {
     if !action.lowers_to_static_ability() {
@@ -170,7 +172,7 @@ pub(crate) fn lower_granted_ability_ast(
             StaticAbility::can_block_additional_creature_each_combat(*additional),
         ),
         GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
-            let mut lowered = lower_parsed_ability(ability.clone())?.ability;
+            let mut lowered = rewrite_lower_parsed_ability(ability.clone())?.ability;
             if lowered.text.is_none() {
                 lowered.text = Some(display.clone());
             }

@@ -1,6 +1,3 @@
-use super::effect_ast_traversal::{
-    assert_effect_ast_variant_coverage, for_each_nested_effects, for_each_nested_effects_mut,
-};
 #[allow(unused_imports)]
 use crate::ability;
 #[allow(unused_imports)]
@@ -10,33 +7,15 @@ use crate::card::PowerToughness;
 #[allow(unused_imports)]
 use crate::cards::CardDefinition;
 #[allow(unused_imports)]
-use crate::cards::builders::ability_lowering::lower_parsed_ability;
-#[allow(unused_imports)]
-use crate::cards::builders::effect_pipeline::{
-    EffectPreludeTag, PreparedEffectsForLowering, PreparedPredicateForLowering,
-    PreparedTriggeredEffectsForLowering, prepare_effects_for_lowering,
-    prepare_effects_with_trigger_context_for_lowering, prepare_triggered_effects_for_lowering,
-};
-#[allow(unused_imports)]
-use crate::cards::builders::reference_resolution::{
-    EffectReferenceResolutionConfig, annotate_effect_sequence,
-};
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    AnnotatedEffect, AnnotatedEffectSequence, CardDefinitionBuilder, CardTextError,
+    CardDefinitionBuilder, CardTextError,
     ClashOpponentAst, ControlDurationAst, DamageBySpec, EffectAst, ExtraTurnAnchorAst,
     EffectLoweringContext, GrantedAbilityAst, IT_TAG, IdGenContext, IfResultPredicate, LineAst,
-    LoweredEffects, LoweringFrame, NormalizedLine, ObjectRefAst,
+    LoweringFrame, NormalizedLine, ObjectRefAst,
     ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
-    PreventNextTimeDamageTargetAst, ReferenceEnv, ReferenceExports, ReferenceImports,
+    PreventNextTimeDamageTargetAst,
     RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
-    choose_spec_targets_object, contains_until_end_of_turn,
-    infer_player_filter_from_object_filter, lower_granted_abilities_ast, map_span_to_original,
-    object_filter_as_tagged_reference, parse_card_type, parse_number_word_i32,
-    parse_subtype_word, resolve_attach_object_spec, resolve_choose_spec_it_tag, resolve_it_tag,
-    resolve_it_tag_key, resolve_non_target_player_filter, resolve_restriction_it_tag,
-    resolve_target_spec_with_choices, resolve_unless_player_filter, resolve_value_it_tag,
-    watch_tag_from_filter,
 };
 #[allow(unused_imports)]
 use crate::color::ColorSet;
@@ -69,6 +48,35 @@ use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 #[allow(unused_imports)]
 use std::collections::HashMap;
+
+use super::effect_ast_traversal::{
+    assert_effect_ast_variant_coverage, for_each_nested_effects, for_each_nested_effects_mut,
+};
+use super::effect_pipeline::{
+    EffectPreludeTag, PreparedEffectsForLowering, PreparedPredicateForLowering,
+    PreparedTriggeredEffectsForLowering,
+};
+use super::lowering_support::{
+    rewrite_lower_parsed_ability as lower_parsed_ability, rewrite_prepare_effects_for_lowering,
+    rewrite_prepare_effects_with_trigger_context_for_lowering,
+};
+use super::reference_helpers::{
+    choose_spec_targets_object, infer_player_filter_from_object_filter,
+    object_filter_as_tagged_reference, resolve_attach_object_spec, resolve_choose_spec_it_tag,
+    resolve_it_tag, resolve_it_tag_key, resolve_non_target_player_filter,
+    resolve_restriction_it_tag, resolve_target_spec_with_choices,
+    resolve_unless_player_filter, resolve_value_it_tag, watch_tag_from_filter,
+};
+use super::reference_model::{
+    AnnotatedEffect, AnnotatedEffectSequence, LoweredEffects, ReferenceEnv, ReferenceExports,
+    ReferenceImports,
+};
+use super::reference_resolution::{EffectReferenceResolutionConfig, annotate_effect_sequence};
+use super::static_ability_helpers::lower_granted_abilities_ast;
+use super::util::{
+    contains_until_end_of_turn, map_span_to_original, parse_card_type, parse_number_word_i32,
+};
+use super::ported_effects_sentences::parse_subtype_word;
 
 pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
     match trigger {
@@ -303,7 +311,6 @@ pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), 
     }
 }
 
-#[cfg(test)]
 pub(crate) fn compile_statement_effects(
     effects: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
@@ -318,7 +325,7 @@ pub(crate) fn compile_statement_effects_with_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
 ) -> Result<LoweredEffects, CardTextError> {
-    let prepared = prepare_effects_for_lowering(effects, imports.clone())?;
+    let prepared = rewrite_prepare_effects_for_lowering(effects, imports.clone())?;
     materialize_prepared_statement_effects(&prepared)
 }
 
@@ -361,13 +368,14 @@ pub(crate) fn materialize_prepared_statement_effects(
     ctx.force_auto_tag_object_targets = prepared.force_auto_tag_object_targets;
     ctx.apply_reference_env(&prepared.initial_env);
     let (compiled, _) = compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
+    let final_env = ctx.reference_env();
     Ok(LoweredEffects {
         effects: crate::resolution::ResolutionProgram::from_effects(prepend_effect_prelude(
             compiled,
             compile_effect_prelude_tags(&prepared.prelude),
         )),
         choices: Vec::new(),
-        exports: ReferenceExports::from_env(&ctx.reference_env()),
+        exports: ReferenceExports::from_env(&final_env),
     })
 }
 
@@ -415,13 +423,14 @@ pub(crate) fn materialize_prepared_effects_with_trigger_context(
     ctx.apply_reference_env(&prepared.initial_env);
     let (compiled, choices) =
         compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
+    let final_env = ctx.reference_env();
     Ok(LoweredEffects {
         effects: crate::resolution::ResolutionProgram::from_effects(prepend_effect_prelude(
             compiled,
             compile_effect_prelude_tags(&prepared.prelude),
         )),
         choices,
-        exports: ReferenceExports::from_env(&ctx.reference_env()),
+        exports: ReferenceExports::from_env(&final_env),
     })
 }
 
@@ -707,7 +716,8 @@ pub(crate) fn compile_condition_from_predicate_ast_with_env(
     saved_last_object_tag: Option<&TagKey>,
 ) -> Result<Condition, CardTextError> {
     let mut ctx = EffectLoweringContext::new();
-    ctx.apply_reference_env(refs);
+    let legacy_refs: crate::cards::builders::ReferenceEnv = refs.clone().into();
+    ctx.apply_reference_env(&legacy_refs);
     let saved_last_tag = saved_last_object_tag.map(|tag| tag.as_str().to_string());
     compile_condition_from_predicate_ast(predicate, &mut ctx, &saved_last_tag)
 }
@@ -850,7 +860,7 @@ pub(crate) fn compile_trigger_effects_with_imports(
     imports: &ReferenceImports,
 ) -> Result<LoweredEffects, CardTextError> {
     let prepared =
-        prepare_effects_with_trigger_context_for_lowering(trigger, effects, imports.clone())?;
+        rewrite_prepare_effects_with_trigger_context_for_lowering(trigger, effects, imports.clone())?;
     materialize_prepared_effects_with_trigger_context(&prepared)
 }
 
@@ -1995,7 +2005,7 @@ pub(crate) fn compile_annotated_effects_with_context(
 
     while idx < annotated.effects.len() {
         let current = &annotated.effects[idx];
-        ctx.apply_reference_env(&current.in_env);
+        apply_local_reference_env(ctx, &current.in_env);
         ctx.auto_tag_object_targets =
             ctx.force_auto_tag_object_targets || current.auto_tag_object_targets;
 
@@ -2006,7 +2016,7 @@ pub(crate) fn compile_annotated_effects_with_context(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
-            ctx.apply_reference_env(&annotated.effects[idx + consumed - 1].out_env);
+            apply_local_reference_env(ctx, &annotated.effects[idx + consumed - 1].out_env);
             idx += consumed;
             continue;
         }
@@ -2022,7 +2032,7 @@ pub(crate) fn compile_annotated_effects_with_context(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
-            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
+            apply_local_reference_env(ctx, &annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
@@ -2038,7 +2048,7 @@ pub(crate) fn compile_annotated_effects_with_context(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
-            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
+            apply_local_reference_env(ctx, &annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
@@ -2054,7 +2064,7 @@ pub(crate) fn compile_annotated_effects_with_context(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
-            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
+            apply_local_reference_env(ctx, &annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
@@ -2070,7 +2080,7 @@ pub(crate) fn compile_annotated_effects_with_context(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
-            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
+            apply_local_reference_env(ctx, &annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
@@ -3740,7 +3750,12 @@ where
 }
 
 fn current_reference_env(ctx: &EffectLoweringContext) -> ReferenceEnv {
-    ctx.reference_env()
+    ctx.reference_env().into()
+}
+
+fn apply_local_reference_env(ctx: &mut EffectLoweringContext, env: &ReferenceEnv) {
+    let legacy_env: crate::cards::builders::ReferenceEnv = env.clone().into();
+    ctx.apply_reference_env(&legacy_env);
 }
 
 fn try_compile_combat_and_damage_effect(
@@ -10430,7 +10445,7 @@ mod parse_compile_tests {
         assert_eq!(lowered.effects.len(), 1);
         assert_eq!(
             lowered.exports.last_object_tag,
-            RefState::Known(TagKey::from("destroyed_0"))
+            RefState::Known(TagKey::from("destroyed_0")).into()
         );
     }
 

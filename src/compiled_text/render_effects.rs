@@ -4790,8 +4790,20 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             Zone::Hand => {
                 if let ChooseSpec::Tagged(tag) = move_to_zone.target.base()
                     && (tag.as_str().starts_with("revealed_")
+                        || crate::cards::builders::is_sentence_helper_tag(
+                            tag.as_str(),
+                            "revealed",
+                        )
                         || tag.as_str().starts_with("searched_")
+                        || crate::cards::builders::is_sentence_helper_tag(
+                            tag.as_str(),
+                            "searched",
+                        )
                         || tag.as_str().starts_with("milled_")
+                        || crate::cards::builders::is_sentence_helper_tag(
+                            tag.as_str(),
+                            "milled",
+                        )
                         || tag.as_str().starts_with("discarded_"))
                 {
                     format!(
@@ -4873,7 +4885,11 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
                     crate::effects::BattlefieldController::You => " under your control",
                 };
                 if let crate::target::ChooseSpec::Tagged(tag) = &move_to_zone.target
-                    && tag.as_str().starts_with("exiled_")
+                    && (tag.as_str().starts_with("exiled_")
+                        || crate::cards::builders::is_sentence_helper_tag(
+                            tag.as_str(),
+                            "exiled",
+                        ))
                 {
                     format!("Return {target} to the battlefield{tapped_suffix}{controller_suffix}")
                 } else {
@@ -7806,6 +7822,17 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         };
         let object_text = if grant_play_tagged.tag.as_str().starts_with("targeted_")
             || grant_play_tagged.tag.as_str() == "__it__"
+            || crate::cards::builders::is_sentence_helper_tag(grant_play_tagged.tag.as_str(), "exiled")
+            || crate::cards::builders::is_sentence_helper_tag(
+                grant_play_tagged.tag.as_str(),
+                "revealed",
+            )
+            || crate::cards::builders::is_sentence_helper_tag(grant_play_tagged.tag.as_str(), "looked")
+            || crate::cards::builders::is_sentence_helper_tag(grant_play_tagged.tag.as_str(), "chosen")
+            || crate::cards::builders::is_sentence_helper_tag(
+                grant_play_tagged.tag.as_str(),
+                "searched",
+            )
         {
             "that card".to_string()
         } else {
