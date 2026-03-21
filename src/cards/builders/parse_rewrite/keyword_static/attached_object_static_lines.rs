@@ -30,7 +30,7 @@ fn scale_value_by_factor(base: Value, factor: u32) -> Option<Value> {
 }
 
 pub(crate) fn display_text_for_tokens(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     capitalize_effect_start: bool,
 ) -> String {
     let mut text = String::new();
@@ -40,68 +40,61 @@ pub(crate) fn display_text_for_tokens(
     let mut capitalize_next_cost_action = true;
 
     for token in tokens {
-        match token {
-            Token::Word(word, _) => {
-                if needs_space && !text.is_empty() {
-                    text.push(' ');
-                }
-                let numeric_like = word
-                    .chars()
-                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
-                let mut rendered = match word.as_str() {
-                    "t" => "{T}".to_string(),
-                    "q" => "{Q}".to_string(),
-                    _ if in_effect_text && numeric_like => word.clone(),
-                    _ => crate::cards::builders::parse_rewrite::util::parse_mana_symbol(word)
-                        .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
-                        .unwrap_or_else(|_| word.clone()),
-                };
-                if !in_effect_text
-                    && capitalize_next_cost_action
-                    && matches!(
-                        word.as_str(),
-                        "sacrifice" | "discard" | "exile" | "remove" | "reveal" | "pay"
-                    )
-                {
-                    if let Some(first) = rendered.get_mut(0..1) {
-                        first.make_ascii_uppercase();
-                    }
-                }
-                if capitalize_next_effect_word {
-                    if let Some(first) = rendered.get_mut(0..1) {
-                        first.make_ascii_uppercase();
-                    }
-                    capitalize_next_effect_word = false;
-                }
-                text.push_str(&rendered);
-                needs_space = true;
-                capitalize_next_cost_action = false;
+        if let Some(word) = token.as_word() {
+            if needs_space && !text.is_empty() {
+                text.push(' ');
             }
-            Token::Colon(_) => {
-                text.push(':');
-                needs_space = true;
-                in_effect_text = true;
+            let numeric_like = word
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+            let mut rendered = match word {
+                "t" => "{T}".to_string(),
+                "q" => "{Q}".to_string(),
+                _ if in_effect_text && numeric_like => word.to_string(),
+                _ => crate::cards::builders::parse_rewrite::util::parse_mana_symbol(word)
+                    .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
+                    .unwrap_or_else(|_| word.to_string()),
+            };
+            if !in_effect_text
+                && capitalize_next_cost_action
+                && matches!(
+                    word,
+                    "sacrifice" | "discard" | "exile" | "remove" | "reveal" | "pay"
+                )
+            {
+                if let Some(first) = rendered.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+            }
+            if capitalize_next_effect_word {
+                if let Some(first) = rendered.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                capitalize_next_effect_word = false;
+            }
+            text.push_str(&rendered);
+            needs_space = true;
+            capitalize_next_cost_action = false;
+        } else if token.is_colon() {
+            text.push(':');
+            needs_space = true;
+            in_effect_text = true;
+            capitalize_next_effect_word = capitalize_effect_start;
+        } else if token.is_comma() {
+            text.push(',');
+            needs_space = true;
+            if !in_effect_text {
+                capitalize_next_cost_action = true;
+            }
+        } else if token.is_period() {
+            text.push('.');
+            needs_space = true;
+            if in_effect_text {
                 capitalize_next_effect_word = capitalize_effect_start;
             }
-            Token::Comma(_) => {
-                text.push(',');
-                needs_space = true;
-                if !in_effect_text {
-                    capitalize_next_cost_action = true;
-                }
-            }
-            Token::Period(_) => {
-                text.push('.');
-                needs_space = true;
-                if in_effect_text {
-                    capitalize_next_effect_word = capitalize_effect_start;
-                }
-            }
-            Token::Semicolon(_) => {
-                text.push(';');
-                needs_space = true;
-            }
-            Token::Quote(_) => {}
+        } else if token.is_semicolon() {
+            text.push(';');
+            needs_space = true;
         }
     }
 
@@ -144,7 +137,7 @@ pub(crate) fn cumulative_upkeep_granted_ability(
 }
 
 pub(crate) fn parse_equipped_creature_has_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let words = words(tokens);
     let clause_text = words.join(" ");
@@ -209,7 +202,7 @@ pub(crate) fn parse_equipped_creature_has_line(
 }
 
 pub(crate) fn parse_enchanted_creature_has_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     let clause_text = line_words.join(" ");
@@ -307,7 +300,7 @@ pub(crate) fn parse_enchanted_creature_has_line(
 }
 
 pub(crate) fn parse_attached_has_and_loses_keywords_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 7 {
@@ -384,7 +377,7 @@ pub(crate) fn parse_attached_has_and_loses_keywords_line(
 }
 
 pub(crate) fn parse_attached_cant_attack_or_block_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
     let normalized = normalize_cant_words(tokens);
     if normalized.len() < 4 {
@@ -442,7 +435,7 @@ pub(crate) fn parse_attached_cant_attack_or_block_line(
 }
 
 pub(crate) fn parse_you_control_attached_creature_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 4 || !line_words.starts_with(&["you", "control"]) {
@@ -469,7 +462,7 @@ pub(crate) fn parse_you_control_attached_creature_line(
 }
 
 pub(crate) fn parse_attached_gets_and_cant_block_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 6 {
@@ -539,7 +532,7 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
 }
 
 pub(crate) fn parse_prevent_damage_to_source_remove_counter_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 12 {
@@ -629,7 +622,7 @@ pub(crate) fn parse_prevent_damage_to_source_remove_counter_line(
 }
 
 pub(crate) fn parse_attached_prevent_all_damage_dealt_by_attached_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 6 {
@@ -655,7 +648,7 @@ pub(crate) fn parse_attached_prevent_all_damage_dealt_by_attached_line(
 }
 
 pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 6 {
@@ -790,7 +783,7 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
 }
 
 pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 10 {
@@ -833,7 +826,7 @@ pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
     }
     let filter = parse_object_filter(&subject_tokens, false)?;
 
-    let modifier_token = tokens.get(get_idx + 1).and_then(Token::as_word);
+    let modifier_token = tokens.get(get_idx + 1).and_then(OwnedLexToken::as_word);
     let Some(modifier_token) = modifier_token else {
         return Ok(None);
     };
@@ -880,7 +873,7 @@ pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
 }
 
 pub(crate) fn parse_attached_gets_and_has_ability_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 6 {
@@ -972,7 +965,7 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
 
     let has_colon = ability_tokens
         .iter()
-        .any(|token| matches!(token, Token::Colon(_)));
+        .any(|token| token.is_colon());
     if let Some(parsed) = parse_activated_line(&ability_tokens)? {
         let display = display_text_for_tokens(&ability_tokens, false);
         let grant = grant_object_ability_for_anthem_subject(&clause, parsed, display);
@@ -1019,7 +1012,7 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
 }
 
 pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 4 || line_words[0] != "equipped" || line_words[1] != "creature" {
@@ -1038,7 +1031,7 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
     }
     let has_colon = ability_tokens
         .iter()
-        .any(|token| matches!(token, Token::Colon(_)));
+        .any(|token| token.is_colon());
     let Some(parsed) = parse_activated_line(&ability_tokens)? else {
         if has_colon {
             return Err(CardTextError::ParseError(format!(
@@ -1082,7 +1075,7 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
 
 
 pub(crate) fn parse_enchanted_has_activated_ability_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
     let token_words = words(tokens);
     if !token_words.starts_with(&["enchanted"]) || !token_words.contains(&"has") {

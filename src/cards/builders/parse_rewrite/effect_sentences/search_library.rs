@@ -1,13 +1,17 @@
-use super::{find_verb, parse_effect_chain, parse_effect_chain_with_sentence_primitives, parse_effect_clause};
-use super::sentence_helpers::*;
+use super::super::lexer::{OwnedLexToken, TokenKind, lex_line, trim_lexed_commas};
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::{parse_object_filter, split_on_or};
 use super::super::util::{
-    is_article, parse_number, parse_subject, parse_target_phrase, parse_zone_word,
-    span_from_tokens, token_index_for_word_index, trim_commas, words,
+    compat_tokens_from_lexed, is_article, parse_number, parse_subject, parse_target_phrase,
+    parse_zone_word, span_from_tokens, token_index_for_word_index, trim_commas, words,
+};
+use super::sentence_helpers::*;
+use super::{
+    find_verb, parse_effect_chain, parse_effect_chain_with_sentence_primitives, parse_effect_clause,
 };
 use crate::cards::builders::{
     CardTextError, CarryContext, ChoiceCount, EffectAst, IT_TAG, PlayerAst, ReturnControllerAst,
-    SubjectAst, TagKey, TargetAst, TextSpan, Token,
+    SubjectAst, TagKey, TargetAst, TextSpan,
 };
 use crate::target::{ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
 use crate::types::{CardType, Subtype};
@@ -22,7 +26,7 @@ enum SearchLibraryManaConstraint {
 }
 
 pub(crate) fn parse_search_library_disjunction_filter(
-    filter_tokens: &[Token],
+    filter_tokens: &[OwnedLexToken],
 ) -> Option<ObjectFilter> {
     let segments = split_on_or(filter_tokens);
     if segments.len() < 2 {
@@ -50,9 +54,258 @@ pub(crate) fn parse_search_library_disjunction_filter(
     Some(filter)
 }
 
+pub(crate) fn parse_search_library_sentence_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_search_library_sentence(&compat_tokens_from_lexed(tokens))
+}
+
+pub(crate) fn parse_cant_effect_sentence_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let source_tapped_duration = has_source_remains_tapped_duration_lexed(tokens);
+    let Some((duration, clause_tokens)) = parse_restriction_duration_lexed(tokens)? else {
+        return Ok(None);
+    };
+    if clause_tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "restriction clause missing body".to_string(),
+        ));
+    }
+    if clause_tokens.first().is_some_and(|token| token.is_word("if")) {
+        return Ok(None);
+    }
+
+    let clause_compat = compat_tokens_from_lexed(&clause_tokens);
+    if find_negation_span(&clause_compat).is_none() {
+        return Ok(None);
+    }
+    if let Some((neg_start, _)) = find_negation_span(&clause_compat)
+        && clause_compat[..neg_start]
+            .iter()
+            .any(|token| token.is_word("and"))
+    {
+        return Ok(None);
+    }
+
+    let Some(restrictions) = parse_cant_restrictions(&clause_compat)? else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported restriction clause body (clause: '{}')",
+            words(&clause_compat).join(" ")
+        )));
+    };
+
+    let mut target: Option<TargetAst> = None;
+    let mut effects = Vec::new();
+    for parsed in restrictions {
+        if let Some(parsed_target) = parsed.target {
+            if let Some(existing) = &target {
+                if *existing != parsed_target {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported mixed restriction targets (clause: '{}')",
+                        words(&clause_compat).join(" ")
+                    )));
+                }
+            } else {
+                target = Some(parsed_target);
+            }
+        }
+        effects.push(EffectAst::Cant {
+            restriction: parsed.restriction,
+            duration: duration.clone(),
+            condition: source_tapped_duration.then_some(crate::ConditionExpr::SourceIsTapped),
+        });
+    }
+    if let Some(target) = target {
+        effects.insert(0, EffectAst::TargetOnly { target });
+    }
+
+    Ok(Some(effects))
+}
+
+fn remainder_after_prefix_words_lexed(
+    tokens: &[OwnedLexToken],
+    consumed_word_count: usize,
+) -> Vec<OwnedLexToken> {
+    let words = LowercaseWordView::new(tokens);
+    let start = words
+        .token_index_for_word_index(consumed_word_count)
+        .unwrap_or(tokens.len());
+    trim_lexed_commas(&tokens[start..]).to_vec()
+}
+
+pub(crate) fn parse_restriction_duration_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<(crate::effect::Until, Vec<OwnedLexToken>)>, CardTextError> {
+    use crate::effect::Until;
+
+    let words = LowercaseWordView::new(tokens);
+    let all_words = words.to_word_refs();
+    if all_words.len() < 4 {
+        return Ok(None);
+    }
+
+    if starts_with_until_end_of_turn(&all_words) {
+        let remainder = if let Some(idx) = tokens.iter().position(|token| token.kind == TokenKind::Comma)
+        {
+            trim_lexed_commas(&tokens[idx + 1..]).to_vec()
+        } else {
+            remainder_after_prefix_words_lexed(tokens, 4)
+        };
+        return Ok(Some((Until::EndOfTurn, remainder)));
+    }
+
+    if all_words.starts_with(&["until", "your", "next", "turn"]) {
+        let remainder = if let Some(idx) = tokens.iter().position(|token| token.kind == TokenKind::Comma)
+        {
+            trim_lexed_commas(&tokens[idx + 1..]).to_vec()
+        } else {
+            remainder_after_prefix_words_lexed(tokens, 4)
+        };
+        return Ok(Some((Until::YourNextTurn, remainder)));
+    }
+
+    if all_words.starts_with(&["for", "as", "long", "as"]) {
+        let as_long_duration = all_words.contains(&"you")
+            && all_words.contains(&"control")
+            && (all_words.contains(&"this")
+                || all_words.contains(&"thiss")
+                || all_words.contains(&"source")
+                || all_words.contains(&"creature")
+                || all_words.contains(&"permanent"));
+        if !as_long_duration {
+            return Ok(None);
+        }
+        let Some(comma_idx) = tokens.iter().position(|token| token.kind == TokenKind::Comma) else {
+            return Err(CardTextError::ParseError(
+                "missing comma after duration prefix".to_string(),
+            ));
+        };
+        let remainder = trim_lexed_commas(&tokens[comma_idx + 1..]).to_vec();
+        return Ok(Some((Until::YouStopControllingThis, remainder)));
+    }
+
+    if ends_with_until_end_of_turn(&all_words) {
+        let end_idx = tokens
+            .iter()
+            .rposition(|token| token.is_word("until"))
+            .unwrap_or(tokens.len());
+        let remainder = trim_lexed_commas(&tokens[..end_idx]).to_vec();
+        return Ok(Some((Until::EndOfTurn, remainder)));
+    }
+
+    if all_words.ends_with(&["until", "your", "next", "turn"])
+        || (all_words.ends_with(&["next", "turn"]) && all_words.contains(&"until"))
+    {
+        let end_idx = tokens
+            .iter()
+            .rposition(|token| token.is_word("until"))
+            .unwrap_or(tokens.len());
+        let remainder = trim_lexed_commas(&tokens[..end_idx]).to_vec();
+        return Ok(Some((Until::YourNextTurn, remainder)));
+    }
+
+    if all_words.ends_with(&["during", "your", "next", "untap", "step"]) {
+        let during_idx = tokens
+            .iter()
+            .rposition(|token| token.is_word("during"))
+            .unwrap_or(tokens.len());
+        let remainder = trim_lexed_commas(&tokens[..during_idx]).to_vec();
+        if !remainder.is_empty() {
+            return Ok(Some((Until::ControllersNextUntapStep, remainder)));
+        }
+    }
+
+    if all_words.ends_with(&["during", "its", "controller", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "its", "controllers", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "its", "controller's", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "its", "controllers'", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "their", "controller", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "their", "controllers", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "their", "controller's", "next", "untap", "step"])
+        || all_words.ends_with(&["during", "their", "controllers'", "next", "untap", "step"])
+    {
+        let during_idx = tokens
+            .iter()
+            .rposition(|token| token.is_word("during"))
+            .unwrap_or(tokens.len());
+        let remainder = trim_lexed_commas(&tokens[..during_idx]).to_vec();
+        if !remainder.is_empty() {
+            return Ok(Some((Until::ControllersNextUntapStep, remainder)));
+        }
+    }
+
+    if all_words.ends_with(&["for", "the", "rest", "of", "the", "game"]) {
+        let end_idx = words
+            .token_index_for_word_index(all_words.len().saturating_sub(6))
+            .unwrap_or(tokens.len());
+        let remainder = trim_lexed_commas(&tokens[..end_idx]).to_vec();
+        if !remainder.is_empty() {
+            return Ok(Some((Until::Forever, remainder)));
+        }
+    }
+
+    let suffix_idx = (0..all_words.len().saturating_sub(3))
+        .find(|&idx| all_words[idx..].starts_with(&["for", "as", "long", "as"]));
+    if let Some(word_idx) = suffix_idx {
+        let token_idx = words.token_index_for_word_index(word_idx).unwrap_or(tokens.len());
+        let suffix_words = words.to_word_refs();
+        let suffix_words = &suffix_words[word_idx..];
+        let remains_tapped_duration = suffix_words.contains(&"remains")
+            && suffix_words.contains(&"tapped")
+            && (suffix_words.contains(&"this")
+                || suffix_words.contains(&"thiss")
+                || suffix_words.contains(&"source")
+                || suffix_words.contains(&"artifact")
+                || suffix_words.contains(&"creature")
+                || suffix_words.contains(&"permanent"));
+        if remains_tapped_duration {
+            let remainder = trim_lexed_commas(&tokens[..token_idx]).to_vec();
+            return Ok(Some((Until::ThisLeavesTheBattlefield, remainder)));
+        }
+        let as_long_duration = suffix_words.contains(&"you")
+            && suffix_words.contains(&"control")
+            && (suffix_words.contains(&"this")
+                || suffix_words.contains(&"thiss")
+                || suffix_words.contains(&"source")
+                || suffix_words.contains(&"creature")
+                || suffix_words.contains(&"permanent"));
+        if as_long_duration {
+            let remainder = trim_lexed_commas(&tokens[..token_idx]).to_vec();
+            return Ok(Some((Until::YouStopControllingThis, remainder)));
+        }
+    }
+
+    let has_this_turn = all_words
+        .windows(2)
+        .any(|window| window == ["this", "turn"]);
+    if has_this_turn {
+        let mut cleaned = Vec::new();
+        let mut idx = 0usize;
+        while idx < tokens.len() {
+            if tokens[idx].is_word("this")
+                && tokens
+                    .get(idx + 1)
+                    .is_some_and(|token| token.is_word("turn"))
+            {
+                idx += 2;
+                continue;
+            }
+            cleaned.push(tokens[idx].clone());
+            idx += 1;
+        }
+        let remainder = trim_lexed_commas(&cleaned).to_vec();
+        if !remainder.is_empty() {
+            return Ok(Some((Until::EndOfTurn, remainder)));
+        }
+    }
+
+    Ok(None)
+}
+
 fn extract_search_library_mana_constraint(
-    filter_tokens: &[Token],
-) -> Option<(Vec<Token>, SearchLibraryManaConstraint)> {
+    filter_tokens: &[OwnedLexToken],
+) -> Option<(Vec<OwnedLexToken>, SearchLibraryManaConstraint)> {
     let filter_words = words(filter_tokens);
     let with_idx = filter_words.windows(3).position(|window| {
         window[0] == "with" && window[1] == "mana" && matches!(window[2], "cost" | "value")
@@ -132,8 +385,8 @@ fn apply_search_library_mana_constraint(
 }
 
 pub(crate) fn split_search_same_name_reference_filter(
-    tokens: &[Token],
-) -> Option<(Vec<Token>, Vec<Token>)> {
+    tokens: &[OwnedLexToken],
+) -> Option<(Vec<OwnedLexToken>, Vec<OwnedLexToken>)> {
     let words_all = words(tokens);
     let (start_word_idx, phrase_len) = if let Some(idx) = words_all
         .windows(5)
@@ -210,7 +463,7 @@ pub(crate) fn normalize_search_library_filter(filter: &mut ObjectFilter) {
 }
 
 pub(crate) fn parse_search_library_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let words_all = words(tokens);
     let Some(search_idx) = tokens
@@ -486,10 +739,10 @@ pub(crate) fn parse_search_library_sentence(
     let filter_end = {
         let mut end = filter_boundary;
         for idx in (for_idx + 1)..filter_boundary {
-            if !matches!(search_tokens[idx], Token::Comma(_)) {
+            if !search_tokens[idx].is_comma() {
                 continue;
             }
-            let next_word = search_tokens[idx + 1..].iter().find_map(Token::as_word);
+            let next_word = search_tokens[idx + 1..].iter().find_map(OwnedLexToken::as_word);
             if matches!(next_word, Some("put" | "reveal" | "then")) {
                 end = idx;
                 break;
@@ -504,7 +757,7 @@ pub(crate) fn parse_search_library_sentence(
         }
         while end > for_idx + 1 {
             let token = &search_tokens[end - 1];
-            if matches!(token, Token::Comma(_)) || token.is_word("and") || token.is_word("then") {
+            if token.is_comma() || token.is_word("and") || token.is_word("then") {
                 end -= 1;
             } else {
                 break;
@@ -687,9 +940,9 @@ pub(crate) fn parse_search_library_sentence(
         {
             ObjectFilter::default()
         } else {
-            let base_tokens: Vec<Token> = base_words
+            let base_tokens: Vec<OwnedLexToken> = base_words
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect();
             parse_object_filter(&base_tokens, false).map_err(|_| {
                 CardTextError::ParseError(format!(
@@ -908,7 +1161,7 @@ pub(crate) fn parse_search_library_sentence(
         let mut discard_end = shuffle_idx;
         while discard_end > discard_idx {
             let token = &search_tokens[discard_end - 1];
-            if matches!(token, Token::Comma(_)) || token.is_word("then") || token.is_word("and") {
+            if token.is_comma() || token.is_word("then") || token.is_word("and") {
                 discard_end -= 1;
                 continue;
             }
@@ -985,7 +1238,7 @@ pub(crate) fn parse_search_library_sentence(
 }
 
 pub(crate) fn parse_shuffle_graveyard_into_library_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     if tokens.is_empty() {
         return Ok(None);
@@ -1157,7 +1410,7 @@ pub(crate) fn parse_shuffle_graveyard_into_library_sentence(
 }
 
 pub(crate) fn parse_shuffle_object_into_library_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     if tokens.is_empty() {
         return Ok(None);
@@ -1265,7 +1518,7 @@ pub(crate) fn parse_shuffle_object_into_library_sentence(
 }
 
 pub(crate) fn parse_exile_hand_and_graveyard_bundle_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     if tokens.is_empty() {
         return Ok(None);
@@ -1366,7 +1619,7 @@ pub(crate) fn parse_exile_hand_and_graveyard_bundle_sentence(
 }
 
 pub(crate) fn parse_target_player_exiles_creature_and_graveyard_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_tokens = trim_commas(tokens);
     let clause_words = words(&clause_tokens);
@@ -1437,7 +1690,7 @@ pub(crate) fn parse_target_player_exiles_creature_and_graveyard_sentence(
 }
 
 pub(crate) fn parse_for_each_exiled_this_way_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let words_all = words(tokens);
     if !words_all.starts_with(&["for", "each", "permanent", "exiled", "this", "way"]) {
@@ -1452,7 +1705,8 @@ pub(crate) fn parse_for_each_exiled_this_way_sentence(
         return Ok(None);
     }
 
-    let filter_tokens = tokenize_line("a permanent that shares a card type with it", 0);
+    let filter_tokens =
+        compat_tokens_from_lexed(&lex_line("a permanent that shares a card type with it", 0)?);
     let filter = parse_object_filter(&filter_tokens, false)?;
 
     Ok(Some(vec![EffectAst::ForEachTagged {
@@ -1471,7 +1725,7 @@ pub(crate) fn parse_for_each_exiled_this_way_sentence(
 }
 
 pub(crate) fn parse_each_player_put_permanent_cards_exiled_with_source_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let words_all = words(tokens);
     let starts_with_each_player_turns_face_up =
@@ -1522,7 +1776,7 @@ pub(crate) fn parse_each_player_put_permanent_cards_exiled_with_source_sentence(
 }
 
 pub(crate) fn parse_for_each_destroyed_this_way_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let words_all = words(tokens);
     if !words_all.starts_with(&["for", "each"]) {
@@ -1540,7 +1794,7 @@ pub(crate) fn parse_for_each_destroyed_this_way_sentence(
 
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
         .ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "missing comma after 'for each ... this way' clause (clause: '{}')",
@@ -1569,7 +1823,7 @@ pub(crate) fn parse_for_each_destroyed_this_way_sentence(
 }
 
 pub(crate) fn parse_earthbend_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let words = words(tokens);
     if words.first().copied() != Some("earthbend") {
@@ -1587,7 +1841,7 @@ pub(crate) fn parse_earthbend_sentence(
     Ok(Some(EffectAst::Earthbend { counters: count }))
 }
 
-pub(crate) fn parse_enchant_sentence(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+pub(crate) fn parse_enchant_sentence(tokens: &[OwnedLexToken]) -> Result<Option<EffectAst>, CardTextError> {
     let words = words(tokens);
     if words.is_empty() || words[0] != "enchant" {
         return Ok(None);
@@ -1599,7 +1853,7 @@ pub(crate) fn parse_enchant_sentence(tokens: &[Token]) -> Result<Option<EffectAs
 }
 
 pub(crate) fn parse_cant_effect_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let source_tapped_duration = has_source_remains_tapped_duration(tokens);
     let Some((duration, clause_tokens)) = parse_restriction_duration(tokens)? else {
@@ -1667,8 +1921,8 @@ pub(crate) fn parse_cant_effect_sentence(
 }
 
 pub(crate) fn parse_restriction_duration(
-    tokens: &[Token],
-) -> Result<Option<(crate::effect::Until, Vec<Token>)>, CardTextError> {
+    tokens: &[OwnedLexToken],
+) -> Result<Option<(crate::effect::Until, Vec<OwnedLexToken>)>, CardTextError> {
     use crate::effect::Until;
 
     let all_words = words(tokens);
@@ -1679,7 +1933,7 @@ pub(crate) fn parse_restriction_duration(
     if starts_with_until_end_of_turn(&all_words) {
         let comma_idx = tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)));
+            .position(|token| token.is_comma());
         let remainder = if let Some(idx) = comma_idx {
             &tokens[idx + 1..]
         } else {
@@ -1691,7 +1945,7 @@ pub(crate) fn parse_restriction_duration(
     if all_words.starts_with(&["until", "your", "next", "turn"]) {
         let comma_idx = tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)));
+            .position(|token| token.is_comma());
         let remainder = if let Some(idx) = comma_idx {
             &tokens[idx + 1..]
         } else {
@@ -1713,7 +1967,7 @@ pub(crate) fn parse_restriction_duration(
         }
         let Some(comma_idx) = tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         else {
             return Err(CardTextError::ParseError(
                 "missing comma after duration prefix".to_string(),
@@ -1837,7 +2091,7 @@ pub(crate) fn parse_restriction_duration(
     Ok(None)
 }
 
-fn has_source_remains_tapped_duration(tokens: &[Token]) -> bool {
+fn has_source_remains_tapped_duration(tokens: &[OwnedLexToken]) -> bool {
     let words = words(tokens);
     words
         .windows(4)
@@ -1852,8 +2106,22 @@ fn has_source_remains_tapped_duration(tokens: &[Token]) -> bool {
             || words.contains(&"permanent"))
 }
 
+fn has_source_remains_tapped_duration_lexed(tokens: &[OwnedLexToken]) -> bool {
+    let word_view = LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
+    words.windows(4).any(|window| window == ["for", "as", "long", "as"])
+        && words.contains(&"remains")
+        && words.contains(&"tapped")
+        && (words.contains(&"this")
+            || words.contains(&"thiss")
+            || words.contains(&"source")
+            || words.contains(&"artifact")
+            || words.contains(&"creature")
+            || words.contains(&"permanent"))
+}
+
 pub(crate) fn parse_play_from_graveyard_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 8 || !starts_with_until_end_of_turn(&line_words) {
@@ -1862,7 +2130,7 @@ pub(crate) fn parse_play_from_graveyard_sentence(
 
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)));
+        .position(|token| token.is_comma());
     let remainder = if let Some(idx) = comma_idx {
         &tokens[idx + 1..]
     } else {
@@ -1897,7 +2165,7 @@ pub(crate) fn parse_play_from_graveyard_sentence(
 }
 
 pub(crate) fn parse_exile_instead_of_graveyard_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let line_words = words(tokens);
     if line_words.first().copied() != Some("if") {
@@ -1921,7 +2189,7 @@ pub(crate) fn parse_exile_instead_of_graveyard_sentence(
 
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)));
+        .position(|token| token.is_comma());
     let remainder = if let Some(idx) = comma_idx {
         &tokens[idx + 1..]
     } else {

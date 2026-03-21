@@ -131,7 +131,6 @@ pub(super) fn subject_is_plural(subject: &str) -> bool {
         || lower.ends_with('s')
 }
 
-
 pub(super) fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, &str)> {
     for verb in [
         " gets ", " get ", " has ", " have ", " gains ", " gain ", " is ", " are ",

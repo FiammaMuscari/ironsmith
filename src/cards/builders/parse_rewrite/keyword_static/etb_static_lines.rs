@@ -1,5 +1,5 @@
 pub(crate) fn parse_enters_tapped_with_counters_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.is_empty() {
@@ -44,11 +44,11 @@ pub(crate) fn parse_enters_tapped_with_counters_line(
 }
 
 pub(crate) fn parse_enters_with_counters_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let full_words = words(tokens);
     let mut condition: Option<(crate::ConditionExpr, String)> = None;
-    let mut clause_tokens: Vec<Token> = tokens.to_vec();
+    let mut clause_tokens: Vec<OwnedLexToken> = tokens.to_vec();
 
     // Support leading conditional form:
     // "If <condition>, it enters with ..."
@@ -57,7 +57,7 @@ pub(crate) fn parse_enters_with_counters_line(
         .is_some_and(|token| token.is_word("if"))
         && let Some(comma_idx) = clause_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
     {
         let condition_tokens = trim_commas(&clause_tokens[1..comma_idx]);
         if !condition_tokens.is_empty() {
@@ -79,10 +79,7 @@ pub(crate) fn parse_enters_with_counters_line(
         return Ok(None);
     };
     if clause_tokens[..enter_token_idx].iter().any(|token| {
-        matches!(
-            token,
-            Token::Period(_) | Token::Colon(_) | Token::Semicolon(_)
-        )
+        token.is_period() || token.is_colon() || token.is_semicolon()
     }) {
         return Ok(None);
     }
@@ -154,7 +151,7 @@ pub(crate) fn parse_enters_with_counters_line(
         .is_some_and(|token| token.is_word("this") || token.is_word("thiss"))
     {
         tail = &tail[1..];
-        if let Some(word) = tail.first().and_then(Token::as_word)
+        if let Some(word) = tail.first().and_then(OwnedLexToken::as_word)
             && (matches!(word, "source" | "spell" | "card")
                 || word == "creature"
                 || word == "permanent"
@@ -166,7 +163,7 @@ pub(crate) fn parse_enters_with_counters_line(
     let tail = trim_commas(tail);
     let tail_has_words = tail.iter().any(|token| token.as_word().is_some());
     if tail_has_words {
-        let tail_words = tail.iter().filter_map(Token::as_word).collect::<Vec<_>>();
+        let tail_words = tail.iter().filter_map(OwnedLexToken::as_word).collect::<Vec<_>>();
         let scaled_for_each_count = |dynamic: Value, base_count: &Value| match base_count {
             Value::Fixed(multiplier) => scale_dynamic_cost_modifier_value(dynamic, *multiplier),
             _ => dynamic,
@@ -360,7 +357,7 @@ fn combine_enters_with_counter_conditions(
     }
 }
 
-fn parse_unless_enters_with_counter_condition_display(tokens: &[Token]) -> Option<String> {
+fn parse_unless_enters_with_counter_condition_display(tokens: &[OwnedLexToken]) -> Option<String> {
     let condition_words = words(tokens);
     if condition_words.len() >= 11
         && condition_words.get(1).copied() == Some("or")
@@ -383,7 +380,7 @@ fn parse_unless_enters_with_counter_condition_display(tokens: &[Token]) -> Optio
     None
 }
 
-fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate::ConditionExpr> {
+fn parse_enters_with_counter_condition_clause(tokens: &[OwnedLexToken]) -> Option<crate::ConditionExpr> {
     let condition_tokens = trim_edge_punctuation(tokens);
     let condition_words = words(&condition_tokens);
     if condition_words.is_empty() {
@@ -476,7 +473,7 @@ fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate:
         && condition_words[3] == "or"
         && condition_words[4] == "more"
     {
-        let amount_tokens = [Token::Word(
+        let amount_tokens = [OwnedLexToken::word(
             condition_words[2].to_string(),
             TextSpan::synthetic(),
         )];
@@ -505,7 +502,7 @@ fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate:
             && condition_words.get(count_word_idx + 4).copied() == Some("this")
             && condition_words.get(count_word_idx + 5).copied() == Some("turn")
         {
-            let amount_tokens = [Token::Word(
+            let amount_tokens = [OwnedLexToken::word(
                 condition_words[count_word_idx].to_string(),
                 TextSpan::synthetic(),
             )];
@@ -532,7 +529,7 @@ fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate:
             || (condition_words.get(10).copied() == Some("this")
                 && condition_words.get(11).copied() == Some("spell")))
     {
-        let amount_tokens = [Token::Word(
+        let amount_tokens = [OwnedLexToken::word(
             condition_words[0].to_string(),
             TextSpan::synthetic(),
         )];
@@ -564,7 +561,7 @@ fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate:
     parse_static_condition_clause(&condition_tokens).ok()
 }
 
-fn parse_enters_with_counter_equal_to_value_clause(tokens: &[Token]) -> Option<Value> {
+fn parse_enters_with_counter_equal_to_value_clause(tokens: &[OwnedLexToken]) -> Option<Value> {
     let trimmed = trim_edge_punctuation(tokens);
     let words_all = words(&trimmed);
     if !words_all.starts_with(&["equal", "to"]) {
@@ -576,9 +573,9 @@ fn parse_enters_with_counter_equal_to_value_clause(tokens: &[Token]) -> Option<V
     }
 
     let mut where_tokens = Vec::with_capacity(trimmed.len() + 1);
-    where_tokens.push(Token::Word("where".to_string(), TextSpan::synthetic()));
-    where_tokens.push(Token::Word("x".to_string(), TextSpan::synthetic()));
-    where_tokens.push(Token::Word("is".to_string(), TextSpan::synthetic()));
+    where_tokens.push(OwnedLexToken::word("where".to_string(), TextSpan::synthetic()));
+    where_tokens.push(OwnedLexToken::word("x".to_string(), TextSpan::synthetic()));
+    where_tokens.push(OwnedLexToken::word("is".to_string(), TextSpan::synthetic()));
     where_tokens.extend_from_slice(&trimmed[2..]);
 
     parse_where_x_value_clause(&where_tokens)
@@ -591,7 +588,7 @@ fn parse_enters_with_counter_equal_to_value_clause(tokens: &[Token]) -> Option<V
         .or_else(|| parse_equal_to_number_of_counters_on_reference_value(&trimmed))
 }
 
-fn parse_equal_to_greatest_cards_drawn_this_turn_value(tokens: &[Token]) -> Option<Value> {
+fn parse_equal_to_greatest_cards_drawn_this_turn_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words_all = words(tokens);
     if words_all
         == [
@@ -609,7 +606,7 @@ fn parse_equal_to_greatest_cards_drawn_this_turn_value(tokens: &[Token]) -> Opti
     None
 }
 
-pub(crate) fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_value_clause(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -705,7 +702,14 @@ pub(crate) fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
     None
 }
 
-pub(crate) fn parse_where_x_source_stat_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_value_clause_lexed(
+    tokens: &[crate::cards::builders::parse_rewrite::lexer::OwnedLexToken],
+) -> Option<Value> {
+    let compat = crate::cards::builders::parse_rewrite::util::compat_tokens_from_lexed(tokens);
+    parse_where_x_value_clause(&compat)
+}
+
+pub(crate) fn parse_where_x_source_stat_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -736,7 +740,7 @@ pub(crate) fn parse_where_x_source_stat_value(tokens: &[Token]) -> Option<Value>
     }
 }
 
-pub(crate) fn parse_where_x_life_gained_this_turn_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_life_gained_this_turn_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -776,7 +780,7 @@ pub(crate) fn parse_where_x_life_gained_this_turn_value(tokens: &[Token]) -> Opt
     }
 }
 
-pub(crate) fn parse_where_x_life_lost_this_turn_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_life_lost_this_turn_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -811,7 +815,7 @@ pub(crate) fn parse_where_x_life_lost_this_turn_value(tokens: &[Token]) -> Optio
     }
 }
 
-pub(crate) fn parse_where_x_noncombat_damage_to_opponents_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_noncombat_damage_to_opponents_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -854,7 +858,7 @@ pub(crate) fn parse_where_x_noncombat_damage_to_opponents_value(tokens: &[Token]
     }
 }
 
-pub(crate) fn parse_where_x_is_aggregate_filter_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_is_aggregate_filter_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -938,7 +942,7 @@ pub(crate) fn parse_where_x_is_aggregate_filter_value(tokens: &[Token]) -> Optio
 }
 
 pub(crate) fn parse_where_x_greatest_commander_mana_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     commander_start_word_idx: usize,
 ) -> Option<Value> {
     let commander_start_token_idx = token_index_for_word_index(tokens, commander_start_word_idx)?;
@@ -979,7 +983,7 @@ pub(crate) fn parse_where_x_greatest_commander_mana_value(
 }
 
 pub(crate) fn parse_where_x_is_number_of_differently_named_filter_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Option<Value> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["where", "x", "is"]) {
@@ -1004,7 +1008,7 @@ pub(crate) fn parse_where_x_is_number_of_differently_named_filter_value(
     Some(Value::DistinctNames(filter))
 }
 
-pub(crate) fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_where_x_is_number_of_filter_value(tokens: &[OwnedLexToken]) -> Option<Value> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["where", "x", "is"]) {
         return None;
@@ -1099,13 +1103,12 @@ fn parse_number_of_counters_on_source_value(filter_words: &[&str]) -> Option<Val
         idx += 1;
     }
     let counter_word = *filter_words.get(idx)?;
-    let counter_type = parse_counter_type_word(counter_word)
-        .or_else(|| {
-            counter_word
-                .chars()
-                .all(|ch| ch.is_ascii_alphabetic())
-                .then_some(CounterType::Named(intern_counter_name(counter_word)))
-        })?;
+    let counter_type = parse_counter_type_word(counter_word).or_else(|| {
+        counter_word
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic())
+            .then_some(CounterType::Named(intern_counter_name(counter_word)))
+    })?;
     idx += 1;
     if !matches!(filter_words.get(idx).copied(), Some("counter" | "counters")) {
         return None;
@@ -1138,7 +1141,7 @@ fn parse_number_of_counters_on_source_value(filter_words: &[&str]) -> Option<Val
 }
 
 pub(crate) fn parse_where_x_is_fixed_plus_number_of_filter_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Option<Value> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["where", "x", "is"]) {
@@ -1205,7 +1208,7 @@ pub(crate) fn parse_where_x_is_fixed_plus_number_of_filter_value(
 }
 
 pub(crate) fn parse_where_x_is_number_of_filter_plus_or_minus_fixed_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Option<Value> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["where", "x", "is"]) {
@@ -1261,7 +1264,7 @@ pub(crate) fn parse_where_x_is_number_of_filter_plus_or_minus_fixed_value(
     ))
 }
 
-pub(crate) fn token_index_for_word_index(tokens: &[Token], word_index: usize) -> Option<usize> {
+pub(crate) fn token_index_for_word_index(tokens: &[OwnedLexToken], word_index: usize) -> Option<usize> {
     let mut seen_words = 0usize;
     for (idx, token) in tokens.iter().enumerate() {
         if token.as_word().is_none() {
@@ -1276,7 +1279,7 @@ pub(crate) fn token_index_for_word_index(tokens: &[Token], word_index: usize) ->
 }
 
 pub(crate) fn parse_enters_tapped_for_filter_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = words(tokens);
     if is_negated_untap_clause(&clause_words) {
@@ -1346,7 +1349,7 @@ pub(crate) fn parse_enters_tapped_for_filter_line(
 }
 
 pub(crate) fn parse_enters_untapped_for_filter_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.contains(&"unless") || clause_words.first().copied() == Some("this") {
@@ -1379,7 +1382,7 @@ pub(crate) fn parse_enters_untapped_for_filter_line(
 }
 
 pub(crate) fn parse_reveal_from_hand_or_enters_tapped_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["as", "this", "land", "enters"]) {
@@ -1524,7 +1527,7 @@ pub(crate) fn parse_reveal_from_hand_or_enters_tapped_line(
 }
 
 pub(crate) fn parse_conditional_enters_tapped_unless_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.contains(&"enters") && !clause_words.contains(&"enter") {
@@ -1594,7 +1597,7 @@ pub(crate) fn parse_conditional_enters_tapped_unless_line(
 }
 
 pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = words(tokens);
     let enter_word_idx = clause_words
@@ -1607,10 +1610,7 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
         return Ok(None);
     };
     if tokens[..enter_token_idx].iter().any(|token| {
-        matches!(
-            token,
-            Token::Period(_) | Token::Colon(_) | Token::Semicolon(_)
-        )
+        token.is_period() || token.is_colon() || token.is_semicolon()
     }) {
         return Ok(None);
     }
@@ -1686,8 +1686,8 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
     let mut added_subtypes = Vec::new();
     if let Some(idx) = and_as_idx {
         let mut addition_tokens = tokens[idx + 1..].to_vec();
-        if let Some(Token::Word(_, span)) = addition_tokens.first() {
-            addition_tokens[0] = Token::Word("is".to_string(), *span);
+        if let Some(first) = addition_tokens.first() {
+            addition_tokens[0] = OwnedLexToken::word("is".to_string(), first.span());
         }
         let Some(additions) = parse_type_color_addition_clause(&addition_tokens)? else {
             return Err(CardTextError::ParseError(format!(
@@ -1707,10 +1707,12 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
         added_subtypes = additions.subtypes;
     }
 
-    Ok(Some(StaticAbility::enters_with_counters_and_subtypes_for_filter(
-        filter,
-        counter_type,
-        count,
-        added_subtypes,
-    )))
+    Ok(Some(
+        StaticAbility::enters_with_counters_and_subtypes_for_filter(
+            filter,
+            counter_type,
+            count,
+            added_subtypes,
+        ),
+    ))
 }

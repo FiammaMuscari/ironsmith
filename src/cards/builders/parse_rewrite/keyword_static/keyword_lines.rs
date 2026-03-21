@@ -1,4 +1,4 @@
-pub(crate) fn parse_ability_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
+pub(crate) fn parse_ability_line(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
     if let Some(actions) = parse_flashback_keyword_line(tokens) {
         return Some(actions);
     }
@@ -58,7 +58,7 @@ pub(crate) fn reject_unimplemented_keyword_actions(
     Ok(())
 }
 
-pub(crate) fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
+pub(crate) fn parse_protection_chain(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
     let mut words = words(tokens);
     if words.first().copied() == Some("and") {
         words.remove(0);

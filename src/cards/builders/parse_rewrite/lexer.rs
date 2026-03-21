@@ -28,6 +28,8 @@ pub(crate) enum TokenKind {
     #[token("•")]
     #[token("*")]
     Bullet,
+    #[token("~")]
+    Tilde,
     #[token("-")]
     #[token("−")]
     Dash,
@@ -51,13 +53,104 @@ pub(crate) struct OwnedLexToken {
 }
 
 impl OwnedLexToken {
+    pub(crate) fn word(slice: impl Into<String>, span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Word,
+            slice: slice.into(),
+            span,
+        }
+    }
+
+    pub(crate) fn comma(span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Comma,
+            slice: ",".to_string(),
+            span,
+        }
+    }
+
+    pub(crate) fn period(span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Period,
+            slice: ".".to_string(),
+            span,
+        }
+    }
+
+    pub(crate) fn colon(span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Colon,
+            slice: ":".to_string(),
+            span,
+        }
+    }
+
+    pub(crate) fn semicolon(span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Semicolon,
+            slice: ";".to_string(),
+            span,
+        }
+    }
+
+    pub(crate) fn quote(span: TextSpan) -> Self {
+        Self {
+            kind: TokenKind::Quote,
+            slice: "\"".to_string(),
+            span,
+        }
+    }
+
+    pub(crate) fn synthetic_word(slice: impl Into<String>) -> Self {
+        Self::word(slice, TextSpan::synthetic())
+    }
+
+    pub(crate) fn synthetic_comma() -> Self {
+        Self::comma(TextSpan::synthetic())
+    }
+
     pub(crate) fn as_word(&self) -> Option<&str> {
-        (self.kind == TokenKind::Word).then_some(self.slice.as_str())
+        match self.kind {
+            TokenKind::Word => Some(self.slice.as_str()),
+            TokenKind::Tilde => Some("this"),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn word_mut(&mut self) -> Option<&mut String> {
+        match self.kind {
+            TokenKind::Word => Some(&mut self.slice),
+            _ => None,
+        }
     }
 
     pub(crate) fn is_word(&self, expected: &str) -> bool {
         self.as_word()
             .is_some_and(|word| word.eq_ignore_ascii_case(expected))
+    }
+
+    pub(crate) fn is_comma(&self) -> bool {
+        self.kind == TokenKind::Comma
+    }
+
+    pub(crate) fn is_period(&self) -> bool {
+        self.kind == TokenKind::Period
+    }
+
+    pub(crate) fn is_colon(&self) -> bool {
+        self.kind == TokenKind::Colon
+    }
+
+    pub(crate) fn is_semicolon(&self) -> bool {
+        self.kind == TokenKind::Semicolon
+    }
+
+    pub(crate) fn is_quote(&self) -> bool {
+        self.kind == TokenKind::Quote
+    }
+
+    pub(crate) fn span(&self) -> TextSpan {
+        self.span
     }
 }
 
@@ -99,6 +192,10 @@ pub(crate) fn lexed_words(tokens: &[OwnedLexToken]) -> Vec<&str> {
     tokens.iter().filter_map(OwnedLexToken::as_word).collect()
 }
 
+pub(crate) fn lexed_tokens_from_compat(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    tokens.to_vec()
+}
+
 #[allow(dead_code)]
 pub(crate) fn trim_lexed_commas(tokens: &[OwnedLexToken]) -> &[OwnedLexToken] {
     let mut start = 0usize;
@@ -120,6 +217,9 @@ pub(crate) fn split_lexed_sentences(tokens: &[OwnedLexToken]) -> Vec<&[OwnedLexT
     for (idx, token) in tokens.iter().enumerate() {
         match token.kind {
             TokenKind::Quote => {
+                if !matches!(token.slice.as_str(), "\"" | "“" | "”") {
+                    continue;
+                }
                 let closing_quote = quote_depth != 0;
                 quote_depth = if quote_depth == 0 { 1 } else { 0 };
                 if closing_quote

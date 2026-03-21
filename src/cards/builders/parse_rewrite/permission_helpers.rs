@@ -1,16 +1,19 @@
 use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, PlayerAst, PreventNextTimeDamageSourceAst,
-    PreventNextTimeDamageTargetAst, TagKey, Token,
+    PreventNextTimeDamageTargetAst, TagKey,
 };
 use crate::effect::{Until, Value};
 use crate::static_abilities::StaticAbilityId;
 use crate::target::ObjectFilter;
 use crate::zone::Zone;
 
-use super::object_filters::{merge_spell_filters, parse_object_filter, parse_spell_filter};
-use super::util::{
-    parse_value, starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
+use super::lexer::{OwnedLexToken, lexed_tokens_from_compat, trim_lexed_commas};
+use super::native_tokens::LowercaseWordView;
+use super::object_filters::{
+    merge_spell_filters, parse_object_filter_lexed, parse_spell_filter_lexed,
 };
+use super::util::{starts_with_until_end_of_turn, trim_commas, words};
+use super::value_helpers::parse_value_from_lexed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PermissionLifetime {
@@ -138,29 +141,30 @@ fn normalize_permission_subject_filter(mut filter: ObjectFilter) -> ObjectFilter
     filter
 }
 
-fn parse_permission_subject_filter_tokens(
-    filter_tokens: &[Token],
+fn parse_permission_subject_filter_tokens_lexed(
+    filter_tokens: &[OwnedLexToken],
 ) -> Result<Option<ObjectFilter>, CardTextError> {
     if filter_tokens.is_empty() {
         return Ok(None);
     }
 
+    let filter_words = LowercaseWordView::new(filter_tokens);
     for separator in ["and", "or"] {
-        let Some(split_idx) = filter_tokens
-            .iter()
-            .position(|token| token.is_word(separator))
-        else {
+        let Some(split_idx) = filter_words.find(separator) else {
             continue;
         };
-        let left_tokens = trim_commas(&filter_tokens[..split_idx]);
-        let right_tokens = trim_commas(&filter_tokens[split_idx + 1..]);
+        let Some(split_token_idx) = filter_words.token_index_for_word_index(split_idx) else {
+            continue;
+        };
+        let left_tokens = trim_lexed_commas(&filter_tokens[..split_token_idx]);
+        let right_tokens = trim_lexed_commas(&filter_tokens[split_token_idx + 1..]);
         if left_tokens.is_empty() || right_tokens.is_empty() {
             continue;
         }
-        let Ok(left) = parse_object_filter(&left_tokens, false) else {
+        let Ok(left) = parse_object_filter_lexed(left_tokens, false) else {
             continue;
         };
-        let Ok(right) = parse_object_filter(&right_tokens, false) else {
+        let Ok(right) = parse_object_filter_lexed(right_tokens, false) else {
             continue;
         };
         return Ok(Some(ObjectFilter {
@@ -172,7 +176,7 @@ fn parse_permission_subject_filter_tokens(
         }));
     }
 
-    if let Ok(filter) = parse_object_filter(filter_tokens, false) {
+    if let Ok(filter) = parse_object_filter_lexed(filter_tokens, false) {
         return Ok(Some(normalize_permission_subject_filter(filter)));
     }
 
@@ -180,18 +184,33 @@ fn parse_permission_subject_filter_tokens(
 }
 
 pub(crate) fn parse_permission_clause_spec(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<PermissionClauseSpec>, CardTextError> {
-    let clause_words = words(tokens);
-    if clause_words.is_empty() {
+    let lexed = lexed_tokens_from_compat(tokens);
+    parse_permission_clause_spec_lexed(&lexed)
+}
+
+pub(crate) fn parse_unsupported_play_cast_permission_clause(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let lexed = lexed_tokens_from_compat(tokens);
+    parse_unsupported_play_cast_permission_clause_lexed(&lexed)
+}
+
+pub(crate) fn parse_permission_clause_spec_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<PermissionClauseSpec>, CardTextError> {
+    let clause_words = LowercaseWordView::new(tokens);
+    let clause_refs = clause_words.to_word_refs();
+    if clause_refs.is_empty() {
         return Ok(None);
     }
 
-    let (prefixed_lifetime, prefix_len) = parse_permission_duration_prefix(&clause_words)
+    let (prefixed_lifetime, prefix_len) = parse_permission_duration_prefix(&clause_refs)
         .map_or((None, 0usize), |(lifetime, consumed)| {
             (Some(lifetime), consumed)
         });
-    let body = &clause_words[prefix_len..];
+    let body = &clause_refs[prefix_len..];
 
     let Some((player, allow_land, lead_len)) = (if body.starts_with(&["you", "may", "cast"]) {
         Some((PlayerAst::You, false, 3usize))
@@ -226,7 +245,7 @@ pub(crate) fn parse_permission_clause_spec(
                 };
                 return Err(CardTextError::ParseError(format!(
                     "unsupported {label} play target (clause: '{}')",
-                    clause_words.join(" ")
+                    clause_refs.join(" ")
                 )));
             }
             return Ok(None);
@@ -249,7 +268,7 @@ pub(crate) fn parse_permission_clause_spec(
             };
             return Err(CardTextError::ParseError(format!(
                 "unsupported {label} play target (clause: '{}')",
-                clause_words.join(" ")
+                clause_refs.join(" ")
             )));
         }
         if without_paying_mana_cost
@@ -261,7 +280,7 @@ pub(crate) fn parse_permission_clause_spec(
         {
             return Err(CardTextError::ParseError(format!(
                 "unsupported temporary play/cast permission clause with alternative cost (clause: '{}')",
-                clause_words.join(" ")
+                clause_refs.join(" ")
             )));
         }
         if lifetime == PermissionLifetime::UntilYourNextTurn
@@ -269,7 +288,7 @@ pub(crate) fn parse_permission_clause_spec(
         {
             return Err(CardTextError::ParseError(format!(
                 "unsupported until-next-turn play target (clause: '{}')",
-                clause_words.join(" ")
+                clause_refs.join(" ")
             )));
         }
 
@@ -294,18 +313,19 @@ pub(crate) fn parse_permission_clause_spec(
             } else {
                 let filter_start_word_idx = prefix_len + lead_len + 3;
                 let Some(filter_start_token_idx) =
-                    token_index_for_word_index(tokens, filter_start_word_idx)
+                    clause_words.token_index_for_word_index(filter_start_word_idx)
                 else {
                     return Ok(None);
                 };
-                let Some(filter_end_token_idx) =
-                    token_index_for_word_index(tokens, filter_start_word_idx + subject_words.len())
+                let Some(filter_end_token_idx) = clause_words
+                    .token_index_for_word_index(filter_start_word_idx + subject_words.len())
                 else {
                     return Ok(None);
                 };
                 let subject_tokens =
-                    trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
-                let Some(spell_filter) = parse_permission_subject_filter_tokens(&subject_tokens)?
+                    trim_lexed_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+                let Some(spell_filter) =
+                    parse_permission_subject_filter_tokens_lexed(subject_tokens)?
                 else {
                     return Ok(None);
                 };
@@ -406,21 +426,21 @@ pub(crate) fn parse_permission_clause_spec(
             let subject_word_len = rest.len() - tail.len();
             let filter_start_word_idx = prefix_len + lead_len;
             let Some(filter_start_token_idx) =
-                token_index_for_word_index(tokens, filter_start_word_idx)
+                clause_words.token_index_for_word_index(filter_start_word_idx)
             else {
                 continue;
             };
             let Some(filter_end_token_idx) =
-                token_index_for_word_index(tokens, filter_start_word_idx + subject_word_len)
+                clause_words.token_index_for_word_index(filter_start_word_idx + subject_word_len)
             else {
                 continue;
             };
-            let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+            let filter_tokens = trim_lexed_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
             if filter_tokens.is_empty() {
                 continue;
             }
 
-            let Some(filter) = parse_permission_subject_filter_tokens(&filter_tokens)? else {
+            let Some(filter) = parse_permission_subject_filter_tokens_lexed(filter_tokens)? else {
                 continue;
             };
 
@@ -433,14 +453,14 @@ pub(crate) fn parse_permission_clause_spec(
     }
 
     if prefixed_lifetime.is_none() && !allow_land {
-        let Some(from_hand_word_idx) = clause_words
+        let Some(from_hand_word_idx) = clause_refs
             .windows(3)
             .position(|window| window == ["from", "your", "hand"])
         else {
             return Ok(None);
         };
 
-        let suffix = &clause_words[from_hand_word_idx..];
+        let suffix = &clause_refs[from_hand_word_idx..];
         if !matches!(
             suffix,
             [
@@ -456,18 +476,19 @@ pub(crate) fn parse_permission_clause_spec(
 
         let filter_start_word_idx = prefix_len + lead_len;
         let Some(filter_start_token_idx) =
-            token_index_for_word_index(tokens, filter_start_word_idx)
+            clause_words.token_index_for_word_index(filter_start_word_idx)
         else {
             return Ok(None);
         };
-        let Some(filter_end_token_idx) = token_index_for_word_index(tokens, from_hand_word_idx)
+        let Some(filter_end_token_idx) = clause_words.token_index_for_word_index(from_hand_word_idx)
         else {
             return Ok(None);
         };
-        let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
-        let filter_words = words(&filter_tokens);
-        if filter_words.is_empty()
-            || !filter_words
+        let filter_tokens = trim_lexed_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+        let filter_words = LowercaseWordView::new(filter_tokens);
+        let filter_refs = filter_words.to_word_refs();
+        if filter_refs.is_empty()
+            || !filter_refs
                 .iter()
                 .any(|word| *word == "spell" || *word == "spells")
         {
@@ -475,7 +496,7 @@ pub(crate) fn parse_permission_clause_spec(
         }
 
         let mut filter = ObjectFilter::nonland();
-        merge_spell_filters(&mut filter, parse_spell_filter(&filter_tokens));
+        merge_spell_filters(&mut filter, parse_spell_filter_lexed(filter_tokens));
         return Ok(Some(PermissionClauseSpec::GrantBySpec {
             player,
             spec: crate::grant::GrantSpec::cast_from_hand_without_paying_mana_cost_matching(filter),
@@ -486,56 +507,55 @@ pub(crate) fn parse_permission_clause_spec(
     Ok(None)
 }
 
-fn clause_has_may_play_or_cast(words: &[&str]) -> bool {
-    words
-        .windows(2)
-        .any(|window| matches!(window, ["may", "play"] | ["may", "cast"]))
-}
-
-pub(crate) fn parse_unsupported_play_cast_permission_clause(
-    tokens: &[Token],
+pub(crate) fn parse_unsupported_play_cast_permission_clause_lexed(
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let clause_words = words(tokens);
-    if clause_words.is_empty() {
+    let clause_words = LowercaseWordView::new(tokens);
+    let clause_refs = clause_words.to_word_refs();
+    if clause_refs.is_empty() {
         return Ok(None);
     }
 
-    if clause_words
+    if clause_refs
         == [
             "play", "any", "number", "of", "lands", "on", "each", "of", "your", "turns",
         ]
     {
         return Err(CardTextError::ParseError(format!(
             "unsupported additional-land-play permission clause (clause: '{}')",
-            clause_words.join(" ")
+            clause_refs.join(" ")
         )));
     }
 
     if clause_words.starts_with(&["for", "as", "long", "as"])
-        && clause_has_may_play_or_cast(&clause_words)
+        && clause_refs
+            .windows(2)
+            .any(|window| matches!(window, ["may", "play"] | ["may", "cast"]))
     {
         return Err(CardTextError::ParseError(format!(
             "unsupported for-as-long-as play/cast permission clause (clause: '{}')",
-            clause_words.join(" ")
+            clause_refs.join(" ")
         )));
     }
 
     if clause_words.starts_with(&["once", "during", "each", "of", "your", "turns"])
-        && clause_words.contains(&"graveyard")
-        && clause_has_may_play_or_cast(&clause_words)
+        && clause_refs.contains(&"graveyard")
+        && clause_refs
+            .windows(2)
+            .any(|window| matches!(window, ["may", "play"] | ["may", "cast"]))
     {
         return Err(CardTextError::ParseError(format!(
             "unsupported once-per-turn graveyard play/cast permission clause (clause: '{}')",
-            clause_words.join(" ")
+            clause_refs.join(" ")
         )));
     }
 
-    let _ = parse_permission_clause_spec(tokens)?;
+    let _ = parse_permission_clause_spec_lexed(tokens)?;
     Ok(None)
 }
 
 pub(crate) fn parse_until_end_of_turn_may_play_tagged_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     match parse_permission_clause_spec(tokens)? {
         Some(PermissionClauseSpec::Tagged {
@@ -555,7 +575,7 @@ pub(crate) fn parse_until_end_of_turn_may_play_tagged_clause(
 }
 
 pub(crate) fn parse_until_your_next_turn_may_play_tagged_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     match parse_permission_clause_spec(tokens)? {
         Some(PermissionClauseSpec::Tagged {
@@ -576,28 +596,40 @@ pub(crate) fn parse_until_your_next_turn_may_play_tagged_clause(
 }
 
 pub(crate) fn parse_additional_land_plays_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let clause_words = words(tokens);
-    if clause_words.first().copied() != Some("play") {
+    let lexed = lexed_tokens_from_compat(tokens);
+    parse_additional_land_plays_clause_lexed(&lexed)
+}
+
+pub(crate) fn parse_additional_land_plays_clause_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = LowercaseWordView::new(tokens);
+    let clause_refs = clause_words.to_word_refs();
+    if clause_refs.first().copied() != Some("play") {
         return Ok(None);
     }
 
-    let rest_tokens = &tokens[1..];
+    let Some(rest_start) = clause_words.token_index_for_word_index(1) else {
+        return Ok(None);
+    };
+    let rest_tokens = &tokens[rest_start..];
     let (count, used) = if rest_tokens.first().is_some_and(|token| token.is_word("an"))
         || rest_tokens.first().is_some_and(|token| token.is_word("a"))
     {
         (Value::Fixed(1), 1usize)
-    } else if let Some((value, used)) = parse_value(rest_tokens) {
-        (value, used)
     } else {
-        return Ok(None);
+        let Some((value, used)) = parse_value_from_lexed(rest_tokens) else {
+            return Ok(None);
+        };
+        (value, used)
     };
 
-    let tail_words = words(&rest_tokens[used..]);
+    let tail = &clause_refs[1 + used..];
     let singular = ["additional", "land", "this", "turn"];
     let plural = ["additional", "lands", "this", "turn"];
-    if tail_words.as_slice() != singular && tail_words.as_slice() != plural {
+    if tail != singular && tail != plural {
         return Ok(None);
     }
 
@@ -609,7 +641,7 @@ pub(crate) fn parse_additional_land_plays_clause(
 }
 
 pub(crate) fn parse_cast_spells_as_though_they_had_flash_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     match parse_permission_clause_spec(tokens)? {
         Some(PermissionClauseSpec::GrantBySpec {
@@ -630,7 +662,7 @@ pub(crate) fn parse_cast_spells_as_though_they_had_flash_clause(
 }
 
 pub(crate) fn parse_cast_or_play_tagged_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut trimmed = trim_commas(tokens).to_vec();
     while trimmed

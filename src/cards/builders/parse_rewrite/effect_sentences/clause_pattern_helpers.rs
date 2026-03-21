@@ -1,29 +1,27 @@
 use crate::cards::builders::{
-    CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, PlayerAst,
-    PreventNextTimeDamageSourceAst, PreventNextTimeDamageTargetAst, SubjectAst, TagKey, TargetAst,
-    TextSpan, Token, Verb,
+    CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, PlayerAst, PreventNextTimeDamageSourceAst,
+    PreventNextTimeDamageTargetAst, SubjectAst, TagKey, TargetAst, TextSpan, OwnedLexToken, Verb,
 };
 use crate::effect::{Until, Value};
 use crate::static_abilities::StaticAbilityId;
 use crate::target::ObjectFilter;
-use crate::{ChoiceCount, Supertype};
 use crate::zone::Zone;
+use crate::{ChoiceCount, Supertype};
 
-use super::chain_carry::find_verb;
-use super::sentence_primitives::parse_distribute_counters_sentence;
-use super::verb_dispatch::parse_effect_with_verb;
 use super::super::activation_and_restrictions::{
     starts_with_target_indicator, title_case_token_word,
 };
-use super::super::object_filters::parse_object_filter;
 use super::super::keyword_static::parse_ability_line;
+use super::super::object_filters::parse_object_filter;
 use super::super::util::{
     parse_card_type, parse_color, parse_counter_type_from_tokens, parse_counter_type_word,
-    parse_number, parse_subject, parse_target_count_range_prefix, parse_target_phrase,
-    parse_value, span_from_tokens, token_index_for_word_index, trim_commas, words,
-    wrap_target_count,
+    parse_number, parse_subject, parse_target_count_range_prefix, parse_target_phrase, parse_value,
+    span_from_tokens, token_index_for_word_index, trim_commas, words, wrap_target_count,
 };
-use super::{parse_subtype_word, Verb as LocalVerb};
+use super::chain_carry::find_verb;
+use super::sentence_primitives::parse_distribute_counters_sentence;
+use super::verb_dispatch::parse_effect_with_verb;
+use super::{Verb as LocalVerb, parse_subtype_word};
 
 pub(crate) fn extract_subject_player(subject: Option<SubjectAst>) -> Option<PlayerAst> {
     match subject {
@@ -33,7 +31,7 @@ pub(crate) fn extract_subject_player(subject: Option<SubjectAst>) -> Option<Play
 }
 
 pub(crate) fn parse_prevent_next_damage_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.first().copied() != Some("prevent") {
@@ -49,7 +47,7 @@ pub(crate) fn parse_prevent_next_damage_clause(
     }
     idx += 1;
 
-    let amount_token = Token::Word(
+    let amount_token = OwnedLexToken::word(
         clause_words
             .get(idx)
             .copied()
@@ -112,7 +110,7 @@ pub(crate) fn parse_prevent_next_damage_clause(
     }
     let target_tokens = target_words
         .iter()
-        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
     let target = parse_target_phrase(&target_tokens)?;
 
@@ -124,7 +122,7 @@ pub(crate) fn parse_prevent_next_damage_clause(
 }
 
 pub(crate) fn parse_double_counters_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["double", "the", "number", "of"]) {
@@ -198,19 +196,19 @@ pub(crate) fn parse_double_counters_clause(
 }
 
 pub(crate) fn parse_distribute_counters_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     parse_distribute_counters_sentence(tokens)
 }
 
 pub(crate) fn parse_verb_first_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let Some(Token::Word(word, _)) = tokens.first() else {
+    let Some(word) = tokens.first().and_then(OwnedLexToken::as_word) else {
         return Ok(None);
     };
 
-    let verb = match word.as_str() {
+    let verb = match word {
         "add" => Verb::Add,
         "move" => Verb::Move,
         "counter" => Verb::Counter,
@@ -248,7 +246,7 @@ pub(crate) fn parse_verb_first_clause(
     Ok(Some(effect))
 }
 
-pub(crate) fn is_simple_chosen_object_reference(tokens: &[Token]) -> bool {
+pub(crate) fn is_simple_chosen_object_reference(tokens: &[OwnedLexToken]) -> bool {
     let words: Vec<&str> = words(tokens)
         .into_iter()
         .filter(|word| !super::super::util::is_article(word) && *word != "then")
@@ -266,7 +264,7 @@ pub(crate) fn is_simple_chosen_object_reference(tokens: &[Token]) -> bool {
 }
 
 pub(crate) fn parse_choose_target_and_verb_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["choose", "target"]) {
@@ -319,9 +317,9 @@ pub(crate) fn parse_choose_target_and_verb_clause(
 }
 
 pub(crate) fn parse_copy_spell_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    fn find_choose_new_targets_split_idx(tail: &[Token]) -> Option<usize> {
+    fn find_choose_new_targets_split_idx(tail: &[OwnedLexToken]) -> Option<usize> {
         for idx in 0..tail.len() {
             if !tail[idx].is_word("and") {
                 continue;
@@ -360,15 +358,11 @@ pub(crate) fn parse_copy_spell_clause(
         if let Some(then_idx) = tokens.iter().position(|token| token.is_word("then")) {
             let tail_tokens = trim_commas(&tokens[then_idx + 1..]);
             if let Some(spec) =
-                super::super::activation_and_restrictions::parse_may_cast_it_sentence(
-                    &tail_tokens,
-                )
+                super::super::activation_and_restrictions::parse_may_cast_it_sentence(&tail_tokens)
                 && spec.as_copy
             {
                 return Ok(Some(
-                    super::super::activation_and_restrictions::build_may_cast_tagged_effect(
-                        &spec,
-                    ),
+                    super::super::activation_and_restrictions::build_may_cast_tagged_effect(&spec),
                 ));
             }
         }
@@ -406,8 +400,7 @@ pub(crate) fn parse_copy_spell_clause(
                     clause_words.join(" ")
                 )));
             }
-            let predicate =
-                super::conditionals::parse_predicate(&predicate_tokens)?;
+            let predicate = super::conditionals::parse_predicate(&predicate_tokens)?;
             return Ok(Some(EffectAst::Conditional {
                 predicate,
                 if_true: vec![base],
@@ -511,7 +504,7 @@ pub(crate) fn parse_copy_spell_clause(
     }))
 }
 
-pub(crate) fn parse_counter_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+pub(crate) fn parse_counter_target_phrase(tokens: &[OwnedLexToken]) -> Result<TargetAst, CardTextError> {
     if let Some(target) = parse_counter_ability_target_phrase(tokens)? {
         return Ok(target);
     }
@@ -530,7 +523,7 @@ pub(crate) fn parse_counter_target_phrase(tokens: &[Token]) -> Result<TargetAst,
 }
 
 fn parse_counter_ability_target_phrase(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<TargetAst>, CardTextError> {
     let clause_tokens = trim_commas(tokens);
     let clause_words = words(&clause_tokens);
@@ -620,7 +613,7 @@ fn parse_counter_ability_target_phrase(
     }
 
     while idx < list_end {
-        let Some(word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+        let Some(word) = clause_tokens.get(idx).and_then(OwnedLexToken::as_word) else {
             idx += 1;
             continue;
         };
@@ -640,7 +633,10 @@ fn parse_counter_ability_target_phrase(
                 .get(idx + 3)
                 .is_some_and(|token| token.is_word("ability"))
         {
-            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            term_filters.push((
+                ObjectFilter::activated_ability(),
+                CounterTargetTerm::Ability,
+            ));
             let mut triggered = ObjectFilter::ability();
             triggered.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
             term_filters.push((triggered, CounterTargetTerm::Ability));
@@ -662,7 +658,10 @@ fn parse_counter_ability_target_phrase(
             let mut triggered = ObjectFilter::ability();
             triggered.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
             term_filters.push((triggered, CounterTargetTerm::Ability));
-            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            term_filters.push((
+                ObjectFilter::activated_ability(),
+                CounterTargetTerm::Ability,
+            ));
             idx += 4;
             continue;
         }
@@ -672,7 +671,10 @@ fn parse_counter_ability_target_phrase(
                 .get(idx + 1)
                 .is_some_and(|token| token.is_word("ability"))
         {
-            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            term_filters.push((
+                ObjectFilter::activated_ability(),
+                CounterTargetTerm::Ability,
+            ));
             idx += 2;
             continue;
         }
@@ -756,7 +758,7 @@ fn parse_counter_ability_target_phrase(
     let mut source_types: Vec<crate::types::CardType> = Vec::new();
     let mut controller_filter: Option<crate::target::PlayerFilter> = None;
     while idx < clause_tokens.len() {
-        let Some(word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+        let Some(word) = clause_tokens.get(idx).and_then(OwnedLexToken::as_word) else {
             idx += 1;
             continue;
         };
@@ -796,7 +798,7 @@ fn parse_counter_ability_target_phrase(
 
             let mut parsed_type = false;
             while idx < clause_tokens.len() {
-                let Some(type_word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+                let Some(type_word) = clause_tokens.get(idx).and_then(OwnedLexToken::as_word) else {
                     idx += 1;
                     continue;
                 };
@@ -858,7 +860,7 @@ fn parse_counter_ability_target_phrase(
 }
 
 pub(crate) fn parse_prevent_all_damage_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     let prefix_target_then_duration = [
@@ -898,7 +900,7 @@ pub(crate) fn parse_prevent_all_damage_clause(
 
     let target_tokens = target_words
         .iter()
-        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
     let target = parse_target_phrase(&target_tokens)?;
 
@@ -909,7 +911,7 @@ pub(crate) fn parse_prevent_all_damage_clause(
 }
 
 pub(crate) fn parse_can_attack_as_though_no_defender_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     let Some(can_idx) = clause_words.iter().position(|word| *word == "can") else {
@@ -931,7 +933,7 @@ pub(crate) fn parse_can_attack_as_though_no_defender_clause(
     } else {
         let subject_tokens = subject_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         parse_target_phrase(&subject_tokens)?
     };
@@ -944,7 +946,7 @@ pub(crate) fn parse_can_attack_as_though_no_defender_clause(
 }
 
 pub(crate) fn parse_prevent_next_time_damage_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["the", "next", "time"]) {
@@ -1053,7 +1055,7 @@ pub(crate) fn parse_prevent_next_time_damage_sentence(
 }
 
 pub(crate) fn parse_redirect_next_damage_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.starts_with(&["the", "next", "time"]) {
@@ -1141,7 +1143,7 @@ pub(crate) fn parse_redirect_next_damage_sentence(
         }
         let target_tokens = target_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let target = parse_target_phrase(&target_tokens)?;
 
@@ -1174,7 +1176,7 @@ pub(crate) fn parse_redirect_next_damage_sentence(
         return Ok(None);
     }
 
-    let amount_token = Token::Word(
+    let amount_token = OwnedLexToken::word(
         clause_words.get(2).copied().unwrap_or_default().to_string(),
         TextSpan::synthetic(),
     );
@@ -1235,7 +1237,7 @@ pub(crate) fn parse_redirect_next_damage_sentence(
     }
     let target_tokens = target_words
         .iter()
-        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
     let target = parse_target_phrase(&target_tokens)?;
 
@@ -1245,7 +1247,7 @@ pub(crate) fn parse_redirect_next_damage_sentence(
 }
 
 pub(crate) fn parse_can_block_additional_creature_this_turn_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     let Some(can_idx) = clause_words.iter().position(|word| *word == "can") else {
@@ -1284,7 +1286,7 @@ pub(crate) fn parse_can_block_additional_creature_this_turn_clause(
     } else {
         let subject_tokens = subject_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         parse_target_phrase(&subject_tokens)?
     };
@@ -1297,7 +1299,7 @@ pub(crate) fn parse_can_block_additional_creature_this_turn_clause(
 }
 
 pub(crate) fn parse_win_the_game_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.len() < 4 || !clause_words.starts_with(&["you", "win", "the", "game"]) {
@@ -1367,7 +1369,7 @@ pub(crate) fn parse_win_the_game_clause(
 }
 
 pub(crate) fn parse_choose_target_prelude_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.first().copied() != Some("choose") {
@@ -1387,7 +1389,7 @@ pub(crate) fn parse_choose_target_prelude_sentence(
 }
 
 pub(crate) fn parse_keyword_mechanic_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     if tokens.is_empty() {
         return Ok(None);
@@ -1533,7 +1535,10 @@ pub(crate) fn parse_keyword_mechanic_clause(
         }));
     }
 
-    if matches!(clause_words.first().copied(), Some("discover" | "discovers")) {
+    if matches!(
+        clause_words.first().copied(),
+        Some("discover" | "discovers")
+    ) {
         let (count, used) = parse_value(&clause_tokens[1..]).ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "missing amount for discover clause (clause: '{}')",
@@ -1571,7 +1576,7 @@ pub(crate) fn parse_keyword_mechanic_clause(
     Ok(None)
 }
 
-pub(crate) fn parse_connive_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+pub(crate) fn parse_connive_clause(tokens: &[OwnedLexToken]) -> Result<Option<EffectAst>, CardTextError> {
     let Some(connive_idx) = tokens
         .iter()
         .rposition(|token| token.is_word("connive") || token.is_word("connives"))

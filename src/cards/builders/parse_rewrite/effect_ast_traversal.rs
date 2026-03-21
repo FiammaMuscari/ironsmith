@@ -198,7 +198,9 @@ pub(crate) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::PutSomeIntoHandRestOnBottomOfLibrary { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary { .. } => {}
-        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary { .. } => {}
+        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
+            ..
+        } => {}
         EffectAst::PutRestOnBottomOfLibrary => {}
         EffectAst::CopySpell { .. } => {}
         EffectAst::RetargetStackObject { .. } => {}

@@ -1,11 +1,12 @@
 use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming, TriggeredAbility};
-use crate::cards::builders::{ParsedRestrictions, Token};
+use crate::cards::builders::ParsedRestrictions;
 
 use super::activation_and_restrictions::{
-    combine_mana_activation_condition, parse_activate_only_timing, parse_activation_condition,
-    parse_mana_usage_restriction_sentence, parse_triggered_times_each_turn_from_words,
+    combine_mana_activation_condition, parse_activate_only_timing_lexed,
+    parse_activation_condition_lexed, parse_mana_usage_restriction_sentence_lexed,
+    parse_triggered_times_each_turn_lexed,
 };
-use super::util::tokenize_line;
+use super::lexer::lex_line;
 
 pub(crate) fn apply_pending_restrictions_to_ability(
     ability: &mut Ability,
@@ -97,9 +98,9 @@ pub(crate) fn apply_pending_activation_restriction(
         None
     }
 
-    let tokens = tokenize_line(restriction, 0);
-    let parsed_timing = parse_activate_only_timing(&tokens);
-    let parsed_condition = parse_activation_condition(&tokens);
+    let tokens = lex_line(restriction, 0).unwrap_or_default();
+    let parsed_timing = parse_activate_only_timing_lexed(&tokens);
+    let parsed_condition = parse_activation_condition_lexed(&tokens);
     if parsed_condition.is_some() {
         let existing = ability.activation_condition.take();
         ability.activation_condition =
@@ -138,8 +139,8 @@ pub(crate) fn apply_pending_activation_restriction(
 }
 
 fn apply_pending_trigger_restriction(ability: &mut TriggeredAbility, restriction: &str) {
-    let tokens = tokenize_line(restriction, 0);
-    let count = parse_triggered_times_each_turn_from_words(&words(&tokens));
+    let tokens = lex_line(restriction, 0).unwrap_or_default();
+    let count = parse_triggered_times_each_turn_lexed(&tokens);
     if let Some(parsed_count) = count {
         ability.intervening_if = Some(match ability.intervening_if.take() {
             Some(crate::ConditionExpr::MaxTimesEachTurn(existing)) => {
@@ -155,11 +156,11 @@ pub(crate) fn apply_pending_mana_restriction(ability: &mut ActivatedAbility, res
     if normalized_restriction.is_empty() {
         return;
     }
-    let tokens = tokenize_line(&normalized_restriction, 0);
-    let parsed_timing = parse_activate_only_timing(&tokens).unwrap_or_default();
-    let parsed_usage_restriction = parse_mana_usage_restriction_sentence(&tokens);
+    let tokens = lex_line(&normalized_restriction, 0).unwrap_or_default();
+    let parsed_timing = parse_activate_only_timing_lexed(&tokens).unwrap_or_default();
+    let parsed_usage_restriction = parse_mana_usage_restriction_sentence_lexed(&tokens);
     let has_usage_restriction = parsed_usage_restriction.is_some();
-    let parsed_condition = parse_activation_condition(&tokens).or_else(|| {
+    let parsed_condition = parse_activation_condition_lexed(&tokens).or_else(|| {
         if parsed_timing == ActivationTiming::AnyTime && !has_usage_restriction {
             Some(crate::ConditionExpr::Unmodeled(
                 normalized_restriction.clone(),
@@ -249,8 +250,4 @@ fn merge_mana_activation_conditions(
             Some(crate::ConditionExpr::And(Box::new(left), Box::new(right)))
         }
     }
-}
-
-fn words(tokens: &[Token]) -> Vec<&str> {
-    tokens.iter().filter_map(Token::as_word).collect()
 }

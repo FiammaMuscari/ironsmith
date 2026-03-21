@@ -1,24 +1,350 @@
-use crate::cards::builders::{CardTextError, IT_TAG, Token};
+use crate::cards::builders::{CardTextError, IT_TAG};
 use crate::{
     CardType, Color, ColorSet, ObjectFilter, PlayerFilter, Supertype, TagKey,
     TaggedObjectConstraint, TaggedOpbjectRelation, Zone,
 };
 
-use super::util::{
-    apply_filter_keyword_constraint, is_article, is_demonstrative_object_head,
-    is_non_outlaw_word, is_outlaw_word, is_permanent_type, is_source_reference_words,
-    parse_alternative_cast_words, parse_card_type, parse_color, parse_counter_type_word,
-    parse_filter_counter_constraint_words, parse_filter_keyword_constraint_words,
-    parse_non_color, parse_non_subtype, parse_non_supertype, parse_non_type,
-    parse_subtype_flexible, parse_unsigned_pt_word, parse_zone_word, push_outlaw_subtypes,
-    split_on_and, token_index_for_word_index, trim_commas, words,
-};
 use super::effect_sentences::{parse_subtype_word, parse_supertype_word};
 use super::keyword_static::parse_pt_modifier;
+use super::lexer::OwnedLexToken;
+use super::native_tokens::LowercaseWordView;
+use super::util::{
+    apply_filter_keyword_constraint, compat_tokens_from_lexed, is_article,
+    is_demonstrative_object_head, is_non_outlaw_word, is_outlaw_word, is_permanent_type,
+    is_source_reference_words, parse_alternative_cast_words, parse_card_type, parse_color,
+    parse_counter_type_word, parse_filter_counter_constraint_words,
+    parse_filter_keyword_constraint_words, parse_non_color, parse_non_subtype, parse_non_supertype,
+    parse_non_type, parse_subtype_flexible, parse_unsigned_pt_word, parse_zone_word,
+    push_outlaw_subtypes, split_on_and, token_index_for_word_index, trim_commas, words,
+};
 use super::value_helpers::parse_filter_comparison_tokens;
 
+fn lower_words_end_with(words: &[&str], suffix: &[&str]) -> bool {
+    words.len() >= suffix.len() && words[words.len() - suffix.len()..] == *suffix
+}
+
+fn parse_simple_object_filter_lexed(
+    tokens: &[OwnedLexToken],
+    other: bool,
+) -> Option<ObjectFilter> {
+    let word_view = LowercaseWordView::new(tokens);
+    let mut words: Vec<&str> = word_view
+        .to_word_refs()
+        .into_iter()
+        .filter(|word| *word != "instead")
+        .filter(|word| !is_article(word))
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+
+    if words.iter().any(|word| {
+        matches!(
+            *word,
+            "target"
+                | "targets"
+                | "that"
+                | "which"
+                | "whose"
+                | "where"
+                | "there"
+                | "shares"
+                | "share"
+                | "dealt"
+                | "entered"
+                | "put"
+                | "this"
+                | "way"
+        )
+    }) {
+        return None;
+    }
+
+    let mut filter = ObjectFilter::default();
+    if other {
+        filter.other = true;
+    }
+
+    let mut saw_permanent_type = false;
+    let mut saw_spell = false;
+    let mut saw_card = false;
+    let mut saw_permanent = false;
+
+    let trim_suffix = |words: &mut Vec<&str>, suffix_len: usize| {
+        let new_len = words.len().saturating_sub(suffix_len);
+        words.truncate(new_len);
+    };
+
+    let apply_owner_zone_suffix =
+        |filter: &mut ObjectFilter, owner: PlayerFilter, zone: Zone, words: &mut Vec<&str>, suffix_len: usize| {
+            filter.owner = Some(owner);
+            filter.zone = Some(zone);
+            trim_suffix(words, suffix_len);
+        };
+
+    if lower_words_end_with(&words, &["you", "control"]) {
+        filter.controller = Some(PlayerFilter::You);
+        filter.zone = Some(Zone::Battlefield);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["opponents", "control"])
+        || lower_words_end_with(&words, &["opponent", "controls"])
+    {
+        filter.controller = Some(PlayerFilter::Opponent);
+        filter.zone = Some(Zone::Battlefield);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["you", "own"]) {
+        filter.owner = Some(PlayerFilter::You);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["in", "your", "graveyard"])
+        || lower_words_end_with(&words, &["from", "your", "graveyard"])
+    {
+        apply_owner_zone_suffix(
+            &mut filter,
+            PlayerFilter::You,
+            Zone::Graveyard,
+            &mut words,
+            3,
+        );
+    } else if lower_words_end_with(&words, &["in", "your", "hand"])
+        || lower_words_end_with(&words, &["from", "your", "hand"])
+    {
+        apply_owner_zone_suffix(
+            &mut filter,
+            PlayerFilter::You,
+            Zone::Hand,
+            &mut words,
+            3,
+        );
+    } else if lower_words_end_with(&words, &["in", "your", "library"])
+        || lower_words_end_with(&words, &["from", "your", "library"])
+    {
+        apply_owner_zone_suffix(
+            &mut filter,
+            PlayerFilter::You,
+            Zone::Library,
+            &mut words,
+            3,
+        );
+    } else if lower_words_end_with(&words, &["in", "graveyard"])
+        || lower_words_end_with(&words, &["from", "graveyard"])
+    {
+        filter.zone = Some(Zone::Graveyard);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["in", "hand"])
+        || lower_words_end_with(&words, &["from", "hand"])
+    {
+        filter.zone = Some(Zone::Hand);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["in", "library"])
+        || lower_words_end_with(&words, &["from", "library"])
+    {
+        filter.zone = Some(Zone::Library);
+        trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["in", "exile"])
+        || lower_words_end_with(&words, &["from", "exile"])
+    {
+        filter.zone = Some(Zone::Exile);
+        trim_suffix(&mut words, 2);
+    }
+
+    let mut idx = 0usize;
+    while idx < words.len() {
+        let word = words[idx];
+        if let Some((kind, consumed)) = parse_alternative_cast_words(&words[idx..]) {
+            filter.alternative_cast = Some(kind);
+            saw_spell = true;
+            idx += consumed;
+            continue;
+        }
+        if matches!(word, "face-down" | "facedown") {
+            filter.face_down = Some(true);
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "face-up" | "faceup") {
+            filter.face_down = Some(false);
+            idx += 1;
+            continue;
+        }
+        if word == "face" && idx + 1 < words.len() {
+            if words[idx + 1] == "down" {
+                filter.face_down = Some(true);
+                idx += 2;
+                continue;
+            }
+            if words[idx + 1] == "up" {
+                filter.face_down = Some(false);
+                idx += 2;
+                continue;
+            }
+        }
+        if matches!(word, "other" | "another") {
+            filter.other = true;
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "token" | "tokens") {
+            filter.token = true;
+            idx += 1;
+            continue;
+        }
+        if word == "nontoken" {
+            filter.nontoken = true;
+            idx += 1;
+            continue;
+        }
+        if word == "historic" {
+            filter.historic = true;
+            idx += 1;
+            continue;
+        }
+        if word == "nonhistoric" {
+            filter.nonhistoric = true;
+            idx += 1;
+            continue;
+        }
+        if word == "modified" {
+            filter.modified = true;
+            idx += 1;
+            continue;
+        }
+        if word == "colorless" {
+            filter.colorless = true;
+            idx += 1;
+            continue;
+        }
+        if word == "multicolored" {
+            filter.multicolored = true;
+            idx += 1;
+            continue;
+        }
+        if word == "monocolored" {
+            filter.monocolored = true;
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "card" | "cards") {
+            saw_card = true;
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "permanent" | "permanents") {
+            saw_permanent = true;
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "spell" | "spells") {
+            saw_spell = true;
+            idx += 1;
+            continue;
+        }
+        if word == "chosen" && idx + 1 < words.len() {
+            if words[idx + 1] == "color" {
+                filter.chosen_color = true;
+                idx += 2;
+                continue;
+            }
+            if words[idx + 1] == "type" {
+                filter.chosen_creature_type = true;
+                idx += 2;
+                continue;
+            }
+        }
+        if word == "nonchosen" && idx + 1 < words.len() && words[idx + 1] == "type" {
+            filter.excluded_chosen_creature_type = true;
+            idx += 2;
+            continue;
+        }
+        if let Some(card_type) = parse_card_type(word) {
+            if !filter.card_types.contains(&card_type) {
+                filter.card_types.push(card_type);
+            }
+            if is_permanent_type(card_type) {
+                saw_permanent_type = true;
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(card_type) = parse_non_type(word) {
+            if !filter.excluded_card_types.contains(&card_type) {
+                filter.excluded_card_types.push(card_type);
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(subtype) = parse_subtype_flexible(word) {
+            if !filter.subtypes.contains(&subtype) {
+                filter.subtypes.push(subtype);
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(subtype) = parse_non_subtype(word) {
+            if !filter.excluded_subtypes.contains(&subtype) {
+                filter.excluded_subtypes.push(subtype);
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(supertype) = parse_supertype_word(word) {
+            if !filter.supertypes.contains(&supertype) {
+                filter.supertypes.push(supertype);
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(supertype) = parse_non_supertype(word) {
+            if !filter.excluded_supertypes.contains(&supertype) {
+                filter.excluded_supertypes.push(supertype);
+            }
+            idx += 1;
+            continue;
+        }
+        if let Some(color) = parse_color(word) {
+            let existing = filter.colors.unwrap_or(ColorSet::new());
+            filter.colors = Some(existing.union(color));
+            idx += 1;
+            continue;
+        }
+        if let Some(color) = parse_non_color(word) {
+            filter.excluded_colors = filter.excluded_colors.union(color);
+            idx += 1;
+            continue;
+        }
+        if is_outlaw_word(word) {
+            push_outlaw_subtypes(&mut filter.subtypes);
+            idx += 1;
+            continue;
+        }
+        if is_non_outlaw_word(word) {
+            push_outlaw_subtypes(&mut filter.excluded_subtypes);
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "of" | "from" | "in") {
+            return None;
+        }
+        return None;
+    }
+
+    if filter.zone.is_none() {
+        if saw_spell {
+            filter.zone = Some(Zone::Stack);
+        } else if saw_permanent || saw_permanent_type || filter.token {
+            filter.zone = Some(Zone::Battlefield);
+        } else if saw_card && filter.zone.is_none() {
+            filter.zone = None;
+        }
+    }
+    if saw_spell {
+        filter.has_mana_cost = true;
+    }
+
+    Some(filter)
+}
+
 fn parse_attached_reference_or_another_disjunction(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ObjectFilter>, CardTextError> {
     let segments = split_on_or(tokens);
     if segments.len() != 2 {
@@ -60,7 +386,7 @@ fn parse_attached_reference_or_another_disjunction(
 }
 
 pub(crate) fn parse_object_filter(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
     let mut filter = ObjectFilter::default();
@@ -70,7 +396,7 @@ pub(crate) fn parse_object_filter(
 
     let mut target_player: Option<PlayerFilter> = None;
     let mut target_object: Option<ObjectFilter> = None;
-    let mut base_tokens: Vec<Token> = tokens.to_vec();
+    let mut base_tokens: Vec<OwnedLexToken> = tokens.to_vec();
     let mut targets_idx: Option<usize> = None;
     for (idx, token) in tokens.iter().enumerate() {
         if token.is_word("targets") || token.is_word("target") {
@@ -84,7 +410,7 @@ pub(crate) fn parse_object_filter(
         let that_idx = targets_idx - 1;
         base_tokens = tokens[..that_idx].to_vec();
         let target_tokens = &tokens[targets_idx + 1..];
-        let parse_target_fragment = |fragment_tokens: &[Token]| -> Result<
+        let parse_target_fragment = |fragment_tokens: &[OwnedLexToken]| -> Result<
             (Option<PlayerFilter>, Option<ObjectFilter>),
             CardTextError,
         > {
@@ -2589,9 +2915,155 @@ pub(crate) fn parse_object_filter(
     Ok(filter)
 }
 
-pub(crate) fn parse_spell_filter(tokens: &[Token]) -> ObjectFilter {
+pub(crate) fn parse_spell_filter(tokens: &[OwnedLexToken]) -> ObjectFilter {
     let mut filter = ObjectFilter::default();
     let words: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let clause_words = words.clone();
+
+    let mut idx = 0usize;
+    while idx < words.len() {
+        if let Some((kind, consumed)) = parse_alternative_cast_words(&words[idx..]) {
+            filter.alternative_cast = Some(kind);
+            idx += consumed;
+            continue;
+        }
+        let word = words[idx];
+        if matches!(word, "face-down" | "facedown") {
+            filter.face_down = Some(true);
+            idx += 1;
+            continue;
+        }
+        if matches!(word, "face-up" | "faceup") {
+            filter.face_down = Some(false);
+            idx += 1;
+            continue;
+        }
+        if word == "face" && idx + 1 < words.len() {
+            if words[idx + 1] == "down" {
+                filter.face_down = Some(true);
+                idx += 2;
+                continue;
+            }
+            if words[idx + 1] == "up" {
+                filter.face_down = Some(false);
+                idx += 2;
+                continue;
+            }
+        }
+        if let Some(card_type) = parse_card_type(word)
+            && !filter.card_types.contains(&card_type)
+        {
+            filter.card_types.push(card_type);
+        }
+        if let Some(card_type) = parse_non_type(word)
+            && !filter.excluded_card_types.contains(&card_type)
+        {
+            filter.excluded_card_types.push(card_type);
+        }
+
+        if let Some(subtype) = parse_subtype_flexible(word)
+            && !filter.subtypes.contains(&subtype)
+        {
+            filter.subtypes.push(subtype);
+        }
+
+        if let Some(color) = parse_color(word) {
+            let existing = filter.colors.unwrap_or(ColorSet::new());
+            filter.colors = Some(existing.union(color));
+        }
+        idx += 1;
+    }
+
+    let mut cmp_idx = 0usize;
+    while cmp_idx < words.len() {
+        let axis = match words[cmp_idx] {
+            "power" => Some("power"),
+            "toughness" => Some("toughness"),
+            "mana" if cmp_idx + 1 < words.len() && words[cmp_idx + 1] == "value" => {
+                Some("mana value")
+            }
+            _ => None,
+        };
+        let Some(axis) = axis else {
+            cmp_idx += 1;
+            continue;
+        };
+
+        let axis_word_count = usize::from(axis == "mana value") + 1;
+        let value_tokens = if cmp_idx + axis_word_count < words.len() {
+            &words[cmp_idx + axis_word_count..]
+        } else {
+            &[]
+        };
+        let parsed = parse_filter_comparison_tokens(axis, value_tokens, &clause_words)
+            .ok()
+            .flatten();
+        let Some((cmp, consumed)) = parsed else {
+            cmp_idx += 1;
+            continue;
+        };
+
+        match axis {
+            "power" => filter.power = Some(cmp),
+            "toughness" => filter.toughness = Some(cmp),
+            "mana value" => filter.mana_value = Some(cmp),
+            _ => {}
+        }
+        cmp_idx += axis_word_count + consumed;
+    }
+
+    for idx in 0..words.len() {
+        let Some(value_tokens) = (match words.get(idx..) {
+            Some(["power", "or", "toughness", rest @ ..]) => Some(rest),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some((cmp, _)) = parse_filter_comparison_tokens("power", value_tokens, &clause_words)
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+
+        let mut base = filter.clone();
+        base.any_of.clear();
+        base.power = None;
+        base.toughness = None;
+
+        let mut power_branch = base.clone();
+        power_branch.power = Some(cmp.clone());
+
+        let mut toughness_branch = base;
+        toughness_branch.toughness = Some(cmp);
+
+        let mut disjunction = ObjectFilter::default();
+        disjunction.any_of = vec![power_branch, toughness_branch];
+        return disjunction;
+    }
+
+    filter
+}
+
+pub(crate) fn parse_object_filter_lexed(
+    tokens: &[OwnedLexToken],
+    other: bool,
+) -> Result<ObjectFilter, CardTextError> {
+    if let Some(filter) = parse_simple_object_filter_lexed(tokens, other) {
+        return Ok(filter);
+    }
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_object_filter(&compat, other)
+}
+
+pub(crate) fn parse_spell_filter_lexed(tokens: &[OwnedLexToken]) -> ObjectFilter {
+    let mut filter = ObjectFilter::default();
+    let word_view = LowercaseWordView::new(tokens);
+    let words: Vec<&str> = word_view
+        .to_word_refs()
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
@@ -2786,12 +3258,12 @@ pub(crate) fn merge_spell_filters(base: &mut ObjectFilter, extra: ObjectFilter) 
     }
 }
 
-pub(crate) fn split_on_or(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_on_or(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
     for (idx, token) in tokens.iter().enumerate() {
-        let is_separator = matches!(token, Token::Comma(_))
+        let is_separator = token.is_comma()
             || (token.is_word("or") && !is_comparison_or_delimiter(tokens, idx));
         if is_separator {
             if !current.is_empty() {
@@ -2809,12 +3281,12 @@ pub(crate) fn split_on_or(tokens: &[Token]) -> Vec<Vec<Token>> {
     segments
 }
 
-pub(crate) fn is_comparison_or_delimiter(tokens: &[Token], idx: usize) -> bool {
+pub(crate) fn is_comparison_or_delimiter(tokens: &[OwnedLexToken], idx: usize) -> bool {
     if !tokens.get(idx).is_some_and(|token| token.is_word("or")) {
         return false;
     }
     let previous_word = (0..idx).rev().find_map(|i| tokens[i].as_word());
-    let next_word = tokens.get(idx + 1).and_then(Token::as_word);
+    let next_word = tokens.get(idx + 1).and_then(OwnedLexToken::as_word);
     if matches!(next_word, Some("less" | "greater" | "more" | "fewer")) {
         return true;
     }

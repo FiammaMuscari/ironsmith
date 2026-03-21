@@ -1,9 +1,8 @@
-use crate::cards::builders::{CardTextError, EffectAst, PlayerAst, SubjectAst, Token};
+use crate::cards::builders::{CardTextError, EffectAst, PlayerAst, SubjectAst, OwnedLexToken};
 use crate::effect::Value;
 use crate::mana::ManaSymbol;
 use crate::target::ObjectFilter;
 
-pub(crate) use super::object_filters::is_comparison_or_delimiter;
 use super::activation_and_restrictions::parse_devotion_value_from_add_clause;
 use super::effect_sentences::clause_pattern_helpers::extract_subject_player;
 use super::effect_sentences::conditionals::parse_predicate;
@@ -11,25 +10,25 @@ use super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
     parse_dynamic_cost_modifier_value, parse_where_x_is_number_of_filter_value,
 };
+pub(crate) use super::object_filters::is_comparison_or_delimiter;
 use super::object_filters::parse_object_filter;
 pub(crate) use super::util::{
     contains_discard_source_phrase, contains_source_from_your_graveyard_phrase,
     contains_source_from_your_hand_phrase, find_activation_cost_start, is_article,
     is_basic_color_word, is_source_from_your_graveyard_words, join_sentences_with_period,
-    parse_mana_symbol, parse_next_end_step_token_delay_flags, parse_subtype_flexible,
-    parse_value, split_cost_segments, token_index_for_word_index, trim_commas,
-    value_contains_unbound_x, words,
+    parse_mana_symbol, parse_next_end_step_token_delay_flags, parse_subtype_flexible, parse_value,
+    split_cost_segments, token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
 };
 pub(crate) use super::value_helpers::parse_filter_comparison_tokens;
 
 pub(crate) fn parse_add_mana(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     let clause_words = words(tokens);
     let wrap_instead_if_tail = |base_effect: EffectAst,
-                                tail_tokens: &[Token]|
+                                tail_tokens: &[OwnedLexToken]|
      -> Result<Option<EffectAst>, CardTextError> {
         let tail_words = words(tail_tokens);
         if !tail_words.starts_with(&["instead", "if"]) {
@@ -93,7 +92,7 @@ pub(crate) fn parse_add_mana(
 
     let has_explicit_symbol = tokens
         .iter()
-        .filter_map(Token::as_word)
+        .filter_map(OwnedLexToken::as_word)
         .any(|word| parse_mana_symbol(word).is_ok());
     if !has_explicit_symbol
         && let Some(chosen_idx) = clause_words
@@ -435,7 +434,7 @@ pub(crate) fn mana_symbol_to_color(symbol: ManaSymbol) -> Option<crate::color::C
 }
 
 pub(crate) fn parse_or_mana_color_choices(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.contains(&"or") {
@@ -475,7 +474,7 @@ pub(crate) fn parse_or_mana_color_choices(
 }
 
 pub(crate) fn parse_any_combination_mana_colors(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
     let clause_words = words(tokens);
     let Some(combination_idx) = clause_words
@@ -539,15 +538,15 @@ pub(crate) fn parse_any_combination_mana_colors(
     Ok(Some(colors))
 }
 
-pub(crate) fn trim_leading_commas(tokens: &[Token]) -> &[Token] {
+pub(crate) fn trim_leading_commas(tokens: &[OwnedLexToken]) -> &[OwnedLexToken] {
     let start = tokens
         .iter()
-        .position(|token| !matches!(token, Token::Comma(_)))
+        .position(|token| !token.is_comma())
         .unwrap_or(tokens.len());
     &tokens[start..]
 }
 
-pub(crate) fn is_mana_pool_tail_tokens(tokens: &[Token]) -> bool {
+pub(crate) fn is_mana_pool_tail_tokens(tokens: &[OwnedLexToken]) -> bool {
     let words = words(tokens);
     if words.is_empty() || words[0] != "to" || !words.contains(&"mana") || !words.contains(&"pool")
     {
@@ -562,7 +561,7 @@ pub(crate) fn is_mana_pool_tail_tokens(tokens: &[Token]) -> bool {
 }
 
 pub(crate) fn parse_land_could_produce_filter(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ObjectFilter>, CardTextError> {
     let words = words(tokens);
     if words.len() < 3 || words[0] != "that" {

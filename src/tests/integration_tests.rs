@@ -371,10 +371,7 @@ struct ScriptedGameDecisionMaker {
 impl ScriptedGameDecisionMaker {
     fn new(game: &GameState, actions: Vec<Action>) -> Self {
         let _ = game;
-        Self {
-            actions,
-            index: 0,
-        }
+        Self { actions, index: 0 }
     }
 
     fn is_exhausted(&self) -> bool {
@@ -736,7 +733,6 @@ impl ReplayTestConfig {
         self.commanders_on_battlefield[0] = cards;
         self
     }
-
 }
 
 /// Input source for replay tests - either a file path or inline inputs.

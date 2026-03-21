@@ -9,12 +9,10 @@ use crate::cards::CardDefinition;
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardDefinitionBuilder, CardTextError,
-    ClashOpponentAst, ControlDurationAst, DamageBySpec, EffectAst, ExtraTurnAnchorAst,
-    EffectLoweringContext, GrantedAbilityAst, IT_TAG, IdGenContext, IfResultPredicate, LineAst,
-    LoweringFrame, NormalizedLine, ObjectRefAst,
-    ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
-    PreventNextTimeDamageTargetAst,
+    CardDefinitionBuilder, CardTextError, ClashOpponentAst, ControlDurationAst, DamageBySpec,
+    EffectAst, EffectLoweringContext, ExtraTurnAnchorAst, GrantedAbilityAst, IT_TAG, IdGenContext,
+    IfResultPredicate, LineAst, LoweringFrame, NormalizedLine, ObjectRefAst, ParseAnnotations,
+    PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst, PreventNextTimeDamageTargetAst,
     RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
 };
 #[allow(unused_imports)]
@@ -56,6 +54,7 @@ use super::effect_pipeline::{
     EffectPreludeTag, PreparedEffectsForLowering, PreparedPredicateForLowering,
     PreparedTriggeredEffectsForLowering,
 };
+use super::effect_sentences::parse_subtype_word;
 use super::lowering_support::{
     rewrite_lower_parsed_ability as lower_parsed_ability, rewrite_prepare_effects_for_lowering,
     rewrite_prepare_effects_with_trigger_context_for_lowering,
@@ -64,8 +63,8 @@ use super::reference_helpers::{
     choose_spec_targets_object, infer_player_filter_from_object_filter,
     object_filter_as_tagged_reference, resolve_attach_object_spec, resolve_choose_spec_it_tag,
     resolve_it_tag, resolve_it_tag_key, resolve_non_target_player_filter,
-    resolve_restriction_it_tag, resolve_target_spec_with_choices,
-    resolve_unless_player_filter, resolve_value_it_tag, watch_tag_from_filter,
+    resolve_restriction_it_tag, resolve_target_spec_with_choices, resolve_unless_player_filter,
+    resolve_value_it_tag, watch_tag_from_filter,
 };
 use super::reference_model::{
     AnnotatedEffect, AnnotatedEffectSequence, LoweredEffects, ReferenceEnv, ReferenceExports,
@@ -76,7 +75,6 @@ use super::static_ability_helpers::lower_granted_abilities_ast;
 use super::util::{
     contains_until_end_of_turn, map_span_to_original, parse_card_type, parse_number_word_i32,
 };
-use super::effect_sentences::parse_subtype_word;
 
 pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
     match trigger {
@@ -859,8 +857,11 @@ pub(crate) fn compile_trigger_effects_with_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
 ) -> Result<LoweredEffects, CardTextError> {
-    let prepared =
-        rewrite_prepare_effects_with_trigger_context_for_lowering(trigger, effects, imports.clone())?;
+    let prepared = rewrite_prepare_effects_with_trigger_context_for_lowering(
+        trigger,
+        effects,
+        imports.clone(),
+    )?;
     materialize_prepared_effects_with_trigger_context(&prepared)
 }
 
@@ -9689,7 +9690,7 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             subtypes
                 .first()
                 .map(|subtype| format!("{subtype:?}"))
-                .unwrap_or_else(|| "Token".to_string())
+                .unwrap_or_else(|| "OwnedLexToken".to_string())
         });
 
         let mut builder = CardDefinitionBuilder::new(CardId::new(), token_name)

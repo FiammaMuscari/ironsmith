@@ -12,12 +12,11 @@ use crate::target::{ChooseSpec, PlayerFilter};
 use crate::zone::Zone;
 
 use super::compile_support::{
-    collect_tag_spans_from_effects_with_context,
-    compile_trigger_spec, effects_reference_it_tag, effects_reference_its_controller,
-    effects_reference_tag, ensure_concrete_trigger_spec, inferred_trigger_player_filter,
-    materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
-    materialize_prepared_triggered_effects, trigger_binds_player_reference_context,
-    trigger_supports_event_value,
+    collect_tag_spans_from_effects_with_context, compile_trigger_spec, effects_reference_it_tag,
+    effects_reference_its_controller, effects_reference_tag, ensure_concrete_trigger_spec,
+    inferred_trigger_player_filter, materialize_prepared_effects_with_trigger_context,
+    materialize_prepared_statement_effects, materialize_prepared_triggered_effects,
+    trigger_binds_player_reference_context, trigger_supports_event_value,
 };
 use super::effect_ast_normalization::normalize_effects_ast;
 use super::effect_pipeline::{
@@ -26,9 +25,7 @@ use super::effect_pipeline::{
     PreparedTriggeredEffectsForLowering,
 };
 use super::reference_model::{LoweredEffects, ReferenceEnv, ReferenceExports, ReferenceImports};
-use super::reference_resolution::{
-    EffectReferenceResolutionConfig, annotate_effect_sequence,
-};
+use super::reference_resolution::{EffectReferenceResolutionConfig, annotate_effect_sequence};
 use super::util::classify_instead_followup_text;
 
 fn rewrite_prepare_effects_from_normalized(

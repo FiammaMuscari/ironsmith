@@ -1,17 +1,19 @@
-use crate::card::{PowerToughness, PtValue};
-use super::parse_effect_chain;
 use super::super::activation_and_restrictions::{contains_word_sequence, parse_named_number};
+use super::super::lexer::{OwnedLexToken, trim_lexed_commas};
+use super::super::modal_helpers::parse_if_result_predicate_lexed;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    is_article, is_permanent_type, parse_card_type, parse_counter_type_word,
-    parse_mana_symbol_word_flexible, parse_number, parse_target_phrase, span_from_tokens,
-    token_index_for_word_index, trim_commas, words,
+    compat_tokens_from_lexed, is_article, is_permanent_type, parse_card_type,
+    parse_counter_type_word, parse_mana_symbol_word_flexible, parse_number, parse_target_phrase,
+    span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
 use super::super::value_helpers::parse_filter_comparison_tokens;
+use super::parse_effect_chain;
+use crate::card::{PowerToughness, PtValue};
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, IfResultPredicate, PlayerAst,
-    PredicateAst, TagKey, TargetAst, TextSpan, Token,
+    PredicateAst, TagKey, TargetAst, TextSpan,
 };
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::target::{ObjectFilter, PlayerFilter, TaggedOpbjectRelation};
@@ -426,7 +428,7 @@ pub(crate) fn parse_pt_value(raw: &str) -> Option<PtValue> {
 }
 
 pub(crate) fn parse_for_each_opponent_doesnt(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut clause_tokens = tokens;
     let mut clause_words = words(clause_tokens);
@@ -462,7 +464,7 @@ pub(crate) fn parse_for_each_opponent_doesnt(
 
     let effect_token_start = if let Some(comma_idx) = inner_tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
     {
         comma_idx + 1
     } else if let Some(this_way_idx) = inner_words
@@ -491,7 +493,7 @@ pub(crate) fn parse_for_each_opponent_doesnt(
 }
 
 pub(crate) fn parse_for_each_player_doesnt(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut clause_tokens = tokens;
     let mut clause_words = words(clause_tokens);
@@ -527,7 +529,7 @@ pub(crate) fn parse_for_each_player_doesnt(
 
     let effect_token_start = if let Some(comma_idx) = inner_tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
     {
         comma_idx + 1
     } else if let Some(this_way_idx) = inner_words
@@ -569,7 +571,7 @@ pub(crate) fn negated_action_word_index(words: &[&str]) -> Option<(usize, usize)
 }
 
 fn parse_negated_who_this_way_predicate(
-    inner_tokens: &[Token],
+    inner_tokens: &[OwnedLexToken],
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let inner_words = words(inner_tokens);
     if inner_words.first().copied() != Some("who") {
@@ -616,7 +618,7 @@ fn parse_negated_who_this_way_predicate(
 }
 
 pub(crate) fn parse_vote_start_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let words = words(tokens);
     let vote_idx = words
@@ -672,7 +674,7 @@ pub(crate) fn parse_vote_start_sentence(
 }
 
 pub(crate) fn parse_for_each_vote_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let words = words(tokens);
     if words.len() < 4 {
@@ -709,7 +711,7 @@ pub(crate) fn parse_for_each_vote_clause(
 
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
         .ok_or_else(|| {
             CardTextError::ParseError("missing comma in for each vote clause".to_string())
         })?;
@@ -719,7 +721,7 @@ pub(crate) fn parse_for_each_vote_clause(
     Ok(Some(EffectAst::VoteOption { option, effects }))
 }
 
-pub(crate) fn parse_vote_extra_sentence(tokens: &[Token]) -> Option<EffectAst> {
+pub(crate) fn parse_vote_extra_sentence(tokens: &[OwnedLexToken]) -> Option<EffectAst> {
     let words = words(tokens);
     if words.len() < 3 || words.first().copied() != Some("you") {
         return None;
@@ -737,7 +739,7 @@ pub(crate) fn parse_vote_extra_sentence(tokens: &[Token]) -> Option<EffectAst> {
 }
 
 pub(crate) fn parse_after_turn_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 3
@@ -750,7 +752,7 @@ pub(crate) fn parse_after_turn_sentence(
 
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)));
+        .position(|token| token.is_comma());
     let remainder = if let Some(idx) = comma_idx {
         &tokens[idx + 1..]
     } else {
@@ -793,12 +795,12 @@ pub(crate) fn parse_after_turn_sentence(
 }
 
 pub(crate) fn parse_conditional_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
     let comma_indices = tokens
         .iter()
         .enumerate()
-        .filter_map(|(idx, token)| matches!(token, Token::Comma(_)).then_some(idx))
+        .filter_map(|(idx, token)| token.is_comma().then_some(idx))
         .collect::<Vec<_>>();
     if comma_indices.is_empty() {
         return Err(CardTextError::ParseError(
@@ -888,7 +890,7 @@ pub(crate) fn parse_conditional_sentence(
     return Ok(vec![EffectAst::IfResult { predicate, effects }]);
 }
 
-pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPredicate> {
+pub(crate) fn parse_if_result_predicate(tokens: &[OwnedLexToken]) -> Option<IfResultPredicate> {
     let words: Vec<&str> = words(tokens)
         .into_iter()
         .filter(|word| !is_article(word))
@@ -1056,8 +1058,8 @@ pub(crate) enum LeadingResultPrefixKind {
 }
 
 pub(crate) fn split_leading_result_prefix(
-    tokens: &[Token],
-) -> Option<(LeadingResultPrefixKind, IfResultPredicate, Vec<Token>)> {
+    tokens: &[OwnedLexToken],
+) -> Option<(LeadingResultPrefixKind, IfResultPredicate, Vec<OwnedLexToken>)> {
     let trimmed = trim_commas(tokens);
     let kind = if trimmed.first().is_some_and(|token| token.is_word("if")) {
         LeadingResultPrefixKind::If
@@ -1069,7 +1071,7 @@ pub(crate) fn split_leading_result_prefix(
 
     let comma_idx = trimmed
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))?;
+        .position(|token| token.is_comma())?;
     if comma_idx <= 1 || comma_idx + 1 >= trimmed.len() {
         return None;
     }
@@ -1088,7 +1090,46 @@ pub(crate) fn split_leading_result_prefix(
     Some((kind, predicate, trailing_tokens))
 }
 
-pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
+pub(crate) fn split_leading_result_prefix_lexed(
+    tokens: &[OwnedLexToken],
+) -> Option<(LeadingResultPrefixKind, IfResultPredicate, Vec<OwnedLexToken>)> {
+    let trimmed = trim_lexed_commas(tokens);
+    let kind = if trimmed.first().is_some_and(|token| token.is_word("if")) {
+        LeadingResultPrefixKind::If
+    } else if trimmed.first().is_some_and(|token| token.is_word("when")) {
+        LeadingResultPrefixKind::When
+    } else {
+        return None;
+    };
+
+    let comma_idx = trimmed
+        .iter()
+        .position(|token| matches!(token.kind, crate::cards::builders::parse_rewrite::lexer::TokenKind::Comma))?;
+    if comma_idx <= 1 || comma_idx + 1 >= trimmed.len() {
+        return None;
+    }
+
+    let predicate_tokens = trim_lexed_commas(&trimmed[1..comma_idx]);
+    if predicate_tokens.is_empty() {
+        return None;
+    }
+    let predicate = parse_if_result_predicate_lexed(predicate_tokens)?;
+
+    let trailing_tokens = trim_lexed_commas(&trimmed[comma_idx + 1..]);
+    if trailing_tokens.is_empty() {
+        return None;
+    }
+
+    Some((kind, predicate, trailing_tokens.to_vec()))
+}
+
+pub(crate) fn parse_predicate_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<PredicateAst, CardTextError> {
+    parse_predicate(&compat_tokens_from_lexed(tokens))
+}
+
+pub(crate) fn parse_predicate(tokens: &[OwnedLexToken]) -> Result<PredicateAst, CardTextError> {
     let raw_words = words(tokens);
     let mut filtered: Vec<&str> = raw_words
         .iter()
@@ -1144,11 +1185,11 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         let and_idx = 5 + and_idx;
         let left_tokens = filtered[5..and_idx]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let right_tokens = filtered[and_idx + 1..]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         if !left_tokens.is_empty() && !right_tokens.is_empty() {
             let mut left_filter = parse_object_filter(&left_tokens, false).map_err(|_| {
@@ -1193,11 +1234,11 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             }
             let left_tokens = left_words
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             let right_tokens = right_words
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             let left = parse_predicate(&left_tokens)?;
             let right = parse_predicate(&right_tokens)?;
@@ -1504,7 +1545,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         if matches!(tail, ["than", "you"] | ["than", "you", "do"]) {
             let filter_tokens = filtered[subject_len + 2..than_idx]
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             if !filter_tokens.is_empty() {
                 let other = filter_tokens
@@ -1773,7 +1814,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         };
         let attached_tokens = filtered[attached_start..]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let mut filter = parse_object_filter(&attached_tokens, false)?;
         if filter.card_types.is_empty() {
@@ -1794,7 +1835,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         if subject_is_permanent {
             let descriptor_tokens = filtered[3..]
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             let mut filter = parse_object_filter(&descriptor_tokens, false)?;
             if filter.card_types.is_empty() {
@@ -1865,7 +1906,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             let remainder = filtered[2..].to_vec();
             let tokens = remainder
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             let mut filter = parse_object_filter(&tokens, false)?;
             if filter.card_types.is_empty() {
@@ -1892,7 +1933,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         let filter_words = &filtered[2..onto_idx];
         let filter_tokens = filter_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let mut filter = parse_object_filter(&filter_tokens, false)?;
         if filter.zone.is_none() {
@@ -1976,7 +2017,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         if !descriptor_words.is_empty() {
             let descriptor_tokens = descriptor_words
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             if let Ok(filter) = parse_object_filter(&descriptor_tokens, false)
                 && filter != ObjectFilter::default()
@@ -2002,7 +2043,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
     {
         let control_tokens = filtered[3..]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         if let Ok(mut filter) = parse_object_filter(&control_tokens, false) {
             filter.controller = Some(PlayerFilter::You);
@@ -2036,7 +2077,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
     if let Some(filter_start) = you_dont_control_filter_start {
         let control_tokens = filtered[filter_start..]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let other = control_tokens
             .first()
@@ -2058,7 +2099,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
     {
         let left_tokens = filtered[2..or_idx]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let mut right_words = filtered[or_idx + 1..].to_vec();
         if right_words.first().copied() == Some("there") {
@@ -2067,7 +2108,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         if right_words.contains(&"graveyard") && right_words.contains(&"your") {
             let right_tokens = right_words
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             if let (Ok(mut control_filter), Ok(mut graveyard_filter)) = (
                 parse_object_filter(&left_tokens, false),
@@ -2128,7 +2169,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         }
         let control_tokens = control_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let other = control_tokens
             .first()
@@ -2197,7 +2238,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
 
         let control_tokens = filtered[filter_start..]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let other = control_tokens
             .first()
@@ -2254,7 +2295,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         let filter_words = &filtered[2..filtered.len() - 5];
         let filter_tokens = filter_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let filter = parse_object_filter(&filter_tokens, false)?;
         return Ok(PredicateAst::PlayerTaggedObjectMatches {
@@ -2465,7 +2506,7 @@ pub(crate) fn parse_graveyard_threshold_predicate(
     } else {
         let filter_tokens = normalized_filter_words
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let Ok(filter) = parse_object_filter(&filter_tokens, false) else {
             return Ok(None);
@@ -2482,7 +2523,7 @@ pub(crate) fn parse_graveyard_threshold_predicate(
 }
 
 pub(crate) fn parse_sentence_counter_target_spell_if_it_was_kicked(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.as_slice() != ["counter", "target", "spell", "if", "it", "was", "kicked"] {
@@ -2500,7 +2541,7 @@ pub(crate) fn parse_sentence_counter_target_spell_if_it_was_kicked(
 }
 
 pub(crate) fn parse_sentence_counter_target_spell_thats_second_cast_this_turn(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     let matches = clause_words.as_slice()
@@ -2527,7 +2568,7 @@ pub(crate) fn parse_sentence_counter_target_spell_thats_second_cast_this_turn(
 }
 
 pub(crate) fn parse_sentence_exile_target_creature_with_greatest_power(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     let is_shape = clause_words.starts_with(&["exile", "target", "creature"])
@@ -2563,7 +2604,7 @@ pub(crate) fn parse_mana_spent_to_cast_predicate(
         return None;
     }
 
-    let amount_tokens = vec![Token::Word(words[2].to_string(), TextSpan::synthetic())];
+    let amount_tokens = vec![OwnedLexToken::word(words[2].to_string(), TextSpan::synthetic())];
     let (amount, _) = parse_number(&amount_tokens)?;
 
     let mut idx = 3;

@@ -850,39 +850,7 @@ impl TextSpan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Token {
-    Word(String, TextSpan),
-    Comma(TextSpan),
-    Period(TextSpan),
-    Colon(TextSpan),
-    Semicolon(TextSpan),
-    Quote(TextSpan),
-}
-
-impl Token {
-    fn as_word(&self) -> Option<&str> {
-        match self {
-            Token::Word(word, _) => Some(word.as_str()),
-            _ => None,
-        }
-    }
-
-    fn is_word(&self, value: &str) -> bool {
-        matches!(self, Token::Word(word, _) if word == value)
-    }
-
-    fn span(&self) -> TextSpan {
-        match self {
-            Token::Word(_, span)
-            | Token::Comma(span)
-            | Token::Period(span)
-            | Token::Colon(span)
-            | Token::Semicolon(span)
-            | Token::Quote(span) => *span,
-        }
-    }
-}
+pub(crate) use crate::cards::builders::parse_rewrite::OwnedLexToken;
 
 #[derive(Debug, Clone)]
 pub(crate) enum LineAst {
@@ -1337,7 +1305,7 @@ pub(crate) enum PredicateAst {
     YouHaveNoCardsInHand,
     SourceIsTapped,
     SourceIsSaddled,
-    
+
     SourceHasNoCounter(CounterType),
     TriggeringObjectHadNoCounter(CounterType),
     SourceHasCounterAtLeast {
@@ -1371,7 +1339,6 @@ pub(crate) enum PredicateAst {
     Not(Box<PredicateAst>),
     And(Box<PredicateAst>, Box<PredicateAst>),
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ZoneReplacementDurationAst {
@@ -2343,7 +2310,7 @@ pub(crate) enum EffectAst {
     ReorderTopOfLibrary {
         tag: TagKey,
     },
-    
+
     ShuffleLibrary {
         player: PlayerAst,
     },

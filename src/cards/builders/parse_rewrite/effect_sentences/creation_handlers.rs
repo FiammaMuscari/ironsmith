@@ -1,6 +1,5 @@
 use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, SubjectAst, TagKey, TargetAst,
-    Token,
+    CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, SubjectAst, TagKey, TargetAst, OwnedLexToken,
 };
 use crate::color::ColorSet;
 use crate::effect::{EventValueSpec, Value};
@@ -346,8 +345,8 @@ pub(crate) fn trailing_create_at_next_end_step_clause(
 }
 
 pub(crate) fn split_copy_source_tail_modifiers(
-    source_tokens: &[Token],
-) -> (Vec<Token>, bool, bool) {
+    source_tokens: &[OwnedLexToken],
+) -> (Vec<OwnedLexToken>, bool, bool) {
     let mut split_idx: Option<usize> = None;
     for idx in 0..source_tokens.len() {
         if !source_tokens[idx].is_word("and") {
@@ -385,8 +384,8 @@ pub(crate) fn split_copy_source_tail_modifiers(
 }
 
 pub(crate) fn split_copy_source_inline_combat_modifiers(
-    source_tokens: &[Token],
-) -> (Vec<Token>, bool, bool, Option<PlayerAst>) {
+    source_tokens: &[OwnedLexToken],
+) -> (Vec<OwnedLexToken>, bool, bool, Option<PlayerAst>) {
     let source_words = words(source_tokens);
     let modifier_start_word_idx = source_words
         .iter()
@@ -466,7 +465,7 @@ pub(crate) fn split_copy_source_inline_combat_modifiers(
 }
 
 pub(crate) fn parse_create(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
@@ -731,7 +730,7 @@ pub(crate) fn parse_create(
                 let source_tokens = &tail_tokens[of_idx + 1..];
                 let source_end = source_tokens
                     .iter()
-                    .position(|token| matches!(token, Token::Comma(_)) || token.is_word("except"))
+                    .position(|token| token.is_comma() || token.is_word("except"))
                     .unwrap_or(source_tokens.len());
                 let mut source_end = source_end;
                 for idx in 1..source_end {
@@ -943,7 +942,7 @@ pub(crate) fn parse_create(
     )))
 }
 
-pub(crate) fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
+pub(crate) fn parse_create_for_each_dynamic_count(tokens: &[OwnedLexToken]) -> Option<Value> {
     let clause_words = words(tokens);
     if clause_words.starts_with(&["creature", "that", "died", "this", "turn"])
         || clause_words.starts_with(&["creatures", "that", "died", "this", "turn"])
@@ -1013,14 +1012,14 @@ pub(crate) fn normalize_token_name(words: &[&str]) -> String {
     words.join(" ")
 }
 
-pub(crate) fn parse_investigate(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+pub(crate) fn parse_investigate(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
         return Ok(EffectAst::Investigate {
             count: Value::Fixed(1),
         });
     }
 
-    let (count, used) = if let Some(first) = tokens.first().and_then(Token::as_word) {
+    let (count, used) = if let Some(first) = tokens.first().and_then(OwnedLexToken::as_word) {
         match first {
             "once" => (Value::Fixed(1), 1),
             "twice" => (Value::Fixed(2), 1),

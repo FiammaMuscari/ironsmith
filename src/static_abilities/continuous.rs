@@ -72,7 +72,6 @@ fn subject_text(filter: &ObjectFilter) -> String {
     attached_subject(filter).unwrap_or_else(|| filter.description())
 }
 
-
 fn split_subject_suffix(subject: &str) -> (&str, &str) {
     const SUFFIXES: &[&str] = &[
         " you control",
@@ -98,7 +97,6 @@ fn split_subject_suffix(subject: &str) -> (&str, &str) {
     }
     (subject, "")
 }
-
 
 fn pluralized_subject_text(filter: &ObjectFilter) -> String {
     let mut subject = subject_text(filter);

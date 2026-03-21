@@ -12,12 +12,13 @@ use crate::cards::builders::{
 #[cfg(test)]
 use crate::{ChooseSpec, TagKey};
 
-use super::effect_ast_traversal::try_for_each_nested_effects_mut;
+use super::compile_support::{
+    effect_references_event_derived_amount, effects_reference_it_tag,
+    effects_reference_its_controller,
+};
 #[cfg(test)]
 use super::effect_ast_traversal::for_each_nested_effects_mut;
-use super::compile_support::{
-    effect_references_event_derived_amount, effects_reference_it_tag, effects_reference_its_controller,
-};
+use super::effect_ast_traversal::try_for_each_nested_effects_mut;
 use super::reference_helpers::{
     choose_spec_targets_object, infer_player_filter_from_object_filter, resolve_it_tag,
     resolve_non_target_player_filter, resolve_target_spec_with_choices,
@@ -102,10 +103,7 @@ fn lowering_reference_frame(frame: &ReferenceFrame) -> ReferenceEnv {
 
 fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
     let tag = if matches!(prefix, "exiled" | "looked" | "chosen" | "revealed") {
-        format!(
-            "__sentence_helper_{prefix}_l0_s0_e{}",
-            id_gen.next_tag_id
-        )
+        format!("__sentence_helper_{prefix}_l0_s0_e{}", id_gen.next_tag_id)
     } else {
         format!("{prefix}_{}", id_gen.next_tag_id)
     };
@@ -1550,8 +1548,9 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             }
             replacements
         }
-        EffectAst::Investigate { count }
-        | EffectAst::Proliferate { count } => bind_unresolved_it_in_value(count, seed_tag),
+        EffectAst::Investigate { count } | EffectAst::Proliferate { count } => {
+            bind_unresolved_it_in_value(count, seed_tag)
+        }
         EffectAst::CreateTokenCopy { object, count, .. } => {
             bind_unresolved_it_in_object_ref_ast(object, seed_tag)
                 + bind_unresolved_it_in_value(count, seed_tag)

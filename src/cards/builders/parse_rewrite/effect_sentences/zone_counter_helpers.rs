@@ -1,14 +1,13 @@
 use crate::cards::TextSpan;
 use crate::cards::builders::{
     CardTextError, ChoiceCount, EffectAst, IT_TAG, PlayerAst, PredicateAst, SubjectAst, TargetAst,
-    Token,
+    OwnedLexToken,
 };
 use crate::effect::EventValueSpec;
 use crate::target::{ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
 use crate::zone::Zone;
 use crate::{ChooseSpec, CounterType, TagKey, Value};
 
-use super::conditionals::parse_predicate;
 use super::super::activation_and_restrictions::parse_devotion_value_from_add_clause;
 use super::super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_dynamic_cost_modifier_value,
@@ -21,8 +20,9 @@ use super::super::util::{
 use super::super::value_helpers::{
     parse_equal_to_aggregate_filter_value, parse_equal_to_number_of_filter_value,
 };
+use super::conditionals::parse_predicate;
 
-fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
+fn parse_create_for_each_dynamic_count(tokens: &[OwnedLexToken]) -> Option<Value> {
     let clause_words = words(tokens);
     if clause_words.starts_with(&["creature", "that", "died", "this", "turn"])
         || clause_words.starts_with(&["creatures", "that", "died", "this", "turn"])
@@ -64,17 +64,16 @@ fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
         "color", "of", "mana", "spent", "to", "cast", "this", "spell",
     ]) || clause_words.starts_with(&[
         "colors", "of", "mana", "spent", "to", "cast", "this", "spell",
-    ]) || clause_words.starts_with(&[
-        "color", "of", "mana", "used", "to", "cast", "this", "spell",
-    ]) || clause_words.starts_with(&[
-        "colors", "of", "mana", "used", "to", "cast", "this", "spell",
-    ]) {
+    ]) || clause_words
+        .starts_with(&["color", "of", "mana", "used", "to", "cast", "this", "spell"])
+        || clause_words.starts_with(&[
+            "colors", "of", "mana", "used", "to", "cast", "this", "spell",
+        ])
+    {
         return Some(Value::ColorsOfManaSpentToCastThisSpell);
     }
     if clause_words.starts_with(&["basic", "land", "type", "among", "lands", "you", "control"])
-        || clause_words.starts_with(&[
-            "basic", "land", "types", "among", "lands", "you", "control",
-        ])
+        || clause_words.starts_with(&["basic", "land", "types", "among", "lands", "you", "control"])
         || clause_words.starts_with(&[
             "basic", "land", "type", "among", "the", "lands", "you", "control",
         ])
@@ -114,7 +113,7 @@ pub(crate) fn sentence_case_mode_text(text: &str) -> String {
 }
 
 pub(crate) fn parse_counter_descriptor(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<(u32, CounterType), CardTextError> {
     let descriptor = trim_commas(tokens);
     let (count, used) = parse_number(&descriptor).ok_or_else(|| {
@@ -142,7 +141,7 @@ pub(crate) fn parse_counter_descriptor(
     Ok((count, counter_type))
 }
 
-fn parse_referential_counter_count_value(tokens: &[Token]) -> Option<(Value, usize)> {
+fn parse_referential_counter_count_value(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
     let words_all = words(tokens);
     if words_all.is_empty() {
         return None;
@@ -167,7 +166,10 @@ fn parse_referential_counter_count_value(tokens: &[Token]) -> Option<(Value, usi
         idx += 1;
         None
     } else if let Some(counter_type) = parse_counter_type_word(word) {
-        if !matches!(words_all.get(idx + 1).copied(), Some("counter" | "counters")) {
+        if !matches!(
+            words_all.get(idx + 1).copied(),
+            Some("counter" | "counters")
+        ) {
             return None;
         }
         idx += 2;
@@ -179,7 +181,7 @@ fn parse_referential_counter_count_value(tokens: &[Token]) -> Option<(Value, usi
     Some((Value::CountersOn(Box::new(source_spec), counter_type), idx))
 }
 
-fn parse_put_counter_count_value(tokens: &[Token]) -> Result<(Value, usize), CardTextError> {
+fn parse_put_counter_count_value(tokens: &[OwnedLexToken]) -> Result<(Value, usize), CardTextError> {
     let clause = words(tokens).join(" ");
     let words_all = words(tokens);
 
@@ -216,10 +218,7 @@ fn parse_put_counter_count_value(tokens: &[Token]) -> Result<(Value, usize), Car
     })
 }
 
-fn target_from_counter_source_spec(
-    spec: &ChooseSpec,
-    span: Option<TextSpan>,
-) -> Option<TargetAst> {
+fn target_from_counter_source_spec(spec: &ChooseSpec, span: Option<TextSpan>) -> Option<TargetAst> {
     match spec {
         ChooseSpec::Source => Some(TargetAst::Source(span)),
         ChooseSpec::Tagged(tag) => Some(TargetAst::Tagged(tag.clone(), span)),
@@ -269,7 +268,7 @@ fn merge_it_match_filter_into_target(target: &mut TargetAst, it_filter: &ObjectF
     true
 }
 
-pub(crate) fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+pub(crate) fn parse_put_counters(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     let (count_value, used) = parse_put_counter_count_value(tokens)?;
     let rest = &tokens[used..];
     let on_idx = rest
@@ -346,8 +345,12 @@ pub(crate) fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardText
 
     if let Value::Fixed(fixed_count) = count_value
         && fixed_count >= 0
-        && let Some(mut effect) =
-            parse_put_or_remove_counter_choice(fixed_count as u32, counter_type, &target_tokens, tokens)?
+        && let Some(mut effect) = parse_put_or_remove_counter_choice(
+            fixed_count as u32,
+            counter_type,
+            &target_tokens,
+            tokens,
+        )?
     {
         let mut predicate = trailing_predicate.clone();
         if let Some(PredicateAst::ItMatches(filter)) = predicate.as_ref()
@@ -424,11 +427,12 @@ pub(crate) fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardText
             {
                 predicate = None;
             }
-            let mut count = if let Some(dynamic) = parse_create_for_each_dynamic_count(&count_filter_tokens) {
-                dynamic
-            } else {
-                Value::Count(parse_object_filter(&count_filter_tokens, false)?)
-            };
+            let mut count =
+                if let Some(dynamic) = parse_create_for_each_dynamic_count(&count_filter_tokens) {
+                    dynamic
+                } else {
+                    Value::Count(parse_object_filter(&count_filter_tokens, false)?)
+                };
             if let Value::Fixed(multiplier) = count_value.clone()
                 && multiplier > 1
             {
@@ -481,7 +485,7 @@ pub(crate) fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardText
 }
 
 pub(crate) fn parse_sentence_put_multiple_counters_on_target(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
     if !matches!(clause_words.first().copied(), Some("put") | Some("puts")) {
@@ -508,14 +512,20 @@ pub(crate) fn parse_sentence_put_multiple_counters_on_target(
     if first_desc.is_empty() || second_desc.is_empty() {
         return Ok(None);
     }
-    if first_desc.iter().any(|token| matches!(token, Token::Comma(_)))
-        || second_desc.iter().any(|token| matches!(token, Token::Comma(_)))
+    if first_desc
+        .iter()
+        .any(|token| token.is_comma())
+        || second_desc
+            .iter()
+            .any(|token| token.is_comma())
     {
         return Ok(None);
     }
     let first_words = words(&first_desc);
     let second_words = words(&second_desc);
-    if !first_words.iter().any(|word| *word == "counter" || *word == "counters")
+    if !first_words
+        .iter()
+        .any(|word| *word == "counter" || *word == "counters")
         || !second_words
             .iter()
             .any(|word| *word == "counter" || *word == "counters")
@@ -574,8 +584,8 @@ pub(crate) fn parse_sentence_put_multiple_counters_on_target(
 fn parse_put_or_remove_counter_choice(
     put_count: u32,
     put_counter_type: CounterType,
-    target_tokens: &[Token],
-    clause_tokens: &[Token],
+    target_tokens: &[OwnedLexToken],
+    clause_tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let Some(or_idx) = target_tokens
         .windows(2)
@@ -595,12 +605,13 @@ fn parse_put_or_remove_counter_choice(
     }
 
     let mut idx = 1usize;
-    let (remove_count, used_remove_count) = parse_value(&remove_tokens[idx..]).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "missing counter removal amount in put-or-remove clause (clause: '{}')",
-            words(clause_tokens).join(" ")
-        ))
-    })?;
+    let (remove_count, used_remove_count) =
+        parse_value(&remove_tokens[idx..]).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing counter removal amount in put-or-remove clause (clause: '{}')",
+                words(clause_tokens).join(" ")
+            ))
+        })?;
     idx += used_remove_count;
 
     let from_idx = remove_tokens[idx..]
@@ -686,7 +697,7 @@ fn parse_put_or_remove_counter_choice(
 }
 
 pub(crate) fn parse_counter_target_count_prefix(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<(ChoiceCount, usize)>, CardTextError> {
     if tokens.is_empty() {
         return Ok(None);
@@ -748,12 +759,12 @@ pub(crate) fn parse_counter_target_count_prefix(
         let mut pos = idx + used_first;
         let mut values = vec![first];
         loop {
-            while matches!(tokens.get(pos), Some(Token::Comma(_))) {
+            while tokens.get(pos).is_some_and(OwnedLexToken::is_comma) {
                 pos += 1;
             }
             if tokens.get(pos).is_some_and(|token| token.is_word("or")) {
                 pos += 1;
-                while matches!(tokens.get(pos), Some(Token::Comma(_))) {
+                while tokens.get(pos).is_some_and(OwnedLexToken::is_comma) {
                     pos += 1;
                 }
             }
@@ -795,7 +806,7 @@ pub(crate) fn parse_counter_target_count_prefix(
     Ok(None)
 }
 
-pub(crate) fn split_until_source_leaves_tail(tokens: &[Token]) -> (&[Token], bool) {
+pub(crate) fn split_until_source_leaves_tail(tokens: &[OwnedLexToken]) -> (&[OwnedLexToken], bool) {
     let Some(until_idx) = tokens.iter().rposition(|token| token.is_word("until")) else {
         return (tokens, false);
     };
@@ -832,26 +843,64 @@ fn player_filter_for_set_life_total_reference(player: PlayerAst) -> Option<Playe
 }
 
 pub(crate) fn parse_half_starting_life_total_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     player: PlayerAst,
 ) -> Option<Value> {
     let clause_words = words(tokens);
     let inferred_player_filter = || match clause_words.as_slice() {
         ["half", "your", "starting", "life", "total"]
         | ["half", "your", "starting", "life", "total", "rounded", "up"]
-        | ["half", "your", "starting", "life", "total", "rounded", "down"] => {
-            Some(PlayerFilter::You)
-        }
+        | [
+            "half",
+            "your",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::You),
         ["half", "target", "players", "starting", "life", "total"]
-        | ["half", "target", "players", "starting", "life", "total", "rounded", "up"]
-        | ["half", "target", "players", "starting", "life", "total", "rounded", "down"] => {
-            Some(PlayerFilter::target_player())
-        }
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ]
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::target_player()),
         ["half", "an", "opponents", "starting", "life", "total"]
-        | ["half", "an", "opponents", "starting", "life", "total", "rounded", "up"]
-        | ["half", "an", "opponents", "starting", "life", "total", "rounded", "down"] => {
-            Some(PlayerFilter::Opponent)
-        }
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ]
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::Opponent),
         _ => None,
     };
     let player_filter =
@@ -863,13 +912,27 @@ pub(crate) fn parse_half_starting_life_total_value(
             player_filter == PlayerFilter::You
         }
         ["half", "target", "players", "starting", "life", "total"]
-        | ["half", "target", "players", "starting", "life", "total", "rounded", "up"] => {
-            player_filter == PlayerFilter::target_player()
-        }
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ] => player_filter == PlayerFilter::target_player(),
         ["half", "an", "opponents", "starting", "life", "total"]
-        | ["half", "an", "opponents", "starting", "life", "total", "rounded", "up"] => {
-            player_filter == PlayerFilter::Opponent
-        }
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ] => player_filter == PlayerFilter::Opponent,
         _ => false,
     };
     if rounded_up {
@@ -877,15 +940,35 @@ pub(crate) fn parse_half_starting_life_total_value(
     }
 
     let rounded_down = match clause_words.as_slice() {
-        ["half", "your", "starting", "life", "total", "rounded", "down"] => {
-            player_filter == PlayerFilter::You
-        }
-        ["half", "target", "players", "starting", "life", "total", "rounded", "down"] => {
-            player_filter == PlayerFilter::target_player()
-        }
-        ["half", "an", "opponents", "starting", "life", "total", "rounded", "down"] => {
-            player_filter == PlayerFilter::Opponent
-        }
+        [
+            "half",
+            "your",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::You,
+        [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::target_player(),
+        [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::Opponent,
         _ => false,
     };
     if rounded_down {
@@ -895,7 +978,7 @@ pub(crate) fn parse_half_starting_life_total_value(
     None
 }
 
-pub(crate) fn parse_transform(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+pub(crate) fn parse_transform(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
         return Ok(EffectAst::Transform {
             target: TargetAst::Source(None),

@@ -1,67 +1,63 @@
-#[allow(unused_imports)]
-use super::{Verb, find_verb, parse_effect_chain};
-use super::sentence_helpers::*;
-use super::dispatch_inner::trim_edge_punctuation;
-use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
-use super::super::compile_support::compile_statement_effects;
 use super::super::activation_and_restrictions::parse_triggered_line;
+use super::super::compile_support::compile_statement_effects;
+use super::super::lexer::{OwnedLexToken, lexed_words, trim_lexed_commas};
+use super::super::native_tokens::LowercaseWordView;
+use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
 use super::super::object_filters::{parse_object_filter, split_on_or};
 use super::super::util::{
-    is_article, is_source_reference_words, parse_mana_symbol, parse_target_phrase, span_from_tokens,
-    token_index_for_word_index, trim_commas, words,
+    compat_tokens_from_lexed, is_article, is_source_reference_words, parse_mana_symbol,
+    parse_target_phrase, span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
+use super::dispatch_inner::trim_edge_punctuation;
+use super::lex_chain_helpers::find_verb_lexed;
+use super::sentence_helpers::*;
+#[allow(unused_imports)]
+use super::{Verb, find_verb, parse_effect_chain};
 use crate::cards::builders::{
     CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ReferenceImports,
-    TagKey, TargetAst, Token,
+    TagKey, TargetAst, TextSpan,
 };
 use crate::effect::Until;
 use crate::mana::ManaCost;
 use crate::target::PlayerFilter;
 use crate::zone::Zone;
 
-fn display_text_for_tokens(tokens: &[Token]) -> String {
+fn display_text_for_tokens(tokens: &[OwnedLexToken]) -> String {
     let mut text = String::new();
     let mut needs_space = false;
     let mut in_effect_text = false;
 
     for token in tokens {
-        match token {
-            Token::Word(word, _) => {
-                if needs_space && !text.is_empty() {
-                    text.push(' ');
-                }
-                let numeric_like = word
-                    .chars()
-                    .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
-                let rendered = match word.as_str() {
-                    "t" => "{T}".to_string(),
-                    "q" => "{Q}".to_string(),
-                    _ if in_effect_text && numeric_like => word.clone(),
-                    _ => parse_mana_symbol(word)
-                        .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
-                        .unwrap_or_else(|_| word.clone()),
-                };
-                text.push_str(&rendered);
-                needs_space = true;
+        if let Some(word) = token.as_word() {
+            if needs_space && !text.is_empty() {
+                text.push(' ');
             }
-            Token::Colon(_) => {
-                text.push(':');
-                needs_space = true;
-                in_effect_text = true;
-            }
-            Token::Comma(_) => {
-                text.push(',');
-                needs_space = true;
-            }
-            Token::Period(_) => {
-                text.push('.');
-                needs_space = true;
-            }
-            Token::Semicolon(_) => {
-                text.push(';');
-                needs_space = true;
-            }
-            Token::Quote(_) => {}
+            let numeric_like = word
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+            let rendered = match word {
+                "t" => "{T}".to_string(),
+                "q" => "{Q}".to_string(),
+                _ if in_effect_text && numeric_like => word.to_string(),
+                _ => parse_mana_symbol(word)
+                    .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
+                    .unwrap_or_else(|_| word.to_string()),
+            };
+            text.push_str(&rendered);
+            needs_space = true;
+        } else if token.is_colon() {
+            text.push(':');
+            needs_space = true;
+            in_effect_text = true;
+        } else if token.is_comma() {
+            text.push(',');
+            needs_space = true;
+        } else if token.is_period() {
+            text.push('.');
+            needs_space = true;
+        } else if token.is_semicolon() {
+            text.push(';');
+            needs_space = true;
         }
     }
 
@@ -105,20 +101,209 @@ pub(crate) fn parse_simple_ability_duration(
     None
 }
 
+pub(crate) fn parse_simple_gain_ability_clause_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    parse_simple_ability_modifier_clause_lexed(tokens, false)
+}
+
+pub(crate) fn parse_simple_lose_ability_clause_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    parse_simple_ability_modifier_clause_lexed(tokens, true)
+}
+
+fn lexed_token_index_for_word_index(tokens: &[OwnedLexToken], word_idx: usize) -> Option<usize> {
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, token)| token.as_word().map(|_| idx))
+        .nth(word_idx)
+}
+
+fn span_from_lexed_tokens(tokens: &[OwnedLexToken]) -> Option<TextSpan> {
+    match (tokens.first(), tokens.last()) {
+        (Some(first), Some(last)) => Some(TextSpan {
+            line: first.span.line,
+            start: first.span.start,
+            end: last.span.end,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_simple_ability_modifier_clause_lexed(
+    tokens: &[OwnedLexToken],
+    losing: bool,
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = lexed_words(tokens);
+    let verb_idx = clause_words.iter().position(|word| {
+        if losing {
+            matches!(*word, "lose" | "loses")
+        } else {
+            matches!(*word, "gain" | "gains")
+        }
+    });
+    let Some(verb_idx) = verb_idx else {
+        return Ok(None);
+    };
+    let implied_it_subject = verb_idx == 0;
+    let Some(verb_token_idx) = lexed_token_index_for_word_index(tokens, verb_idx) else {
+        return Ok(None);
+    };
+
+    if !losing && matches!(clause_words[verb_idx], "gain" | "gains") {
+        let starts_with_life = clause_words
+            .get(verb_idx + 1)
+            .is_some_and(|word| *word == "life");
+        let starts_with_control = clause_words
+            .get(verb_idx + 1)
+            .is_some_and(|word| *word == "control");
+        if starts_with_life || starts_with_control {
+            return Ok(None);
+        }
+    }
+
+    let subject_tokens = trim_lexed_commas(&tokens[..verb_token_idx]);
+    if subject_tokens.is_empty() && !implied_it_subject {
+        return Ok(None);
+    }
+
+    if !losing
+        && !subject_tokens.is_empty()
+        && let Some((subject_verb, _)) = find_verb_lexed(subject_tokens)
+        && subject_verb != Verb::Get
+    {
+        return Ok(None);
+    }
+
+    let words_after_verb = &clause_words[verb_idx + 1..];
+    if words_after_verb.is_empty() {
+        return Ok(None);
+    }
+
+    let duration_phrase = parse_simple_ability_duration(words_after_verb);
+    let duration = duration_phrase
+        .as_ref()
+        .map(|(_, _, duration)| duration.clone())
+        .unwrap_or(Until::Forever);
+
+    let ability_end_word_idx = duration_phrase
+        .as_ref()
+        .map(|(start, _, _)| verb_idx + 1 + *start)
+        .unwrap_or(clause_words.len());
+    let ability_end_token_idx =
+        lexed_token_index_for_word_index(tokens, ability_end_word_idx).unwrap_or(tokens.len());
+    let ability_tokens = trim_lexed_commas(&tokens[verb_token_idx + 1..ability_end_token_idx]);
+    if ability_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let ability_compat = compat_tokens_from_lexed(ability_tokens);
+    let mut abilities = if let Some(actions) = parse_ability_line(&ability_compat) {
+        reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+        actions
+            .into_iter()
+            .map(GrantedAbilityAst::from)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    if abilities.is_empty()
+        && let Some(granted) =
+            parse_granted_activated_or_triggered_ability_for_gain(&ability_compat, &clause_words)?
+    {
+        abilities.push(granted);
+    }
+    if abilities.is_empty() {
+        return Ok(None);
+    }
+
+    if let Some((start, len, _)) = duration_phrase {
+        let tail_word_idx = verb_idx + 1 + start + len;
+        if let Some(tail_token_idx) = lexed_token_index_for_word_index(tokens, tail_word_idx) {
+            let trailing = trim_lexed_commas(&tokens[tail_token_idx..]);
+            if !trailing.is_empty() {
+                return Ok(None);
+            }
+        }
+    }
+
+    let subject_words = LowercaseWordView::new(subject_tokens);
+    let subject_word_refs = subject_words.to_word_refs();
+    let is_pronoun_subject =
+        implied_it_subject || matches!(subject_word_refs.as_slice(), ["it"] | ["they"] | ["them"]);
+    if is_pronoun_subject {
+        let target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_lexed_tokens(subject_tokens));
+        if losing {
+            return Ok(Some(EffectAst::RemoveAbilitiesFromTarget {
+                target,
+                abilities,
+                duration,
+            }));
+        }
+        return Ok(Some(EffectAst::GrantAbilitiesToTarget {
+            target,
+            abilities,
+            duration,
+        }));
+    }
+
+    let subject_compat = compat_tokens_from_lexed(subject_tokens);
+    let is_demonstrative_subject = subject_words
+        .first()
+        .is_some_and(|word| word == "that" || word == "those");
+    if is_demonstrative_subject || subject_words.find("target").is_some() {
+        let target = parse_target_phrase(&subject_compat)?;
+        if losing {
+            return Ok(Some(EffectAst::RemoveAbilitiesFromTarget {
+                target,
+                abilities,
+                duration,
+            }));
+        }
+        return Ok(Some(EffectAst::GrantAbilitiesToTarget {
+            target,
+            abilities,
+            duration,
+        }));
+    }
+
+    let filter = parse_object_filter(&subject_compat, false).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "unsupported subject in {}-ability clause (clause: '{}')",
+            if losing { "lose" } else { "gain" },
+            clause_words.join(" ")
+        ))
+    })?;
+    if losing {
+        return Ok(Some(EffectAst::RemoveAbilitiesAll {
+            filter,
+            abilities,
+            duration,
+        }));
+    }
+    Ok(Some(EffectAst::GrantAbilitiesAll {
+        filter,
+        abilities,
+        duration,
+    }))
+}
+
 pub(crate) fn parse_simple_gain_ability_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     parse_simple_ability_modifier_clause(tokens, false)
 }
 
 pub(crate) fn parse_simple_lose_ability_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     parse_simple_ability_modifier_clause(tokens, true)
 }
 
 pub(crate) fn parse_simple_ability_modifier_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     losing: bool,
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
@@ -273,7 +458,7 @@ pub(crate) fn parse_simple_ability_modifier_clause(
 }
 
 pub(crate) fn parse_gain_ability_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let word_list = words(tokens);
     let looks_like_can_attack_no_defender = word_list
@@ -373,7 +558,7 @@ pub(crate) fn parse_gain_ability_sentence(
     let has_explicit_duration =
         duration_phrase.is_some() || leading_duration_phrase.as_ref().is_some();
 
-    let mut trailing_tail_tokens: Vec<Token> = Vec::new();
+    let mut trailing_tail_tokens: Vec<OwnedLexToken> = Vec::new();
     if let Some((start_rel, len_words, _)) = duration_phrase {
         let tail_word_idx = gain_idx + 1 + start_rel + len_words;
         if let Some(tail_token_idx) = token_index_for_word_index(tokens, tail_word_idx) {
@@ -485,7 +670,7 @@ pub(crate) fn parse_gain_ability_sentence(
     // Check for pronoun subjects ("it", "they") that reference a prior tagged object.
     let real_subject_words: Vec<&str> = real_subject_tokens
         .iter()
-        .filter_map(Token::as_word)
+        .filter_map(OwnedLexToken::as_word)
         .collect();
     let is_pronoun_subject =
         real_subject_words.as_slice() == ["it"] || real_subject_words.as_slice() == ["they"];
@@ -662,7 +847,7 @@ pub(crate) fn parse_gain_ability_sentence(
 }
 
 pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
-    ability_tokens: &[Token],
+    ability_tokens: &[OwnedLexToken],
     clause_words: &[&str],
 ) -> Result<Option<GrantedAbilityAst>, CardTextError> {
     let ability_tokens = trim_edge_punctuation(ability_tokens);
@@ -672,7 +857,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
 
     let has_colon = ability_tokens
         .iter()
-        .any(|token| matches!(token, Token::Colon(_)));
+        .any(|token| token.is_colon());
     let looks_like_trigger = ability_tokens.first().is_some_and(|token| {
         token.is_word("when")
             || token.is_word("whenever")
@@ -725,7 +910,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
 
 pub(crate) fn append_gain_ability_trailing_effects(
     mut effects: Vec<EffectAst>,
-    trailing_tokens: &[Token],
+    trailing_tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
     if trailing_tokens.is_empty() {
         return Ok(effects);
@@ -750,7 +935,7 @@ pub(crate) fn append_gain_ability_trailing_effects(
     Ok(effects)
 }
 
-pub(crate) fn parse_choice_of_abilities(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
+pub(crate) fn parse_choice_of_abilities(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
     let tokens = trim_commas(tokens);
     let words = words(&tokens);
     let prefix_words = if words.starts_with(&["your", "choice", "of"]) {
@@ -789,7 +974,7 @@ pub(crate) fn parse_choice_of_abilities(tokens: &[Token]) -> Option<Vec<KeywordA
 }
 
 pub(crate) fn parse_gain_ability_to_source_sentence(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     let gain_idx = clause_words
@@ -818,11 +1003,12 @@ pub(crate) fn parse_gain_ability_to_source_sentence(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::lexer::lex_line;
+    use super::super::super::util::tokenize_line;
     use super::*;
     use crate::CardId;
     use crate::ability::AbilityKind;
     use crate::cards::builders::CardDefinitionBuilder;
-    use super::super::super::util::tokenize_line;
 
     #[test]
     fn gain_ability_to_source_keeps_parsed_ability_until_lowering() {
@@ -841,8 +1027,8 @@ mod tests {
             "expected parsed ability to remain unlowered in the AST, got {debug}"
         );
 
-        let compiled = compile_statement_effects(&[effect])
-            .expect("grant-to-source effect should lower");
+        let compiled =
+            compile_statement_effects(&[effect]).expect("grant-to-source effect should lower");
         assert!(
             format!("{compiled:?}").contains("GrantObjectAbilityEffect"),
             "expected source grant effect after lowering, got {compiled:?}"
@@ -869,8 +1055,8 @@ mod tests {
             "expected granted ability to remain unlowered in AST, got {debug}"
         );
 
-        let compiled = compile_statement_effects(&[effect])
-            .expect("target gain clause should lower");
+        let compiled =
+            compile_statement_effects(&[effect]).expect("target gain clause should lower");
         let compiled_debug = format!("{compiled:?}");
         assert!(
             compiled_debug.contains("ApplyContinuousEffect")
@@ -900,8 +1086,8 @@ mod tests {
             "expected removed ability to remain unlowered in AST, got {debug}"
         );
 
-        let compiled = compile_statement_effects(&[effect])
-            .expect("target lose clause should lower");
+        let compiled =
+            compile_statement_effects(&[effect]).expect("target lose clause should lower");
         let compiled_debug = format!("{compiled:?}");
         assert!(
             compiled_debug.contains("RemoveAbility"),
@@ -910,6 +1096,42 @@ mod tests {
         assert!(
             compiled_debug.contains("GrantObjectAbilityForFilter"),
             "expected removed granted object ability after lowering, got {compiled_debug}"
+        );
+    }
+
+    #[test]
+    fn lexed_target_gain_activated_ability_matches_legacy_clause() {
+        let text = "Target creature gains {T}: Draw a card until end of turn.";
+        let lexed = lex_line(text, 0).expect("rewrite lexer should classify gain clause");
+        let compat = tokenize_line(text, 0);
+
+        let lexed_effect = parse_simple_gain_ability_clause_lexed(&lexed)
+            .expect("lexed gain clause should parse");
+        let compat_effect =
+            parse_simple_gain_ability_clause(&compat).expect("legacy gain clause should parse");
+
+        assert_eq!(
+            format!("{lexed_effect:?}"),
+            format!("{compat_effect:?}"),
+            "lexed simple gain-ability clause should match legacy output"
+        );
+    }
+
+    #[test]
+    fn lexed_target_lose_activated_ability_matches_legacy_clause() {
+        let text = "Target creature loses {T}: Draw a card until end of turn.";
+        let lexed = lex_line(text, 0).expect("rewrite lexer should classify lose clause");
+        let compat = tokenize_line(text, 0);
+
+        let lexed_effect = parse_simple_lose_ability_clause_lexed(&lexed)
+            .expect("lexed lose clause should parse");
+        let compat_effect =
+            parse_simple_lose_ability_clause(&compat).expect("legacy lose clause should parse");
+
+        assert_eq!(
+            format!("{lexed_effect:?}"),
+            format!("{compat_effect:?}"),
+            "lexed simple lose-ability clause should match legacy output"
         );
     }
 

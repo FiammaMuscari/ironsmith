@@ -3655,7 +3655,6 @@ fn tokens_match_subsetish_with_threshold(
     (overlapping_tokens.len() as f32 / tokens.len() as f32) >= threshold
 }
 
-
 fn is_activation_restriction_tokens(tokens: &[String]) -> bool {
     tokens.len() >= 2 && tokens[0] == "activate" && tokens[1] == "only"
 }

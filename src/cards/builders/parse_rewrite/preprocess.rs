@@ -3,8 +3,8 @@ use crate::cards::builders::{
     ParseAnnotations,
 };
 
-use super::lexer::lex_line;
 use super::activation_and_restrictions::parse_single_word_keyword_action;
+use super::lexer::lex_line;
 use super::parser_support::{
     looks_like_spell_resolution_followup_intro_lexed, spell_card_prefers_resolution_line_merge,
 };
@@ -639,7 +639,11 @@ fn strip_labeled_ability_word_prefix_with_map(text: &str, map: &[usize]) -> (Str
     (remainder, remainder_map)
 }
 
-fn normalize_line_for_parse(line: &str, full_name: &str, short_name: &str) -> Option<NormalizedLine> {
+fn normalize_line_for_parse(
+    line: &str,
+    full_name: &str,
+    short_name: &str,
+) -> Option<NormalizedLine> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;

@@ -2,8 +2,8 @@ use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::cards::TextSpan;
 use crate::cards::builders::{
-    AdditionalCostChoiceOptionAst, CardTextError, KeywordAction, ParsedAbility, PlayerAst,
-    ReferenceImports, TargetAst, Token, IT_TAG,
+    AdditionalCostChoiceOptionAst, CardTextError, IT_TAG, KeywordAction, ParsedAbility, PlayerAst,
+    ReferenceImports, TargetAst,
 };
 use crate::cost::OptionalCost;
 use crate::cost::TotalCost;
@@ -17,41 +17,43 @@ use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
 use crate::{ChoiceCount, PowerToughness, PtValue, TagKey};
 
-use super::lexer::{TokenKind, lex_line};
-use super::clause_support::rewrite_parse_effect_sentences;
 use super::activation_and_restrictions::{parse_ability_phrase, parse_activation_cost};
+use super::clause_support::rewrite_parse_effect_sentences;
 use super::effect_sentences::{find_verb, parse_subtype_word, parse_supertype_word};
 use super::keyword_static::keyword_action_to_static_ability;
 use super::keyword_static::parse_this_spell_cost_condition;
+use super::lexer::{OwnedLexToken, TokenKind, lex_line};
 use super::object_filters::{parse_object_filter, split_on_or};
 
 fn push_legacy_compat_words(
     slice: &str,
     span: TextSpan,
     in_mana_braces: bool,
-    out: &mut Vec<Token>,
+    out: &mut Vec<OwnedLexToken>,
 ) {
     let mut buffer = String::new();
     let mut word_start: Option<usize> = None;
     let mut word_end = span.start;
     let chars: Vec<(usize, char)> = slice.char_indices().collect();
 
-    let flush =
-        |buffer: &mut String, out: &mut Vec<Token>, word_start: &mut Option<usize>, word_end: &mut usize| {
-            if !buffer.is_empty() {
-                let start = word_start.unwrap_or(span.start);
-                out.push(Token::Word(
-                    buffer.clone(),
-                    TextSpan {
-                        line: span.line,
-                        start,
-                        end: *word_end,
-                    },
-                ));
-                buffer.clear();
-            }
-            *word_start = None;
-        };
+    let flush = |buffer: &mut String,
+                 out: &mut Vec<OwnedLexToken>,
+                 word_start: &mut Option<usize>,
+                 word_end: &mut usize| {
+        if !buffer.is_empty() {
+            let start = word_start.unwrap_or(span.start);
+            out.push(OwnedLexToken::word(
+                buffer.clone(),
+                TextSpan {
+                    line: span.line,
+                    start,
+                    end: *word_end,
+                },
+            ));
+            buffer.clear();
+        }
+        *word_start = None;
+    };
 
     for (idx, (rel_idx, mut ch)) in chars.iter().copied().enumerate() {
         if ch == '−' {
@@ -100,11 +102,7 @@ fn push_legacy_compat_words(
     flush(&mut buffer, out, &mut word_start, &mut word_end);
 }
 
-pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<Token> {
-    let Ok(lexed) = lex_line(line, line_index) else {
-        return Vec::new();
-    };
-
+pub(crate) fn compat_tokens_from_lexed(lexed: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
     let mut tokens = Vec::new();
     let mut idx = 0usize;
     while idx < lexed.len() {
@@ -113,6 +111,7 @@ pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<Token> {
             TokenKind::Word => {
                 push_legacy_compat_words(token.slice.as_str(), token.span, false, &mut tokens);
             }
+            TokenKind::Tilde => tokens.push(OwnedLexToken::word("this", token.span)),
             TokenKind::ManaGroup => {
                 let inner = token.slice.trim_start_matches('{').trim_end_matches('}');
                 if !inner.is_empty() {
@@ -148,16 +147,16 @@ pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<Token> {
                 );
                 idx += 1;
             }
-            TokenKind::Comma => tokens.push(Token::Comma(token.span)),
-            TokenKind::Period => tokens.push(Token::Period(token.span)),
-            TokenKind::Colon => tokens.push(Token::Colon(token.span)),
-            TokenKind::Semicolon => tokens.push(Token::Semicolon(token.span)),
+            TokenKind::Comma => tokens.push(OwnedLexToken::comma(token.span)),
+            TokenKind::Period => tokens.push(OwnedLexToken::period(token.span)),
+            TokenKind::Colon => tokens.push(OwnedLexToken::colon(token.span)),
+            TokenKind::Semicolon => tokens.push(OwnedLexToken::semicolon(token.span)),
             TokenKind::Quote => {
                 if matches!(token.slice.as_str(), "\"" | "“" | "”") {
-                    tokens.push(Token::Quote(token.span));
+                    tokens.push(OwnedLexToken::quote(token.span));
                 }
             }
-            TokenKind::Half => tokens.push(Token::Word("1/2".to_string(), token.span)),
+            TokenKind::Half => tokens.push(OwnedLexToken::word("1/2", token.span)),
             _ => {}
         }
         idx += 1;
@@ -166,14 +165,15 @@ pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<Token> {
     tokens
 }
 
-pub(crate) fn words(tokens: &[Token]) -> Vec<&str> {
-    tokens
-        .iter()
-        .filter_map(|token| match token {
-            Token::Word(word, _) => Some(word.as_str()),
-            _ => None,
-        })
-        .collect()
+pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<OwnedLexToken> {
+    let Ok(lexed) = lex_line(line, line_index) else {
+        return Vec::new();
+    };
+    compat_tokens_from_lexed(&lexed)
+}
+
+pub(crate) fn words(tokens: &[OwnedLexToken]) -> Vec<&str> {
+    tokens.iter().filter_map(OwnedLexToken::as_word).collect()
 }
 
 pub(crate) fn is_article(word: &str) -> bool {
@@ -182,7 +182,7 @@ pub(crate) fn is_article(word: &str) -> bool {
 
 const SENTENCE_HELPER_TAG_PREFIX: &str = "__sentence_helper_";
 
-pub(crate) fn helper_tag_for_tokens(tokens: &[Token], prefix: &str) -> TagKey {
+pub(crate) fn helper_tag_for_tokens(tokens: &[OwnedLexToken], prefix: &str) -> TagKey {
     let span = match (tokens.first(), tokens.last()) {
         (Some(first), Some(last)) => {
             let first_span = first.span();
@@ -326,8 +326,8 @@ pub(crate) fn replace_unbound_x_with_value(
     }
 }
 
-pub(crate) fn starts_with_activation_cost(tokens: &[Token]) -> bool {
-    let Some(word) = tokens.first().and_then(Token::as_word) else {
+pub(crate) fn starts_with_activation_cost(tokens: &[OwnedLexToken]) -> bool {
+    let Some(word) = tokens.first().and_then(OwnedLexToken::as_word) else {
         return false;
     };
     if matches!(
@@ -352,7 +352,7 @@ pub(crate) fn starts_with_activation_cost(tokens: &[Token]) -> bool {
     parse_mana_symbol(word).is_ok()
 }
 
-pub(crate) fn find_activation_cost_start(tokens: &[Token]) -> Option<usize> {
+pub(crate) fn find_activation_cost_start(tokens: &[OwnedLexToken]) -> Option<usize> {
     (0..tokens.len()).find(|idx| starts_with_activation_cost(&tokens[*idx..]))
 }
 
@@ -394,23 +394,23 @@ pub(crate) fn is_basic_color_word(word: &str) -> bool {
     )
 }
 
-pub(crate) fn join_sentences_with_period(sentences: &[Vec<Token>]) -> Vec<Token> {
+pub(crate) fn join_sentences_with_period(sentences: &[Vec<OwnedLexToken>]) -> Vec<OwnedLexToken> {
     let mut joined = Vec::new();
     for (idx, sentence) in sentences.iter().enumerate() {
         if idx > 0 {
-            joined.push(Token::Period(TextSpan::synthetic()));
+            joined.push(OwnedLexToken::period(TextSpan::synthetic()));
         }
         joined.extend(sentence.clone());
     }
     joined
 }
 
-pub(crate) fn split_cost_segments(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_cost_segments(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
     for token in tokens {
-        if matches!(token, Token::Comma(_)) || token.is_word("and") {
+        if token.is_comma() || token.is_word("and") {
             if !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
             }
@@ -461,7 +461,7 @@ pub(crate) fn parse_next_end_step_token_delay_flags(tail_words: &[&str]) -> (boo
     (has_sacrifice_reference, has_exile_reference)
 }
 
-pub(crate) fn token_index_for_word_index(tokens: &[Token], word_index: usize) -> Option<usize> {
+pub(crate) fn token_index_for_word_index(tokens: &[OwnedLexToken], word_index: usize) -> Option<usize> {
     let mut seen_words = 0usize;
     for (idx, token) in tokens.iter().enumerate() {
         if token.as_word().is_none() {
@@ -475,13 +475,13 @@ pub(crate) fn token_index_for_word_index(tokens: &[Token], word_index: usize) ->
     None
 }
 
-pub(crate) fn trim_commas(tokens: &[Token]) -> Vec<Token> {
+pub(crate) fn trim_commas(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
     let mut start = 0usize;
     let mut end = tokens.len();
-    while start < end && matches!(tokens[start], Token::Comma(_)) {
+    while start < end && tokens[start].is_comma() {
         start += 1;
     }
-    while end > start && matches!(tokens[end - 1], Token::Comma(_)) {
+    while end > start && tokens[end - 1].is_comma() {
         end -= 1;
     }
     tokens[start..end].to_vec()
@@ -499,7 +499,7 @@ pub(crate) fn parser_trace_enabled() -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn parser_trace(stage: &str, tokens: &[Token]) {
+pub(crate) fn parser_trace(stage: &str, tokens: &[OwnedLexToken]) {
     if !parser_trace_enabled() {
         return;
     }
@@ -509,7 +509,7 @@ pub(crate) fn parser_trace(stage: &str, tokens: &[Token]) {
     );
 }
 
-pub(crate) fn parser_trace_stack(stage: &str, tokens: &[Token]) {
+pub(crate) fn parser_trace_stack(stage: &str, tokens: &[OwnedLexToken]) {
     if !parser_stacktrace_enabled() {
         return;
     }
@@ -520,16 +520,16 @@ pub(crate) fn parser_trace_stack(stage: &str, tokens: &[Token]) {
     eprintln!("{}", std::backtrace::Backtrace::force_capture());
 }
 
-pub(crate) fn split_on_period(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_on_period(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
     let mut quote_depth = 0u32;
 
     for token in tokens {
-        if matches!(token, Token::Quote(_)) {
+        if token.is_quote() {
             quote_depth = if quote_depth == 0 { 1 } else { 0 };
             current.push(token.clone());
-        } else if matches!(token, Token::Period(_)) && quote_depth == 0 {
+        } else if token.is_period() && quote_depth == 0 {
             if !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
             }
@@ -545,12 +545,12 @@ pub(crate) fn split_on_period(tokens: &[Token]) -> Vec<Vec<Token>> {
     segments
 }
 
-pub(crate) fn split_on_comma(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_on_comma(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
     for token in tokens {
-        if matches!(token, Token::Comma(_)) {
+        if token.is_comma() {
             if !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
             }
@@ -566,12 +566,12 @@ pub(crate) fn split_on_comma(tokens: &[Token]) -> Vec<Vec<Token>> {
     segments
 }
 
-pub(crate) fn split_on_comma_or_semicolon(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_on_comma_or_semicolon(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
     for token in tokens {
-        if matches!(token, Token::Comma(_) | Token::Semicolon(_)) {
+        if token.is_comma() || token.is_semicolon() {
             if !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
             }
@@ -653,7 +653,7 @@ pub(crate) fn map_span_to_original(
     }
 }
 
-pub(crate) fn split_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
+pub(crate) fn split_on_and(tokens: &[OwnedLexToken]) -> Vec<Vec<OwnedLexToken>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
@@ -926,7 +926,7 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
     }
 }
 
-pub(crate) fn parse_counter_type_from_tokens(tokens: &[Token]) -> Option<CounterType> {
+pub(crate) fn parse_counter_type_from_tokens(tokens: &[OwnedLexToken]) -> Option<CounterType> {
     let token_words = words(tokens);
 
     if let Some(counter_idx) = token_words
@@ -971,9 +971,7 @@ pub(crate) enum FilterKeywordConstraint {
     Marker(&'static str),
 }
 
-fn keyword_action_to_filter_constraint(
-    action: KeywordAction,
-) -> Option<FilterKeywordConstraint> {
+fn keyword_action_to_filter_constraint(action: KeywordAction) -> Option<FilterKeywordConstraint> {
     use FilterKeywordConstraint::{Marker, Static};
 
     if let KeywordAction::Landwalk(subtype) = action {
@@ -1037,7 +1035,7 @@ pub(crate) fn parse_filter_keyword_constraint_words(
     for len in (1..=max_len).rev() {
         let tokens = words[..len]
             .iter()
-            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
         let Some(action) = parse_ability_phrase(&tokens) else {
             continue;
@@ -1079,7 +1077,7 @@ pub(crate) fn parse_filter_counter_constraint_words(
     }
     let descriptor_tokens = descriptor_words
         .iter()
-        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
     let counter_type = if descriptor_tokens.len() == 1 {
         parse_counter_type_word(descriptor_words[0])?
@@ -1127,7 +1125,7 @@ pub(crate) fn apply_filter_keyword_constraint(
     }
 }
 
-pub(crate) fn parse_flashback_keyword_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
+pub(crate) fn parse_flashback_keyword_line(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
     let words_all = words(tokens);
     if words_all.first().copied() != Some("flashback") {
         return None;
@@ -1219,12 +1217,9 @@ pub(crate) fn parse_scryfall_mana_cost(raw: &str) -> Result<ManaCost, CardTextEr
     Ok(ManaCost::from_pips(pips))
 }
 
-pub(crate) fn parse_number_or_x_value(tokens: &[Token]) -> Option<(Value, usize)> {
+pub(crate) fn parse_number_or_x_value(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
     let token = tokens.first()?;
-    let word = match token {
-        Token::Word(word, _) => word.as_str(),
-        _ => return None,
-    };
+    let word = token.as_word()?;
 
     if word == "x" {
         return Some((Value::X, 1));
@@ -1249,6 +1244,11 @@ pub(crate) fn parse_number_or_x_value(tokens: &[Token]) -> Option<(Value, usize)
     };
 
     Some((Value::Fixed(value), 1))
+}
+
+pub(crate) fn parse_number_or_x_value_lexed(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_number_or_x_value(&compat)
 }
 
 pub(crate) fn parse_number_word_i32(word: &str) -> Option<i32> {
@@ -1430,7 +1430,9 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
                 | ["those", "permanents"]
         ) {
             let value = Value::CountersOn(
-                Box::new(ChooseSpec::Tagged(TagKey::from(crate::cards::builders::IT_TAG))),
+                Box::new(ChooseSpec::Tagged(TagKey::from(
+                    crate::cards::builders::IT_TAG,
+                ))),
                 parsed_counter_type,
             );
             return Some((value, reference_end));
@@ -1487,7 +1489,7 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
             let count_filter_tokens = filter_words
                 [..filter_words.len().saturating_sub(suffix.len())]
                 .iter()
-                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();
             if let Ok(filter) = parse_object_filter(&count_filter_tokens, false) {
                 let exclude_source = count_filter_tokens
@@ -1506,7 +1508,7 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
     }
     let filter_tokens = words[filter_start..filter_end]
         .iter()
-        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .map(|word| OwnedLexToken::word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
     let filter = parse_object_filter(&filter_tokens, false).ok()?;
     Some((Value::Count(filter), filter_end))
@@ -1539,14 +1541,14 @@ pub(crate) fn parse_value_expr_words(words: &[&str]) -> Option<(Value, usize)> {
     Some((value, used))
 }
 
-pub(crate) fn parse_value_expr(tokens: &[Token]) -> Option<(Value, usize)> {
-    let words = tokens.iter().filter_map(Token::as_word).collect::<Vec<_>>();
+pub(crate) fn parse_value_expr(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
+    let words = tokens.iter().filter_map(OwnedLexToken::as_word).collect::<Vec<_>>();
     let (value, used_words) = parse_value_expr_words(&words)?;
     let used = token_index_for_word_index(tokens, used_words).unwrap_or(tokens.len());
     Some((value, used))
 }
 
-pub(crate) fn parse_value(tokens: &[Token]) -> Option<(Value, usize)> {
+pub(crate) fn parse_value(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
     parse_value_expr(tokens)
 }
 
@@ -1569,7 +1571,7 @@ pub(crate) enum SubjectAst {
     This,
 }
 
-pub(crate) fn parse_subject(tokens: &[Token]) -> SubjectAst {
+pub(crate) fn parse_subject(tokens: &[OwnedLexToken]) -> SubjectAst {
     let words = words(tokens);
     if words.is_empty() {
         return SubjectAst::This;
@@ -1689,7 +1691,7 @@ pub(crate) fn parse_subject(tokens: &[Token]) -> SubjectAst {
     SubjectAst::This
 }
 
-pub(crate) fn span_from_tokens(tokens: &[Token]) -> Option<TextSpan> {
+pub(crate) fn span_from_tokens(tokens: &[OwnedLexToken]) -> Option<TextSpan> {
     let first = tokens.first()?;
     let last = tokens.last()?;
     let first_span = first.span();
@@ -1701,7 +1703,7 @@ pub(crate) fn span_from_tokens(tokens: &[Token]) -> Option<TextSpan> {
     })
 }
 
-pub(crate) fn parse_number(tokens: &[Token]) -> Option<(u32, usize)> {
+pub(crate) fn parse_number(tokens: &[OwnedLexToken]) -> Option<(u32, usize)> {
     let token = tokens.first()?;
     let word = token.as_word()?;
 
@@ -1726,7 +1728,7 @@ pub(crate) fn parse_number(tokens: &[Token]) -> Option<(u32, usize)> {
     Some((value, 1))
 }
 
-pub(crate) fn parse_target_count_range_prefix(tokens: &[Token]) -> Option<(ChoiceCount, usize)> {
+pub(crate) fn parse_target_count_range_prefix(tokens: &[OwnedLexToken]) -> Option<(ChoiceCount, usize)> {
     let (first, first_used) = parse_number(tokens)?;
     let or_idx = first_used;
     if !tokens.get(or_idx).is_some_and(|token| token.is_word("or")) {
@@ -1793,7 +1795,7 @@ pub(crate) fn is_source_from_your_graveyard_words(words: &[&str]) -> bool {
         && words.contains(&"graveyard")
 }
 
-pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+pub(crate) fn parse_target_phrase(tokens: &[OwnedLexToken]) -> Result<TargetAst, CardTextError> {
     let all_words = words(tokens);
     if matches!(
         all_words.as_slice(),
@@ -1844,7 +1846,7 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     }
 }
 
-fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, CardTextError> {
     let mut tokens = tokens;
     while tokens.first().is_some_and(|token| token.is_word("then")) {
         tokens = &tokens[1..];
@@ -1994,7 +1996,9 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
     }
 
     if tokens.get(idx).is_some_and(|token| token.is_word("any"))
-        && tokens.get(idx + 1).is_some_and(|token| token.is_word("number"))
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|token| token.is_word("number"))
         && tokens.get(idx + 2).is_some_and(|token| token.is_word("of"))
     {
         target_count = Some(ChoiceCount::any_number());
@@ -2009,7 +2013,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
             target_count = Some(choice_count_from_value(&value, true));
             idx += used;
         } else {
-            let next_word = tokens.get(idx).and_then(Token::as_word).unwrap_or("?");
+            let next_word = tokens.get(idx).and_then(OwnedLexToken::as_word).unwrap_or("?");
             return Err(CardTextError::ParseError(format!(
                 "unsupported dynamic or missing target count after 'up to' (found '{next_word}' in clause: '{}')",
                 words(tokens).join(" ")
@@ -2031,7 +2035,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
         let mut object_selector_idx = idx + used;
         while tokens
             .get(object_selector_idx)
-            .and_then(Token::as_word)
+            .and_then(OwnedLexToken::as_word)
             .is_some_and(|word| {
                 matches!(
                     word,
@@ -2059,7 +2063,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
         }
         let next_is_object_selector = tokens
             .get(object_selector_idx)
-            .and_then(Token::as_word)
+            .and_then(OwnedLexToken::as_word)
             .is_some_and(|word| {
                 matches!(
                     word,
@@ -2078,7 +2082,10 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
                 ) || parse_card_type(word).is_some()
                     || parse_non_type(word).is_some()
                     || parse_subtype_word(word).is_some()
-                    || word.strip_suffix('s').and_then(parse_subtype_word).is_some()
+                    || word
+                        .strip_suffix('s')
+                        .and_then(parse_subtype_word)
+                        .is_some()
             });
         if next_is_target || next_is_other_target || next_is_object_selector {
             target_count = Some(choice_count_from_value(&value, false));
@@ -2094,7 +2101,11 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
         idx += 1;
     }
 
-    while tokens.get(idx).and_then(Token::as_word).is_some_and(is_article) {
+    while tokens
+        .get(idx)
+        .and_then(OwnedLexToken::as_word)
+        .is_some_and(is_article)
+    {
         idx += 1;
     }
 
@@ -2107,7 +2118,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
             let mut object_selector_idx = count_idx + used;
             while tokens
                 .get(object_selector_idx)
-                .and_then(Token::as_word)
+                .and_then(OwnedLexToken::as_word)
                 .is_some_and(|word| {
                     matches!(
                         word,
@@ -2135,7 +2146,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
             }
             let next_is_object_selector = tokens
                 .get(object_selector_idx)
-                .and_then(Token::as_word)
+                .and_then(OwnedLexToken::as_word)
                 .is_some_and(|word| {
                     matches!(
                         word,
@@ -2154,7 +2165,10 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
                     ) || parse_card_type(word).is_some()
                         || parse_non_type(word).is_some()
                         || parse_subtype_word(word).is_some()
-                        || word.strip_suffix('s').and_then(parse_subtype_word).is_some()
+                        || word
+                            .strip_suffix('s')
+                            .and_then(parse_subtype_word)
+                            .is_some()
                 });
             if next_is_object_selector {
                 target_count = Some(choice_count_from_value(&value, false));
@@ -2186,7 +2200,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
         }
     }
 
-    if let Some(ordinal_word) = tokens.get(idx).and_then(Token::as_word)
+    if let Some(ordinal_word) = tokens.get(idx).and_then(OwnedLexToken::as_word)
         && matches!(
             ordinal_word,
             "first"
@@ -2673,7 +2687,7 @@ fn parse_target_phrase_inner(tokens: &[Token]) -> Result<TargetAst, CardTextErro
             .iter()
             .rev()
             .find(|token| token.is_word("it"))
-            .map(Token::span)
+            .map(OwnedLexToken::span)
     } else {
         None
     };
@@ -2758,7 +2772,7 @@ fn parse_pt_value(raw: &str) -> Option<PtValue> {
 }
 
 pub(crate) fn parse_level_up_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
     let token_words = words(tokens);
     if token_words.len() < 3 || token_words[0] != "level" || token_words[1] != "up" {
@@ -2806,6 +2820,13 @@ pub(crate) fn parse_level_up_line(
     }))
 }
 
+pub(crate) fn parse_level_up_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ParsedAbility>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_level_up_line(&compat)
+}
+
 pub(crate) fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
     let words: Vec<&str> = prefix
         .split_whitespace()
@@ -2839,7 +2860,7 @@ pub(crate) fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
 }
 
 pub(crate) fn parse_self_free_cast_alternative_cost_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Option<AlternativeCastingMethod> {
     let clause_words = words(tokens);
     let is_self_free_cast_clause = clause_words
@@ -2861,6 +2882,13 @@ pub(crate) fn parse_self_free_cast_alternative_cost_line(
     ))
 }
 
+pub(crate) fn parse_self_free_cast_alternative_cost_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Option<AlternativeCastingMethod> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_self_free_cast_alternative_cost_line(&compat)
+}
+
 fn leading_mana_symbols_to_oracle(words_all: &[&str]) -> Option<(String, usize)> {
     let mut symbols = Vec::new();
     let mut consumed = 0usize;
@@ -2878,7 +2906,7 @@ fn leading_mana_symbols_to_oracle(words_all: &[&str]) -> Option<(String, usize)>
 }
 
 pub(crate) fn parse_madness_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !tokens.first().is_some_and(|token| token.is_word("madness")) {
         return Ok(None);
@@ -2893,7 +2921,7 @@ pub(crate) fn parse_madness_line(
 
     let cost_end = cost_tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
         .unwrap_or(cost_tokens.len());
     let cost_tokens = &cost_tokens[..cost_end];
     if cost_tokens.is_empty() {
@@ -2910,7 +2938,14 @@ pub(crate) fn parse_madness_line(
     Ok(Some(AlternativeCastingMethod::Madness { cost: mana_cost }))
 }
 
-pub(crate) fn parse_buyback_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+pub(crate) fn parse_madness_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_madness_line(&compat)
+}
+
+pub(crate) fn parse_buyback_line(tokens: &[OwnedLexToken]) -> Result<Option<OptionalCost>, CardTextError> {
     if !tokens.first().is_some_and(|token| token.is_word("buyback")) {
         return Ok(None);
     }
@@ -2947,8 +2982,15 @@ pub(crate) fn parse_buyback_line(tokens: &[Token]) -> Result<Option<OptionalCost
     Ok(Some(OptionalCost::buyback(total_cost)))
 }
 
+pub(crate) fn parse_buyback_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_buyback_line(&compat)
+}
+
 pub(crate) fn parse_optional_cost_keyword_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     keyword: &str,
     constructor: fn(TotalCost) -> OptionalCost,
 ) -> Result<Option<OptionalCost>, CardTextError> {
@@ -2975,7 +3017,7 @@ pub(crate) fn parse_optional_cost_keyword_line(
         .unwrap_or(tail.len());
     let sentence_end = tail
         .iter()
-        .position(|token| matches!(token, Token::Period(_)))
+        .position(|token| token.is_period())
         .unwrap_or(tail.len());
     let end = reminder_start.min(sentence_end);
     let cost_tokens = trim_commas(&tail[..end]);
@@ -2989,34 +3031,69 @@ pub(crate) fn parse_optional_cost_keyword_line(
     Ok(Some(constructor(total_cost)))
 }
 
-pub(crate) fn parse_kicker_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+pub(crate) fn parse_kicker_line(tokens: &[OwnedLexToken]) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "kicker", OptionalCost::kicker)
 }
 
+pub(crate) fn parse_kicker_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_kicker_line(&compat)
+}
+
 pub(crate) fn parse_multikicker_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "multikicker", OptionalCost::multikicker)
 }
 
-pub(crate) fn parse_squad_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+pub(crate) fn parse_multikicker_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_multikicker_line(&compat)
+}
+
+pub(crate) fn parse_squad_line(tokens: &[OwnedLexToken]) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "squad", OptionalCost::squad)
 }
 
+pub(crate) fn parse_squad_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_squad_line(&compat)
+}
+
 pub(crate) fn parse_offspring_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "offspring", OptionalCost::offspring)
 }
 
-pub(crate) fn parse_entwine_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+pub(crate) fn parse_offspring_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_offspring_line(&compat)
+}
+
+pub(crate) fn parse_entwine_line(tokens: &[OwnedLexToken]) -> Result<Option<OptionalCost>, CardTextError> {
     parse_optional_cost_keyword_line(tokens, "entwine", OptionalCost::entwine)
 }
 
+pub(crate) fn parse_entwine_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<OptionalCost>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_entwine_line(&compat)
+}
+
 pub(crate) fn parse_morph_keyword_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let Some(first_word) = tokens.first().and_then(Token::as_word) else {
+    let Some(first_word) = tokens.first().and_then(OwnedLexToken::as_word) else {
         return Ok(None);
     };
 
@@ -3072,8 +3149,15 @@ pub(crate) fn parse_morph_keyword_line(
     }))
 }
 
+pub(crate) fn parse_morph_keyword_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ParsedAbility>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_morph_keyword_line(&compat)
+}
+
 pub(crate) fn parse_escape_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !tokens.first().is_some_and(|token| token.is_word("escape")) {
         return Ok(None);
@@ -3088,7 +3172,7 @@ pub(crate) fn parse_escape_line(
 
     let comma_idx = tokens[cost_start..]
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
         .map(|idx| cost_start + idx)
         .ok_or_else(|| {
             CardTextError::ParseError("escape keyword missing exile clause separator".to_string())
@@ -3160,8 +3244,15 @@ pub(crate) fn parse_escape_line(
     }))
 }
 
+pub(crate) fn parse_escape_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_escape_line(&compat)
+}
+
 pub(crate) fn parse_flashback_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !tokens
         .first()
@@ -3187,8 +3278,15 @@ pub(crate) fn parse_flashback_line(
     Ok(Some(AlternativeCastingMethod::Flashback { total_cost }))
 }
 
+pub(crate) fn parse_flashback_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_flashback_line(&compat)
+}
+
 pub(crate) fn parse_warp_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !tokens.first().is_some_and(|token| token.is_word("warp")) {
         return Ok(None);
@@ -3203,8 +3301,15 @@ pub(crate) fn parse_warp_line(
     Ok(Some(AlternativeCastingMethod::Warp { cost }))
 }
 
+pub(crate) fn parse_warp_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_warp_line(&compat)
+}
+
 pub(crate) fn parse_bestow_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !tokens.first().is_some_and(|token| token.is_word("bestow")) {
         return Ok(None);
@@ -3243,11 +3348,11 @@ pub(crate) fn parse_bestow_line(
     let tail_tokens = tokens.get(1 + consumed_mana_tokens..).unwrap_or_default();
     if tail_tokens
         .first()
-        .is_some_and(|token| matches!(token, Token::Comma(_)))
+        .is_some_and(|token| token.is_comma())
     {
         let clause_end = tail_tokens
             .iter()
-            .position(|token| matches!(token, Token::Period(_)))
+            .position(|token| token.is_period())
             .unwrap_or(tail_tokens.len());
         let clause_tokens = trim_commas(&tail_tokens[..clause_end]).to_vec();
         let clause_words = words(&clause_tokens);
@@ -3268,8 +3373,15 @@ pub(crate) fn parse_bestow_line(
     Ok(Some(AlternativeCastingMethod::Bestow { total_cost }))
 }
 
+pub(crate) fn parse_bestow_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_bestow_line(&compat)
+}
+
 pub(crate) fn parse_transmute_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
     let words_all = words(tokens);
     if words_all.first().copied() != Some("transmute") {
@@ -3358,8 +3470,15 @@ pub(crate) fn parse_transmute_line(
     }))
 }
 
+pub(crate) fn parse_transmute_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ParsedAbility>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_transmute_line(&compat)
+}
+
 pub(crate) fn parse_reinforce_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
     let words_all = words(tokens);
     if words_all.first().copied() != Some("reinforce") {
@@ -3454,8 +3573,15 @@ pub(crate) fn parse_reinforce_line(
     }))
 }
 
+pub(crate) fn parse_reinforce_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ParsedAbility>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_reinforce_line(&compat)
+}
+
 pub(crate) fn parse_cast_this_spell_only_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let line_words = words(tokens);
     if !line_words.starts_with(&["cast", "this", "spell", "only"]) {
@@ -3674,22 +3800,29 @@ pub(crate) fn parse_cast_this_spell_only_line(
     Ok(restriction.map(|(kind, text)| StaticAbility::this_spell_cast_restriction(kind, text)))
 }
 
+pub(crate) fn parse_cast_this_spell_only_line_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_cast_this_spell_only_line(&compat)
+}
+
 pub(crate) fn parse_you_may_rather_than_spell_cost_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     if !(tokens
         .first()
-        .is_some_and(|token| matches!(token, Token::Word(word, _) if word == "you"))
+        .is_some_and(|token| token.as_word() == Some("you"))
         && tokens
             .get(1)
-            .is_some_and(|token| matches!(token, Token::Word(word, _) if word == "may")))
+            .is_some_and(|token| token.as_word() == Some("may")))
     {
         return Ok(None);
     }
     let Some(rather_idx) = tokens
         .iter()
-        .position(|token| matches!(token, Token::Word(word, _) if word == "rather"))
+        .position(|token| token.as_word() == Some("rather"))
     else {
         return Ok(None);
     };
@@ -3702,12 +3835,7 @@ pub(crate) fn parse_you_may_rather_than_spell_cost_line(
         return Ok(None);
     }
     let cost_clause_end = (rather_idx + 1..tokens.len())
-        .rfind(|idx| {
-            matches!(
-                tokens[*idx],
-                Token::Word(ref word, _) if word == "cost" || word == "costs"
-            )
-        })
+        .rfind(|idx| tokens[*idx].as_word().is_some_and(|word| word == "cost" || word == "costs"))
         .ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "alternative cost line missing terminal cost word (line: '{}')",
@@ -3736,11 +3864,22 @@ pub(crate) fn parse_you_may_rather_than_spell_cost_line(
     }))
 }
 
+pub(crate) fn parse_you_may_rather_than_spell_cost_line_lexed(
+    tokens: &[OwnedLexToken],
+    line: &str,
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_you_may_rather_than_spell_cost_line(&compat, line)
+}
+
 pub(crate) fn parse_additional_cost_choice_options(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<AdditionalCostChoiceOptionAst>>, CardTextError> {
     let clause_words = words(tokens);
-    if clause_words.windows(3).any(|window| window == ["one", "or", "more"]) {
+    if clause_words
+        .windows(3)
+        .any(|window| window == ["one", "or", "more"])
+    {
         return Ok(None);
     }
     if !clause_words.contains(&"or") {
@@ -3800,6 +3939,13 @@ pub(crate) fn parse_additional_cost_choice_options(
     Ok(Some(options))
 }
 
+pub(crate) fn parse_additional_cost_choice_options_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<AdditionalCostChoiceOptionAst>>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_additional_cost_choice_options(&compat)
+}
+
 fn trap_condition_from_this_spell_cost_condition(
     condition: &crate::static_abilities::ThisSpellCostCondition,
 ) -> Option<crate::TrapCondition> {
@@ -3830,7 +3976,7 @@ fn simple_trap_cost_from_alternative_method(method: &AlternativeCastingMethod) -
 }
 
 pub(crate) fn parse_if_conditional_alternative_cost_line(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
     let clause_words = words(tokens);
@@ -3840,7 +3986,7 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
 
     let Some(comma_idx) = tokens
         .iter()
-        .position(|token| matches!(token, Token::Comma(_)))
+        .position(|token| token.is_comma())
     else {
         return Ok(None);
     };
@@ -3895,4 +4041,12 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
         )));
     }
     Ok(Some(method))
+}
+
+pub(crate) fn parse_if_conditional_alternative_cost_line_lexed(
+    tokens: &[OwnedLexToken],
+    line: &str,
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    let compat = compat_tokens_from_lexed(tokens);
+    parse_if_conditional_alternative_cost_line(&compat, line)
 }

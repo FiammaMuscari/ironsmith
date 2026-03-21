@@ -4,10 +4,13 @@ use crate::cards::builders::{
     CardDefinitionBuilder, CardTextError, ParseAnnotations, ParsedLevelAbilityItemAst,
 };
 
+use super::activation_and_restrictions::{
+    parse_channel_line_lexed, parse_cycling_line_lexed, parse_equip_line_lexed,
+};
 use super::clause_support::{
-    rewrite_parse_ability_line, rewrite_parse_effect_sentences,
-    rewrite_parse_static_ability_ast_line, rewrite_parse_trigger_clause,
-    rewrite_parse_triggered_line,
+    rewrite_parse_ability_line_lexed, rewrite_parse_effect_sentences_lexed,
+    rewrite_parse_static_ability_ast_line_lexed, rewrite_parse_trigger_clause_lexed,
+    rewrite_parse_triggered_line_lexed,
 };
 use super::cst::{
     ActivatedLineCst, KeywordLineCst, KeywordLineKindCst, LevelHeaderCst, LevelItemCst,
@@ -21,30 +24,32 @@ use super::ir::{
     RewriteSagaChapterLine, RewriteSemanticDocument, RewriteSemanticItem, RewriteStatementLine,
     RewriteStaticLine, RewriteTriggeredLine, RewriteUnsupportedLine,
 };
+use super::keyword_static::parse_if_this_spell_costs_less_to_cast_line_lexed;
 use super::leaf::{lower_activation_cost_cst, parse_activation_cost_rewrite};
-use super::lexer::TokenKind;
+use super::lexer::{OwnedLexToken, TokenKind, lex_line};
 use super::lower::{
     lower_rewrite_activated_to_chunk, lower_rewrite_keyword_to_chunk,
     lower_rewrite_statement_to_chunks, lower_rewrite_static_to_chunk,
     lower_rewrite_triggered_to_chunk,
 };
-use super::activation_and_restrictions::{
-    parse_channel_line, parse_cycling_line, parse_equip_line,
-};
-use super::keyword_static::parse_if_this_spell_costs_less_to_cast_line;
 use super::preprocess::{
     PreprocessedDocument, PreprocessedItem, PreprocessedLine, preprocess_document,
 };
 use super::util::{
-    parse_additional_cost_choice_options, parse_bestow_line, parse_buyback_line,
-    parse_cast_this_spell_only_line, parse_entwine_line, parse_escape_line, parse_flashback_line,
-    parse_if_conditional_alternative_cost_line, parse_kicker_line, parse_level_header,
-    parse_level_up_line, parse_madness_line, parse_morph_keyword_line, parse_multikicker_line,
-    parse_offspring_line, parse_power_toughness, parse_reinforce_line, parse_saga_chapter_prefix,
-    parse_self_free_cast_alternative_cost_line, parse_squad_line, parse_transmute_line,
-    parse_warp_line, parse_you_may_rather_than_spell_cost_line, preserve_keyword_prefix_for_parse,
-    tokenize_line, words,
+    parse_additional_cost_choice_options_lexed, parse_bestow_line_lexed, parse_buyback_line_lexed,
+    parse_cast_this_spell_only_line_lexed, parse_entwine_line_lexed, parse_escape_line_lexed,
+    parse_flashback_line_lexed, parse_if_conditional_alternative_cost_line_lexed,
+    parse_kicker_line_lexed, parse_level_header, parse_level_up_line_lexed,
+    parse_madness_line_lexed, parse_morph_keyword_line_lexed, parse_multikicker_line_lexed,
+    parse_offspring_line_lexed, parse_power_toughness, parse_reinforce_line_lexed,
+    parse_saga_chapter_prefix, parse_self_free_cast_alternative_cost_line_lexed,
+    parse_squad_line_lexed, parse_transmute_line_lexed, parse_warp_line_lexed,
+    parse_you_may_rather_than_spell_cost_line_lexed, preserve_keyword_prefix_for_parse,
 };
+
+fn lexed_tokens(text: &str, line_index: usize) -> Result<Vec<OwnedLexToken>, CardTextError> {
+    lex_line(text, line_index)
+}
 
 fn is_bullet_line(line: &str) -> bool {
     let trimmed = line.trim_start();
@@ -153,12 +158,10 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
             continue;
         }
 
-        let trigger_probe = rewrite_parse_trigger_clause(&tokenize_line(
-            trigger_text.as_str(),
-            line.info.line_index,
-        ));
-        let effect_probe =
-            rewrite_parse_effect_sentences(&tokenize_line(effect_candidate, line.info.line_index));
+        let trigger_probe = lexed_tokens(trigger_text.as_str(), line.info.line_index)
+            .and_then(|tokens| rewrite_parse_trigger_clause_lexed(&tokens));
+        let effect_probe = lexed_tokens(effect_candidate, line.info.line_index)
+            .and_then(|tokens| rewrite_parse_effect_sentences_lexed(&tokens));
         let trigger_is_supported = trigger_probe.is_ok();
         if trigger_is_supported && effect_probe.is_ok() {
             if best_supported_split.is_none() {
@@ -185,8 +188,9 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
             trigger_text,
             effect_candidate
         );
-        let full_tokens = tokenize_line(full_text.as_str(), line.info.line_index);
-        if rewrite_parse_triggered_line(&full_tokens).is_ok() && best_fallback_split.is_none() {
+        let full_tokens = lexed_tokens(full_text.as_str(), line.info.line_index)?;
+        if rewrite_parse_triggered_line_lexed(&full_tokens).is_ok() && best_fallback_split.is_none()
+        {
             best_fallback_split = Some(TriggeredLineCst {
                 info: line.info.clone(),
                 full_text,
@@ -202,8 +206,8 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
         return Ok(split);
     }
 
-    let full_tokens = tokenize_line(&normalized, line.info.line_index);
-    match rewrite_parse_triggered_line(&full_tokens) {
+    let full_tokens = lexed_tokens(&normalized, line.info.line_index)?;
+    match rewrite_parse_triggered_line_lexed(&full_tokens) {
         Ok(_) => Ok(TriggeredLineCst {
             info: line.info.clone(),
             full_text: normalized.to_string(),
@@ -219,11 +223,20 @@ fn parse_triggered_line_cst(line: &PreprocessedLine) -> Result<TriggeredLineCst,
 fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst>, CardTextError> {
     let normalized = line.info.normalized.normalized.as_str();
     let legacy_parse_text = rewrite_keyword_dash_parse_text(normalized);
-    let legacy_tokens = tokenize_line(legacy_parse_text.as_str(), line.info.line_index);
-    let token_words = words(&legacy_tokens);
+    let lexed = lexed_tokens(legacy_parse_text.as_str(), line.info.line_index)?;
     let mut deferred_error = None;
 
-    if normalized.starts_with("level up ") && parse_level_up_line(&legacy_tokens)?.is_some() {
+    if normalized.starts_with("level up ") {
+        if parse_level_up_line_lexed(&lexed)?.is_some() {
+            return Ok(Some(StaticLineCst {
+                info: line.info.clone(),
+                text: normalized.to_string(),
+                chosen_option_label: None,
+            }));
+        }
+    }
+    let lexed_words = crate::cards::builders::parse_rewrite::lexer::lexed_words(&lexed);
+    if is_doesnt_untap_during_your_untap_step_words(lexed_words.as_slice()) {
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
@@ -231,15 +244,7 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         }));
     }
 
-    if is_doesnt_untap_during_your_untap_step_words(token_words.as_slice()) {
-        return Ok(Some(StaticLineCst {
-            info: line.info.clone(),
-            text: normalized.to_string(),
-            chosen_option_label: None,
-        }));
-    }
-
-    if parse_if_this_spell_costs_less_to_cast_line(&legacy_tokens)?.is_some() {
+    if parse_if_this_spell_costs_less_to_cast_line_lexed(&lexed)?.is_some() {
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
             text: normalized.to_string(),
@@ -264,7 +269,7 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
     }
 
     if !should_skip_keyword_action_static_probe(normalized)
-        && let Some(_actions) = rewrite_parse_ability_line(&legacy_tokens)
+        && let Some(_actions) = rewrite_parse_ability_line_lexed(&lexed)
     {
         return Ok(Some(StaticLineCst {
             info: line.info.clone(),
@@ -273,7 +278,7 @@ fn parse_static_line_cst(line: &PreprocessedLine) -> Result<Option<StaticLineCst
         }));
     }
 
-    match rewrite_parse_static_ability_ast_line(&legacy_tokens) {
+    match rewrite_parse_static_ability_ast_line_lexed(&lexed) {
         Ok(Some(_abilities)) => {
             return Ok(Some(StaticLineCst {
                 info: line.info.clone(),
@@ -316,16 +321,16 @@ fn parse_split_static_item_count(
     let mut item_count = 0usize;
     for sentence in sentences {
         let normalized_sentence = normalize_legacy_style_static_sentence(sentence);
-        let tokens = tokenize_line(&normalized_sentence, line_index);
-        if parse_if_this_spell_costs_less_to_cast_line(&tokens)?.is_some() {
+        let lexed = lexed_tokens(&normalized_sentence, line_index)?;
+        if parse_if_this_spell_costs_less_to_cast_line_lexed(&lexed)?.is_some() {
             item_count += 1;
             continue;
         }
-        if let Some(actions) = rewrite_parse_ability_line(&tokens) {
+        if let Some(actions) = rewrite_parse_ability_line_lexed(&lexed) {
             item_count += actions.len();
             continue;
         }
-        let Some(abilities) = rewrite_parse_static_ability_ast_line(&tokens)? else {
+        let Some(abilities) = rewrite_parse_static_ability_ast_line_lexed(&lexed)? else {
             return Ok(None);
         };
         item_count += abilities.len();
@@ -369,7 +374,7 @@ fn parse_keyword_line_cst(
 ) -> Result<Option<KeywordLineCst>, CardTextError> {
     let normalized = line.info.normalized.normalized.as_str();
     let legacy_parse_text = rewrite_keyword_dash_parse_text(normalized);
-    let tokens = tokenize_line(legacy_parse_text.as_str(), line.info.line_index);
+    let tokens = lexed_tokens(legacy_parse_text.as_str(), line.info.line_index)?;
 
     let kind = if parse_additional_cost_kind(&tokens, normalized)? {
         Some(KeywordLineKindCst::AdditionalCostChoice)
@@ -379,43 +384,43 @@ fn parse_keyword_line_cst(
         Some(KeywordLineKindCst::AdditionalCost)
     } else if parse_alternative_cast_kind(&tokens, normalized)? {
         Some(KeywordLineKindCst::AlternativeCast)
-    } else if parse_bestow_line(&tokens)?.is_some() {
+    } else if parse_bestow_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Bestow)
-    } else if parse_buyback_line(&tokens)?.is_some() {
+    } else if parse_buyback_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Buyback)
-    } else if parse_channel_line(&tokens)?.is_some() {
+    } else if parse_channel_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Channel)
-    } else if parse_cycling_line(&tokens)?.is_some() {
+    } else if parse_cycling_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Cycling)
-    } else if parse_reinforce_line(&tokens)?.is_some() {
+    } else if parse_reinforce_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Reinforce)
-    } else if parse_equip_line(&tokens)?.is_some() {
+    } else if parse_equip_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Equip)
-    } else if parse_kicker_line(&tokens)?.is_some() {
+    } else if parse_kicker_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Kicker)
-    } else if parse_flashback_line(&tokens)?.is_some() {
+    } else if parse_flashback_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Flashback)
-    } else if parse_multikicker_line(&tokens)?.is_some() {
+    } else if parse_multikicker_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Multikicker)
-    } else if parse_entwine_line(&tokens)?.is_some() {
+    } else if parse_entwine_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Entwine)
-    } else if parse_offspring_line(&tokens)?.is_some() {
+    } else if parse_offspring_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Offspring)
-    } else if parse_madness_line(&tokens)?.is_some() {
+    } else if parse_madness_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Madness)
-    } else if parse_escape_line(&tokens)?.is_some() {
+    } else if parse_escape_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Escape)
     } else if normalized.starts_with("morph—") || normalized.starts_with("megamorph—") {
         None
-    } else if parse_morph_keyword_line(&tokens)?.is_some() {
+    } else if parse_morph_keyword_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Morph)
-    } else if parse_squad_line(&tokens)?.is_some() {
+    } else if parse_squad_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Squad)
-    } else if parse_transmute_line(&tokens)?.is_some() {
+    } else if parse_transmute_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Transmute)
-    } else if parse_cast_this_spell_only_line(&tokens)?.is_some() {
+    } else if parse_cast_this_spell_only_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::CastThisSpellOnly)
-    } else if parse_warp_line(&tokens)?.is_some() {
+    } else if parse_warp_line_lexed(&tokens)?.is_some() {
         Some(KeywordLineKindCst::Warp)
     } else {
         None
@@ -428,12 +433,10 @@ fn parse_keyword_line_cst(
     }))
 }
 
-fn additional_cost_tail_tokens<'a>(
-    tokens: &'a [crate::cards::builders::Token],
-) -> Option<&'a [crate::cards::builders::Token]> {
+fn additional_cost_tail_tokens(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
     let comma_idx = tokens
         .iter()
-        .position(|token| matches!(token, crate::cards::builders::Token::Comma(_)));
+        .position(|token| token.kind == TokenKind::Comma);
     let effect_start = if let Some(idx) = comma_idx {
         idx + 1
     } else if let Some(idx) = tokens.iter().position(|token| token.is_word("spell")) {
@@ -446,7 +449,7 @@ fn additional_cost_tail_tokens<'a>(
 }
 
 fn parse_additional_cost_kind(
-    tokens: &[crate::cards::builders::Token],
+    tokens: &[OwnedLexToken],
     normalized: &str,
 ) -> Result<bool, CardTextError> {
     if !normalized.starts_with("as an additional cost to cast this spell") {
@@ -455,24 +458,24 @@ fn parse_additional_cost_kind(
     let Some(effect_tokens) = additional_cost_tail_tokens(tokens) else {
         return Ok(false);
     };
-    Ok(parse_additional_cost_choice_options(effect_tokens)?.is_some())
+    Ok(parse_additional_cost_choice_options_lexed(effect_tokens)?.is_some())
 }
 
 fn parse_alternative_cast_kind(
-    tokens: &[crate::cards::builders::Token],
+    tokens: &[OwnedLexToken],
     normalized: &str,
 ) -> Result<bool, CardTextError> {
-    Ok(parse_self_free_cast_alternative_cost_line(tokens).is_some()
-        || parse_you_may_rather_than_spell_cost_line(tokens, normalized)?.is_some()
-        || parse_if_conditional_alternative_cost_line(tokens, normalized)?.is_some())
+    Ok(parse_self_free_cast_alternative_cost_line_lexed(tokens).is_some()
+        || parse_you_may_rather_than_spell_cost_line_lexed(tokens, normalized)?.is_some()
+        || parse_if_conditional_alternative_cost_line_lexed(tokens, normalized)?.is_some())
 }
 
 fn parse_level_item_cst(line: &PreprocessedLine) -> Result<Option<LevelItemCst>, CardTextError> {
     let normalized = line.info.normalized.normalized.as_str();
-    let legacy_tokens = tokenize_line(normalized, line.info.line_index);
+    let lexed = lexed_tokens(normalized, line.info.line_index)?;
 
     if !should_skip_keyword_action_static_probe(normalized)
-        && let Some(_actions) = rewrite_parse_ability_line(&legacy_tokens)
+        && let Some(_actions) = rewrite_parse_ability_line_lexed(&lexed)
     {
         return Ok(Some(LevelItemCst {
             info: line.info.clone(),
@@ -481,7 +484,7 @@ fn parse_level_item_cst(line: &PreprocessedLine) -> Result<Option<LevelItemCst>,
         }));
     }
 
-    if let Some(_abilities) = rewrite_parse_static_ability_ast_line(&legacy_tokens)? {
+    if let Some(_abilities) = rewrite_parse_static_ability_ast_line_lexed(&lexed)? {
         return Ok(Some(LevelItemCst {
             info: line.info.clone(),
             text: normalized.to_string(),
@@ -511,8 +514,8 @@ fn parse_statement_line_cst(
         }));
     }
     let parse_text = rewrite_statement_parse_text(normalized);
-    let legacy_tokens = tokenize_line(parse_text.as_str(), line.info.line_index);
-    let effects = match rewrite_parse_effect_sentences(&legacy_tokens) {
+    let lexed = lexed_tokens(parse_text.as_str(), line.info.line_index)?;
+    let effects = match rewrite_parse_effect_sentences_lexed(&lexed) {
         Ok(effects) => effects,
         Err(err)
             if looks_like_statement_line(normalized)
@@ -966,82 +969,16 @@ fn split_trigger_sentence_chunks_rewrite(text: &str, line_index: usize) -> Vec<S
 }
 
 fn sentence_starts_with_trigger_intro_rewrite(sentence: &str, line_index: usize) -> bool {
-    let tokens = tokenize_line(sentence, line_index);
-    if looks_like_delayed_next_turn_intro_rewrite(&tokens)
-        || looks_like_when_one_or_more_this_way_followup_rewrite(&tokens)
-        || looks_like_when_you_do_followup_rewrite(&tokens)
-    {
+    let Ok(tokens) = lexed_tokens(sentence, line_index) else {
+        return false;
+    };
+    if super::parser_support::looks_like_spell_resolution_followup_intro_lexed(&tokens) {
         return false;
     }
     tokens
         .first()
         .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
-        || super::parser_support::is_at_trigger_intro(&tokens, 0)
-}
-
-fn looks_like_delayed_next_turn_intro_rewrite(tokens: &[crate::cards::builders::Token]) -> bool {
-    let mut idx = 0usize;
-    if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
-        return false;
-    }
-    idx += 1;
-
-    if tokens.get(idx).is_some_and(|token| token.is_word("the")) {
-        idx += 1;
-    }
-    if !tokens
-        .get(idx)
-        .is_some_and(|token| token.is_word("beginning"))
-    {
-        return false;
-    }
-    idx += 1;
-    if !tokens.get(idx).is_some_and(|token| token.is_word("of")) {
-        return false;
-    }
-    idx += 1;
-
-    if tokens.get(idx).is_some_and(|token| token.is_word("the")) {
-        idx += 1;
-    }
-    if tokens.get(idx).is_some_and(|token| token.is_word("your")) {
-        idx += 1;
-    }
-
-    if !tokens.get(idx).is_some_and(|token| token.is_word("next")) {
-        return false;
-    }
-
-    if tokens
-        .get(idx + 1)
-        .is_some_and(|token| token.is_word("end"))
-        && tokens
-            .get(idx + 2)
-            .is_some_and(|token| token.is_word("step"))
-    {
-        return true;
-    }
-
-    tokens
-        .get(idx + 1)
-        .is_some_and(|token| token.is_word("upkeep"))
-}
-
-fn looks_like_when_one_or_more_this_way_followup_rewrite(
-    tokens: &[crate::cards::builders::Token],
-) -> bool {
-    let clause_words = words(tokens);
-    (clause_words.starts_with(&["when", "one", "or", "more"])
-        || clause_words.starts_with(&["whenever", "one", "or", "more"]))
-        && clause_words
-            .windows(2)
-            .any(|window| window == ["this", "way"])
-}
-
-fn looks_like_when_you_do_followup_rewrite(tokens: &[crate::cards::builders::Token]) -> bool {
-    let clause_words = words(tokens);
-    clause_words.starts_with(&["when", "you", "do"])
-        || clause_words.starts_with(&["whenever", "you", "do"])
+        || super::parser_support::is_at_trigger_intro_lexed(&tokens, 0)
 }
 
 fn classify_unsupported_line_reason(line: &PreprocessedLine) -> &'static str {
@@ -1692,7 +1629,8 @@ fn lower_document_cst(
                     }
                     KeywordLineKindCst::Warp => RewriteKeywordLineKind::Warp,
                 };
-                let parsed = lower_rewrite_keyword_to_chunk(keyword.info.clone(), &keyword.text, kind)?;
+                let parsed =
+                    lower_rewrite_keyword_to_chunk(keyword.info.clone(), &keyword.text, kind)?;
                 items.push(RewriteSemanticItem::Keyword(RewriteKeywordLine {
                     info: keyword.info,
                     text: keyword.text,
@@ -1764,8 +1702,10 @@ fn lower_document_cst(
                 }));
             }
             RewriteLineCst::Statement(statement_line) => {
-                let parsed_chunks =
-                    lower_rewrite_statement_to_chunks(statement_line.info.clone(), &statement_line.text)?;
+                let parsed_chunks = lower_rewrite_statement_to_chunks(
+                    statement_line.info.clone(),
+                    &statement_line.text,
+                )?;
                 items.push(RewriteSemanticItem::Statement(RewriteStatementLine {
                     info: statement_line.info,
                     text: statement_line.text,
@@ -1779,13 +1719,12 @@ fn lower_document_cst(
                         .modes
                         .into_iter()
                         .map(|mode| {
-                            let parse_text =
-                                strip_non_keyword_label_prefix(mode.info.normalized.normalized.as_str())
-                                    .trim();
-                            let effects_ast = rewrite_parse_effect_sentences(&tokenize_line(
-                                parse_text,
-                                mode.info.line_index,
-                            ))?;
+                            let parse_text = strip_non_keyword_label_prefix(
+                                mode.info.normalized.normalized.as_str(),
+                            )
+                            .trim();
+                            let effects_ast = lexed_tokens(parse_text, mode.info.line_index)
+                                .and_then(|tokens| rewrite_parse_effect_sentences_lexed(&tokens))?;
                             Ok(RewriteModalMode {
                                 info: mode.info,
                                 text: mode.text,
@@ -1806,8 +1745,8 @@ fn lower_document_cst(
                         .map(|item| {
                             let parsed = match item.kind {
                                 LevelItemKindCst::KeywordActions => {
-                                    let tokens = tokenize_line(item.text.as_str(), item.info.line_index);
-                                    let actions = rewrite_parse_ability_line(&tokens).ok_or_else(|| {
+                                    let tokens = lexed_tokens(item.text.as_str(), item.info.line_index)?;
+                                    let actions = rewrite_parse_ability_line_lexed(&tokens).ok_or_else(|| {
                                         CardTextError::ParseError(format!(
                                             "rewrite level lowering could not parse keyword line '{}'",
                                             item.info.raw_line
@@ -1816,14 +1755,16 @@ fn lower_document_cst(
                                     ParsedLevelAbilityItemAst::KeywordActions(actions)
                                 }
                                 LevelItemKindCst::StaticAbilities => {
-                                    let tokens = tokenize_line(item.text.as_str(), item.info.line_index);
-                                    let abilities = rewrite_parse_static_ability_ast_line(&tokens)?
-                                        .ok_or_else(|| {
-                                            CardTextError::ParseError(format!(
-                                                "rewrite level lowering could not parse static line '{}'",
-                                                item.info.raw_line
-                                            ))
-                                        })?;
+                                    let tokens =
+                                        lexed_tokens(item.text.as_str(), item.info.line_index)?;
+                                    let abilities =
+                                        rewrite_parse_static_ability_ast_line_lexed(&tokens)?
+                                            .ok_or_else(|| {
+                                                CardTextError::ParseError(format!(
+                                                    "rewrite level lowering could not parse static line '{}'",
+                                                    item.info.raw_line
+                                                ))
+                                            })?;
                                     ParsedLevelAbilityItemAst::StaticAbilities(abilities)
                                 }
                             };
@@ -1845,8 +1786,8 @@ fn lower_document_cst(
                 }));
             }
             RewriteLineCst::SagaChapter(saga) => {
-                let effects_ast =
-                    rewrite_parse_effect_sentences(&tokenize_line(saga.text.as_str(), saga.info.line_index))?;
+                let effects_ast = lexed_tokens(saga.text.as_str(), saga.info.line_index)
+                    .and_then(|tokens| rewrite_parse_effect_sentences_lexed(&tokens))?;
                 items.push(RewriteSemanticItem::SagaChapter(RewriteSagaChapterLine {
                     info: saga.info,
                     chapters: saga.chapters,

@@ -15,7 +15,6 @@ use crate::types::{CardType, Subtype, Supertype};
 #[derive(Debug, Clone)]
 pub(crate) struct CardDefinitionBuilder(RawCardDefinitionBuilder);
 
-
 impl CardDefinitionBuilder {
     pub(crate) fn new(id: CardId, name: impl Into<String>) -> Self {
         Self(RawCardDefinitionBuilder::new(id, name))

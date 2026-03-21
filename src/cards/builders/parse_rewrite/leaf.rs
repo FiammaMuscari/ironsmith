@@ -16,9 +16,9 @@ use crate::object::CounterType;
 use crate::target::PlayerFilter;
 use crate::types::{CardType, Subtype, Supertype};
 
-use super::object_filters::parse_object_filter;
 use super::effect_sentences::parse_subtype_word;
-use super::util::tokenize_line;
+use super::lexer::lex_line;
+use super::object_filters::parse_object_filter_lexed;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TypeLineCst {
@@ -113,6 +113,11 @@ fn parse_word<'a>(input: &mut &'a str) -> WResult<&'a str> {
         ch.is_ascii_alphabetic() || ch == '\'' || ch == '-'
     })
     .parse_next(input)
+}
+
+fn parse_filter_text(text: &str, other: bool) -> Result<ObjectFilter, CardTextError> {
+    let tokens = lex_line(text, 0)?;
+    parse_object_filter_lexed(&tokens, other)
 }
 
 fn spaced<'a, O, P>(parser: P) -> impl Parser<&'a str, O, ContextError>
@@ -1457,8 +1462,7 @@ pub(crate) fn lower_activation_cost_cst(
                 other,
             } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
-                let tokens = tokenize_line(filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, *other)?;
+                let mut filter = parse_filter_text(filter_text, *other)?;
                 if filter.controller.is_none() {
                     filter.controller = Some(PlayerFilter::You);
                 }
@@ -1570,8 +1574,7 @@ pub(crate) fn lower_activation_cost_cst(
                 } else {
                     filter_text.trim()
                 };
-                let tokens = tokenize_line(normalized_filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, *other)?;
+                let mut filter = parse_filter_text(normalized_filter_text, *other)?;
                 if filter.controller.is_none() {
                     filter.controller = Some(PlayerFilter::You);
                 }
@@ -1628,8 +1631,7 @@ pub(crate) fn lower_activation_cost_cst(
                 filter_text,
             } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
-                let tokens = tokenize_line(filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, false)?;
+                let mut filter = parse_filter_text(filter_text, false)?;
                 if filter.zone.is_none() {
                     filter.zone = Some(crate::zone::Zone::Battlefield);
                 }
@@ -1663,8 +1665,7 @@ pub(crate) fn lower_activation_cost_cst(
             }
             ActivationCostSegmentCst::ReturnChosenToHand { count, filter_text } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
-                let tokens = tokenize_line(filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, false)?;
+                let mut filter = parse_filter_text(filter_text, false)?;
                 if filter.controller.is_none() {
                     filter.controller = Some(PlayerFilter::You);
                 }
@@ -1708,8 +1709,7 @@ pub(crate) fn lower_activation_cost_cst(
                     costs.push(Cost::add_counters(*counter_type, *count));
                     continue;
                 }
-                let tokens = tokenize_line(filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, false)?;
+                let mut filter = parse_filter_text(filter_text, false)?;
                 if filter.controller.is_none() {
                     filter.controller = Some(PlayerFilter::You);
                 }
@@ -1744,8 +1744,7 @@ pub(crate) fn lower_activation_cost_cst(
                 display_x,
             } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
-                let tokens = tokenize_line(filter_text, 0);
-                let mut filter = parse_object_filter(&tokens, false)?;
+                let mut filter = parse_filter_text(filter_text, false)?;
                 if filter.controller.is_none() {
                     filter.controller = Some(PlayerFilter::You);
                 }

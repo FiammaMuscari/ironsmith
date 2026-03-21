@@ -1,14 +1,10 @@
 use crate::cards::builders::{
     CardTextError, ChoiceCount, EffectAst, IT_TAG, PlayerAst, PredicateAst, TagKey, TargetAst,
-    Token,
+    OwnedLexToken,
 };
 use crate::effect::{Until, Value};
 use crate::target::{ObjectFilter, PlayerFilter};
 
-use super::chain_carry::{
-    bind_implicit_player_context, parse_effect_chain, parse_effect_chain_inner, remove_first_word,
-};
-use super::conditionals::negated_action_word_index;
 use super::super::effect_ast_traversal::for_each_nested_effects_mut;
 use super::super::keyword_static::{
     parse_pt_modifier, parse_pt_modifier_values, parse_where_x_value_clause,
@@ -20,9 +16,12 @@ use super::super::util::{
     replace_unbound_x_with_value, starts_with_until_end_of_turn, token_index_for_word_index,
     trim_commas, value_contains_unbound_x, words,
 };
+use super::chain_carry::bind_implicit_player_context;
+use super::chain_carry::{parse_effect_chain, parse_effect_chain_inner, remove_first_word};
+use super::conditionals::negated_action_word_index;
 
 pub(crate) fn parse_for_each_object_subject(
-    subject_tokens: &[Token],
+    subject_tokens: &[OwnedLexToken],
 ) -> Result<Option<ObjectFilter>, CardTextError> {
     if subject_tokens.is_empty() {
         return Ok(None);
@@ -49,7 +48,7 @@ pub(crate) fn parse_for_each_object_subject(
         return Ok(None);
     }
 
-    let mut normalized_filter_tokens: Vec<Token> = filter_tokens.to_vec();
+    let mut normalized_filter_tokens: Vec<OwnedLexToken> = filter_tokens.to_vec();
     if let Some(attached_idx) = filter_tokens
         .iter()
         .position(|token| token.is_word("attached"))
@@ -87,7 +86,7 @@ pub(crate) fn parse_for_each_object_subject(
 }
 
 pub(crate) fn parse_for_each_targeted_object_subject(
-    subject_tokens: &[Token],
+    subject_tokens: &[OwnedLexToken],
 ) -> Result<Option<(ObjectFilter, ChoiceCount)>, CardTextError> {
     if subject_tokens.is_empty() {
         return Ok(None);
@@ -191,7 +190,7 @@ pub(crate) fn is_mana_trigger_additional_clause_words(words: &[&str]) -> bool {
 }
 
 pub(crate) fn parse_has_base_power_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let words_all = words(tokens);
     let Some(has_idx) = words_all
@@ -248,7 +247,7 @@ pub(crate) fn parse_has_base_power_clause(
 
     let tail_words: Vec<&str> = rest_tokens[value_token_idx + value_used..]
         .iter()
-        .filter_map(Token::as_word)
+        .filter_map(OwnedLexToken::as_word)
         .collect();
     if tail_words.is_empty() {
         let has_target_subject = subject_words.contains(&"target");
@@ -267,11 +266,11 @@ pub(crate) fn parse_has_base_power_clause(
         )));
     }
 
-    let target_tokens: Vec<Token> = if starts_with_until_end_of_turn(&subject_words) {
+    let target_tokens: Vec<OwnedLexToken> = if starts_with_until_end_of_turn(&subject_words) {
         let mut skip_idx = 4usize;
         if subject_tokens
             .get(skip_idx)
-            .is_some_and(|token| matches!(token, Token::Comma(_)))
+            .is_some_and(|token| token.is_comma())
         {
             skip_idx += 1;
         }
@@ -288,7 +287,7 @@ pub(crate) fn parse_has_base_power_clause(
 }
 
 pub(crate) fn parse_has_base_power_toughness_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let words_all = words(tokens);
     let Some(has_idx) = words_all
@@ -334,11 +333,11 @@ pub(crate) fn parse_has_base_power_toughness_clause(
         )));
     }
 
-    let target_tokens: Vec<Token> = if starts_with_until_end_of_turn(&subject_words) {
+    let target_tokens: Vec<OwnedLexToken> = if starts_with_until_end_of_turn(&subject_words) {
         let mut skip_idx = 4usize;
         if subject_tokens
             .get(skip_idx)
-            .is_some_and(|token| matches!(token, Token::Comma(_)))
+            .is_some_and(|token| token.is_comma())
         {
             skip_idx += 1;
         }
@@ -356,7 +355,7 @@ pub(crate) fn parse_has_base_power_toughness_clause(
 }
 
 pub(crate) fn parse_get_for_each_count_value(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<Value>, CardTextError> {
     let mut for_each_idx = None;
     for idx in 0..tokens.len().saturating_sub(1) {
@@ -430,11 +429,14 @@ pub(crate) fn parse_get_for_each_count_value(
         return Ok(Some(Value::ColorsAmong(filter)));
     }
 
-    Ok(Some(Value::Count(parse_object_filter(filter_tokens, other)?)))
+    Ok(Some(Value::Count(parse_object_filter(
+        filter_tokens,
+        other,
+    )?)))
 }
 
 pub(crate) fn parse_get_modifier_values_with_tail(
-    modifier_tokens: &[Token],
+    modifier_tokens: &[OwnedLexToken],
     power: Value,
     toughness: Value,
 ) -> Result<(Value, Value, Until, Option<crate::ConditionExpr>), CardTextError> {
@@ -570,7 +572,7 @@ pub(crate) fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
 }
 
 pub(crate) fn parse_for_each_opponent_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut clause_tokens = tokens;
     let mut clause_words = words(clause_tokens);
@@ -647,7 +649,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else if let Some(this_way_idx) = inner_words
@@ -700,7 +702,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else {
@@ -770,7 +772,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else if let Some(this_way_idx) = inner_words
@@ -819,7 +821,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else {
@@ -889,7 +891,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else if let Some(this_way_idx) = inner_words
@@ -938,7 +940,7 @@ pub(crate) fn parse_for_each_opponent_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else {
@@ -974,7 +976,7 @@ pub(crate) fn parse_for_each_opponent_clause(
 }
 
 pub(crate) fn parse_for_each_target_players_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut clause_tokens = tokens;
     let mut clause_words = words(clause_tokens);
@@ -1048,7 +1050,7 @@ pub(crate) fn parse_for_each_target_players_clause(
 }
 
 pub(crate) fn parse_who_did_this_way_predicate(
-    inner_tokens: &[Token],
+    inner_tokens: &[OwnedLexToken],
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let inner_words = words(inner_tokens);
     if inner_words.first().copied() != Some("who") {
@@ -1087,7 +1089,7 @@ pub(crate) fn parse_who_did_this_way_predicate(
 }
 
 fn parse_negated_who_this_way_predicate(
-    inner_tokens: &[Token],
+    inner_tokens: &[OwnedLexToken],
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let inner_words = words(inner_tokens);
     if inner_words.first().copied() != Some("who") {
@@ -1134,7 +1136,7 @@ fn parse_negated_who_this_way_predicate(
 }
 
 pub(crate) fn parse_for_each_player_clause(
-    tokens: &[Token],
+    tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let mut clause_tokens = tokens;
     let mut clause_words = words(clause_tokens);
@@ -1167,7 +1169,8 @@ pub(crate) fn parse_for_each_player_clause(
         for idx in 2..inner_tokens.len() {
             if let Some(word) = inner_tokens[idx].as_word()
                 && (word == "may"
-                    || super::find_verb(&inner_tokens[idx..]).is_some_and(|(_, verb_idx)| verb_idx == 0))
+                    || super::find_verb(&inner_tokens[idx..])
+                        .is_some_and(|(_, verb_idx)| verb_idx == 0))
             {
                 effect_start = Some(idx);
                 break;
@@ -1285,7 +1288,7 @@ pub(crate) fn parse_for_each_player_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else if let Some(this_way_idx) = inner_words
@@ -1334,7 +1337,7 @@ pub(crate) fn parse_for_each_player_clause(
     {
         let effect_token_start = if let Some(comma_idx) = inner_tokens
             .iter()
-            .position(|token| matches!(token, Token::Comma(_)))
+            .position(|token| token.is_comma())
         {
             comma_idx + 1
         } else {

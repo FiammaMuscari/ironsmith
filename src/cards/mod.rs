@@ -16,7 +16,6 @@ pub use definitions::*;
 #[cfg(test)]
 mod parse_snapshots;
 
-
 mod generated_registry {
     include!(concat!(env!("OUT_DIR"), "/generated_registry.rs"));
 }
@@ -744,7 +743,6 @@ const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line f
 
 const GENERATED_SUPPORT_ISSUE_MAX_LEN: usize = 180;
 
-
 fn truncate_generated_support_issue(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.chars().count() <= GENERATED_SUPPORT_ISSUE_MAX_LEN {
@@ -761,12 +759,10 @@ fn truncate_generated_support_issue(raw: &str) -> String {
     out
 }
 
-
 fn compact_generated_support_text(raw: &str) -> String {
     let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     truncate_generated_support_issue(&compact)
 }
-
 
 fn extract_fallback_reason(display: &str) -> String {
     let body = display
@@ -803,7 +799,6 @@ fn extract_fallback_reason(display: &str) -> String {
 
     compact_generated_support_text(body)
 }
-
 
 pub(crate) fn generated_definition_support_issues(definition: &CardDefinition) -> Vec<String> {
     let mut issues: Vec<String> = Vec::new();
@@ -855,7 +850,6 @@ pub(crate) fn generated_definition_support_issues(definition: &CardDefinition) -
 
     issues
 }
-
 
 pub(crate) fn generated_definition_unsupported_mechanics_message(
     definition: &CardDefinition,

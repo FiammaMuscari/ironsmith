@@ -598,7 +598,6 @@ pub(super) fn normalize_third_person_verb_phrase(text: &str) -> String {
     text.to_string()
 }
 
-
 pub(super) fn normalize_cost_amount_token(text: &str) -> String {
     let cleaned = text.trim().trim_end_matches('.').trim_matches('"').trim();
     if cleaned.is_empty() {
@@ -1319,7 +1318,9 @@ pub(super) fn normalize_singular_tagged_play_permission(line: &str) -> Option<St
             continue;
         };
         if needle.contains("that card until end of turn") {
-            return Some(format!("{prefix}you may {verb} that card until end of turn"));
+            return Some(format!(
+                "{prefix}you may {verb} that card until end of turn"
+            ));
         }
         let Some((_, tail)) = rest.split_once('\'') else {
             continue;
@@ -4209,7 +4210,6 @@ pub(super) fn strip_parenthetical_segments(text: &str) -> String {
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
-
 
 pub(super) fn describe_card_count(value: &Value) -> String {
     match value {

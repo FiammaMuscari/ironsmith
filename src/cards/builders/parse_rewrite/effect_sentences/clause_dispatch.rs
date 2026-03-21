@@ -1,17 +1,24 @@
-use super::{
-    Verb, bind_implicit_player_context, find_verb, parse_effect_chain_with_sentence_primitives,
-    parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subtype_word,
-};
-use super::super::keyword_static::{
-    keyword_action_to_static_ability, parse_ability_line, parse_pt_modifier, parse_pt_modifier_values,
-};
 use super::super::activation_and_restrictions::{
     find_negation_span, parse_cant_restrictions, parse_choose_color_phrase_words,
     parse_choose_creature_type_phrase_words, parse_choose_player_phrase_words,
     parse_target_player_choose_objects_clause, parse_you_choose_objects_clause,
     parse_you_choose_player_clause,
 };
+use super::super::lexer::OwnedLexToken;
+use super::super::keyword_static::{
+    keyword_action_to_static_ability, parse_ability_line, parse_pt_modifier,
+    parse_pt_modifier_values,
+};
 use super::super::object_filters::parse_object_filter;
+use super::super::util::{
+    compat_tokens_from_lexed, contains_until_end_of_turn, parse_card_type, parse_color,
+    parse_subject, parse_target_phrase, parse_value, parser_trace, parser_trace_stack,
+    span_from_tokens, starts_with_until_end_of_turn, token_index_for_word_index, trim_commas,
+    words,
+};
+use super::chain_carry::{parse_leading_player_may, remove_first_word, remove_through_first_word};
+use super::clause_pattern_helpers::extract_subject_player;
+use super::clause_primitives::run_clause_primitives;
 use super::for_each_helpers::{
     has_demonstrative_object_reference, is_mana_replacement_clause_words,
     is_mana_trigger_additional_clause_words, is_target_player_dealt_damage_by_this_turn_subject,
@@ -20,28 +27,19 @@ use super::for_each_helpers::{
     parse_has_base_power_toughness_clause,
 };
 use super::search_library::parse_restriction_duration;
-use super::zone_counter_helpers::{
-    parse_half_starting_life_total_value, parse_put_counters,
-};
-use super::super::util::{
-    contains_until_end_of_turn, parse_card_type, parse_color, parse_subject, parse_target_phrase,
-    parse_value, parser_trace, parser_trace_stack, span_from_tokens,
-    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
-};
-use super::chain_carry::{
-    parse_leading_player_may, remove_first_word, remove_through_first_word, run_clause_primitives,
-};
-use super::clause_pattern_helpers::extract_subject_player;
 use super::verb_dispatch::parse_effect_with_verb;
-use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, TargetAst, Token,
+use super::zone_counter_helpers::{parse_half_starting_life_total_value, parse_put_counters};
+use super::{
+    Verb, bind_implicit_player_context, find_verb, parse_effect_chain_with_sentence_primitives,
+    parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subtype_word,
 };
+use crate::TagKey;
+use crate::cards::builders::{CardTextError, EffectAst, IT_TAG, TargetAst};
 use crate::effect::{Until, Value};
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::{CardType, Subtype};
-use crate::TagKey;
 
-pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
         return Err(CardTextError::ParseError("empty effect clause".to_string()));
     }
@@ -305,7 +303,7 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
         let subject_tokens = &tokens[..verb_idx];
         if !subject_tokens.is_empty() {
             let subject_words = words(subject_tokens);
-            if let Some(mod_token) = tokens.get(verb_idx + 1).and_then(Token::as_word)
+            if let Some(mod_token) = tokens.get(verb_idx + 1).and_then(OwnedLexToken::as_word)
                 && let Ok((power, toughness)) = parse_pt_modifier_values(mod_token)
             {
                 let modifier_tail = &tokens[verb_idx + 1..];
@@ -480,9 +478,15 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     Ok(effect)
 }
 
+pub(crate) fn parse_effect_clause_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<EffectAst, CardTextError> {
+    parse_effect_clause(&compat_tokens_from_lexed(tokens))
+}
+
 pub(crate) fn parse_become_clause(
-    subject_tokens: &[Token],
-    rest_tokens: &[Token],
+    subject_tokens: &[OwnedLexToken],
+    rest_tokens: &[OwnedLexToken],
 ) -> Result<EffectAst, CardTextError> {
     let subject_words = words(subject_tokens);
     let subject = parse_subject(subject_tokens);
@@ -495,7 +499,7 @@ pub(crate) fn parse_become_clause(
         };
     let become_body_tokens = if become_tokens
         .first()
-        .and_then(Token::as_word)
+        .and_then(OwnedLexToken::as_word)
         .is_some_and(|word| word == "the" || word == "a" || word == "an")
     {
         &become_tokens[1..]

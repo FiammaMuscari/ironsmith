@@ -21,7 +21,6 @@ impl ReorderGraveyardEffect {
         Self { player }
     }
 
-    
     pub fn you() -> Self {
         Self::new(PlayerFilter::You)
     }

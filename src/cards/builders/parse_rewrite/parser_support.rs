@@ -1,11 +1,10 @@
-use crate::cards::builders::{CardDefinitionBuilder, ParsedRestrictions, Token};
+use crate::cards::builders::{CardDefinitionBuilder, ParsedRestrictions};
 use crate::types::CardType;
 
-use super::lexer::OwnedLexToken;
 use super::activation_and_restrictions::{
-    is_activate_only_restriction_sentence, is_trigger_only_restriction_sentence,
+    is_activate_only_restriction_sentence_lexed, is_trigger_only_restriction_sentence_lexed,
 };
-use super::util::tokenize_line;
+use super::lexer::{OwnedLexToken, lex_line};
 
 pub(crate) fn split_text_for_parse(
     raw_text: &str,
@@ -92,13 +91,29 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
     sentences
 }
 
-pub(crate) fn is_at_trigger_intro(tokens: &[Token], idx: usize) -> bool {
+pub(crate) fn is_at_trigger_intro(tokens: &[OwnedLexToken], idx: usize) -> bool {
     if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
         return false;
     }
 
-    let second = tokens.get(idx + 1).and_then(Token::as_word);
-    let third = tokens.get(idx + 2).and_then(Token::as_word);
+    let second = tokens.get(idx + 1).and_then(OwnedLexToken::as_word);
+    let third = tokens.get(idx + 2).and_then(OwnedLexToken::as_word);
+    matches!(
+        (second, third),
+        (Some("beginning"), _)
+            | (Some("end"), _)
+            | (Some("the"), Some("beginning"))
+            | (Some("the"), Some("end"))
+    )
+}
+
+pub(crate) fn is_at_trigger_intro_lexed(tokens: &[OwnedLexToken], idx: usize) -> bool {
+    if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
+        return false;
+    }
+
+    let second = tokens.get(idx + 1).and_then(OwnedLexToken::as_word);
+    let third = tokens.get(idx + 2).and_then(OwnedLexToken::as_word);
     matches!(
         (second, third),
         (Some("beginning"), _)
@@ -193,11 +208,11 @@ fn queue_restriction(
         return false;
     }
 
-    let tokens = tokenize_line(&normalized, line_index);
-    if is_activate_only_restriction_sentence(&tokens) {
+    let tokens = lex_line(&normalized, line_index).unwrap_or_default();
+    if is_activate_only_restriction_sentence_lexed(&tokens) {
         pending.activation.push(normalized);
         true
-    } else if is_trigger_only_restriction_sentence(&tokens) {
+    } else if is_trigger_only_restriction_sentence_lexed(&tokens) {
         pending.trigger.push(normalized);
         true
     } else {
