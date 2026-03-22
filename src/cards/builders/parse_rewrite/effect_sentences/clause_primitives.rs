@@ -485,7 +485,7 @@ pub(crate) fn parse_choose_card_name_clause(
         .copied()
         .filter(|word| !is_article(word))
         .collect::<Vec<_>>();
-    let filter = if filter_words.is_empty() {
+    let filter = if filter_words.is_empty() || filter_words.as_slice() == ["any"] {
         None
     } else {
         let normalized_tokens: Vec<OwnedLexToken> = filter_words

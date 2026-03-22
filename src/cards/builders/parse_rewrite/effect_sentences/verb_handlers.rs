@@ -18,12 +18,13 @@ use super::super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_dynamic_cost_modifier_value,
     parse_where_x_value_clause,
 };
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    is_article, is_source_reference_words, parse_card_type, parse_mana_symbol, parse_number,
-    parse_number_word_u32, parse_target_count_range_prefix, parse_target_phrase, parse_value,
-    replace_unbound_x_with_value, span_from_tokens, token_index_for_word_index, trim_commas,
-    value_contains_unbound_x, words, wrap_target_count,
+    is_article, is_source_reference_words, mana_pips_from_token, parse_card_type,
+    parse_mana_symbol, parse_number, parse_number_word_u32, parse_target_count_range_prefix,
+    parse_target_phrase, parse_value, replace_unbound_x_with_value, span_from_tokens,
+    token_index_for_word_index, trim_commas, value_contains_unbound_x, words, wrap_target_count,
 };
 use super::clause_pattern_helpers::extract_subject_player;
 use super::conditionals::parse_predicate;
@@ -291,7 +292,8 @@ pub(crate) fn parse_look(
     {
         clause_tokens = trim_commas(&clause_tokens[1..]);
     }
-    let clause_words = words(&clause_tokens);
+    let clause_word_view = LowercaseWordView::new(&clause_tokens);
+    let clause_words = clause_word_view.to_word_refs();
 
     let mut hand_tokens = clause_tokens.clone();
     while hand_tokens
@@ -300,7 +302,8 @@ pub(crate) fn parse_look(
     {
         hand_tokens = hand_tokens[1..].to_vec();
     }
-    let hand_words = words(&hand_tokens);
+    let hand_word_view = LowercaseWordView::new(&hand_tokens);
+    let hand_words = hand_word_view.to_word_refs();
     if let Some((player, used_words)) = parse_hand_owner(&hand_words) {
         if used_words < hand_words.len() {
             return Err(CardTextError::ParseError(format!(
@@ -399,7 +402,8 @@ pub(crate) fn parse_look(
     {
         owner_tokens = &owner_tokens[1..];
     }
-    let owner_words = words(owner_tokens);
+    let owner_word_view = LowercaseWordView::new(owner_tokens);
+    let owner_words = owner_word_view.to_word_refs();
     let (player, used_words) = parse_library_owner(&owner_words)
         .or_else(|| {
             // If the clause uses a subject ("target player looks ..."), treat that as the default.
@@ -787,6 +791,18 @@ pub(crate) fn parse_attach(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTe
 
 pub(crate) fn parse_deal_damage(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     let clause_words = words(tokens);
+    if clause_words.starts_with(&["damage", "to", "each", "opponent", "equal", "to"])
+        && clause_words.contains(&"number")
+        && clause_words.contains(&"cards")
+        && clause_words.contains(&"hand")
+    {
+        return Ok(EffectAst::ForEachOpponent {
+            effects: vec![EffectAst::DealDamage {
+                amount: Value::CardsInHand(PlayerFilter::IteratedPlayer),
+                target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
+            }],
+        });
+    }
     let is_divided_as_you_choose_clause = clause_words.contains(&"divided")
         && clause_words.contains(&"choose")
         && clause_words.contains(&"among");
@@ -1674,8 +1690,14 @@ pub(crate) fn parse_draw_delayed_timing_words(words: &[&str]) -> Option<DelayedR
     if matches!(
         words,
         ["at", "beginning", "of", "next", "turns", "upkeep"]
+            | ["at", "beginning", "of", "next", "turn's", "upkeep"]
+            | ["at", "beginning", "of", "next", "turn’s", "upkeep"]
             | ["at", "beginning", "of", "the", "next", "turns", "upkeep"]
+            | ["at", "beginning", "of", "the", "next", "turn's", "upkeep"]
+            | ["at", "beginning", "of", "the", "next", "turn’s", "upkeep"]
             | ["at", "the", "beginning", "of", "next", "turns", "upkeep"]
+            | ["at", "the", "beginning", "of", "next", "turn's", "upkeep"]
+            | ["at", "the", "beginning", "of", "next", "turn’s", "upkeep"]
             | [
                 "at",
                 "the",
@@ -1684,6 +1706,26 @@ pub(crate) fn parse_draw_delayed_timing_words(words: &[&str]) -> Option<DelayedR
                 "the",
                 "next",
                 "turns",
+                "upkeep"
+            ]
+            | [
+                "at",
+                "the",
+                "beginning",
+                "of",
+                "the",
+                "next",
+                "turn's",
+                "upkeep"
+            ]
+            | [
+                "at",
+                "the",
+                "beginning",
+                "of",
+                "the",
+                "next",
+                "turn’s",
                 "upkeep"
             ]
     ) {
@@ -1804,7 +1846,18 @@ pub(crate) fn parse_counter(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardT
         let mut mana = Vec::new();
         let mut trailing_start: Option<usize> = None;
         for (offset, token) in unless_tokens[pays_idx + 1..].iter().enumerate() {
+            if let Some(group) = mana_pips_from_token(token) {
+                mana.extend(group);
+                continue;
+            }
+            if token.is_comma() || token.is_period() {
+                continue;
+            }
             let Some(word) = token.as_word() else {
+                if !mana.is_empty() {
+                    trailing_start = Some(pays_idx + 1 + offset);
+                    break;
+                }
                 continue;
             };
             match parse_mana_symbol(word) {
@@ -1935,6 +1988,29 @@ fn parse_counter_ability_target_phrase(
 ) -> Result<Option<TargetAst>, CardTextError> {
     let clause_tokens = trim_commas(tokens);
     let clause_words = words(&clause_tokens);
+    let is_you_control_tail = |idx: usize| {
+        clause_tokens
+            .get(idx)
+            .is_some_and(|token| token.is_word("you"))
+            && ((clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("control") || token.is_word("controls")))
+                || (clause_tokens
+                    .get(idx + 1)
+                    .is_some_and(|token| token.is_word("dont") || token.is_word("don't"))
+                    && clause_tokens
+                        .get(idx + 2)
+                        .is_some_and(|token| token.is_word("control")))
+                || (clause_tokens
+                    .get(idx + 1)
+                    .is_some_and(|token| token.is_word("do"))
+                    && clause_tokens
+                        .get(idx + 2)
+                        .is_some_and(|token| token.is_word("not"))
+                    && clause_tokens
+                        .get(idx + 3)
+                        .is_some_and(|token| token.is_word("control"))))
+    };
     if !clause_words.contains(&"ability")
         || (!clause_words.contains(&"activated") && !clause_words.contains(&"triggered"))
     {
@@ -1994,26 +2070,7 @@ fn parse_counter_ability_target_phrase(
             list_end = scan;
             break;
         }
-        if clause_tokens
-            .get(scan)
-            .is_some_and(|token| token.is_word("you"))
-            && clause_tokens
-                .get(scan + 1)
-                .is_some_and(|token| token.is_word("control") || token.is_word("controls"))
-        {
-            list_end = scan;
-            break;
-        }
-        if clause_tokens
-            .get(scan)
-            .is_some_and(|token| token.is_word("you"))
-            && clause_tokens
-                .get(scan + 1)
-                .is_some_and(|token| token.is_word("dont"))
-            && clause_tokens
-                .get(scan + 2)
-                .is_some_and(|token| token.is_word("control"))
-        {
+        if is_you_control_tail(scan) {
             list_end = scan;
             break;
         }
@@ -2186,13 +2243,28 @@ fn parse_counter_ability_target_phrase(
         if word == "you"
             && clause_tokens
                 .get(idx + 1)
-                .is_some_and(|token| token.is_word("dont"))
+                .is_some_and(|token| token.is_word("dont") || token.is_word("don't"))
             && clause_tokens
                 .get(idx + 2)
                 .is_some_and(|token| token.is_word("control"))
         {
             controller_filter = Some(PlayerFilter::NotYou);
             idx += 3;
+            continue;
+        }
+        if word == "you"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("do"))
+            && clause_tokens
+                .get(idx + 2)
+                .is_some_and(|token| token.is_word("not"))
+            && clause_tokens
+                .get(idx + 3)
+                .is_some_and(|token| token.is_word("control"))
+        {
+            controller_filter = Some(PlayerFilter::NotYou);
+            idx += 4;
             continue;
         }
         if word == "from" {
@@ -2311,23 +2383,39 @@ pub(crate) fn parse_counter_unless_additional_generic_value(
     }
     idx += 1;
 
-    let symbol_word = tokens
-        .get(idx)
-        .and_then(OwnedLexToken::as_word)
-        .ok_or_else(|| CardTextError::ParseError("missing additional mana symbol".to_string()))?;
-    let symbol = parse_mana_symbol(symbol_word).map_err(|_| {
-        CardTextError::ParseError(format!(
-            "unsupported additional payment symbol '{}' in counter clause",
-            symbol_word
-        ))
-    })?;
-    let multiplier = match symbol {
-        ManaSymbol::Generic(amount) => amount as i32,
-        _ => {
-            return Err(CardTextError::ParseError(
-                "unsupported nongeneric additional counter payment".to_string(),
-            ));
+    let multiplier = if let Some(token) = tokens.get(idx) {
+        if let Some(group) = mana_pips_from_token(token) {
+            match group.as_slice() {
+                [ManaSymbol::Generic(amount)] => *amount as i32,
+                _ => {
+                    return Err(CardTextError::ParseError(
+                        "unsupported nongeneric additional counter payment".to_string(),
+                    ));
+                }
+            }
+        } else {
+            let symbol_word = token.as_word().ok_or_else(|| {
+                CardTextError::ParseError("missing additional mana symbol".to_string())
+            })?;
+            let symbol = parse_mana_symbol(symbol_word).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported additional payment symbol '{}' in counter clause",
+                    symbol_word
+                ))
+            })?;
+            match symbol {
+                ManaSymbol::Generic(amount) => amount as i32,
+                _ => {
+                    return Err(CardTextError::ParseError(
+                        "unsupported nongeneric additional counter payment".to_string(),
+                    ));
+                }
+            }
         }
+    } else {
+        return Err(CardTextError::ParseError(
+            "missing additional mana symbol".to_string(),
+        ));
     };
 
     let filter_tokens = trim_commas(&tokens[idx + 1..]);

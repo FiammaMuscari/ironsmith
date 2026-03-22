@@ -947,6 +947,10 @@ pub(super) fn cleanup_decompiled_text(text: &str) -> String {
         ("Creatures token", "Creature tokens"),
         ("creatures token", "creature tokens"),
         ("target any target", "any target"),
+        (" to any while ", " to any target while "),
+        (" to any until ", " to any target until "),
+        (" to any.", " to any target."),
+        (" to any,", " to any target,"),
     ] {
         while out.contains(from) {
             out = out.replace(from, to);
@@ -1086,12 +1090,25 @@ pub(super) fn activated_ability_has_source_untap_cost(
 
 pub(super) fn normalize_inline_ability_text(ability: &Ability, text: &str) -> String {
     let trimmed = text.trim();
-    let lower = trimmed.to_ascii_lowercase();
+    let canonicalized = trimmed
+        .replace("{t}", "{T}")
+        .replace("{q}", "{Q}")
+        .replace("{b}", "{B}")
+        .replace("{u}", "{U}")
+        .replace("{g}", "{G}")
+        .replace("{r}", "{R}")
+        .replace("{w}", "{W}")
+        .replace("{c}", "{C}")
+        .replace(" to any while ", " to any target while ")
+        .replace(" to any until ", " to any target until ")
+        .replace(" to any.", " to any target.")
+        .replace(" to any,", " to any target,");
+    let lower = canonicalized.to_ascii_lowercase();
     match &ability.kind {
         AbilityKind::Activated(activated) => {
             if activated_ability_has_source_tap_cost(activated)
                 && lower.starts_with("t ")
-                && let Some((_, rest)) = trimmed.split_once(' ')
+                && let Some((_, rest)) = canonicalized.split_once(' ')
                 && !rest.trim().is_empty()
             {
                 if activated.is_mana_ability() {
@@ -1105,7 +1122,7 @@ pub(super) fn normalize_inline_ability_text(ability: &Ability, text: &str) -> St
             }
             if activated_ability_has_source_untap_cost(activated)
                 && lower.starts_with("q ")
-                && let Some((_, rest)) = trimmed.split_once(' ')
+                && let Some((_, rest)) = canonicalized.split_once(' ')
                 && !rest.trim().is_empty()
             {
                 if activated.is_mana_ability() {
@@ -1117,9 +1134,9 @@ pub(super) fn normalize_inline_ability_text(ability: &Ability, text: &str) -> St
                 }
                 return format!("{{Q}}: {}", rest.trim());
             }
-            trimmed.to_string()
+            canonicalized
         }
-        _ => trimmed.to_string(),
+        _ => canonicalized,
     }
 }
 
@@ -6108,7 +6125,12 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             grant_all
                 .abilities
                 .iter()
-                .map(|ability| ability.display())
+                .map(|ability| {
+                    ability
+                        .granted_inline_ability()
+                        .map(describe_inline_ability)
+                        .unwrap_or_else(|| ability.display())
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
             describe_until(&grant_all.duration)
@@ -6122,7 +6144,12 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             grant_target
                 .abilities
                 .iter()
-                .map(|ability| ability.display())
+                .map(|ability| {
+                    ability
+                        .granted_inline_ability()
+                        .map(describe_inline_ability)
+                        .unwrap_or_else(|| ability.display())
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
             describe_until(&grant_target.duration)
@@ -7781,10 +7808,17 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             crate::grant::GrantDuration::UntilEndOfTurn => " until end of turn",
             crate::grant::GrantDuration::Forever => "",
         };
+        let granted_text = match &grant.grantable {
+            crate::grant::Grantable::Ability(ability) => ability
+                .granted_inline_ability()
+                .map(describe_inline_ability)
+                .unwrap_or_else(|| ability.display()),
+            _ => grant.grantable.display(),
+        };
         return format!(
             "{} gains {}{}",
             describe_choose_spec(&grant.target),
-            grant.grantable.display(),
+            granted_text,
             duration
         );
     }
@@ -8382,17 +8416,19 @@ pub(super) fn describe_ability(
                 }
                 return lines;
             }
-            if matches!(
-                static_ability.id(),
-                crate::static_abilities::StaticAbilityId::KeywordMarker
-                    | crate::static_abilities::StaticAbilityId::RuleTextPlaceholder
-                    | crate::static_abilities::StaticAbilityId::KeywordFallbackText
-                    | crate::static_abilities::StaticAbilityId::RuleFallbackText
-                    | crate::static_abilities::StaticAbilityId::UnsupportedParserLine
-            ) && let Some(text) = ability.text.as_deref()
-            {
+            if let Some(text) = ability.text.as_deref() {
                 let normalized = normalize_sentence_surface_style(text.trim());
-                if !normalized.is_empty() {
+                let lower = normalized.to_ascii_lowercase();
+                let prefer_source_surface = matches!(
+                    static_ability.id(),
+                    crate::static_abilities::StaticAbilityId::KeywordMarker
+                        | crate::static_abilities::StaticAbilityId::RuleTextPlaceholder
+                        | crate::static_abilities::StaticAbilityId::KeywordFallbackText
+                        | crate::static_abilities::StaticAbilityId::RuleFallbackText
+                        | crate::static_abilities::StaticAbilityId::UnsupportedParserLine
+                ) || normalized.contains('"')
+                    || lower.contains("cycling ");
+                if prefer_source_surface && !normalized.is_empty() {
                     return vec![format!("Static ability {index}: {normalized}")];
                 }
             }

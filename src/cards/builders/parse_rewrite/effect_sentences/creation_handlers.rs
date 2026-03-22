@@ -198,7 +198,13 @@ pub(crate) fn parse_copy_modifiers_from_tail(
     } else {
         let starts_with_identity_clause = modifier_words.starts_with(&["its"])
             || modifier_words.starts_with(&["it", "is"])
+            || modifier_words.starts_with(&["it", "s"])
+            || modifier_words.starts_with(&["it's"])
+            || modifier_words.starts_with(&["it’s"])
             || modifier_words.starts_with(&["theyre"])
+            || modifier_words.starts_with(&["they", "re"])
+            || modifier_words.starts_with(&["they're"])
+            || modifier_words.starts_with(&["they’re"])
             || modifier_words.starts_with(&["they", "are"]);
         if starts_with_identity_clause {
             let descriptor_end = modifier_words
@@ -211,7 +217,21 @@ pub(crate) fn parse_copy_modifiers_from_tail(
             let mut subtypes = Vec::new();
             for word in descriptor_words {
                 if is_article(word)
-                    || matches!(*word, "its" | "it" | "is" | "they" | "are")
+                    || matches!(
+                        *word,
+                        "its"
+                            | "it"
+                            | "is"
+                            | "s"
+                            | "it's"
+                            | "it’s"
+                            | "they"
+                            | "are"
+                            | "re"
+                            | "theyre"
+                            | "they're"
+                            | "they’re"
+                    )
                     || looks_like_pt_word(word)
                 {
                     continue;

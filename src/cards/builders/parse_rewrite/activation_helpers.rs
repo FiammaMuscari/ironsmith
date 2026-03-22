@@ -10,14 +10,16 @@ use super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
     parse_dynamic_cost_modifier_value, parse_where_x_is_number_of_filter_value,
 };
+use super::native_tokens::LowercaseWordView;
 pub(crate) use super::object_filters::is_comparison_or_delimiter;
 use super::object_filters::parse_object_filter;
 pub(crate) use super::util::{
     contains_discard_source_phrase, contains_source_from_your_graveyard_phrase,
     contains_source_from_your_hand_phrase, find_activation_cost_start, is_article,
     is_basic_color_word, is_source_from_your_graveyard_words, join_sentences_with_period,
-    parse_mana_symbol, parse_next_end_step_token_delay_flags, parse_subtype_flexible, parse_value,
-    split_cost_segments, token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
+    mana_pips_from_token, parse_mana_symbol, parse_next_end_step_token_delay_flags,
+    parse_subtype_flexible, parse_value, split_cost_segments, token_index_for_word_index,
+    trim_commas, value_contains_unbound_x, words,
 };
 pub(crate) use super::value_helpers::parse_filter_comparison_tokens;
 
@@ -26,7 +28,8 @@ pub(crate) fn parse_add_mana(
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     let wrap_instead_if_tail = |base_effect: EffectAst,
                                 tail_tokens: &[OwnedLexToken]|
      -> Result<Option<EffectAst>, CardTextError> {
@@ -92,8 +95,7 @@ pub(crate) fn parse_add_mana(
 
     let has_explicit_symbol = tokens
         .iter()
-        .filter_map(OwnedLexToken::as_word)
-        .any(|word| parse_mana_symbol(word).is_ok());
+        .any(|token| mana_pips_from_token(token).is_some());
     if !has_explicit_symbol
         && let Some(chosen_idx) = clause_words
             .windows(2)
@@ -306,13 +308,18 @@ pub(crate) fn parse_add_mana(
     let mut mana = Vec::new();
     let mut last_mana_idx = None;
     for (idx, token) in tokens[..mana_scan_end].iter().enumerate() {
+        if let Some(group) = mana_pips_from_token(token) {
+            mana.extend(group);
+            last_mana_idx = Some(idx);
+            continue;
+        }
         if let Some(word) = token.as_word() {
-            if word == "mana" || word == "to" || word == "your" || word == "pool" {
+            if word.eq_ignore_ascii_case("mana")
+                || word.eq_ignore_ascii_case("to")
+                || word.eq_ignore_ascii_case("your")
+                || word.eq_ignore_ascii_case("pool")
+            {
                 continue;
-            }
-            if let Ok(symbol) = parse_mana_symbol(word) {
-                mana.push(symbol);
-                last_mana_idx = Some(idx);
             }
         }
     }
@@ -436,7 +443,8 @@ pub(crate) fn mana_symbol_to_color(symbol: ManaSymbol) -> Option<crate::color::C
 pub(crate) fn parse_or_mana_color_choices(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if !clause_words.contains(&"or") {
         return Ok(None);
     }
@@ -444,23 +452,25 @@ pub(crate) fn parse_or_mana_color_choices(
     let mut colors = Vec::new();
     let mut has_or = false;
     for token in tokens {
-        let Some(word) = token.as_word() else {
-            continue;
-        };
-        if word == "or" {
+        if token.is_word("or") {
             has_or = true;
             continue;
         }
-        if matches!(word, "to" | "your" | "their" | "its" | "mana" | "pool") {
+        if let Some(group) = mana_pips_from_token(token) {
+            for symbol in group {
+                let Some(color) = mana_symbol_to_color(symbol) else {
+                    return Ok(None);
+                };
+                if !colors.contains(&color) {
+                    colors.push(color);
+                }
+            }
             continue;
         }
-        if let Ok(symbol) = parse_mana_symbol(word) {
-            let Some(color) = mana_symbol_to_color(symbol) else {
-                return Ok(None);
-            };
-            if !colors.contains(&color) {
-                colors.push(color);
-            }
+        let Some(word) = token.as_word() else {
+            continue;
+        };
+        if matches!(word.to_ascii_lowercase().as_str(), "to" | "your" | "their" | "its" | "mana" | "pool") {
             continue;
         }
         return Ok(None);
@@ -476,7 +486,8 @@ pub(crate) fn parse_or_mana_color_choices(
 pub(crate) fn parse_any_combination_mana_colors(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     let Some(combination_idx) = clause_words
         .windows(3)
         .position(|window| window == ["any", "combination", "of"])

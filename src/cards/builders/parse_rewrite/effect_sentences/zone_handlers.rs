@@ -18,17 +18,19 @@ use super::super::activation_and_restrictions::{
     controller_filter_for_token_player, parse_devotion_value_from_add_clause,
     target_ast_to_object_filter,
 };
+use super::super::lexer::TokenKind;
 use super::super::keyword_static::parse_where_x_is_number_of_filter_value;
 use super::super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
     parse_dynamic_cost_modifier_value, parse_pt_modifier, parse_pt_modifier_values,
 };
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    intern_counter_name, is_article, parse_color, parse_counter_type_word, parse_mana_symbol,
-    parse_number, parse_number_word_i32, parse_target_phrase, parse_value, parse_value_expr_words,
-    parse_zone_word, parser_trace_stack, span_from_tokens, token_index_for_word_index, trim_commas,
-    words,
+    intern_counter_name, is_article, mana_pips_from_token, parse_color, parse_counter_type_word,
+    parse_mana_symbol, parse_number, parse_number_word_i32, parse_target_phrase, parse_value,
+    parse_value_expr_words, parse_zone_word, parser_trace_stack, span_from_tokens,
+    token_index_for_word_index, trim_commas, words,
 };
 use super::clause_pattern_helpers::extract_subject_player;
 use super::conditionals::{parse_mana_symbol_group, parse_predicate, parse_subtype_word};
@@ -36,6 +38,28 @@ use super::dispatch_inner::trim_edge_punctuation;
 use super::for_each_helpers::parse_get_modifier_values_with_tail;
 use super::search_library::parse_restriction_duration;
 use super::sentence_primitives::find_color_choice_phrase;
+
+pub(crate) fn collapse_leading_signed_pt_modifier_tokens(
+    tokens: &[OwnedLexToken],
+) -> Option<Vec<OwnedLexToken>> {
+    let sign = match tokens.first()?.kind {
+        crate::cards::builders::parse_rewrite::lexer::TokenKind::Dash => "-",
+        crate::cards::builders::parse_rewrite::lexer::TokenKind::Plus => "+",
+        _ => return None,
+    };
+    let modifier = tokens.get(1)?.as_word()?;
+    if !modifier.contains('/') {
+        return None;
+    }
+
+    let mut collapsed = Vec::with_capacity(tokens.len().saturating_sub(1));
+    collapsed.push(OwnedLexToken::word(
+        format!("{sign}{modifier}"),
+        tokens[0].span(),
+    ));
+    collapsed.extend(tokens.iter().skip(2).cloned());
+    Some(collapsed)
+}
 
 fn split_chosen_creature_type_qualifier(
     tokens: &[OwnedLexToken],
@@ -1667,7 +1691,18 @@ pub(crate) fn parse_get(
         return Ok(EffectAst::PoisonCounters { count, player });
     }
 
-    let energy_count = tokens.iter().filter(|token| token.is_word("e")).count();
+    let energy_count = tokens
+        .iter()
+        .filter(|token| {
+            token.is_word("e")
+                || (token.kind == TokenKind::ManaGroup
+                    && token
+                        .slice
+                        .trim_start_matches('{')
+                        .trim_end_matches('}')
+                        .eq_ignore_ascii_case("e"))
+        })
+        .count();
     if energy_count > 0 {
         let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
         let count = parse_add_mana_equal_amount_value(tokens)
@@ -1779,6 +1814,29 @@ pub(crate) fn parse_get(
         });
     }
 
+    if let Some(collapsed_tokens) = collapse_leading_signed_pt_modifier_tokens(tokens)
+        && let Some(mod_token) = collapsed_tokens.first().and_then(OwnedLexToken::as_word)
+        && let Ok((power, toughness)) = parse_pt_modifier_values(mod_token)
+    {
+        let (power, toughness, duration, condition) =
+            parse_get_modifier_values_with_tail(&collapsed_tokens, power, toughness)?;
+        let target = match subject {
+            Some(SubjectAst::This) => TargetAst::Source(None),
+            _ => {
+                return Err(CardTextError::ParseError(
+                    "unsupported get clause (missing subject)".to_string(),
+                ));
+            }
+        };
+        return Ok(EffectAst::Pump {
+            power,
+            toughness,
+            target,
+            duration,
+            condition,
+        });
+    }
+
     Err(CardTextError::ParseError(format!(
         "unsupported get clause (clause: '{}')",
         clause_words.join(" ")
@@ -1791,7 +1849,8 @@ pub(crate) fn parse_add_mana(
 ) -> Result<EffectAst, CardTextError> {
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     parser_trace_stack("parse_add_mana:entry", tokens);
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     let wrap_instead_if_tail = |base_effect: EffectAst,
                                 tail_tokens: &[OwnedLexToken]|
      -> Result<Option<EffectAst>, CardTextError> {
@@ -1858,8 +1917,7 @@ pub(crate) fn parse_add_mana(
     // "Add one mana of the chosen color."
     let has_explicit_symbol = tokens
         .iter()
-        .filter_map(OwnedLexToken::as_word)
-        .any(|word| parse_mana_symbol(word).is_ok());
+        .any(|token| mana_pips_from_token(token).is_some());
     if !has_explicit_symbol
         && let Some(chosen_idx) = clause_words
             .windows(2)
@@ -2072,13 +2130,18 @@ pub(crate) fn parse_add_mana(
     let mut mana = Vec::new();
     let mut last_mana_idx = None;
     for (idx, token) in tokens[..mana_scan_end].iter().enumerate() {
+        if let Some(group) = mana_pips_from_token(token) {
+            mana.extend(group);
+            last_mana_idx = Some(idx);
+            continue;
+        }
         if let Some(word) = token.as_word() {
-            if word == "mana" || word == "to" || word == "your" || word == "pool" {
+            if word.eq_ignore_ascii_case("mana")
+                || word.eq_ignore_ascii_case("to")
+                || word.eq_ignore_ascii_case("your")
+                || word.eq_ignore_ascii_case("pool")
+            {
                 continue;
-            }
-            if let Ok(symbol) = parse_mana_symbol(word) {
-                mana.push(symbol);
-                last_mana_idx = Some(idx);
             }
         }
     }
@@ -2208,7 +2271,8 @@ pub(crate) fn mana_symbol_to_color(symbol: ManaSymbol) -> Option<crate::color::C
 pub(crate) fn parse_or_mana_color_choices(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if !clause_words.contains(&"or") {
         return Ok(None);
     }
@@ -2216,23 +2280,25 @@ pub(crate) fn parse_or_mana_color_choices(
     let mut colors = Vec::new();
     let mut has_or = false;
     for token in tokens {
-        let Some(word) = token.as_word() else {
-            continue;
-        };
-        if word == "or" {
+        if token.is_word("or") {
             has_or = true;
             continue;
         }
-        if matches!(word, "to" | "your" | "their" | "its" | "mana" | "pool") {
+        if let Some(group) = mana_pips_from_token(token) {
+            for symbol in group {
+                let Some(color) = mana_symbol_to_color(symbol) else {
+                    return Ok(None);
+                };
+                if !colors.contains(&color) {
+                    colors.push(color);
+                }
+            }
             continue;
         }
-        if let Ok(symbol) = parse_mana_symbol(word) {
-            let Some(color) = mana_symbol_to_color(symbol) else {
-                return Ok(None);
-            };
-            if !colors.contains(&color) {
-                colors.push(color);
-            }
+        let Some(word) = token.as_word() else {
+            continue;
+        };
+        if matches!(word.to_ascii_lowercase().as_str(), "to" | "your" | "their" | "its" | "mana" | "pool") {
             continue;
         }
         return Ok(None);
@@ -2248,7 +2314,8 @@ pub(crate) fn parse_or_mana_color_choices(
 pub(crate) fn parse_any_combination_mana_colors(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::color::Color>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     let Some(combination_idx) = clause_words
         .windows(3)
         .position(|window| window == ["any", "combination", "of"])
@@ -2941,6 +3008,12 @@ pub(crate) fn parse_exile(
     let (tokens, face_down) = split_exile_face_down_suffix(tokens);
     let tokens = split_exile_graveyard_replacement_suffix(tokens);
     let clause_words = words(tokens);
+    if clause_words.contains(&"unless") {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported exile-unless clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
     let has_face_down_manifest_tail = (clause_words.contains(&"face-down")
         || clause_words.contains(&"facedown")
         || clause_words.contains(&"manifest")
@@ -3508,9 +3581,23 @@ pub(crate) fn parse_pay(
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
+    let energy_symbol_count = tokens
+        .iter()
+        .filter(|token| {
+            token.is_word("e")
+                || (token.kind == TokenKind::ManaGroup
+                    && token
+                        .slice
+                        .trim_start_matches('{')
+                        .trim_end_matches('}')
+                        .eq_ignore_ascii_case("e"))
+        })
+        .count();
 
     let clause_words = words(tokens);
-    if clause_words.starts_with(&["any", "amount", "of"]) && clause_words.contains(&"e") {
+    if clause_words.starts_with(&["any", "amount", "of"])
+        && (clause_words.contains(&"e") || energy_symbol_count > 0)
+    {
         return Ok(EffectAst::PayEnergy {
             amount: Value::Fixed(0),
             player,
@@ -3539,9 +3626,19 @@ pub(crate) fn parse_pay(
     {
         return Ok(EffectAst::PayEnergy { amount, player });
     }
-    if tokens.iter().any(|token| token.is_word("e")) {
+    if energy_symbol_count > 0 {
         let mut energy_count = 0u32;
         for token in tokens {
+            if token.kind == TokenKind::ManaGroup
+                && token
+                    .slice
+                    .trim_start_matches('{')
+                    .trim_end_matches('}')
+                    .eq_ignore_ascii_case("e")
+            {
+                energy_count += 1;
+                continue;
+            }
             let Some(word) = token.as_word() else {
                 continue;
             };
@@ -3573,6 +3670,10 @@ pub(crate) fn parse_pay(
 
     let mut pips = Vec::new();
     for token in tokens {
+        if let Some(group) = mana_pips_from_token(token) {
+            pips.push(group);
+            continue;
+        }
         let Some(word) = token.as_word() else {
             continue;
         };

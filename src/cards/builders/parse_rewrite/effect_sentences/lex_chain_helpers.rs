@@ -290,15 +290,18 @@ pub(crate) fn find_verb_lexed(tokens: &[OwnedLexToken]) -> Option<(Verb, usize)>
         let Some(word) = token.as_word() else {
             continue;
         };
-        if matches!(word, "counter" | "counters")
+        let lower = word.to_ascii_lowercase();
+        if matches!(lower.as_str(), "counter" | "counters")
             && tokens
                 .get(idx + 1)
                 .and_then(OwnedLexToken::as_word)
+                .map(str::to_ascii_lowercase)
+                .as_deref()
                 .is_some_and(|next| matches!(next, "on" | "from" | "among"))
         {
             continue;
         }
-        let local = match word {
+        let local = match lower.as_str() {
             "adds" | "add" => Verb::Add,
             "moves" | "move" => Verb::Move,
             "deals" | "deal" => Verb::Deal,

@@ -3,10 +3,11 @@ use super::super::effect_ast_traversal::{
 };
 use super::super::keyword_static::parse_where_x_value_clause;
 use super::super::lexer::{OwnedLexToken, split_lexed_sentences};
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    compat_tokens_from_lexed, is_article, parse_number, parse_subject, parse_target_phrase,
-    span_from_tokens, token_index_for_word_index, trim_commas, words,
+    is_article, mana_pips_from_token, parse_number, parse_subject, parse_target_phrase, span_from_tokens,
+    token_index_for_word_index, trim_commas, words,
 };
 use super::sentence_helpers::*;
 use super::{
@@ -20,6 +21,7 @@ use crate::cards::builders::{
     TokenCopyFollowup, ZoneReplacementDurationAst,
 };
 use crate::effect::{ChoiceCount, Until, Value};
+use crate::mana::ManaSymbol;
 use crate::target::{
     ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
 };
@@ -40,32 +42,42 @@ type QuadSentenceRule = fn(
     &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError>;
 
+fn lowercase_word_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut lowered = tokens.to_vec();
+    for token in &mut lowered {
+        if let Some(word) = token.word_mut() {
+            *word = word.to_ascii_lowercase();
+        }
+    }
+    lowered
+}
+
 struct SentenceInput {
-    compat: OnceCell<Vec<OwnedLexToken>>,
+    lowered: OnceCell<Vec<OwnedLexToken>>,
     lexed: Option<Vec<OwnedLexToken>>,
 }
 
 impl SentenceInput {
-    fn from_compat(tokens: Vec<OwnedLexToken>) -> Self {
-        let compat = OnceCell::new();
-        let _ = compat.set(tokens);
+    fn from_legacy_tokens(tokens: Vec<OwnedLexToken>) -> Self {
+        let lowered = OnceCell::new();
+        let _ = lowered.set(tokens);
         Self {
-            compat,
+            lowered,
             lexed: None,
         }
     }
 
     fn from_lexed(tokens: &[OwnedLexToken]) -> Self {
         Self {
-            compat: OnceCell::new(),
+            lowered: OnceCell::new(),
             lexed: Some(tokens.to_vec()),
         }
     }
 
-    fn compat(&self) -> &[OwnedLexToken] {
-        self.compat
+    fn lowered(&self) -> &[OwnedLexToken] {
+        self.lowered
             .get_or_init(|| match self.lexed.as_deref() {
-                Some(tokens) => compat_tokens_from_lexed(tokens),
+                Some(tokens) => lowercase_word_tokens(tokens),
                 None => Vec::new(),
             })
             .as_slice()
@@ -856,12 +868,22 @@ fn parse_if_you_dont_put_card_from_among_them_into_your_hand(tokens: &[OwnedLexT
         ]
         || words.as_slice()
             == [
+                "if", "you", "don't", "put", "card", "from", "among", "them", "into", "your",
+                "hand",
+            ]
+        || words.as_slice()
+            == [
                 "if", "you", "do", "not", "put", "card", "from", "among", "them", "into", "your",
                 "hand",
             ]
         || words.as_slice()
             == [
                 "if", "you", "dont", "put", "card", "from", "among", "those", "cards", "into",
+                "your", "hand",
+            ]
+        || words.as_slice()
+            == [
+                "if", "you", "don't", "put", "card", "from", "among", "those", "cards", "into",
                 "your", "hand",
             ]
         || words.as_slice()
@@ -1417,10 +1439,14 @@ fn parse_triple_sentence_sequence(
     second: &[OwnedLexToken],
     third: &[OwnedLexToken],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, TripleSentenceRule); 4] = [
+    const RULES: [(&str, TripleSentenceRule); 5] = [
         (
             "mill-then-put-from-among-into-hand-then-if-you-dont",
             parse_mill_then_may_put_from_among_into_hand_then_if_you_dont,
+        ),
+        (
+            "search-then-next-upkeep-unless-pays-lose-game",
+            parse_search_then_delayed_next_upkeep_unless_pays_lose_game,
         ),
         (
             "exile-until-match-cast-rest-bottom",
@@ -1445,6 +1471,96 @@ fn parse_triple_sentence_sequence(
     Ok(None)
 }
 
+fn parse_search_then_delayed_next_upkeep_unless_pays_lose_game(
+    first: &[OwnedLexToken],
+    second: &[OwnedLexToken],
+    third: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let first_effects = parse_effect_chain(first)?;
+    let first_words = words(first);
+    if first_effects.is_empty()
+        || !first_words.starts_with(&["search", "your", "library"])
+    {
+        return Ok(None);
+    }
+
+    let upkeep_tokens = trim_commas(second);
+    let upkeep_words = words(&upkeep_tokens);
+    let pay_idx = if upkeep_words.starts_with(&[
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "your",
+        "next",
+        "upkeep",
+        "pay",
+    ]) {
+        7usize
+    } else if upkeep_words.starts_with(&[
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "the",
+        "next",
+        "upkeep",
+        "pay",
+    ]) {
+        7usize
+    } else {
+        return Ok(None);
+    };
+    let Some(pay_token_idx) = token_index_for_word_index(&upkeep_tokens, pay_idx) else {
+        return Ok(None);
+    };
+    let mana_tokens = trim_commas(&upkeep_tokens[pay_token_idx + 1..]);
+    if mana_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut mana = Vec::<ManaSymbol>::new();
+    for token in mana_tokens {
+        if let Some(pips) = mana_pips_from_token(&token) {
+            mana.extend(pips);
+            continue;
+        }
+        let Some(word) = token.as_word() else {
+            continue;
+        };
+        if let Ok(generic) = word.parse::<u8>() {
+            mana.push(ManaSymbol::Generic(generic));
+            continue;
+        }
+        return Ok(None);
+    }
+    if mana.is_empty() {
+        return Ok(None);
+    }
+
+    let lose_tokens = trim_commas(third);
+    let lose_words = words(&lose_tokens);
+    let valid_lose_clause = lose_words == ["if", "you", "dont", "you", "lose", "the", "game"]
+        || lose_words == ["if", "you", "don't", "you", "lose", "the", "game"]
+        || lose_words == ["if", "you", "do", "not", "you", "lose", "the", "game"];
+    if !valid_lose_clause {
+        return Ok(None);
+    }
+
+    let mut effects = first_effects;
+    effects.push(EffectAst::DelayedUntilNextUpkeep {
+        player: PlayerAst::You,
+        effects: vec![EffectAst::UnlessPays {
+            effects: vec![EffectAst::LoseGame {
+                player: PlayerAst::You,
+            }],
+            player: PlayerAst::You,
+            mana,
+        }],
+    });
+    Ok(Some(effects))
+}
+
 fn parse_if_no_card_into_hand_this_way_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -1455,6 +1571,8 @@ fn parse_if_no_card_into_hand_this_way_sentence(
 
     let has_expected_prefix = words.starts_with(&[
         "if", "you", "didnt", "put", "card", "into", "your", "hand", "this", "way",
+    ]) || words.starts_with(&[
+        "if", "you", "didn't", "put", "card", "into", "your", "hand", "this", "way",
     ]) || words.starts_with(&[
         "if", "you", "did", "not", "put", "card", "into", "your", "hand", "this", "way",
     ]);
@@ -1483,8 +1601,9 @@ fn parse_if_you_dont_sentence(
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
-    let has_expected_prefix =
-        words.starts_with(&["if", "you", "dont"]) || words.starts_with(&["if", "you", "do", "not"]);
+    let has_expected_prefix = words.starts_with(&["if", "you", "dont"])
+        || words.starts_with(&["if", "you", "don't"])
+        || words.starts_with(&["if", "you", "do", "not"]);
     if !has_expected_prefix {
         return Ok(None);
     }
@@ -1611,7 +1730,7 @@ fn parse_effect_sentences_from_sentence_inputs(
     }
 
     while sentence_idx < sentences.len() {
-        let sentence = sentences[sentence_idx].compat();
+        let sentence = sentences[sentence_idx].lowered();
         if sentence.is_empty() {
             sentence_idx += 1;
             continue;
@@ -1620,9 +1739,9 @@ fn parse_effect_sentences_from_sentence_inputs(
         if sentence_idx + 3 < sentences.len()
             && let Some((rule_name, mut combined)) = parse_quad_sentence_sequence(
                 sentence,
-                sentences[sentence_idx + 1].compat(),
-                sentences[sentence_idx + 2].compat(),
-                sentences[sentence_idx + 3].compat(),
+                sentences[sentence_idx + 1].lowered(),
+                sentences[sentence_idx + 2].lowered(),
+                sentences[sentence_idx + 3].lowered(),
             )?
         {
             let stage = format!("parse_effect_sentences:sequence-hit:{rule_name}");
@@ -1635,8 +1754,8 @@ fn parse_effect_sentences_from_sentence_inputs(
         if sentence_idx + 2 < sentences.len()
             && let Some((rule_name, mut combined)) = parse_triple_sentence_sequence(
                 sentence,
-                sentences[sentence_idx + 1].compat(),
-                sentences[sentence_idx + 2].compat(),
+                sentences[sentence_idx + 1].lowered(),
+                sentences[sentence_idx + 2].lowered(),
             )?
         {
             let stage = format!("parse_effect_sentences:sequence-hit:{rule_name}");
@@ -1648,7 +1767,7 @@ fn parse_effect_sentences_from_sentence_inputs(
 
         if sentence_idx + 1 < sentences.len()
             && let Some((rule_name, mut combined)) =
-                parse_pair_sentence_sequence(sentence, sentences[sentence_idx + 1].compat())?
+                parse_pair_sentence_sequence(sentence, sentences[sentence_idx + 1].lowered())?
         {
             let stage = format!("parse_effect_sentences:sequence-hit:{rule_name}");
             parser_trace(stage.as_str(), sentence);
@@ -1745,7 +1864,8 @@ fn parse_effect_sentences_from_sentence_inputs(
 
         if sentence_idx + 1 < sentences.len() && is_simple_copy_reference_sentence(&sentence_tokens)
         {
-            let next_tokens = strip_embedded_token_rules_text(sentences[sentence_idx + 1].compat());
+            let next_tokens =
+                strip_embedded_token_rules_text(sentences[sentence_idx + 1].lowered());
             if let Some(spec) = parse_may_cast_it_sentence(&next_tokens)
                 && spec.as_copy
             {
@@ -1824,6 +1944,26 @@ fn parse_effect_sentences_from_sentence_inputs(
                 words(&sentence_tokens).join(" ")
             )));
         }
+        if is_generic_token_reminder_sentence(&sentence_tokens) {
+            let reminder_words = words(&sentence_tokens);
+            let delayed_pronoun_lifecycle = matches!(
+                reminder_words.first().copied(),
+                Some("exile" | "sacrifice")
+            ) && (reminder_words.contains(&"it") || reminder_words.contains(&"them"));
+            let pronoun_followup_clause = reminder_words.starts_with(&["when", "it"])
+                || reminder_words.starts_with(&["whenever", "it"])
+                || reminder_words.starts_with(&["when", "they"])
+                || reminder_words.starts_with(&["whenever", "they"]);
+            if delayed_pronoun_lifecycle || pronoun_followup_clause {
+                // Keep standalone pronoun-led followups on the normal parser path.
+                // They can be genuine tagged-object effects, not just token reminder text.
+            } else {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported standalone token reminder clause (clause: '{}')",
+                    words(&sentence_tokens).join(" ")
+                )));
+            }
+        }
 
         if let Some(effect) = parse_choose_target_prelude_sentence(&sentence_tokens)? {
             effects.push(effect);
@@ -1845,7 +1985,7 @@ fn parse_effect_sentences_from_sentence_inputs(
             }
             apply_unapplied_token_copy_followup(sentence, &sentence_tokens, followup)?
         } else if let Some(lexed_sentence) = sentences[sentence_idx].lexed.as_deref()
-            && sentence_tokens.as_slice() == sentences[sentence_idx].compat()
+            && sentence_tokens.as_slice() == sentences[sentence_idx].lowered()
         {
             if super::looks_like_multi_create_chain_lexed(lexed_sentence) {
                 crate::cards::builders::parse_rewrite::clause_support::rewrite_parse_effect_sentences(
@@ -1964,7 +2104,7 @@ fn parse_effect_sentences_from_sentence_inputs(
     }
 
     if let Some(last_sentence) = sentences.last() {
-        parser_trace("parse_effect_sentences:done", last_sentence.compat());
+        parser_trace("parse_effect_sentences:done", last_sentence.lowered());
     }
     Ok(effects)
 }
@@ -1974,7 +2114,7 @@ pub(crate) fn parse_effect_sentences(
 ) -> Result<Vec<EffectAst>, CardTextError> {
     let sentences = split_on_period(tokens)
         .into_iter()
-        .map(SentenceInput::from_compat)
+        .map(SentenceInput::from_legacy_tokens)
         .collect::<Vec<_>>();
     parse_effect_sentences_from_sentence_inputs(sentences)
 }

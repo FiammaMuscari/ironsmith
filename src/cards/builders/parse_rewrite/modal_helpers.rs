@@ -145,17 +145,88 @@ pub(crate) fn parse_if_result_predicate_lexed(
         matches!(qualifiers, [] | ["it"] | ["them"] | ["that"])
     };
 
-    if words.is_empty() {
-        None
-    } else if is_unqualified_this_way_result("if") || is_exact_negated_result("if") {
-        Some(IfResultPredicate::Did)
-    } else if is_negated_this_way_result("if") {
-        Some(IfResultPredicate::DidNot)
-    } else if is_unqualified_this_way_result("when") || is_exact_negated_result("when") {
-        Some(IfResultPredicate::Did)
-    } else if is_negated_this_way_result("when") {
-        Some(IfResultPredicate::DidNot)
-    } else {
-        None
+    if words.len() == 2 && words[0] == "you" && words[1] == "do" {
+        return Some(IfResultPredicate::Did);
     }
+    if words.len() >= 2
+        && words[0] == "you"
+        && (words[1] == "win" || words[1] == "won")
+        && (words.len() == 2 || words.iter().any(|word| *word == "clash"))
+    {
+        return Some(IfResultPredicate::Did);
+    }
+    if words.len() == 2 && words[0] == "they" && words[1] == "do" {
+        return Some(IfResultPredicate::Did);
+    }
+    if words.len() == 2
+        && (words[0] == "player" || words[0] == "players")
+        && (words[1] == "do" || words[1] == "does")
+    {
+        return Some(IfResultPredicate::Did);
+    }
+    if words.len() >= 6
+        && words[0] == "you"
+        && words[1] == "searched"
+        && words[words.len() - 2] == "this"
+        && words[words.len() - 1] == "way"
+    {
+        return Some(IfResultPredicate::Did);
+    }
+    if is_unqualified_this_way_result("you") {
+        return Some(IfResultPredicate::Did);
+    }
+    if is_unqualified_this_way_result("they") {
+        return Some(IfResultPredicate::Did);
+    }
+
+    if words.len() >= 5
+        && (words[0] == "that" || words[0] == "it")
+        && words[1] == "spell"
+        && words.iter().any(|word| *word == "countered")
+        && words[words.len() - 2] == "this"
+        && words[words.len() - 1] == "way"
+    {
+        return Some(IfResultPredicate::Did);
+    }
+
+    if words.len() >= 5
+        && (words[0] == "that" || words[0] == "it")
+        && (words[1] == "creature" || words[1] == "permanent" || words[1] == "card")
+        && words[2] == "dies"
+        && words[3] == "this"
+        && words[4] == "way"
+    {
+        return Some(IfResultPredicate::DiesThisWay);
+    }
+    if words.len() >= 8
+        && matches!(words[0], "creature" | "permanent" | "card")
+        && words[1] == "dealt"
+        && words[2] == "damage"
+        && words[3] == "this"
+        && words[4] == "way"
+        && words[5] == "would"
+        && words[6] == "die"
+        && words[7] == "this"
+        && words.get(8) == Some(&"turn")
+    {
+        return Some(IfResultPredicate::DiesThisWay);
+    }
+
+    if matches!(
+        words.as_slice(),
+        ["it", "deals", "excess", "damage", "this", "way"]
+            | ["its", "power", "becomes", _, "this", "way"]
+            | ["it", "power", "becomes", _, "this", "way"]
+    ) {
+        return Some(IfResultPredicate::Did);
+    }
+
+    if is_exact_negated_result("you") || is_negated_this_way_result("you") {
+        return Some(IfResultPredicate::DidNot);
+    }
+    if is_exact_negated_result("they") || is_negated_this_way_result("they") {
+        return Some(IfResultPredicate::DidNot);
+    }
+
+    None
 }

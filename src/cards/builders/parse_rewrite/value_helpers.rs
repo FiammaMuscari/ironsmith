@@ -14,7 +14,8 @@ use super::util::{
 };
 
 fn parse_spells_cast_this_turn_matching_count_value(tokens: &[OwnedLexToken]) -> Option<Value> {
-    let filter_words = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let filter_words = word_view.to_word_refs();
     if !(filter_words.contains(&"spell") || filter_words.contains(&"spells"))
         || !(filter_words.contains(&"cast") || filter_words.contains(&"casts"))
         || !filter_words.contains(&"this")
@@ -118,7 +119,8 @@ pub(crate) fn parse_value_from_lexed(tokens: &[OwnedLexToken]) -> Option<(Value,
 }
 
 pub(crate) fn parse_equal_to_number_of_filter_value(tokens: &[OwnedLexToken]) -> Option<Value> {
-    let words_all = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words_all = word_view.to_word_refs();
     let equal_idx = words_all
         .windows(2)
         .position(|window| window == ["equal", "to"])?;
@@ -143,6 +145,29 @@ pub(crate) fn parse_equal_to_number_of_filter_value(tokens: &[OwnedLexToken]) ->
     let filter_start_word_idx = number_word_idx + 2;
     let filter_start_token_idx = token_index_for_word_index(tokens, filter_start_word_idx)?;
     let filter_tokens = trim_edge_punctuation(&tokens[filter_start_token_idx..]);
+    let filter_word_view = LowercaseWordView::new(&filter_tokens);
+    let filter_words = filter_word_view.to_word_refs();
+    if filter_words.contains(&"cards")
+        && filter_words.contains(&"in")
+        && (filter_words.contains(&"hand") || filter_words.contains(&"hands"))
+    {
+        if filter_words.contains(&"your") {
+            return Some(Value::CardsInHand(PlayerFilter::You));
+        }
+        if filter_words.contains(&"their")
+            || filter_words.windows(2).any(|window| {
+                matches!(
+                    window,
+                    ["that", "player"] | ["that", "players"] | ["the", "chosen"]
+                )
+            })
+        {
+            return Some(Value::CardsInHand(PlayerFilter::IteratedPlayer));
+        }
+        if filter_words.contains(&"opponent") || filter_words.contains(&"opponents") {
+            return Some(Value::CardsInHand(PlayerFilter::Opponent));
+        }
+    }
     if let Some(value) = parse_spells_cast_this_turn_matching_count_value(&filter_tokens) {
         return Some(value);
     }
@@ -153,7 +178,8 @@ pub(crate) fn parse_equal_to_number_of_filter_value(tokens: &[OwnedLexToken]) ->
 pub(crate) fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value(
     tokens: &[OwnedLexToken],
 ) -> Option<Value> {
-    let clause_words = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let clause_words = word_view.to_word_refs();
     if !clause_words.starts_with(&["equal", "to"]) {
         return None;
     }

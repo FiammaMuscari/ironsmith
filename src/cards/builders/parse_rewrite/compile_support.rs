@@ -1570,15 +1570,20 @@ pub(crate) fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
 }
 
 pub(crate) fn choose_spec_references_exiled_tag(spec: &ChooseSpec) -> bool {
+    fn is_exiled_tag(tag: &TagKey) -> bool {
+        let tag = tag.as_str();
+        tag.starts_with("exiled_") || tag.starts_with("__sentence_helper_exiled")
+    }
+
     match spec {
-        ChooseSpec::Tagged(tag) => tag.as_str().starts_with("exiled_"),
+        ChooseSpec::Tagged(tag) => is_exiled_tag(tag),
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
             choose_spec_references_exiled_tag(inner)
         }
         ChooseSpec::Object(filter) | ChooseSpec::All(filter) => {
             filter.tagged_constraints.iter().any(|constraint| {
                 matches!(constraint.relation, TaggedOpbjectRelation::IsTaggedObject)
-                    && constraint.tag.as_str().starts_with("exiled_")
+                    && is_exiled_tag(&constraint.tag)
             })
         }
         _ => false,
@@ -9323,6 +9328,15 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             word.trim_matches(|ch: char| {
                 !ch.is_ascii_alphanumeric() && ch != '/' && ch != '+' && ch != '-'
             })
+        })
+        .map(|word| match word {
+            "can't" | "cannot" => "cant",
+            "aren't" => "arent",
+            "isn't" => "isnt",
+            "they're" => "theyre",
+            "it's" => "its",
+            "you're" => "youre",
+            _ => word,
         })
         .filter(|word| !word.is_empty())
         .collect();

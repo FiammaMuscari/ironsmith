@@ -9,7 +9,7 @@ use super::super::util::{
     token_index_for_word_index, trim_commas, words,
 };
 use super::super::value_helpers::parse_filter_comparison_tokens;
-use super::{parse_effect_chain, parse_effect_chain_lexed};
+use super::{parse_effect_chain, parse_effect_chain_inner, parse_effect_chain_lexed};
 use crate::card::{PowerToughness, PtValue};
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -484,7 +484,7 @@ pub(crate) fn parse_for_each_opponent_doesnt(
         )));
     }
 
-    let effects = parse_effect_chain(&effect_tokens)?;
+    let effects = parse_effect_chain_inner(&effect_tokens)?;
     let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
     Ok(Some(EffectAst::ForEachOpponentDoesNot {
         effects,
@@ -549,7 +549,7 @@ pub(crate) fn parse_for_each_player_doesnt(
         )));
     }
 
-    let effects = parse_effect_chain(&effect_tokens)?;
+    let effects = parse_effect_chain_inner(&effect_tokens)?;
     let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
     Ok(Some(EffectAst::ForEachPlayerDoesNot { effects, predicate }))
 }
@@ -557,7 +557,7 @@ pub(crate) fn parse_for_each_player_doesnt(
 pub(crate) fn negated_action_word_index(words: &[&str]) -> Option<(usize, usize)> {
     if let Some(idx) = words
         .iter()
-        .position(|word| *word == "doesnt" || *word == "didnt")
+        .position(|word| matches!(*word, "doesnt" | "didnt" | "doesn't" | "didn't"))
     {
         return Some((idx, 1));
     }
@@ -800,6 +800,29 @@ pub(crate) fn parse_conditional_sentence(
         .filter_map(|(idx, token)| token.is_comma().then_some(idx))
         .collect::<Vec<_>>();
     if comma_indices.is_empty() {
+        for split_idx in (2..tokens.len()).rev() {
+            let predicate_tokens = &tokens[1..split_idx];
+            let effect_tokens = trim_commas(&tokens[split_idx..]);
+            if effect_tokens.is_empty() {
+                continue;
+            }
+            if let Ok(predicate) = parse_predicate(predicate_tokens)
+                && let Ok(effects) = parse_effect_chain(&effect_tokens)
+                && !effects.is_empty()
+            {
+                return Ok(vec![EffectAst::Conditional {
+                    predicate,
+                    if_true: effects,
+                    if_false: Vec::new(),
+                }]);
+            }
+            if let Some(predicate) = parse_if_result_predicate(predicate_tokens)
+                && let Ok(effects) = parse_effect_chain(&effect_tokens)
+                && !effects.is_empty()
+            {
+                return Ok(vec![EffectAst::IfResult { predicate, effects }]);
+            }
+        }
         return Err(CardTextError::ParseError(
             "missing comma in if clause".to_string(),
         ));
@@ -896,6 +919,29 @@ pub(crate) fn parse_conditional_sentence_lexed(
         .filter_map(|(idx, token)| token.is_comma().then_some(idx))
         .collect::<Vec<_>>();
     if comma_indices.is_empty() {
+        for split_idx in (2..tokens.len()).rev() {
+            let predicate_tokens = &tokens[1..split_idx];
+            let effect_tokens = trim_commas(&tokens[split_idx..]);
+            if effect_tokens.is_empty() {
+                continue;
+            }
+            if let Ok(predicate) = parse_predicate_lexed(predicate_tokens)
+                && let Ok(effects) = parse_effect_chain_lexed(&effect_tokens)
+                && !effects.is_empty()
+            {
+                return Ok(vec![EffectAst::Conditional {
+                    predicate,
+                    if_true: effects,
+                    if_false: Vec::new(),
+                }]);
+            }
+            if let Some(predicate) = parse_if_result_predicate_lexed(predicate_tokens)
+                && let Ok(effects) = parse_effect_chain_lexed(&effect_tokens)
+                && !effects.is_empty()
+            {
+                return Ok(vec![EffectAst::IfResult { predicate, effects }]);
+            }
+        }
         return Err(CardTextError::ParseError(
             "missing comma in if clause".to_string(),
         ));
@@ -1004,14 +1050,19 @@ pub(crate) fn parse_if_result_predicate(tokens: &[OwnedLexToken]) -> Option<IfRe
         matches!(qualifiers, [] | ["it"] | ["them"] | ["that"])
     };
     let is_exact_negated_result = |subject: &str| {
-        (words.len() == 2 && words[0] == subject && matches!(words[1], "dont" | "didnt" | "cant"))
+        (words.len() == 2
+            && words[0] == subject
+            && matches!(words[1], "dont" | "didnt" | "can't" | "cant" | "don't" | "didn't"))
             || (words.len() == 3
                 && words[0] == subject
                 && (matches!(words[1], "do" | "did" | "can") && words[2] == "not"))
     };
     let is_negated_this_way_result = |subject: &str| {
         let action_idx =
-            if words.len() >= 5 && words[0] == subject && matches!(words[1], "dont" | "didnt") {
+            if words.len() >= 5
+                && words[0] == subject
+                && matches!(words[1], "dont" | "didnt" | "don't" | "didn't")
+            {
                 2
             } else if words.len() >= 6
                 && words[0] == subject
@@ -2153,7 +2204,7 @@ pub(crate) fn parse_predicate(tokens: &[OwnedLexToken]) -> Result<PredicateAst, 
 
     let you_dont_control_filter_start = if filtered.len() >= 4
         && filtered[0] == "you"
-        && filtered[1] == "dont"
+        && matches!(filtered[1], "dont" | "don't")
         && (filtered[2] == "control" || filtered[2] == "controls")
     {
         Some(3usize)
@@ -2509,6 +2560,18 @@ pub(crate) fn parse_predicate(tokens: &[OwnedLexToken]) -> Result<PredicateAst, 
                 "for",
                 "least",
                 "power",
+            ]
+        || filtered.as_slice()
+            == [
+                "card",
+                "would",
+                "be",
+                "put",
+                "into",
+                "opponents",
+                "graveyard",
+                "from",
+                "anywhere",
             ];
     if unsupported_unmodeled {
         return Ok(PredicateAst::Unmodeled(filtered.join(" ")));

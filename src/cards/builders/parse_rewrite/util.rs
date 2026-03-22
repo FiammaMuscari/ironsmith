@@ -192,6 +192,14 @@ pub(crate) fn is_article(word: &str) -> bool {
     matches!(word, "a" | "an" | "the")
 }
 
+fn strip_possessive_suffix(word: &str) -> &str {
+    word.strip_suffix("'s")
+        .or_else(|| word.strip_suffix("’s"))
+        .or_else(|| word.strip_suffix("s'"))
+        .or_else(|| word.strip_suffix("s’"))
+        .unwrap_or(word)
+}
+
 const SENTENCE_HELPER_TAG_PREFIX: &str = "__sentence_helper_";
 
 pub(crate) fn helper_tag_for_tokens(tokens: &[OwnedLexToken], prefix: &str) -> TagKey {
@@ -483,17 +491,7 @@ pub(crate) fn token_index_for_word_index(
     tokens: &[OwnedLexToken],
     word_index: usize,
 ) -> Option<usize> {
-    let mut seen_words = 0usize;
-    for (idx, token) in tokens.iter().enumerate() {
-        if token.as_word().is_none() {
-            continue;
-        }
-        if seen_words == word_index {
-            return Some(idx);
-        }
-        seen_words += 1;
-    }
-    None
+    LowercaseWordView::new(tokens).token_index_for_word_index(word_index)
 }
 
 pub(crate) fn trim_commas(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
@@ -948,7 +946,8 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
 }
 
 pub(crate) fn parse_counter_type_from_tokens(tokens: &[OwnedLexToken]) -> Option<CounterType> {
-    let token_words = words(tokens);
+    let token_word_view = crate::cards::builders::parse_rewrite::native_tokens::LowercaseWordView::new(tokens);
+    let token_words = token_word_view.to_word_refs();
 
     if let Some(counter_idx) = token_words
         .iter()
@@ -1562,10 +1561,8 @@ pub(crate) fn parse_value_expr_words(words: &[&str]) -> Option<(Value, usize)> {
 }
 
 pub(crate) fn parse_value_expr(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
-    let words = tokens
-        .iter()
-        .filter_map(OwnedLexToken::as_word)
-        .collect::<Vec<_>>();
+    let word_view = LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
     let (value, used_words) = parse_value_expr_words(&words)?;
     let used = token_index_for_word_index(tokens, used_words).unwrap_or(tokens.len());
     Some((value, used))
@@ -1908,6 +1905,15 @@ fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, Card
     let mut explicit_target = false;
 
     let all_words = words(tokens);
+    if matches!(all_words.as_slice(), ["any"] | ["any", "target"] | ["any", "targets"]) {
+        return Ok(TargetAst::AnyTarget(span));
+    }
+    if matches!(
+        all_words.as_slice(),
+        ["any", "other"] | ["any", "other", "target"] | ["any", "other", "targets"]
+    ) {
+        return Ok(TargetAst::AnyOtherTarget(span));
+    }
     if all_words.starts_with(&["up", "to"])
         && matches!(all_words.last().copied(), Some("target") | Some("targets"))
         && let Some((value, _)) = parse_number_or_x_value(&tokens[2..])
@@ -1986,6 +1992,62 @@ fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, Card
             "spell",
             "additional",
             "cost"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell's",
+            "additional",
+            "cost"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell’s",
+            "additional",
+            "cost"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell's",
+            "additional",
+            "costs"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell’s",
+            "additional",
+            "costs"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell",
+            "s",
+            "additional",
+            "cost"
+        ] | [
+            "creature",
+            "tapped",
+            "to",
+            "pay",
+            "this",
+            "spell",
+            "s",
+            "additional",
+            "costs"
         ] | [
             "creature",
             "tapped",
@@ -2354,8 +2416,9 @@ fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, Card
         ));
     }
     let second_word_is_object_head = remaining_words.get(1).is_some_and(|word| {
+        let normalized = strip_possessive_suffix(word);
         matches!(
-            *word,
+            normalized,
             "creature"
                 | "creatures"
                 | "permanent"
@@ -2366,8 +2429,8 @@ fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, Card
                 | "sources"
                 | "card"
                 | "cards"
-        ) || parse_card_type(word).is_some()
-            || word
+        ) || parse_card_type(normalized).is_some()
+            || normalized
                 .strip_suffix('s')
                 .is_some_and(|singular| parse_card_type(singular).is_some())
     });
@@ -3969,21 +4032,54 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
         return Ok(None);
     }
 
-    let Some(comma_idx) = tokens.iter().position(|token| token.is_comma()) else {
+    let (condition_tokens, tail_tokens) = if let Some(comma_idx) =
+        tokens.iter().position(|token| token.is_comma())
+    {
+        (
+            trim_commas(&tokens[1..comma_idx]),
+            trim_commas(tokens.get(comma_idx + 1..).unwrap_or_default()),
+        )
+    } else if let Some(may_idx) = tokens.windows(3).position(|window| {
+        window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay")
+    }) {
+        (trim_commas(&tokens[1..may_idx]), trim_commas(&tokens[may_idx..]))
+    } else {
         return Ok(None);
     };
-    let condition_tokens = trim_commas(&tokens[1..comma_idx]);
-    let tail_tokens = trim_commas(tokens.get(comma_idx + 1..).unwrap_or_default());
     if parse_self_free_cast_alternative_cost_line(&tail_tokens).is_none()
         && parse_you_may_rather_than_spell_cost_line(&tail_tokens, line)?.is_none()
     {
         return Ok(None);
     }
-    let Some(condition) = parse_this_spell_cost_condition(&condition_tokens) else {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported this-spell cost condition (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    let condition = if let Some(condition) = parse_this_spell_cost_condition(&condition_tokens) {
+        condition
+    } else {
+        let condition_words_view = LowercaseWordView::new(&condition_tokens);
+        let condition_words = condition_words_view.to_word_refs();
+        if (condition_words.starts_with(&["youve", "been", "dealt", "damage", "by"])
+            || condition_words.starts_with(&["you", "have", "been", "dealt", "damage", "by"]))
+            && condition_words.ends_with(&["creatures", "this", "turn"])
+        {
+            let count_start = if condition_words.first().copied() == Some("youve") {
+                5usize
+            } else {
+                6usize
+            };
+            if let Some((n, _)) = parse_number(condition_tokens.get(count_start..).unwrap_or_default())
+            {
+                crate::static_abilities::ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(n)
+            } else {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported this-spell cost condition (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported this-spell cost condition (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
     };
 
     if parse_self_free_cast_alternative_cost_line(&tail_tokens).is_some() {

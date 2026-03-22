@@ -75,6 +75,17 @@ pub(crate) fn display_text_for_tokens(
             text.push_str(&rendered);
             needs_space = true;
             capitalize_next_cost_action = false;
+        } else if matches!(
+            token.kind,
+            crate::cards::builders::parse_rewrite::lexer::TokenKind::ManaGroup
+        ) {
+            let suppress_space = text.ends_with('}');
+            if needs_space && !text.is_empty() && !suppress_space {
+                text.push(' ');
+            }
+            text.push_str(token.slice.to_ascii_uppercase().as_str());
+            needs_space = true;
+            capitalize_next_cost_action = false;
         } else if token.is_colon() {
             text.push(':');
             needs_space = true;
@@ -438,6 +449,79 @@ pub(crate) fn parse_attached_cant_attack_or_block_line(
     }))
 }
 
+pub(crate) fn parse_attached_tap_abilities_cant_be_activated_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbilityAst>, CardTextError> {
+    let normalized_storage = normalize_cant_words(tokens);
+    let normalized = normalized_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let display = if normalized.as_slice()
+        == [
+            "enchanted",
+            "creatures",
+            "activated",
+            "abilities",
+            "with",
+            "t",
+            "in",
+            "their",
+            "costs",
+            "cant",
+            "be",
+            "activated",
+        ]
+    {
+        "enchanted creature's activated abilities with {T} in their costs can't be activated"
+    } else if normalized.as_slice()
+        == [
+            "enchanted",
+            "permanents",
+            "activated",
+            "abilities",
+            "with",
+            "t",
+            "in",
+            "their",
+            "costs",
+            "cant",
+            "be",
+            "activated",
+        ]
+    {
+        "enchanted permanent's activated abilities with {T} in their costs can't be activated"
+    } else if normalized.as_slice()
+        == [
+            "equipped",
+            "creatures",
+            "activated",
+            "abilities",
+            "with",
+            "t",
+            "in",
+            "their",
+            "costs",
+            "cant",
+            "be",
+            "activated",
+        ]
+    {
+        "equipped creature's activated abilities with {T} in their costs can't be activated"
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(StaticAbilityAst::AttachedStaticAbilityGrant {
+        ability: Box::new(StaticAbilityAst::Static(StaticAbility::restriction(
+            crate::effect::Restriction::activate_tap_abilities_of(ObjectFilter::source()),
+            display.to_string(),
+        ))),
+        display: display.to_string(),
+        condition: None,
+    }))
+}
+
 pub(crate) fn parse_you_control_attached_creature_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -473,12 +557,6 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
         return Ok(None);
     }
 
-    let is_enchanted = line_words.starts_with(&["enchanted", "creature"]);
-    let is_equipped = line_words.starts_with(&["equipped", "creature"]);
-    if !is_enchanted && !is_equipped {
-        return Ok(None);
-    }
-
     let Some(get_idx) = tokens
         .iter()
         .position(|token| token.is_word("get") || token.is_word("gets"))
@@ -492,34 +570,35 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
         return Ok(None);
     }
 
+    let clause = parse_anthem_clause(tokens, get_idx, and_idx)?;
     let tail_tokens = trim_edge_punctuation(&tokens[and_idx + 1..]);
     let tail_words_storage = normalize_cant_words(&tail_tokens);
     let tail_words = tail_words_storage
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    let subject = if is_enchanted {
+    let subject = if line_words.windows(2).any(|window| window == ["enchanted", "permanent"]) {
+        "enchanted permanent"
+    } else if line_words.windows(2).any(|window| window == ["enchanted", "creature"]) {
         "enchanted creature"
-    } else {
+    } else if line_words.windows(2).any(|window| window == ["equipped", "permanent"]) {
+        "equipped permanent"
+    } else if line_words.windows(2).any(|window| window == ["equipped", "creature"]) {
         "equipped creature"
+    } else {
+        return Ok(None);
     };
-    let anthem = build_anthem_static_ability(&parse_anthem_clause(tokens, get_idx, and_idx)?);
+    let anthem = build_anthem_static_ability(&clause);
     let granted = match tail_words.as_slice() {
         ["cant", "block"] => StaticAbilityAst::AttachedStaticAbilityGrant {
-            ability: Box::new(StaticAbilityAst::Static(StaticAbility::restriction(
-                crate::effect::Restriction::block(ObjectFilter::source()),
-                format!("{subject} can't block"),
-            ))),
+            ability: Box::new(StaticAbilityAst::Static(StaticAbility::cant_block())),
             display: format!("{subject} can't block"),
-            condition: None,
+            condition: clause.condition.clone(),
         },
         ["cant", "attack"] => StaticAbilityAst::AttachedStaticAbilityGrant {
-            ability: Box::new(StaticAbilityAst::Static(StaticAbility::restriction(
-                crate::effect::Restriction::attack(ObjectFilter::source()),
-                format!("{subject} can't attack"),
-            ))),
+            ability: Box::new(StaticAbilityAst::Static(StaticAbility::cant_attack())),
             display: format!("{subject} can't attack"),
-            condition: None,
+            condition: clause.condition.clone(),
         },
         ["cant", "attack", "or", "block"] => StaticAbilityAst::AttachedStaticAbilityGrant {
             ability: Box::new(StaticAbilityAst::Static(StaticAbility::restriction(
@@ -527,13 +606,58 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
                 format!("{subject} can't attack or block"),
             ))),
             display: format!("{subject} can't attack or block"),
-            condition: None,
+            condition: clause.condition.clone(),
         },
-        ["cant", "be", "blocked"] => StaticAbilityAst::AttachedStaticAbilityGrant {
-            ability: Box::new(StaticAbilityAst::KeywordAction(KeywordAction::Unblockable)),
-            display: format!("{subject} can't be blocked"),
-            condition: None,
-        },
+        ["cant", "be", "blocked"] => {
+            return Ok(Some(vec![
+                anthem.into(),
+                grant_keyword_action_for_anthem_subject(&clause, KeywordAction::Unblockable),
+            ]));
+        }
+        [lose, ..] if matches!(*lose, "lose" | "loses") => {
+            let ability_tokens = trim_commas(&tail_tokens[1..]);
+            if ability_tokens.is_empty() {
+                return Ok(None);
+            }
+            let Some(actions) = parse_ability_line(&ability_tokens) else {
+                return Ok(None);
+            };
+            reject_unimplemented_keyword_actions(&actions, &line_words.join(" "))?;
+            let removed = actions
+                .into_iter()
+                .filter_map(|action| keyword_action_to_static_ability(action))
+                .collect::<Vec<_>>();
+            if removed.is_empty() {
+                return Ok(None);
+            }
+            let mut out = vec![anthem.into()];
+            for ability in removed {
+                out.push(match &clause.subject {
+                    AnthemSubjectAst::Source => match &clause.condition {
+                        Some(condition) => StaticAbilityAst::ConditionalStaticAbility {
+                            ability: Box::new(StaticAbilityAst::RemoveStaticAbility {
+                                filter: ObjectFilter::source(),
+                                ability: Box::new(StaticAbilityAst::Static(ability)),
+                            }),
+                            condition: condition.clone(),
+                        },
+                        None => StaticAbilityAst::RemoveStaticAbility {
+                            filter: ObjectFilter::source(),
+                            ability: Box::new(StaticAbilityAst::Static(ability)),
+                        },
+                    },
+                    AnthemSubjectAst::Filter(filter) => StaticAbilityAst::GrantStaticAbility {
+                        filter: filter.clone(),
+                        ability: Box::new(StaticAbilityAst::RemoveStaticAbility {
+                            filter: ObjectFilter::source(),
+                            ability: Box::new(StaticAbilityAst::Static(ability)),
+                        }),
+                        condition: clause.condition.clone(),
+                    },
+                });
+            }
+            return Ok(Some(out));
+        }
         _ => return Ok(None),
     };
     Ok(Some(vec![anthem.into(), granted]))
@@ -887,8 +1011,10 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
     if line_words.len() < 6 {
         return Ok(None);
     }
-    let is_enchanted = line_words.starts_with(&["enchanted", "creature"]);
-    let is_equipped = line_words.starts_with(&["equipped", "creature"]);
+    let is_enchanted = line_words.starts_with(&["enchanted", "creature"])
+        || line_words.starts_with(&["enchanted", "permanent"]);
+    let is_equipped = line_words.starts_with(&["equipped", "creature"])
+        || line_words.starts_with(&["equipped", "permanent"]);
     if !is_enchanted && !is_equipped {
         return Ok(None);
     }

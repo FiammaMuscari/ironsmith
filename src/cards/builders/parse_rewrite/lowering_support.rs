@@ -766,9 +766,7 @@ pub(crate) fn rewrite_lower_static_ability_ast(
             condition,
         } => {
             let mut lowered = rewrite_lower_parsed_ability(ability)?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
+            lowered.text = Some(display.clone());
             let mut grant =
                 crate::static_abilities::GrantObjectAbilityForFilter::new(filter, lowered, display);
             if let Some(condition) = condition {
@@ -782,9 +780,7 @@ pub(crate) fn rewrite_lower_static_ability_ast(
             condition,
         } => {
             let mut lowered = rewrite_lower_parsed_ability(ability)?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
+            lowered.text = Some(display.clone());
             let mut grant = crate::static_abilities::AttachedAbilityGrant::new(lowered, display);
             if let Some(condition) = condition {
                 grant = grant.with_condition(condition);

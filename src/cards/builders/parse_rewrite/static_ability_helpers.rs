@@ -173,9 +173,7 @@ pub(crate) fn lower_granted_ability_ast(
         ),
         GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
             let mut lowered = rewrite_lower_parsed_ability(ability.clone())?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
+            lowered.text = Some(display.clone());
             Ok(StaticAbility::grant_object_ability_for_filter(
                 ObjectFilter::source(),
                 lowered,

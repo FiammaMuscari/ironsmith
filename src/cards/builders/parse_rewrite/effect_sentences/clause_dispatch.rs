@@ -1,7 +1,7 @@
 use super::super::activation_and_restrictions::{
     find_negation_span, parse_cant_restrictions, parse_choose_color_phrase_words,
     parse_choose_creature_type_phrase_words, parse_choose_player_phrase_words,
-    parse_target_player_choose_objects_clause, parse_you_choose_objects_clause,
+    parse_single_word_keyword_action, parse_target_player_choose_objects_clause, parse_you_choose_objects_clause,
     parse_you_choose_player_clause,
 };
 use super::super::keyword_static::{
@@ -11,10 +11,9 @@ use super::super::keyword_static::{
 use super::super::lexer::OwnedLexToken;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    compat_tokens_from_lexed, contains_until_end_of_turn, parse_card_type, parse_color,
-    parse_subject, parse_target_phrase, parse_value, parser_trace, parser_trace_stack,
-    span_from_tokens, starts_with_until_end_of_turn, token_index_for_word_index, trim_commas,
-    words,
+    contains_until_end_of_turn, parse_card_type, parse_color, parse_subject,
+    parse_target_phrase, parse_value, parser_trace, parser_trace_stack, span_from_tokens,
+    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
 };
 use super::chain_carry::{parse_leading_player_may, remove_first_word, remove_through_first_word};
 use super::clause_pattern_helpers::extract_subject_player;
@@ -27,17 +26,29 @@ use super::for_each_helpers::{
     parse_has_base_power_toughness_clause,
 };
 use super::search_library::parse_restriction_duration;
+use super::sentence_primitives::try_build_unless;
 use super::verb_dispatch::parse_effect_with_verb;
 use super::zone_counter_helpers::{parse_half_starting_life_total_value, parse_put_counters};
+use super::zone_handlers::collapse_leading_signed_pt_modifier_tokens;
 use super::{
     Verb, bind_implicit_player_context, find_verb, parse_effect_chain_with_sentence_primitives,
     parse_simple_gain_ability_clause, parse_simple_lose_ability_clause, parse_subtype_word,
 };
 use crate::TagKey;
-use crate::cards::builders::{CardTextError, EffectAst, IT_TAG, TargetAst};
+use crate::cards::builders::{CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, TargetAst};
 use crate::effect::{Until, Value};
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::{CardType, Subtype};
+
+fn lowercase_word_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut lowered = tokens.to_vec();
+    for token in &mut lowered {
+        if let Some(word) = token.word_mut() {
+            *word = word.to_ascii_lowercase();
+        }
+    }
+    lowered
+}
 
 pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
@@ -85,6 +96,17 @@ pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst,
 
     if let Some(effect) = run_clause_primitives(tokens)? {
         return Ok(effect);
+    }
+
+    if let Some(unless_idx) = tokens.iter().position(|token| token.is_word("unless")) {
+        let main_tokens = trim_commas(&tokens[..unless_idx]);
+        if !main_tokens.is_empty()
+            && let Ok(main_effect) = parse_effect_clause(&main_tokens)
+            && let Some(unless_effect) =
+                try_build_unless(vec![main_effect], tokens, unless_idx)?
+        {
+            return Ok(unless_effect);
+        }
     }
 
     if let Some(effect) = parse_has_base_power_clause(tokens)? {
@@ -303,10 +325,14 @@ pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst,
         let subject_tokens = &tokens[..verb_idx];
         if !subject_tokens.is_empty() {
             let subject_words = words(subject_tokens);
-            if let Some(mod_token) = tokens.get(verb_idx + 1).and_then(OwnedLexToken::as_word)
+            let collapsed_modifier_tail =
+                collapse_leading_signed_pt_modifier_tokens(&tokens[verb_idx + 1..]);
+            let modifier_tail = collapsed_modifier_tail
+                .as_deref()
+                .unwrap_or(&tokens[verb_idx + 1..]);
+            if let Some(mod_token) = modifier_tail.first().and_then(OwnedLexToken::as_word)
                 && let Ok((power, toughness)) = parse_pt_modifier_values(mod_token)
             {
-                let modifier_tail = &tokens[verb_idx + 1..];
                 if let Some(count) = parse_get_for_each_count_value(modifier_tail)? {
                     let modifier_words = words(modifier_tail);
                     let duration = if starts_with_until_end_of_turn(&modifier_words)
@@ -456,6 +482,44 @@ pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst,
     {
         return Ok(effect);
     }
+    if matches!(verb, Verb::Gain) {
+        let rest_words = words(&tokens[verb_idx + 1..]);
+        let duration_phrase = super::gain_ability::parse_simple_ability_duration(&rest_words);
+        let duration = duration_phrase
+            .as_ref()
+            .map(|(_, _, duration)| duration.clone())
+            .unwrap_or(Until::Forever);
+        let ability_end_word_idx = duration_phrase
+            .as_ref()
+            .map(|(start, _, _)| verb_idx + 1 + *start)
+            .unwrap_or(words(tokens).len());
+        let ability_end_token_idx =
+            token_index_for_word_index(tokens, ability_end_word_idx).unwrap_or(tokens.len());
+        let ability_tokens = trim_commas(&tokens[verb_idx + 1..ability_end_token_idx]);
+        let trailing_tokens = trim_commas(&tokens[ability_end_token_idx..]);
+        let parsed_actions = parse_ability_line(&ability_tokens).or_else(|| {
+            let ability_words = words(&ability_tokens);
+            if ability_words.len() == 1 {
+                parse_single_word_keyword_action(ability_words[0]).map(|action| vec![action])
+            } else {
+                None
+            }
+        });
+        if !ability_tokens.is_empty()
+            && trailing_tokens.is_empty()
+            && let Some(actions) = parsed_actions
+            && !actions.is_empty()
+            && words(subject_tokens).first().copied() == Some("target")
+        {
+            let target = parse_target_phrase(subject_tokens)?;
+            let abilities = actions.into_iter().map(GrantedAbilityAst::from).collect();
+            return Ok(EffectAst::GrantAbilitiesToTarget {
+                target,
+                abilities,
+                duration,
+            });
+        }
+    }
     if matches!(verb, Verb::Lose)
         && let Some(effect) = parse_simple_lose_ability_clause(tokens)?
     {
@@ -481,7 +545,8 @@ pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst,
 pub(crate) fn parse_effect_clause_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<EffectAst, CardTextError> {
-    parse_effect_clause(&compat_tokens_from_lexed(tokens))
+    let lowered = lowercase_word_tokens(tokens);
+    parse_effect_clause(&lowered)
 }
 
 pub(crate) fn parse_become_clause(

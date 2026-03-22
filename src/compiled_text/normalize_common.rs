@@ -148,6 +148,9 @@ pub(super) fn capitalize_first(text: &str) -> String {
 }
 
 pub(super) fn lowercase_first(text: &str) -> String {
+    if text.starts_with('{') {
+        return text.to_string();
+    }
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => format!("{}{}", first.to_ascii_lowercase(), chars.as_str()),

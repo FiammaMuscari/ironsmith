@@ -99,6 +99,18 @@ fn parse_simple_object_filter_lexed(tokens: &[OwnedLexToken], other: bool) -> Op
         filter.controller = Some(PlayerFilter::You);
         filter.zone = Some(Zone::Battlefield);
         trim_suffix(&mut words, 2);
+    } else if lower_words_end_with(&words, &["you", "dont", "control"])
+        || lower_words_end_with(&words, &["you", "don't", "control"])
+        || lower_words_end_with(&words, &["you", "do", "not", "control"])
+    {
+        filter.controller = Some(PlayerFilter::NotYou);
+        filter.zone = Some(Zone::Battlefield);
+        let suffix_len = if words.ends_with(&["you", "do", "not", "control"]) {
+            4
+        } else {
+            3
+        };
+        trim_suffix(&mut words, suffix_len);
     } else if lower_words_end_with(&words, &["opponents", "control"])
         || lower_words_end_with(&words, &["opponent", "controls"])
     {
@@ -1856,10 +1868,10 @@ pub(crate) fn parse_object_filter(
                     filter.controller =
                         Some(PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target));
                 }
-                ["you", "dont", "control"] => {
+                ["you", "dont", "control"] | ["you", "don't", "control"] => {
                     filter.controller = Some(PlayerFilter::NotYou);
                 }
-                ["you", "dont", "own"] => {
+                ["you", "dont", "own"] | ["you", "don't", "own"] => {
                     filter.owner = Some(PlayerFilter::NotYou);
                 }
                 _ => {}
@@ -2030,6 +2042,17 @@ pub(crate) fn parse_object_filter(
                 "in",
                 "its",
                 "cost",
+            ]
+    }) || all_words.windows(7).any(|window| {
+        window
+            == [
+                "activated",
+                "abilities",
+                "with",
+                "t",
+                "in",
+                "their",
+                "costs",
             ]
     });
     if has_tap_activated_ability {

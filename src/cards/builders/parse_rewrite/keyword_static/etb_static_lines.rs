@@ -483,8 +483,12 @@ fn parse_enters_with_counter_condition_clause(tokens: &[OwnedLexToken]) -> Optio
     }
 
     if condition_words.len() >= 7 {
-        let (count_word_idx, valid_prefix) = if condition_words.starts_with(&["youve", "cast"]) {
+        let (count_word_idx, valid_prefix) = if condition_words.starts_with(&["youve", "cast"])
+            || condition_words.starts_with(&["you've", "cast"])
+        {
             (2usize, true)
+        } else if condition_words.starts_with(&["you", "ve", "cast"]) {
+            (3usize, true)
         } else if condition_words.starts_with(&["you", "cast"]) {
             (2usize, true)
         } else if condition_words.starts_with(&["you", "have", "cast"]) {
@@ -607,7 +611,8 @@ fn parse_equal_to_greatest_cards_drawn_this_turn_value(tokens: &[OwnedLexToken])
 }
 
 pub(crate) fn parse_where_x_value_clause(tokens: &[OwnedLexToken]) -> Option<Value> {
-    let words = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
     }
@@ -709,7 +714,8 @@ pub(crate) fn parse_where_x_value_clause_lexed(
 }
 
 pub(crate) fn parse_where_x_source_stat_value(tokens: &[OwnedLexToken]) -> Option<Value> {
-    let words = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
     }
@@ -1441,7 +1447,7 @@ pub(crate) fn parse_reveal_from_hand_or_enters_tapped_line(
     // Pattern A: "... If you don't, this land enters tapped."
     if let Some(if_you_dont_idx) = clause_words
         .windows(3)
-        .position(|window| window == ["if", "you", "dont"])
+        .position(|window| window == ["if", "you", "dont"] || window == ["if", "you", "don't"])
     {
         let trailing = &clause_words[if_you_dont_idx + 3..];
         let valid_trailing = trailing.starts_with(&["this", "land", "enters", "tapped"])

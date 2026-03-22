@@ -8847,10 +8847,13 @@ textarea,
 
   .mobile-battle-action-menu-sheet {
     min-height: 0;
-    height: auto;
-    max-height: min(calc(100vh - 18px), 460px);
+    height: min(calc(100vh - 18px), 680px);
+    max-height: min(calc(100vh - 18px), 680px);
     padding-left: calc(16px + env(safe-area-inset-left));
     padding-right: calc(16px + env(safe-area-inset-right));
+    background:
+      radial-gradient(140% 120% at 50% -4%, rgba(223, 176, 99, 0.18), transparent 42%),
+      linear-gradient(180deg, rgba(34, 25, 19, 0.985) 0%, rgba(22, 17, 13, 0.965) 54%, rgba(28, 20, 15, 0.95) 100%);
   }
 
   .mobile-battle-action-menu-sheet .mobile-decision-header {
@@ -8876,12 +8879,17 @@ textarea,
     padding-inline: 18px;
   }
 
-  .mobile-battle-action-menu-sheet-body {
+  .mobile-decision-sheet-body--action-list.mobile-battle-action-menu-sheet-body {
     display: flex;
     min-height: 0;
     flex: 1 1 auto;
-    max-height: min(40vh, 300px);
+    max-height: none;
     overflow: auto;
+    padding-bottom: 10px;
+    background:
+      linear-gradient(180deg, rgba(228, 190, 126, 0.06), rgba(228, 190, 126, 0) 18%),
+      linear-gradient(180deg, rgba(40, 29, 22, 0.32), rgba(24, 18, 14, 0.16) 44%, rgba(20, 15, 12, 0.12) 100%);
+    border-radius: 22px;
   }
 
   .mobile-battle-action-menu-sheet-body .mobile-decision-action-list {
@@ -9096,13 +9104,14 @@ textarea,
     }
 
     .mobile-battle-action-menu-sheet {
+      height: calc(100vh - 10px);
       max-height: calc(100vh - 10px);
       padding-left: calc(12px + env(safe-area-inset-left));
       padding-right: calc(12px + env(safe-area-inset-right));
     }
 
-    .mobile-battle-action-menu-sheet-body {
-      max-height: min(52vh, 260px);
+    .mobile-decision-sheet-body--action-list.mobile-battle-action-menu-sheet-body {
+      max-height: none;
     }
 
     .mobile-decision-sheet--inline {

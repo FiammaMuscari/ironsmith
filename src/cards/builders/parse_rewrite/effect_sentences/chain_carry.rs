@@ -1468,7 +1468,8 @@ fn parse_leading_player_may_words(words: &[&str]) -> Option<PlayerAst> {
 }
 
 pub(crate) fn parse_leading_player_may_lexed(tokens: &[OwnedLexToken]) -> Option<PlayerAst> {
-    parse_leading_player_may_words(&crate::cards::builders::parse_rewrite::lexed_words(tokens))
+    let words = LowercaseWordView::new(tokens);
+    parse_leading_player_may_words(&words.to_word_refs())
 }
 
 pub(crate) fn find_verb(tokens: &[OwnedLexToken]) -> Option<(Verb, usize)> {

@@ -1578,6 +1578,22 @@ pub(crate) fn parse_shuffle_object_into_library_sentence(
 pub(crate) fn parse_exile_hand_and_graveyard_bundle_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    fn normalize_possessive_words<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
+        words.iter()
+            .filter_map(|word| match *word {
+                "s" | "'" | "’" => None,
+                _ => Some(
+                    word.strip_suffix("'s")
+                        .or_else(|| word.strip_suffix("’s"))
+                        .or_else(|| word.strip_suffix("s'"))
+                        .or_else(|| word.strip_suffix("s’"))
+                        .unwrap_or(word),
+                ),
+            })
+            .filter(|word| !word.is_empty())
+            .collect()
+    }
+
     if tokens.is_empty() {
         return Ok(None);
     }
@@ -1617,8 +1633,8 @@ pub(crate) fn parse_exile_hand_and_graveyard_bundle_sentence(
         return Ok(None);
     }
 
-    let owner_words = &clause_words[4..first_zone_idx];
-    let owner = match owner_words {
+    let owner_words = normalize_possessive_words(&clause_words[4..first_zone_idx]);
+    let owner = match owner_words.as_slice() {
         ["target", "player"] | ["target", "players"] => PlayerFilter::target_player(),
         ["target", "opponent"] | ["target", "opponents"] => PlayerFilter::target_opponent(),
         ["your"] => PlayerFilter::You,

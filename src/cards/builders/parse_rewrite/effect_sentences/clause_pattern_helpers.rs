@@ -530,6 +530,29 @@ fn parse_counter_ability_target_phrase(
 ) -> Result<Option<TargetAst>, CardTextError> {
     let clause_tokens = trim_commas(tokens);
     let clause_words = words(&clause_tokens);
+    let is_you_control_tail = |idx: usize| {
+        clause_tokens
+            .get(idx)
+            .is_some_and(|token| token.is_word("you"))
+            && ((clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("control") || token.is_word("controls")))
+                || (clause_tokens
+                    .get(idx + 1)
+                    .is_some_and(|token| token.is_word("dont") || token.is_word("don't"))
+                    && clause_tokens
+                        .get(idx + 2)
+                        .is_some_and(|token| token.is_word("control")))
+                || (clause_tokens
+                    .get(idx + 1)
+                    .is_some_and(|token| token.is_word("do"))
+                    && clause_tokens
+                        .get(idx + 2)
+                        .is_some_and(|token| token.is_word("not"))
+                    && clause_tokens
+                        .get(idx + 3)
+                        .is_some_and(|token| token.is_word("control"))))
+    };
     if !clause_words.contains(&"ability")
         || (!clause_words.contains(&"activated") && !clause_words.contains(&"triggered"))
     {
@@ -589,26 +612,7 @@ fn parse_counter_ability_target_phrase(
             list_end = scan;
             break;
         }
-        if clause_tokens
-            .get(scan)
-            .is_some_and(|token| token.is_word("you"))
-            && clause_tokens
-                .get(scan + 1)
-                .is_some_and(|token| token.is_word("control") || token.is_word("controls"))
-        {
-            list_end = scan;
-            break;
-        }
-        if clause_tokens
-            .get(scan)
-            .is_some_and(|token| token.is_word("you"))
-            && clause_tokens
-                .get(scan + 1)
-                .is_some_and(|token| token.is_word("dont"))
-            && clause_tokens
-                .get(scan + 2)
-                .is_some_and(|token| token.is_word("control"))
-        {
+        if is_you_control_tail(scan) {
             list_end = scan;
             break;
         }
@@ -781,13 +785,28 @@ fn parse_counter_ability_target_phrase(
         if word == "you"
             && clause_tokens
                 .get(idx + 1)
-                .is_some_and(|token| token.is_word("dont"))
+                .is_some_and(|token| token.is_word("dont") || token.is_word("don't"))
             && clause_tokens
                 .get(idx + 2)
                 .is_some_and(|token| token.is_word("control"))
         {
             controller_filter = Some(crate::target::PlayerFilter::NotYou);
             idx += 3;
+            continue;
+        }
+        if word == "you"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("do"))
+            && clause_tokens
+                .get(idx + 2)
+                .is_some_and(|token| token.is_word("not"))
+            && clause_tokens
+                .get(idx + 3)
+                .is_some_and(|token| token.is_word("control"))
+        {
+            controller_filter = Some(crate::target::PlayerFilter::NotYou);
+            idx += 4;
             continue;
         }
         if word == "from" {

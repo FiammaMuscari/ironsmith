@@ -364,6 +364,11 @@ export default function MobileBattleScene({
     });
   }, [decisionIdentity, state?.decision]);
 
+  useEffect(() => {
+    if (!actionPopoverState) return;
+    setHandExpanded(false);
+  }, [actionPopoverState]);
+
   useEffect(() => () => {
     if (stackPressTimerRef.current) {
       clearTimeout(stackPressTimerRef.current);
@@ -753,23 +758,25 @@ export default function MobileBattleScene({
             <span className="mobile-battle-inline-life">{me?.life ?? 0}</span>
           </button>
 
-          <div
-            className={cn("mobile-battle-hand-rail", handExpanded && "is-open")}
-            onClick={(event) => {
-              if (event.target.closest(".game-card.hand-card")) return;
-              setHandExpanded((current) => !current);
-            }}
-          >
-            <div className="mobile-battle-hand-rail-viewport">
-              <HandZone
-                player={me}
-                selectedObjectId={selectedObjectId}
-                onInspect={onInspect}
-                isExpanded
-                layout="mobile-fan"
-              />
+          {!actionPopoverState ? (
+            <div
+              className={cn("mobile-battle-hand-rail", handExpanded && "is-open")}
+              onClick={(event) => {
+                if (event.target.closest(".game-card.hand-card")) return;
+                setHandExpanded((current) => !current);
+              }}
+            >
+              <div className="mobile-battle-hand-rail-viewport">
+                <HandZone
+                  player={me}
+                  selectedObjectId={selectedObjectId}
+                  onInspect={onInspect}
+                  isExpanded
+                  layout="mobile-fan"
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
         </footer>
       </div>
 

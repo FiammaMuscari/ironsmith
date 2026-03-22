@@ -56,7 +56,7 @@ use super::restriction_support::{
     apply_pending_mana_restriction, apply_pending_restrictions_to_ability, is_restrictable_ability,
 };
 use super::util::{
-    classify_instead_followup_text, compat_tokens_from_lexed, find_first_sacrifice_cost_choice_tag,
+    classify_instead_followup_text, find_first_sacrifice_cost_choice_tag,
     find_last_exile_cost_choice_tag, parse_additional_cost_choice_options_lexed,
     parse_bestow_line_lexed, parse_buyback_line_lexed, parse_cast_this_spell_only_line_lexed,
     parse_entwine_line_lexed, parse_escape_line_lexed, parse_flashback_line_lexed,
@@ -79,10 +79,6 @@ fn rewrite_unsupported_line_ast(
     reason: impl Into<String>,
 ) -> crate::cards::builders::LineAst {
     LineAst::StaticAbility(StaticAbility::unsupported_parser_line(raw_line, reason).into())
-}
-
-fn compat_tokens(text: &str, line_index: usize) -> Result<Vec<OwnedLexToken>, CardTextError> {
-    Ok(compat_tokens_from_lexed(&lex_line(text, line_index)?))
 }
 
 fn lexed_tokens(text: &str, line_index: usize) -> Result<Vec<OwnedLexToken>, CardTextError> {
@@ -1732,6 +1728,11 @@ fn lower_compound_buff_and_unblockable_static_chunk(
         return Ok(None);
     };
 
+    let full_line_tokens = lexed_tokens(line.text.as_str(), line.info.line_index)?;
+    if let Some(abilities) = rewrite_parse_static_ability_ast_line_lexed(&full_line_tokens)? {
+        return Ok(Some(LineAst::StaticAbilities(abilities)));
+    }
+
     let buff_tokens = lexed_tokens(buff_text.as_str(), line.info.line_index)?;
     let unblockable_tokens = lexed_tokens(unblockable_text.as_str(), line.info.line_index)?;
     let Some(mut abilities) = rewrite_parse_static_ability_ast_line_lexed(&buff_tokens)? else {
@@ -2236,16 +2237,18 @@ fn try_lower_optional_cost_with_cast_trigger(
         return Ok(None);
     };
     let head_effect_text = head.strip_prefix(prefix).unwrap_or(head);
-    let head_tokens = compat_tokens(head_effect_text, line.info.line_index)?;
-    let stripped_head_tokens = trim_commas(&head_tokens);
-    if stripped_head_tokens.len() < 3
-        || !stripped_head_tokens[0].is_word("you")
-        || !stripped_head_tokens[1].is_word("may")
-    {
+    let head_tokens = lexed_tokens(head_effect_text, line.info.line_index)?;
+    let stripped_head_tokens = trim_lexed_commas(&head_tokens);
+    let stripped_head_view = LowercaseWordView::new(stripped_head_tokens);
+    if !stripped_head_view.starts_with(&["you", "may"]) {
         return Ok(None);
     }
+    let Some(head_effect_start) = stripped_head_view.token_index_for_word_index(2) else {
+        return Ok(None);
+    };
 
-    let head_effects = rewrite_parse_effect_sentences(&stripped_head_tokens[2..])?;
+    let head_effects =
+        rewrite_parse_effect_sentences_lexed(&stripped_head_tokens[head_effect_start..])?;
     let [
         EffectAst::ChooseObjects {
             filter,
@@ -2270,23 +2273,27 @@ fn try_lower_optional_cost_with_cast_trigger(
         return Ok(None);
     }
 
+    let head_word_view = LowercaseWordView::new(&head_tokens);
+    let head_words = head_word_view.to_word_refs();
     let label = format!(
         "As an additional cost to cast this spell, {}",
-        words(&head_tokens).join(" ")
+        head_words.join(" ")
     );
     let cost = OptionalCost::custom(
         label.clone(),
         TotalCost::from_cost(Cost::sacrifice(filter.clone())),
     )
     .repeatable();
-    let followup_tokens = compat_tokens(followup, line.info.line_index)?;
-    let mut effects = rewrite_parse_effect_sentences(&followup_tokens)?;
+    let followup_tokens = lexed_tokens(followup, line.info.line_index)?;
+    let mut effects = rewrite_parse_effect_sentences_lexed(&followup_tokens)?;
     rewrite_copy_count_to_times_paid_label_rewrite(&mut effects, &label);
+    let followup_word_view = LowercaseWordView::new(&followup_tokens);
+    let followup_words = followup_word_view.to_word_refs();
 
     Ok(Some(LineAst::OptionalCostWithCastTrigger {
         cost,
         effects,
-        followup_text: format!("When you do, {}", words(&followup_tokens).join(" ")),
+        followup_text: format!("When you do, {}", followup_words.join(" ")),
     }))
 }
 
@@ -2702,8 +2709,7 @@ fn parse_rewrite_activated_effects(
             effects.push(effect);
             continue;
         }
-        let sentence_tokens = compat_tokens(sentence, line_index)?;
-        effects.extend(rewrite_parse_effect_sentences(&sentence_tokens)?);
+        effects.extend(rewrite_parse_effect_sentences_lexed(&sentence_lexed)?);
     }
     Ok(effects)
 }
@@ -2771,13 +2777,14 @@ fn lower_rewrite_pact_statement_to_chunk(
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
     if raw_segments.len() == 3 {
-        let first_tokens = compat_tokens(raw_segments[0], line.info.line_index)?;
-        let first_effects = rewrite_parse_effect_sentences(&first_tokens)?;
+        let first_tokens = lexed_tokens(raw_segments[0], line.info.line_index)?;
+        let first_effects = rewrite_parse_effect_sentences_lexed(&first_tokens)?;
         if !first_effects.is_empty() {
             let upkeep_raw = raw_segments[1].trim();
-            let upkeep_segment = compat_tokens(upkeep_raw, line.info.line_index)?;
-            let upkeep_tokens = trim_commas(&upkeep_segment);
-            let upkeep_words = words(&upkeep_tokens);
+            let upkeep_segment = lexed_tokens(upkeep_raw, line.info.line_index)?;
+            let upkeep_tokens = trim_lexed_commas(&upkeep_segment);
+            let upkeep_word_view = LowercaseWordView::new(upkeep_tokens);
+            let upkeep_words = upkeep_word_view.to_word_refs();
             let pay_prefix = if upkeep_words.starts_with(&[
                 "at",
                 "the",
@@ -2810,12 +2817,11 @@ fn lower_rewrite_pact_statement_to_chunk(
                     .map(str::trim)
                     .filter(|tail| !tail.is_empty())
             {
-                let lose_segment = compat_tokens(raw_segments[2], line.info.line_index)?;
-                let lose_tokens = trim_commas(&lose_segment);
-                let lose_words = words(&lose_tokens);
-                if lose_words == ["if", "you", "dont", "you", "lose", "the", "game"]
-                    || lose_words == ["if", "you", "don't", "you", "lose", "the", "game"]
-                    || lose_words == ["if", "you", "don", "t", "you", "lose", "the", "game"]
+                let lose_segment = lexed_tokens(raw_segments[2], line.info.line_index)?;
+                let lose_tokens = trim_lexed_commas(&lose_segment);
+                let lose_word_view = LowercaseWordView::new(lose_tokens);
+                let lose_words = lose_word_view.to_word_refs();
+                if lose_words == ["if", "you", "don't", "you", "lose", "the", "game"]
                     || lose_words == ["if", "you", "do", "not", "you", "lose", "the", "game"]
                 {
                     let mana_cost = parse_scryfall_mana_cost(raw_mana)?;
@@ -2845,9 +2851,10 @@ fn lower_rewrite_pact_statement_to_chunk(
         }
     }
 
-    let tokens = compat_tokens(line.text.as_str(), line.info.line_index)?;
-    let tokens = trim_commas(&tokens);
-    let token_words = words(&tokens);
+    let tokens = lexed_tokens(line.text.as_str(), line.info.line_index)?;
+    let tokens = trim_lexed_commas(&tokens);
+    let token_word_view = LowercaseWordView::new(tokens);
+    let token_words = token_word_view.to_word_refs();
     let upkeep_marker = [
         "at",
         "the",
@@ -2882,9 +2889,7 @@ fn lower_rewrite_pact_statement_to_chunk(
         return Ok(None);
     };
     let lose_patterns: &[&[&str]] = &[
-        &["if", "you", "dont", "you", "lose", "the", "game"],
         &["if", "you", "don't", "you", "lose", "the", "game"],
-        &["if", "you", "don", "t", "you", "lose", "the", "game"],
         &["if", "you", "do", "not", "you", "lose", "the", "game"],
     ];
     let tail_words = &token_words[marker_start + marker_len..];
@@ -2905,14 +2910,15 @@ fn lower_rewrite_pact_statement_to_chunk(
     let mana_word_end = marker_start + marker_len + mana_word_len;
     let mana_token_end = token_index_for_word_index(&tokens, mana_word_end).unwrap_or(tokens.len());
 
-    let first_effects = rewrite_parse_effect_sentences(&tokens[..first_token_end])?;
+    let first_effects = rewrite_parse_effect_sentences_lexed(&tokens[..first_token_end])?;
     if first_effects.is_empty() {
         return Ok(None);
     }
 
     let raw_mana = tokens[mana_token_start..mana_token_end]
         .iter()
-        .filter_map(crate::cards::builders::OwnedLexToken::as_word)
+        .filter(|token| !matches!(token.kind, TokenKind::Comma | TokenKind::Period))
+        .map(|token| token.slice.as_str())
         .collect::<String>();
     let mana_cost = parse_scryfall_mana_cost(raw_mana.as_str())?;
     let mut mana = Vec::new();

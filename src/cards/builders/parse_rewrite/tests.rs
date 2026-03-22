@@ -3,6 +3,8 @@ use crate::ids::CardId;
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
 use crate::static_abilities::StaticAbilityId;
+use std::fs;
+use std::path::{Path, PathBuf};
 use crate::types::{CardType, Subtype, Supertype};
 
 use super::{
@@ -302,12 +304,76 @@ fn rewrite_lexed_restriction_duration_matches_legacy_shapes() {
         .expect("legacy restriction duration should be present");
 
     assert_eq!(native.0, legacy.0);
+    let native_word_view = LowercaseWordView::new(&native.1);
+    let native_words = native_word_view.to_word_refs();
     assert_eq!(
-        crate::cards::builders::parse_rewrite::util::words(
-            &crate::cards::builders::parse_rewrite::util::compat_tokens_from_lexed(&native.1),
-        ),
+        native_words,
         crate::cards::builders::parse_rewrite::util::words(&legacy.1),
         "lexed restriction duration remainder should match legacy words"
+    );
+}
+
+fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    let entries = fs::read_dir(dir).expect("rewrite audit should read source directory");
+    for entry in entries {
+        let entry = entry.expect("rewrite audit should read directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_files(&path, files);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+#[test]
+fn rewrite_runtime_sources_do_not_reintroduce_compat_token_bridges() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cards/builders/parse_rewrite");
+    let compat_reparse_allowed = [root.join("util.rs"), root.join("tests.rs")];
+    let compat_to_lexed_allowed = [
+        root.join("lexer.rs"),
+        root.join("permission_helpers.rs"),
+        root.join("effect_sentences/chain_carry.rs"),
+        root.join("tests.rs"),
+    ];
+    let mut files = Vec::new();
+    collect_rust_files(&root, &mut files);
+
+    let mut compat_reparse_offenders = Vec::new();
+    let mut compat_to_lexed_offenders = Vec::new();
+    for path in files {
+        let source = fs::read_to_string(&path).expect("rewrite audit should read source file");
+        let relative = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .expect("rewrite audit should relativize source path")
+            .display()
+            .to_string();
+
+        if source.contains("compat_tokens_from_lexed")
+            && !compat_reparse_allowed
+                .iter()
+                .any(|allowed_path| allowed_path == &path)
+        {
+            compat_reparse_offenders.push(relative.clone());
+        }
+        if source.contains("lexed_tokens_from_compat")
+            && !compat_to_lexed_allowed
+                .iter()
+                .any(|allowed_path| allowed_path == &path)
+        {
+            compat_to_lexed_offenders.push(relative);
+        }
+    }
+
+    assert!(
+        compat_reparse_offenders.is_empty(),
+        "runtime lexed-to-compat bridges should stay removed: {}",
+        compat_reparse_offenders.join(", ")
+    );
+    assert!(
+        compat_to_lexed_offenders.is_empty(),
+        "compat-to-lexed adapters should stay fenced to legacy entrypoints: {}",
+        compat_to_lexed_offenders.join(", ")
     );
 }
 
@@ -885,6 +951,21 @@ fn rewrite_lexed_triggered_and_static_wrappers_work_natively() {
 }
 
 #[test]
+fn rewrite_lexed_triggered_line_supports_tivit_vote_trigger_body() {
+    let triggered_tokens = lex_line(
+        "Whenever this creature enters the battlefield or deals combat damage to a player, starting with you, each player votes for evidence or bribery. For each evidence vote, investigate. For each bribery vote, create a Treasure token. You may vote an additional time.",
+        0,
+    )
+    .expect("rewrite lexer should classify tivit trigger probe");
+
+    let parsed = super::clause_support::rewrite_parse_triggered_line_lexed(&triggered_tokens);
+    assert!(
+        matches!(parsed, Ok(crate::cards::builders::LineAst::Triggered { .. })),
+        "{parsed:?}"
+    );
+}
+
+#[test]
 fn rewrite_lexed_trigger_clause_parses_common_native_shapes() {
     let dies_tokens = lex_line("another creature dies", 0)
         .expect("rewrite lexer should classify dies trigger probe");
@@ -897,6 +978,11 @@ fn rewrite_lexed_trigger_clause_parses_common_native_shapes() {
     .expect("rewrite lexer should classify etb trigger probe");
     let spell_tokens = lex_line("you cast an aura, equipment, or vehicle spell", 0)
         .expect("rewrite lexer should classify spell-cast trigger probe");
+    let counter_tokens = lex_line("you put one or more -1/-1 counters on a creature", 0)
+        .expect("rewrite lexer should classify counter trigger probe");
+    let graveyard_tokens =
+        lex_line("a nontoken creature is put into your graveyard from the battlefield", 0)
+            .expect("rewrite lexer should classify graveyard trigger probe");
 
     assert!(matches!(
         super::activation_and_restrictions::parse_trigger_clause_lexed(&dies_tokens),
@@ -919,6 +1005,23 @@ fn rewrite_lexed_trigger_clause_parses_common_native_shapes() {
         super::activation_and_restrictions::parse_trigger_clause_lexed(&spell_tokens),
         Ok(crate::cards::builders::TriggerSpec::SpellCast { .. })
     ));
+    let counter = super::activation_and_restrictions::parse_trigger_clause_lexed(&counter_tokens);
+    assert!(
+        matches!(
+            counter,
+            Ok(crate::cards::builders::TriggerSpec::CounterPutOn { one_or_more: true, .. })
+        ),
+        "{counter:?}"
+    );
+    let graveyard =
+        super::activation_and_restrictions::parse_trigger_clause_lexed(&graveyard_tokens);
+    assert!(
+        matches!(
+            graveyard,
+            Ok(crate::cards::builders::TriggerSpec::PutIntoGraveyardFromZone { .. })
+        ),
+        "{graveyard:?}"
+    );
 }
 
 #[test]
@@ -1043,6 +1146,258 @@ fn rewrite_lexed_effect_sentence_matches_legacy_pre_diagnostic_clause_helpers() 
 
         assert_eq!(format!("{native:?}"), format!("{legacy:?}"), "{text}");
     }
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_unsupported_diagnostic_matches_legacy_error() {
+    let text = "The Ring tempts you.";
+    let lexed = lex_line(text, 0).expect("rewrite lexer should classify unsupported sentence");
+    let compat = crate::cards::builders::parse_rewrite::util::tokenize_line(text, 0);
+
+    let native = parse_effect_sentence_lexed(&lexed)
+        .expect_err("lexed sentence should reject unsupported diagnostic probe");
+    let legacy = parse_effect_sentence(&compat)
+        .expect_err("legacy sentence should reject unsupported diagnostic probe");
+
+    assert_eq!(format!("{native:?}"), format!("{legacy:?}"));
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_matches_legacy_where_x_clause() {
+    let text = "Target creature gets +X/+0 until end of turn, where X is its power.";
+    let lexed = lex_line(text, 0).expect("rewrite lexer should classify where-x sentence");
+    let compat = crate::cards::builders::parse_rewrite::util::tokenize_line(text, 0);
+
+    let native =
+        parse_effect_sentence_lexed(&lexed).expect("lexed where-x sentence should parse");
+    let legacy = parse_effect_sentence(&compat).expect("legacy where-x sentence should parse");
+
+    assert_eq!(format!("{native:?}"), format!("{legacy:?}"));
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_matches_legacy_sacrifice_land_clause() {
+    let text = "Sacrifice a land.";
+    let lexed = lex_line(text, 0).expect("rewrite lexer should classify sacrifice sentence");
+    let compat = crate::cards::builders::parse_rewrite::util::tokenize_line(text, 0);
+
+    let legacy = super::clause_support::rewrite_parse_effect_sentences(&compat)
+        .expect("legacy sacrifice sentence should parse");
+    let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
+        .expect("lexed sacrifice sentence should parse");
+
+    assert_eq!(format!("{native:?}"), format!("{legacy:?}"));
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_matches_legacy_sacrifice_all_non_ogres_clause() {
+    let text = "Sacrifice all non-Ogre creatures you control.";
+    let lexed = lex_line(text, 0).expect("rewrite lexer should classify sacrifice-all sentence");
+    let compat = crate::cards::builders::parse_rewrite::util::tokenize_line(text, 0);
+
+    let legacy = super::clause_support::rewrite_parse_effect_sentences(&compat)
+        .expect("legacy sacrifice-all sentence should parse");
+    let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
+        .expect("lexed sacrifice-all sentence should parse");
+
+    assert_eq!(format!("{native:?}"), format!("{legacy:?}"));
+}
+
+#[test]
+fn rewrite_lexed_trigger_clause_supports_this_creature_leaves_battlefield() {
+    let tokens = lex_line("this creature leaves the battlefield", 0)
+        .expect("rewrite lexer should classify leaves-the-battlefield trigger");
+
+    let parsed = super::activation_and_restrictions::parse_trigger_clause_lexed(&tokens)
+        .expect("lexed leaves-the-battlefield trigger should parse");
+
+    assert_eq!(format!("{parsed:?}"), format!("{:?}", crate::cards::builders::TriggerSpec::ThisLeavesBattlefield));
+}
+
+#[test]
+fn rewrite_lexed_triggered_line_supports_leave_battlefield_sacrifice_land() {
+    let tokens = lex_line("When this leaves the battlefield, sacrifice a land.", 0)
+        .expect("rewrite lexer should classify leave-battlefield sacrifice line");
+
+    let parsed = super::clause_support::rewrite_parse_triggered_line_lexed(&tokens);
+
+    assert!(
+        matches!(parsed, Ok(crate::cards::builders::LineAst::Triggered { .. })),
+        "{parsed:?}"
+    );
+}
+
+#[test]
+fn rewrite_lexed_triggered_line_supports_leave_battlefield_sacrifice_all_non_ogres() {
+    let tokens =
+        lex_line("When this creature leaves the battlefield, sacrifice all non-Ogre creatures you control.", 0)
+            .expect("rewrite lexer should classify leave-battlefield sacrifice-all line");
+
+    let parsed = super::clause_support::rewrite_parse_triggered_line_lexed(&tokens);
+
+    assert!(
+        matches!(parsed, Ok(crate::cards::builders::LineAst::Triggered { .. })),
+        "{parsed:?}"
+    );
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_supports_labeled_spent_to_cast_conditional() {
+    let text = "Adamant — If at least three blue mana was spent to cast this spell, create a Food token.";
+    let lexed = lex_line(text, 0).expect("rewrite lexer should classify labeled spent-to-cast sentence");
+
+    let parsed = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed);
+
+    assert!(parsed.is_ok(), "{parsed:?}");
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_supports_unlabeled_spent_to_cast_conditional() {
+    let text = "If at least three blue mana was spent to cast this spell, create a Food token.";
+    let lexed =
+        lex_line(text, 0).expect("rewrite lexer should classify unlabeled spent-to-cast sentence");
+
+    let parsed = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed);
+
+    assert!(parsed.is_ok(), "{parsed:?}");
+}
+
+#[test]
+fn rewrite_lexed_conditional_parser_supports_spent_to_cast_conditional_directly() {
+    let text = "If at least three blue mana was spent to cast this spell, create a Food token.";
+    let lexed =
+        lex_line(text, 0).expect("rewrite lexer should classify unlabeled spent-to-cast sentence");
+
+    let parsed = super::effect_sentences::parse_conditional_sentence_lexed(&lexed);
+
+    assert!(parsed.is_ok(), "{parsed:?}");
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_preserves_conditional_for_leading_instead_followup() {
+    let text =
+        "If it's a Human, instead it gets +3/+3 and gains indestructible until end of turn.";
+    let lexed =
+        lex_line(text, 0).expect("rewrite lexer should classify leading-instead conditional");
+
+    let parsed = parse_effect_sentence_lexed(&lexed).expect("leading-instead conditional");
+    let debug = format!("{parsed:?}");
+
+    assert!(debug.contains("Conditional"), "{debug}");
+}
+
+#[test]
+fn rewrite_lexed_effect_sequence_preserves_for_each_player_doesnt_predicate() {
+    let text =
+        "Each player discards a card. Then each player who didn't discard a creature card this way loses 4 life.";
+    let lexed =
+        lex_line(text, 0).expect("rewrite lexer should classify for-each-player-doesnt sequence");
+
+    let parsed =
+        super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed).expect("sequence");
+    let debug = format!("{parsed:?}");
+
+    assert!(debug.contains("ForEachPlayerDoesNot"), "{debug}");
+    assert!(debug.contains("PlayerTaggedObjectMatches"), "{debug}");
+}
+
+#[test]
+fn rewrite_semantic_parse_supports_adamant_spent_to_cast_statement_line() -> Result<(), CardTextError>
+{
+    let builder = CardDefinitionBuilder::new(CardId::new(), "Adamant Variant")
+        .card_types(vec![CardType::Sorcery]);
+    let (doc, _) = parse_text_with_annotations_rewrite(
+        builder,
+        "Adamant — If at least three blue mana was spent to cast this spell, create a Food token."
+            .to_string(),
+        false,
+    )?;
+
+    assert!(matches!(
+        doc.items.as_slice(),
+        [RewriteSemanticItem::Statement(_)]
+    ));
+    Ok(())
+}
+
+#[test]
+fn rewrite_lowered_supports_adamant_spent_to_cast_statement_line() -> Result<(), CardTextError> {
+    let builder = CardDefinitionBuilder::new(CardId::new(), "Adamant Variant")
+        .card_types(vec![CardType::Sorcery]);
+    let (definition, _) = parse_text_with_annotations_rewrite_lowered(
+        builder,
+        "Adamant — If at least three blue mana was spent to cast this spell, create a Food token."
+            .to_string(),
+        false,
+    )?;
+
+    let debug = format!("{definition:#?}");
+    assert!(debug.contains("ManaSpentToCastThisSpellAtLeast"), "{debug}");
+    assert!(debug.contains("CreateTokenEffect"), "{debug}");
+    Ok(())
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_supports_radiance_shared_color_fanout() {
+    let text =
+        "Radiance — Target creature and each other creature that shares a color with it gain haste until end of turn.";
+    let lexed =
+        lex_line(text, 0).expect("rewrite lexer should classify labeled radiance fanout sentence");
+
+    let stripped = crate::cards::builders::parse_effect_sentence_lexed(
+        lexed
+            .split(|token| matches!(token.kind, super::lexer::TokenKind::Dash | super::lexer::TokenKind::EmDash))
+            .nth(1)
+            .expect("labeled sentence should contain body after dash"),
+    )
+    .expect("rewrite effect sentence parser should support radiance fanout");
+
+    let parsed = parse_effect_sentence_lexed(&lexed)
+        .expect("rewrite effect sentence parser should support radiance fanout");
+    let direct = crate::cards::builders::parse_shared_color_target_fanout_sentence(
+        lexed
+            .split(|token| matches!(token.kind, super::lexer::TokenKind::Dash | super::lexer::TokenKind::EmDash))
+            .nth(1)
+            .expect("labeled sentence should contain body after dash"),
+    )
+    .expect("shared-color primitive should not error");
+    let mut lowered_body = lexed
+        .split(|token| matches!(token.kind, super::lexer::TokenKind::Dash | super::lexer::TokenKind::EmDash))
+        .nth(1)
+        .expect("labeled sentence should contain body after dash")
+        .to_vec();
+    for token in &mut lowered_body {
+        if let Some(word) = token.word_mut() {
+            *word = word.to_ascii_lowercase();
+        }
+    }
+    let lowered_direct = crate::cards::builders::parse_shared_color_target_fanout_sentence(&lowered_body)
+        .expect("lowered shared-color primitive should not error");
+    let debug = format!("{parsed:?}");
+    let direct_debug = format!("{direct:?}");
+    let lowered_direct_debug = format!("{lowered_direct:?}");
+    let stripped_debug = format!("{stripped:?}");
+
+    assert!(
+        direct_debug.contains("GrantAbilitiesAll"),
+        "expected direct shared-color primitive to build fanout grant effect, got {direct_debug}"
+    );
+    assert!(
+        direct_debug.contains("SharesColorWithTagged"),
+        "expected direct shared-color primitive to keep shared-color tagged constraint, got {direct_debug}"
+    );
+    assert!(
+        lowered_direct_debug.contains("GrantAbilitiesAll"),
+        "expected lowered shared-color primitive to build fanout grant effect, got {lowered_direct_debug}"
+    );
+    assert!(
+        stripped_debug.contains("GrantAbilitiesAll"),
+        "expected stripped sentence parser to preserve fanout grant effect, got {stripped_debug}"
+    );
+    assert!(
+        debug.contains("GrantAbilitiesAll"),
+        "expected labeled sentence parser to preserve fanout grant effect, got {debug}"
+    );
 }
 
 #[test]

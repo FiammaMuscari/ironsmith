@@ -598,6 +598,8 @@ fn looks_like_statement_line(normalized: &str) -> bool {
                 | "discards"
                 | "draw"
                 | "draws"
+                | "enchant"
+                | "enchants"
                 | "exile"
                 | "exiles"
                 | "gain"
@@ -632,11 +634,17 @@ fn looks_like_statement_line(normalized: &str) -> bool {
         return false;
     }
 
-    is_statement_verb(words[0])
+    let starts_with_each_player_statement = matches!(
+        words.as_slice(),
+        ["each", "player", third, ..] if is_statement_verb(third)
+    );
+
+    starts_with_each_player_statement
+        || is_statement_verb(words[0])
         || matches!(words.as_slice(), ["this", "spell", third, ..] if is_statement_verb(third))
         || matches!(words.as_slice(), [_, second, ..] if is_statement_verb(second))
         || matches!(words.first(), Some(&"target")
-            if words.iter().skip(1).take(5).any(|word| is_statement_verb(word)))
+            if words.iter().skip(1).any(|word| is_statement_verb(word)))
 }
 
 fn should_skip_keyword_action_static_probe(normalized: &str) -> bool {
@@ -721,6 +729,7 @@ fn looks_like_static_line(normalized: &str) -> bool {
         || normalized.contains(" can ")
         || normalized.contains(" has ")
         || normalized.contains(" have ")
+        || normalized.contains("maximum hand size")
 }
 
 fn looks_like_pact_next_upkeep_line(normalized: &str) -> bool {
@@ -905,6 +914,68 @@ fn rewrite_named_source_sentence_for_builder(
     Some(format!("{subject} enters {rest}"))
 }
 
+fn rewrite_named_source_trigger_for_builder(
+    builder: &CardDefinitionBuilder,
+    text: &str,
+) -> Option<String> {
+    let trimmed = text.trim();
+    let subject = if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Creature)
+    {
+        "this creature"
+    } else if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Land)
+    {
+        "this land"
+    } else if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Artifact)
+    {
+        "this artifact"
+    } else if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Enchantment)
+    {
+        "this enchantment"
+    } else if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Planeswalker)
+    {
+        "this planeswalker"
+    } else if builder
+        .card_builder
+        .card_types_ref()
+        .contains(&crate::types::CardType::Battle)
+    {
+        "this battle"
+    } else {
+        "this permanent"
+    };
+
+    let name = builder.card_builder.name_ref();
+    if name.is_empty() {
+        return None;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let name_lower = name.to_ascii_lowercase();
+    for intro in ["whenever", "when", "at"] {
+        let prefix = format!("{intro} {name_lower} ");
+        if let Some(rest) = lower.strip_prefix(prefix.as_str()) {
+            return Some(format!("{intro} {subject} {rest}"));
+        }
+    }
+
+    None
+}
+
 fn strip_non_keyword_label_prefix(text: &str) -> &str {
     let Some((label, body)) = split_label_prefix(text) else {
         return text;
@@ -962,6 +1033,21 @@ fn rewrite_line_normalized(
     rewritten.info.normalized.char_map = (0..normalized.len()).collect();
     rewritten.tokens = super::lexer::lex_line(normalized, line.info.line_index)?;
     Ok(rewritten)
+}
+
+fn try_parse_triggered_line_with_named_source_rewrite(
+    builder: &CardDefinitionBuilder,
+    line: &PreprocessedLine,
+    text: &str,
+) -> Result<Option<TriggeredLineCst>, CardTextError> {
+    let Some(rewritten) = rewrite_named_source_trigger_for_builder(builder, text) else {
+        return Ok(None);
+    };
+    let rewritten_line = rewrite_line_normalized(line, rewritten.as_str())?;
+    match parse_triggered_line_cst(&rewritten_line) {
+        Ok(triggered) => Ok(Some(triggered)),
+        Err(_) => Ok(None),
+    }
 }
 
 fn is_fully_parenthetical_line(text: &str) -> bool {
@@ -1406,11 +1492,10 @@ pub(crate) fn parse_document_cst(
                     let is_named_label = is_named_ability_label(label);
                     let preserve_as_choice_label =
                         labeled_choice_block_has_peer(&preprocessed.items, idx);
-                    if !preserve_keyword_prefix_for_parse(label) {
-                        let body_line = rewrite_line_normalized(line, body)?;
-                        if parse_trigger_intro(normalized_first_word(body)).is_some() {
-                            match parse_triggered_line_cst(&body_line) {
-                                Ok(mut triggered) => {
+                        if !preserve_keyword_prefix_for_parse(label) {
+                            let body_line = rewrite_line_normalized(line, body)?;
+                            if parse_trigger_intro(normalized_first_word(body)).is_some() {
+                                if let Ok(mut triggered) = parse_triggered_line_cst(&body_line) {
                                     if preserve_as_choice_label {
                                         triggered.chosen_option_label =
                                             Some(label.to_ascii_lowercase());
@@ -1419,7 +1504,22 @@ pub(crate) fn parse_document_cst(
                                     idx += 1;
                                     continue;
                                 }
-                                Err(_) if allow_unsupported && is_named_label => {
+                                if let Some(mut triggered) =
+                                    try_parse_triggered_line_with_named_source_rewrite(
+                                        &preprocessed.builder,
+                                        line,
+                                        body,
+                                    )?
+                                {
+                                    if preserve_as_choice_label {
+                                        triggered.chosen_option_label =
+                                            Some(label.to_ascii_lowercase());
+                                    }
+                                    lines.push(RewriteLineCst::Triggered(triggered));
+                                    idx += 1;
+                                    continue;
+                                }
+                                if allow_unsupported && is_named_label {
                                     lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
                                         info: line.info.clone(),
                                         reason_code: "triggered-line-not-yet-supported",
@@ -1427,10 +1527,15 @@ pub(crate) fn parse_document_cst(
                                     idx += 1;
                                     continue;
                                 }
-                                Err(err) if is_named_label => return Err(err),
-                                Err(_) => {}
+                                if is_named_label {
+                                    return Err(parse_triggered_line_cst(&body_line).err().unwrap_or_else(
+                                        || CardTextError::ParseError(format!(
+                                            "unsupported triggered line: '{}'",
+                                            body
+                                        )),
+                                    ));
+                                }
                             }
-                        }
 
                         if is_named_label
                             && let Some(keyword_line) = parse_keyword_line_cst(&body_line)?
@@ -1493,13 +1598,33 @@ pub(crate) fn parse_document_cst(
                             let chunk_line = rewrite_line_normalized(line, chunk.as_str())?;
                             match parse_triggered_line_cst(&chunk_line) {
                                 Ok(triggered) => lines.push(RewriteLineCst::Triggered(triggered)),
-                                Err(_) if allow_unsupported => {
-                                    lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
-                                        info: line.info.clone(),
-                                        reason_code: "triggered-line-not-yet-supported",
-                                    }))
+                                Err(_) => {
+                                    if let Some(triggered) =
+                                        try_parse_triggered_line_with_named_source_rewrite(
+                                            &preprocessed.builder,
+                                            line,
+                                            chunk.as_str(),
+                                        )?
+                                    {
+                                        lines.push(RewriteLineCst::Triggered(triggered));
+                                        continue;
+                                    }
+                                    if allow_unsupported {
+                                        lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
+                                            info: line.info.clone(),
+                                            reason_code: "triggered-line-not-yet-supported",
+                                        }))
+                                    } else {
+                                        return Err(parse_triggered_line_cst(&chunk_line)
+                                            .err()
+                                            .unwrap_or_else(|| {
+                                                CardTextError::ParseError(format!(
+                                                    "unsupported triggered line: '{}'",
+                                                    chunk
+                                                ))
+                                            }));
+                                    }
                                 }
-                                Err(err) => return Err(err),
                             }
                         }
                         idx += 1;
@@ -1512,15 +1637,33 @@ pub(crate) fn parse_document_cst(
                             idx += 1;
                             continue;
                         }
-                        Err(_) if allow_unsupported => {
-                            lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
-                                info: line.info.clone(),
-                                reason_code: "triggered-line-not-yet-supported",
+                        Err(_) => {
+                            if let Some(triggered) =
+                                try_parse_triggered_line_with_named_source_rewrite(
+                                    &preprocessed.builder,
+                                    line,
+                                    &line.info.normalized.normalized,
+                                )?
+                            {
+                                lines.push(RewriteLineCst::Triggered(triggered));
+                                idx += 1;
+                                continue;
+                            }
+                            if allow_unsupported {
+                                lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
+                                    info: line.info.clone(),
+                                    reason_code: "triggered-line-not-yet-supported",
+                                }));
+                                idx += 1;
+                                continue;
+                            }
+                            return Err(parse_triggered_line_cst(line).err().unwrap_or_else(|| {
+                                CardTextError::ParseError(format!(
+                                    "unsupported triggered line: '{}'",
+                                    line.info.raw_line
+                                ))
                             }));
-                            idx += 1;
-                            continue;
                         }
-                        Err(err) => return Err(err),
                     }
                 }
 
@@ -1568,6 +1711,39 @@ pub(crate) fn parse_document_cst(
                             return Err(err);
                         }
                         Err(_) => {}
+                    }
+                }
+
+                if let Some(PreprocessedItem::Line(next_line)) = preprocessed.items.get(idx + 1) {
+                    let normalized_next = next_line.info.normalized.normalized.as_str();
+                    let should_try_combined_static = (
+                        normalized.starts_with("as this land enters")
+                            && normalized.contains("you may reveal")
+                            && normalized.contains("from your hand")
+                            && (normalized_next.starts_with("if you dont, this land enters tapped")
+                                || normalized_next.starts_with("if you don't, this land enters tapped")
+                                || normalized_next.starts_with("if you dont, it enters tapped")
+                                || normalized_next.starts_with("if you don't, it enters tapped"))
+                    ) || (
+                        normalized.starts_with("if this card is in your opening hand")
+                            && normalized.contains("you may begin the game with")
+                            && normalized.contains("on the battlefield")
+                            && (normalized_next.starts_with("if you do, exile ")
+                                || normalized_next.starts_with("if you do exile "))
+                    );
+
+                    if should_try_combined_static {
+                        let combined_text = format!(
+                            "{}. {}",
+                            normalized.trim_end_matches('.'),
+                            normalized_next.trim_end_matches('.')
+                        );
+                        let combined_line = rewrite_line_normalized(line, combined_text.as_str())?;
+                        if let Some(static_line) = parse_static_line_cst(&combined_line)? {
+                            lines.push(RewriteLineCst::Static(static_line));
+                            idx += 2;
+                            continue;
+                        }
                     }
                 }
 

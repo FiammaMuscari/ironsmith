@@ -3,8 +3,11 @@
 //! These abilities generate continuous effects that modify other objects
 //! through the layer system.
 
-use super::{StaticAbility, StaticAbilityId, StaticAbilityKind, text_utils::join_with_and};
-use crate::ability::Ability;
+use super::{
+    StaticAbility, StaticAbilityId, StaticAbilityKind,
+    text_utils::{capitalize_first, join_with_and},
+};
+use crate::ability::{Ability, AbilityKind};
 use crate::continuous::{
     ContinuousEffect, EffectSourceType, EffectTarget, Modification, PtSublayer,
 };
@@ -2391,7 +2394,39 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
     }
 
     fn display(&self) -> String {
-        self.display.clone()
+        let mut ability_text = self
+            .ability
+            .text
+            .clone()
+            .unwrap_or_else(|| self.display.clone());
+        if let Some((head, tail)) = ability_text.split_once(": ")
+            && let Some(first) = tail.chars().next()
+            && first.is_ascii_lowercase()
+        {
+            ability_text = format!("{head}: {}", capitalize_first(tail));
+        }
+
+        let filter_desc = self.filter.description();
+        let rendered_ability = match self.ability.kind {
+            AbilityKind::Activated(_) | AbilityKind::Triggered(_) => {
+                if !ability_text.ends_with('.') {
+                    ability_text.push('.');
+                }
+                format!("\"{ability_text}\"")
+            }
+            _ => ability_text,
+        };
+        let subject = if filter_desc == "Sliver" {
+            "All Slivers".to_string()
+        } else {
+            filter_desc
+        };
+        let mut text = format!("{subject} have {rendered_ability}");
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
+        }
+        text
     }
 
     fn with_static_condition(&self, condition: crate::ConditionExpr) -> Option<StaticAbility> {

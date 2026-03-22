@@ -1,9 +1,10 @@
 pub(crate) fn parse_subject_cant_be_blocked_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let normalized = words(tokens)
-        .into_iter()
-        .map(|word| if word == "cannot" { "cant" } else { word })
+    let normalized_storage = normalize_cant_words(tokens);
+    let normalized = normalized_storage
+        .iter()
+        .map(String::as_str)
         .collect::<Vec<_>>();
     if normalized.len() < 4 || !normalized.ends_with(&["cant", "be", "blocked"]) {
         return Ok(None);
@@ -73,9 +74,10 @@ pub(crate) fn parse_subject_cant_be_blocked_line(
 pub(crate) fn parse_subject_cant_be_blocked_as_long_as_condition_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let normalized = words(tokens)
-        .into_iter()
-        .map(|word| if word == "cannot" { "cant" } else { word })
+    let normalized_storage = normalize_cant_words(tokens);
+    let normalized = normalized_storage
+        .iter()
+        .map(String::as_str)
         .collect::<Vec<_>>();
 
     let Some(cant_idx) = normalized
@@ -131,9 +133,10 @@ pub(crate) fn parse_subject_cant_be_blocked_as_long_as_condition_line(
 pub(crate) fn parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let normalized = words(tokens)
-        .into_iter()
-        .map(|word| if word == "cannot" { "cant" } else { word })
+    let normalized_storage = normalize_cant_words(tokens);
+    let normalized = normalized_storage
+        .iter()
+        .map(String::as_str)
         .collect::<Vec<_>>();
 
     let Some(cant_idx) = normalized
@@ -222,7 +225,8 @@ pub(crate) fn parse_granted_keyword_static_line(
     fn parse_granted_escape_cost_tail(
         trailing_tokens: &[OwnedLexToken],
     ) -> Result<Option<u32>, CardTextError> {
-        let trailing_words = words(trailing_tokens);
+        let trailing_word_view = LowercaseWordView::new(trailing_tokens);
+        let trailing_words = trailing_word_view.to_word_refs();
         let Some(prefix_len) = (match trailing_words.as_slice() {
             [
                 "the",
@@ -296,7 +300,8 @@ pub(crate) fn parse_granted_keyword_static_line(
         let keyword_words = words(keyword_tokens);
         let spec = match keyword_words.as_slice() {
             ["flashback"] => {
-                let trailing_words = words(trailing_tokens);
+                let trailing_word_view = LowercaseWordView::new(trailing_tokens);
+                let trailing_words = trailing_word_view.to_word_refs();
                 let is_supported_flashback_tail = trailing_words
                     == [
                         "its",
@@ -585,7 +590,11 @@ pub(crate) fn parse_all_creatures_lose_flying_line(
 pub(crate) fn parse_each_creature_cant_be_blocked_by_more_than_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_words_storage = normalize_cant_words(tokens);
+    let clause_words = clause_words_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if clause_words.len() < 10 {
         return Ok(None);
     }
@@ -1346,7 +1355,8 @@ pub(crate) fn parse_static_condition_clause(
     tokens: &[OwnedLexToken],
 ) -> Result<crate::ConditionExpr, CardTextError> {
     let tokens = trim_edge_punctuation(tokens);
-    let clause_words = words(&tokens);
+    let clause_word_view = LowercaseWordView::new(&tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if clause_words.is_empty() {
         return Err(CardTextError::ParseError(
             "missing condition clause after 'as long as'".to_string(),
@@ -1904,23 +1914,25 @@ pub(crate) fn parse_anthem_clause(
         modifier_idx += 2;
     }
 
-    let modifier_token = tokens
-        .get(modifier_idx)
-        .and_then(OwnedLexToken::as_word)
-        .ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "missing power/toughness modifier in anthem clause (clause: '{}')",
-                words(tokens).join(" ")
-            ))
-        })?;
+    let modifier_tokens = &tokens[modifier_idx..tail_end];
+    let modifier_word_view =
+        crate::cards::builders::parse_rewrite::native_tokens::LowercaseWordView::new(
+            modifier_tokens,
+        );
+    let modifier_token = modifier_word_view.first().ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "missing power/toughness modifier in anthem clause (clause: '{}')",
+            words(tokens).join(" ")
+        ))
+    })?;
     let (raw_power, raw_toughness) = parse_pt_modifier_values(modifier_token).map_err(|_| {
         CardTextError::ParseError(format!(
             "invalid power/toughness modifier in anthem clause (clause: '{}')",
             words(tokens).join(" ")
         ))
     })?;
-
-    let tail_tokens = trim_edge_punctuation(&tokens[modifier_idx + 1..tail_end]);
+    let modifier_end = modifier_word_view.token_index_after_words(1).unwrap_or(1);
+    let tail_tokens = trim_edge_punctuation(&modifier_tokens[modifier_end..]);
     let mut scale: Option<AnthemCountExpression> = None;
     let mut suffix_condition: Option<crate::ConditionExpr> = None;
     let mut suffix_attached_subject: Option<ObjectFilter> = None;
@@ -2486,22 +2498,107 @@ pub(crate) fn parse_anthem_and_keyword_line(
 
         let ability_tail_tokens = trim_edge_punctuation(&ability_tokens[and_has_idx + 2..]);
         if !ability_tail_tokens.is_empty() {
-            let has_colon = ability_tail_tokens
-                .iter()
-                .any(|token| token.is_colon());
-            let Some(parsed) = parse_activated_line(&ability_tail_tokens)? else {
-                if has_colon {
-                    return Err(CardTextError::ParseError(format!(
-                        "unsupported granted activated ability in anthem clause (clause: '{}')",
-                        clause_words.join(" ")
-                    )));
+            let mut handled_split_keyword_activation = false;
+            if ability_tail_tokens.iter().any(|token| token.is_colon()) {
+                let colon_idx = ability_tail_tokens
+                    .iter()
+                    .position(|token| token.is_colon())
+                    .expect("validated colon");
+                if let Some(split_and_idx) = (0..colon_idx)
+                    .rev()
+                    .find(|idx| ability_tail_tokens[*idx].is_word("and"))
+                {
+                    let trailing_keyword_tokens =
+                        trim_edge_punctuation(&ability_tail_tokens[..split_and_idx]);
+                    let activated_tail =
+                        trim_edge_punctuation(&ability_tail_tokens[split_and_idx + 1..]);
+                    if !trailing_keyword_tokens.is_empty() {
+                        let Some(actions) = parse_ability_line(&trailing_keyword_tokens) else {
+                            return Ok(None);
+                        };
+                        reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+                        keyword_actions.extend(
+                            actions
+                                .into_iter()
+                                .filter(|action| action.lowers_to_static_ability()),
+                        );
+                    }
+                    let has_colon = activated_tail.iter().any(|token| token.is_colon());
+                    let Some(parsed) = parse_activated_line(&activated_tail)? else {
+                        if has_colon {
+                            return Err(CardTextError::ParseError(format!(
+                                "unsupported granted activated ability in anthem clause (clause: '{}')",
+                                clause_words.join(" ")
+                            )));
+                        }
+                        return Ok(None);
+                    };
+                    let display = display_text_for_tokens(&activated_tail, false);
+                    granted_activated_display = Some(display);
+                    granted_activated_ability = Some(parsed);
+                    handled_split_keyword_activation = true;
                 }
-                return Ok(None);
-            };
-            let display = words(&ability_tail_tokens).join(" ");
-            granted_activated_display = Some(display);
-            granted_activated_ability = Some(parsed);
+            }
+            if !handled_split_keyword_activation {
+                let has_colon = ability_tail_tokens.iter().any(|token| token.is_colon());
+                let Some(parsed) = parse_activated_line(&ability_tail_tokens)? else {
+                    if has_colon {
+                        return Err(CardTextError::ParseError(format!(
+                            "unsupported granted activated ability in anthem clause (clause: '{}')",
+                            clause_words.join(" ")
+                        )));
+                    }
+                    return Ok(None);
+                };
+                let display = display_text_for_tokens(&ability_tail_tokens, false);
+                granted_activated_display = Some(display);
+                granted_activated_ability = Some(parsed);
+            }
         }
+    } else if ability_tokens.iter().any(|token| token.is_colon()) {
+        let Some(colon_idx) = ability_tokens
+            .iter()
+            .position(|token| token.is_colon())
+        else {
+            return Ok(None);
+        };
+        let Some(and_idx) = (0..colon_idx)
+            .rev()
+            .find(|idx| ability_tokens[*idx].is_word("and"))
+        else {
+            return Ok(None);
+        };
+        let keyword_head = trim_edge_punctuation(&ability_tokens[..and_idx]);
+        let activated_tail = trim_edge_punctuation(&ability_tokens[and_idx + 1..]);
+        if keyword_head.is_empty() || activated_tail.is_empty() {
+            return Ok(None);
+        }
+        let Some(actions) = parse_ability_line(&keyword_head) else {
+            return Ok(None);
+        };
+        reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+        keyword_actions = actions
+            .into_iter()
+            .filter(|action| action.lowers_to_static_ability())
+            .collect();
+        let has_colon = activated_tail.iter().any(|token| token.is_colon());
+        let Some(parsed) = parse_activated_line(&activated_tail)? else {
+            if has_colon {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported granted activated ability in anthem clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            return Ok(None);
+        };
+        let display = display_text_for_tokens(&activated_tail, false);
+        granted_activated_display = Some(display);
+        granted_activated_ability = Some(parsed);
+    } else if let Some(GrantedAbilityAst::ParsedObjectAbility { ability, display }) =
+        parse_granted_activated_or_triggered_ability_for_gain(&ability_tokens, &clause_words)?
+    {
+        granted_activated_display = Some(display);
+        granted_activated_ability = Some(ability);
     } else if let Some(actions) = parse_ability_line(&ability_tokens) {
         reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
         keyword_actions = actions
@@ -2636,6 +2733,17 @@ fn grant_object_ability_for_anthem_subject(
     ability: ParsedAbility,
     display: String,
 ) -> StaticAbilityAst {
+    if let AnthemSubjectAst::Filter(filter) = &clause.subject {
+        let subject = filter.description();
+        if subject.starts_with("enchanted ") || subject.starts_with("equipped ") {
+            return StaticAbilityAst::AttachedObjectAbilityGrant {
+                ability,
+                display: format!("{subject} has {display}"),
+                condition: clause.condition.clone(),
+            };
+        }
+    }
+
     StaticAbilityAst::GrantObjectAbility {
         filter: anthem_subject_filter(&clause.subject),
         ability,
@@ -2911,7 +3019,59 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
 
             let mut granted_activated: Option<ParsedAbility> = None;
             let mut granted_activated_display: Option<String> = None;
-            let actions = if let Some(actions) = parse_ability_line(&ability_tokens) {
+            let split_keyword_and_activated = if ability_tokens.iter().any(|token| token.is_colon()) {
+                let Some(colon_idx) = ability_tokens
+                    .iter()
+                    .position(|token| token.is_colon())
+                else {
+                    return Ok(None);
+                };
+                let and_idx = (0..colon_idx)
+                    .rev()
+                    .find(|idx| ability_tokens[*idx].is_word("and"));
+                if let Some(and_idx) = and_idx {
+                    let keyword_head = trim_edge_punctuation(&ability_tokens[..and_idx]);
+                    let activated_tail = trim_edge_punctuation(&ability_tokens[and_idx + 1..]);
+                    if keyword_head.is_empty() || activated_tail.is_empty() {
+                        return Ok(None);
+                    }
+                    let Some(actions) = parse_ability_line(&keyword_head) else {
+                        return Ok(None);
+                    };
+                    let has_colon = activated_tail
+                        .iter()
+                        .any(|token| token.is_colon());
+                    let Some(parsed) = parse_activated_line(&activated_tail)? else {
+                        if has_colon {
+                            return Err(CardTextError::ParseError(format!(
+                                "unsupported granted activated ability in anthem clause (clause: '{}')",
+                                clause_words.join(" ")
+                            )));
+                        }
+                        return Ok(None);
+                    };
+                    let display = display_text_for_tokens(&activated_tail, false);
+                    granted_activated_display = Some(display);
+                    granted_activated = Some(parsed);
+                    Some(actions)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let actions = if let Some(actions) = split_keyword_and_activated {
+                Some(actions)
+            } else if let Some(GrantedAbilityAst::ParsedObjectAbility { ability, display }) =
+                parse_granted_activated_or_triggered_ability_for_gain(
+                    &ability_tokens,
+                    &clause_words,
+                )?
+            {
+                granted_activated_display = Some(display);
+                granted_activated = Some(ability);
+                None
+            } else if let Some(actions) = parse_ability_line(&ability_tokens) {
                 Some(actions)
             } else if ability_tokens
                 .iter()
@@ -2949,7 +3109,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                     }
                     return Ok(None);
                 };
-                let display = words(&activated_tail).join(" ");
+                let display = display_text_for_tokens(&activated_tail, false);
                 granted_activated_display = Some(display);
                 granted_activated = Some(parsed);
                 Some(actions)
@@ -3682,7 +3842,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                     .is_some_and(|next| next.is_word("the")))
     });
     let mut granted_static: Vec<StaticAbilityAst> = Vec::new();
-    let mut granted_object_abilities: Vec<ParsedAbility> = Vec::new();
+    let mut granted_object_abilities: Vec<(ParsedAbility, String)> = Vec::new();
     if has_colon {
         let Some(parsed) = parse_activated_line(&ability_tokens)? else {
             return Err(CardTextError::ParseError(format!(
@@ -3690,9 +3850,9 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 clause_words.join(" ")
             )));
         };
-        granted_object_abilities.push(parsed);
+        granted_object_abilities.push((parsed, display_text_for_tokens(&ability_tokens, false)));
     } else if let Some(parsed) = parse_cycling_line(&ability_tokens)? {
-        granted_object_abilities.push(parsed);
+        granted_object_abilities.push((parsed, display_text_for_tokens(&ability_tokens, false)));
     } else if looks_like_trigger {
         match parse_triggered_line(&ability_tokens)? {
             LineAst::Triggered {
@@ -3714,7 +3874,8 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                         clause_words.join(" ")
                     )));
                 }
-                granted_object_abilities.push(parsed);
+                granted_object_abilities
+                    .push((parsed, display_text_for_tokens(&ability_tokens, false)));
             }
             _ => {
                 return Err(CardTextError::ParseError(format!(
@@ -3734,16 +3895,19 @@ pub(crate) fn parse_filter_has_granted_ability_line(
         else {
             return Ok(None);
         };
-        granted_object_abilities.push(ParsedAbility {
-            ability: cumulative_upkeep_granted_ability(
-                mana_symbols_per_counter.clone(),
-                *life_per_counter,
-                text.clone(),
-            ),
-            effects_ast: None,
-            reference_imports: ReferenceImports::default(),
-            trigger_spec: None,
-        });
+        granted_object_abilities.push((
+            ParsedAbility {
+                ability: cumulative_upkeep_granted_ability(
+                    mana_symbols_per_counter.clone(),
+                    *life_per_counter,
+                    text.clone(),
+                ),
+                effects_ast: None,
+                reference_imports: ReferenceImports::default(),
+                trigger_spec: None,
+            },
+            display_text_for_tokens(&ability_tokens, false),
+        ));
     } else if let Some(abilities) = parse_static_ability_ast_line(&ability_tokens)? {
         granted_static = abilities;
     } else {
@@ -3780,11 +3944,11 @@ pub(crate) fn parse_filter_has_granted_ability_line(
         AnthemSubjectAst::Filter(filter) => filter.clone(),
         AnthemSubjectAst::Source => ObjectFilter::source(),
     };
-    for ability in granted_object_abilities {
+    for (ability, display) in granted_object_abilities {
         if attached_subject {
             granted.push(StaticAbilityAst::AttachedObjectAbilityGrant {
                 ability,
-                display: clause_words.join(" "),
+                display: display.clone(),
                 condition: condition.clone(),
             });
             continue;
@@ -3792,7 +3956,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
         granted.push(StaticAbilityAst::GrantObjectAbility {
             filter: filter.clone(),
             ability,
-            display: clause_words.join(" "),
+            display,
             condition: condition.clone(),
         });
     }

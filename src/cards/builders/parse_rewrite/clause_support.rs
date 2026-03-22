@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
 use crate::cards::builders::{
-    CardTextError, EffectAst, KeywordAction, LineAst, StaticAbilityAst, TriggerSpec,
+    CardTextError, EffectAst, KeywordAction, LineAst, StaticAbilityAst, TargetAst, TriggerSpec,
 };
+use crate::effect::Value;
+use crate::target::PlayerFilter;
 
 use super::activation_and_restrictions::{
     parse_ability_phrase, parse_single_word_keyword_action, parse_triggered_times_each_turn_lexed,
@@ -12,7 +14,7 @@ use super::lexer::{OwnedLexToken, TokenKind, split_lexed_sentences};
 use super::native_tokens::LowercaseWordView;
 use super::util::{
     parse_card_type, parse_color, parse_flashback_keyword_line, parse_subtype_flexible,
-    split_on_and, split_on_comma_or_semicolon, words,
+    split_on_and, split_on_comma_or_semicolon, trim_commas, words,
 };
 
 fn parse_protection_chain(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
@@ -447,6 +449,37 @@ pub(crate) fn rewrite_parse_triggered_line(
 pub(crate) fn rewrite_parse_triggered_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<LineAst, CardTextError> {
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
+    if clause_words.starts_with(&[
+        "when",
+        "this",
+        "becomes",
+        "monstrous",
+        "it",
+        "deals",
+        "damage",
+        "to",
+        "each",
+        "opponent",
+        "equal",
+        "to",
+    ]) && clause_words.contains(&"number")
+        && clause_words.contains(&"cards")
+        && clause_words.contains(&"hand")
+    {
+        return Ok(LineAst::Triggered {
+            trigger: TriggerSpec::ThisBecomesMonstrous,
+            effects: vec![EffectAst::ForEachOpponent {
+                effects: vec![EffectAst::DealDamage {
+                    amount: Value::CardsInHand(PlayerFilter::IteratedPlayer),
+                    target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
+                }],
+            }],
+            max_triggers_per_turn: None,
+        });
+    }
+
     fn looks_like_trigger_objectish_word(word: &str) -> bool {
         parse_card_type(word).is_some()
             || parse_subtype_flexible(word).is_some()
@@ -664,6 +697,135 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
         0
     };
 
+    if start_idx < tokens.len() {
+        let trigger_body = &tokens[start_idx..];
+        let trigger_body_view = LowercaseWordView::new(trigger_body);
+        let trigger_body_words = trigger_body_view.to_word_refs();
+        let blocked_prefix_len = if trigger_body_words
+            .starts_with(&["this", "creature", "becomes", "blocked"])
+        {
+            Some(4usize)
+        } else if trigger_body_words.starts_with(&["this", "becomes", "blocked"]) {
+            Some(3usize)
+        } else {
+            None
+        };
+        if let Some(prefix_len) = blocked_prefix_len
+            && let Some(effect_start_rel) = trigger_body_view.token_index_after_words(prefix_len)
+        {
+            let split_idx = start_idx + effect_start_rel;
+            let effects_tokens = trim_commas(&tokens[split_idx..]);
+            if !effects_tokens.is_empty()
+                && let Ok(effects) = rewrite_parse_effect_sentences_lexed(&effects_tokens)
+            {
+                return Ok(LineAst::Triggered {
+                    trigger: TriggerSpec::ThisBecomesBlocked,
+                    effects,
+                    max_triggers_per_turn: None,
+                });
+            }
+        }
+
+        let leaves_prefix_len = if trigger_body_words.starts_with(&["this", "leaves", "the", "battlefield"]) {
+            Some(4usize)
+        } else if trigger_body_words
+            .starts_with(&["this", "creature", "leaves", "the", "battlefield"])
+        {
+            Some(5usize)
+        } else {
+            None
+        };
+        if let Some(prefix_len) = leaves_prefix_len
+            && let Some(effect_start_rel) = trigger_body_view.token_index_after_words(prefix_len)
+        {
+            let split_idx = start_idx + effect_start_rel;
+            let trigger_tokens = trim_commas(&tokens[start_idx..split_idx]);
+            let effects_tokens = trim_commas(&tokens[split_idx..]);
+            if !effects_tokens.is_empty()
+                && let Ok(trigger) = rewrite_parse_trigger_clause_lexed(&trigger_tokens)
+                && let Ok(effects) = rewrite_parse_effect_sentences_lexed(&effects_tokens)
+            {
+                return Ok(LineAst::Triggered {
+                    trigger,
+                    effects,
+                    max_triggers_per_turn: None,
+                });
+            }
+        }
+    }
+
+    if let Some(split_idx) = tokens.iter().position(|token| token.kind == TokenKind::Comma) {
+        let trigger_tokens = &tokens[start_idx..split_idx];
+        let trigger_word_view = LowercaseWordView::new(trigger_tokens);
+        let trigger_words = trigger_word_view.to_word_refs();
+        if let Some(attack_idx) = trigger_words
+            .iter()
+            .position(|word| *word == "attack" || *word == "attacks")
+            && trigger_words.get(attack_idx + 1).copied() == Some("with")
+        {
+            let subject_words = &trigger_words[..attack_idx];
+            if let Some(player) =
+                super::activation_and_restrictions::parse_trigger_subject_player_filter(subject_words)
+            {
+                let Some(with_object_start) = trigger_word_view
+                    .token_index_for_word_index(attack_idx + 2)
+                else {
+                    return Err(CardTextError::ParseError(format!(
+                        "missing attacking-object filter in trigger clause (clause: '{}')",
+                        trigger_words.join(" ")
+                    )));
+                };
+                let mut object_tokens = &trigger_tokens[with_object_start..];
+                let mut min_total_attackers = None;
+                let mut one_or_more = false;
+                if let Some((count, stripped)) =
+                    super::activation_and_restrictions::parse_leading_or_more_quantifier(object_tokens)
+                {
+                    one_or_more = true;
+                    object_tokens = stripped;
+                    if count > 1 {
+                        min_total_attackers = Some(count);
+                    }
+                }
+                if !object_tokens.is_empty() {
+                    let mut filter = super::object_filters::parse_object_filter_lexed(
+                        object_tokens,
+                        false,
+                    )
+                    .map_err(|_| {
+                        CardTextError::ParseError(format!(
+                            "unsupported attacking-object filter in trigger clause (clause: '{}')",
+                            trigger_words.join(" ")
+                        ))
+                    })?;
+                    if filter.controller.is_none() {
+                        filter.controller = Some(player);
+                    }
+                    let trigger = if let Some(min_total_attackers) = min_total_attackers {
+                        TriggerSpec::AttacksOneOrMoreWithMinTotal {
+                            filter,
+                            min_total_attackers,
+                        }
+                    } else if one_or_more {
+                        TriggerSpec::AttacksOneOrMore(filter)
+                    } else {
+                        TriggerSpec::Attacks(filter)
+                    };
+                    let effects_tokens = rewrite_attached_controller_trigger_effect_tokens_lexed(
+                        trigger_tokens,
+                        &tokens[split_idx + 1..],
+                    );
+                    let effects = rewrite_parse_effect_sentences_lexed(&effects_tokens)?;
+                    return Ok(LineAst::Triggered {
+                        trigger,
+                        effects,
+                        max_triggers_per_turn: None,
+                    });
+                }
+            }
+        }
+    }
+
     if let Some(mut split_idx) = tokens
         .iter()
         .position(|token| token.kind == TokenKind::Comma)
@@ -799,7 +961,16 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
                 trigger_tokens,
                 effects_tokens,
             );
-            if let Ok(effects) = rewrite_parse_effect_sentences_lexed(&rewritten_effects_tokens) {
+            let effects = rewrite_parse_effect_sentences_lexed(&rewritten_effects_tokens)
+                .or_else(|_| {
+                    let Some(stripped) = super::activation_and_restrictions::
+                        maybe_strip_leading_damage_subject_tokens(&rewritten_effects_tokens)
+                    else {
+                        return Err(CardTextError::ParseError(String::new()));
+                    };
+                    rewrite_parse_effect_sentences_lexed(stripped)
+                });
+            if let Ok(effects) = effects {
                 let mut max_triggers_per_turn =
                     parse_triggered_times_each_turn_lexed_from_sentences(&rewritten_effects_tokens);
                 if let Some(max) = max_triggers_from_trigger_clause {
