@@ -12,7 +12,7 @@ use super::{
     lexed_words, lower_activation_cost_cst, parse_activate_only_timing_lexed,
     parse_activation_condition_lexed, parse_activation_cost_rewrite, parse_cant_effect_sentence,
     parse_cant_effect_sentence_lexed, parse_cost_reduction_line, parse_count_word_rewrite,
-    parse_effect_sentence, parse_effect_sentence_lexed, parse_mana_symbol_group_rewrite,
+    parse_effect_sentence_lexed, parse_mana_symbol_group_rewrite,
     parse_mana_usage_restriction_sentence_lexed, parse_restriction_duration,
     parse_restriction_duration_lexed, parse_text_to_semantic_document,
     parse_text_with_annotations_lowered, parse_triggered_times_each_turn_lexed,
@@ -920,10 +920,34 @@ fn rewrite_lexed_triggered_and_static_wrappers_work_natively() {
         super::clause_support::rewrite_parse_triggered_line_lexed(&triggered_tokens),
         Ok(crate::cards::builders::LineAst::Triggered { .. })
     ));
+    assert_eq!(
+        format!(
+            "{:?}",
+            super::clause_support::rewrite_parse_triggered_line_lexed(&triggered_tokens)
+                .expect("triggered entrypoint should parse")
+        ),
+        format!(
+            "{:?}",
+            super::clause_support::rewrite_parse_triggered_line_lexed(&triggered_tokens)
+                .expect("lexed triggered wrapper should parse")
+        )
+    );
     assert!(matches!(
         super::clause_support::rewrite_parse_static_ability_ast_line_lexed(&static_tokens),
         Ok(Some(abilities)) if !abilities.is_empty()
     ));
+    assert_eq!(
+        format!(
+            "{:?}",
+            super::keyword_static::parse_static_ability_ast_line_lexed(&static_tokens)
+                .expect("static entrypoint should parse")
+        ),
+        format!(
+            "{:?}",
+            super::clause_support::rewrite_parse_static_ability_ast_line_lexed(&static_tokens)
+                .expect("lexed static wrapper should parse")
+        )
+    );
 }
 
 #[test]
@@ -1020,7 +1044,7 @@ fn rewrite_lexed_trigger_clause_tail_branches_match_wrapper_output() {
         let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
         let native = super::activation_and_restrictions::parse_trigger_clause_lexed(&lexed);
-        let wrapper = super::activation_and_restrictions::parse_trigger_clause(&compat);
+        let wrapper = super::activation_and_restrictions::parse_trigger_clause_lexed(&compat);
 
         assert_eq!(format!("{native:?}"), format!("{wrapper:?}"), "{text}");
     }
@@ -1034,7 +1058,7 @@ fn rewrite_lexed_trigger_clause_unsupported_tail_matches_wrapper_error() {
 
     let native = super::activation_and_restrictions::parse_trigger_clause_lexed(&lexed)
         .expect_err("lexed trigger clause should reject unsupported tail");
-    let wrapper = super::activation_and_restrictions::parse_trigger_clause(&compat)
+    let wrapper = super::activation_and_restrictions::parse_trigger_clause_lexed(&compat)
         .expect_err("wrapper trigger clause should reject unsupported tail");
 
     assert_eq!(format!("{native:?}"), format!("{wrapper:?}"));
@@ -1052,7 +1076,7 @@ fn rewrite_lexed_trigger_clause_etb_edge_cases_match_wrapper_output() {
         let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
         let native = super::activation_and_restrictions::parse_trigger_clause_lexed(&lexed);
-        let wrapper = super::activation_and_restrictions::parse_trigger_clause(&compat);
+        let wrapper = super::activation_and_restrictions::parse_trigger_clause_lexed(&compat);
 
         assert_eq!(format!("{native:?}"), format!("{wrapper:?}"), "{text}");
     }
@@ -1081,7 +1105,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_multisentence_followups() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify multisentence effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper effect sentence parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed effect sentence parser should succeed");
@@ -1095,7 +1119,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_comma_then_chain() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify comma-then effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper effect sentence parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed effect sentence parser should succeed");
@@ -1109,7 +1133,7 @@ fn rewrite_lexed_effect_sentence_matches_wrapper_conditional_dispatch() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify conditional sentence");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper conditional sentence should parse");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed conditional sentence should parse");
@@ -1140,7 +1164,7 @@ fn rewrite_lexed_effect_sentence_matches_wrapper_pre_diagnostic_clause_helpers()
         let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
         let wrapper =
-            parse_effect_sentence(&compat).expect("wrapper clause helper sentence should parse");
+            parse_effect_sentence_lexed(&compat).expect("wrapper clause helper sentence should parse");
         let native =
             parse_effect_sentence_lexed(&lexed).expect("lexed clause helper sentence should parse");
 
@@ -1156,7 +1180,7 @@ fn rewrite_lexed_effect_sentence_unsupported_diagnostic_matches_wrapper_error() 
 
     let native = parse_effect_sentence_lexed(&lexed)
         .expect_err("lexed sentence should reject unsupported diagnostic probe");
-    let wrapper = parse_effect_sentence(&compat)
+    let wrapper = parse_effect_sentence_lexed(&compat)
         .expect_err("wrapper sentence should reject unsupported diagnostic probe");
 
     assert_eq!(format!("{native:?}"), format!("{wrapper:?}"));
@@ -1169,7 +1193,7 @@ fn rewrite_lexed_effect_sentence_matches_wrapper_where_x_clause() {
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
     let native = parse_effect_sentence_lexed(&lexed).expect("lexed where-x sentence should parse");
-    let wrapper = parse_effect_sentence(&compat).expect("wrapper where-x sentence should parse");
+    let wrapper = parse_effect_sentence_lexed(&compat).expect("wrapper where-x sentence should parse");
 
     assert_eq!(format!("{native:?}"), format!("{wrapper:?}"));
 }
@@ -1180,7 +1204,7 @@ fn rewrite_lexed_effect_sentence_matches_wrapper_sacrifice_land_clause() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify sacrifice sentence");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper sacrifice sentence should parse");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed sacrifice sentence should parse");
@@ -1194,7 +1218,7 @@ fn rewrite_lexed_effect_sentence_matches_wrapper_sacrifice_all_non_ogres_clause(
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify sacrifice-all sentence");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper sacrifice-all sentence should parse");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed sacrifice-all sentence should parse");
@@ -1286,6 +1310,23 @@ fn rewrite_lexed_conditional_parser_supports_spent_to_cast_conditional_directly(
     let parsed = super::effect_sentences::parse_conditional_sentence_lexed(&lexed);
 
     assert!(parsed.is_ok(), "{parsed:?}");
+}
+
+#[test]
+fn rewrite_lexed_effect_sentence_supports_delayed_this_turn_trigger_via_lexed_trigger_parser() {
+    let lexed = lex_line("When this creature dies this turn, exile this creature.", 0)
+        .expect("rewrite lexer should classify delayed this-turn trigger sentence");
+
+    let parsed = parse_effect_sentence_lexed(&lexed)
+        .expect("lexed delayed this-turn trigger sentence should parse");
+    let wrapper = parse_effect_sentence_lexed(&lexed)
+        .expect("wrapper delayed this-turn trigger sentence should parse");
+    let debug = format!("{parsed:?}");
+
+    assert_eq!(format!("{wrapper:?}"), debug);
+    assert!(debug.contains("DelayedTriggerThisTurn"), "{debug}");
+    assert!(debug.contains("ThisDies"), "{debug}");
+    assert!(debug.contains("Exile"), "{debug}");
 }
 
 #[test]
@@ -1434,7 +1475,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_and_chain_split() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify and-chain effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper effect sentence parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed effect sentence parser should succeed");
@@ -1448,7 +1489,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_missing_verb_damage_chain() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify missing-verb damage chain");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper missing-verb damage parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed missing-verb damage parser should succeed");
@@ -1463,7 +1504,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_missing_verb_sacrifice_chain(
         lex_line(text, 0).expect("rewrite lexer should classify missing-verb sacrifice chain");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper missing-verb sacrifice parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed missing-verb sacrifice parser should succeed");
@@ -1477,7 +1518,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_comma_action_chain() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify comma action chain");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper comma action parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed comma action parser should succeed");
@@ -1491,7 +1532,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_simple_draw_clause() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify simple draw effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper simple draw parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed simple draw parser should succeed");
@@ -1521,7 +1562,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_simple_target_clause() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify simple target effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper simple target parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed simple target parser should succeed");
@@ -1535,7 +1576,7 @@ fn rewrite_lexed_effect_entrypoint_keeps_permission_may_as_grant_not_wrapper() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify permission sentence");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper permission sentence parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed permission sentence parser should succeed");
@@ -1554,7 +1595,7 @@ fn rewrite_lexed_effect_entrypoint_keeps_additional_land_play_as_permission_not_
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify land-play permission");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper land-play permission parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed land-play permission parser should succeed");
@@ -1577,7 +1618,7 @@ fn rewrite_lexed_effect_entrypoint_matches_wrapper_or_action_clause() {
     let lexed = lex_line(text, 0).expect("rewrite lexer should classify or-action effect");
     let compat = crate::cards::builders::parser::util::tokenize_line(text, 0);
 
-    let wrapper = super::clause_support::rewrite_parse_effect_sentences(&compat)
+    let wrapper = super::clause_support::rewrite_parse_effect_sentences_lexed(&compat)
         .expect("wrapper or-action parser should succeed");
     let native = super::clause_support::rewrite_parse_effect_sentences_lexed(&lexed)
         .expect("lexed or-action parser should succeed");

@@ -631,7 +631,10 @@ pub(crate) fn parse_each_creature_cant_be_blocked_by_more_than_line(
             return Ok(None);
         };
         let mut filter_tokens = trim_commas(&tokens[..subject_end]);
-        if filter_tokens.first().is_some_and(|token| token.is_word("each")) {
+        if filter_tokens
+            .first()
+            .is_some_and(|token| token.is_word("each"))
+        {
             filter_tokens = trim_commas(&filter_tokens[1..]);
         }
         if filter_tokens.is_empty() {
@@ -1191,7 +1194,9 @@ fn parse_shared_suffix_and_subject_filter(tokens: &[OwnedLexToken]) -> Option<Ob
     best.map(|(_, filter)| filter)
 }
 
-pub(crate) fn parse_anthem_subject(tokens: &[OwnedLexToken]) -> Result<AnthemSubjectAst, CardTextError> {
+pub(crate) fn parse_anthem_subject(
+    tokens: &[OwnedLexToken],
+) -> Result<AnthemSubjectAst, CardTextError> {
     let subject_words = words(tokens);
     if subject_words.as_slice() == ["it"] {
         return Ok(AnthemSubjectAst::Source);
@@ -1212,7 +1217,9 @@ pub(crate) fn parse_anthem_subject(tokens: &[OwnedLexToken]) -> Result<AnthemSub
         })
 }
 
-fn infer_attached_subject_filter_from_condition_tokens(tokens: &[OwnedLexToken]) -> Option<ObjectFilter> {
+fn infer_attached_subject_filter_from_condition_tokens(
+    tokens: &[OwnedLexToken],
+) -> Option<ObjectFilter> {
     let condition_tokens = trim_edge_punctuation(tokens);
     let condition_words = words(&condition_tokens);
     let attached_subject_len = match condition_words.get(..2) {
@@ -1671,7 +1678,9 @@ pub(crate) fn parse_static_condition_clause(
     )))
 }
 
-fn parse_conjoined_static_condition_clause(tokens: &[OwnedLexToken]) -> Option<crate::ConditionExpr> {
+fn parse_conjoined_static_condition_clause(
+    tokens: &[OwnedLexToken],
+) -> Option<crate::ConditionExpr> {
     let words = words(tokens);
     let and_positions = words
         .iter()
@@ -1916,9 +1925,7 @@ pub(crate) fn parse_anthem_clause(
 
     let modifier_tokens = &tokens[modifier_idx..tail_end];
     let modifier_word_view =
-        crate::cards::builders::parser::native_tokens::LowercaseWordView::new(
-            modifier_tokens,
-        );
+        crate::cards::builders::parser::native_tokens::LowercaseWordView::new(modifier_tokens);
     let modifier_token = modifier_word_view.first().ok_or_else(|| {
         CardTextError::ParseError(format!(
             "missing power/toughness modifier in anthem clause (clause: '{}')",
@@ -2556,10 +2563,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
             }
         }
     } else if ability_tokens.iter().any(|token| token.is_colon()) {
-        let Some(colon_idx) = ability_tokens
-            .iter()
-            .position(|token| token.is_colon())
-        else {
+        let Some(colon_idx) = ability_tokens.iter().position(|token| token.is_colon()) else {
             return Ok(None);
         };
         let Some(and_idx) = (0..colon_idx)
@@ -2776,21 +2780,24 @@ fn parse_triggered_granted_ability(
         return Ok(None);
     }
 
-    let ability = match parse_triggered_line(&trigger_tokens)? {
-        LineAst::Triggered {
-            trigger,
-            effects,
-            max_triggers_per_turn,
-        } => parsed_triggered_ability(
-            trigger,
-            effects,
-            vec![Zone::Battlefield],
-            Some(words(&trigger_tokens).join(" ")),
-            max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-            ReferenceImports::default(),
-        ),
-        _ => return Ok(None),
-    };
+    let ability =
+        match crate::cards::builders::parser::clause_support::rewrite_parse_triggered_line_lexed(
+            &trigger_tokens,
+        )? {
+            LineAst::Triggered {
+                trigger,
+                effects,
+                max_triggers_per_turn,
+            } => parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![Zone::Battlefield],
+                Some(words(&trigger_tokens).join(" ")),
+                max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                ReferenceImports::default(),
+            ),
+            _ => return Ok(None),
+        };
     if parsed_triggered_ability_is_empty(&ability) {
         return Err(CardTextError::ParseError(format!(
             "unsupported empty triggered granted ability clause (clause: '{}')",
@@ -2875,7 +2882,10 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
         work_tokens.drain(get_idx + 1..get_idx + 3);
     }
 
-    let Some(pt_word) = work_tokens.get(get_idx + 1).and_then(OwnedLexToken::as_word) else {
+    let Some(pt_word) = work_tokens
+        .get(get_idx + 1)
+        .and_then(OwnedLexToken::as_word)
+    else {
         return Ok(None);
     };
     if parse_pt_modifier(pt_word).is_err() {
@@ -3019,10 +3029,9 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
 
             let mut granted_activated: Option<ParsedAbility> = None;
             let mut granted_activated_display: Option<String> = None;
-            let split_keyword_and_activated = if ability_tokens.iter().any(|token| token.is_colon()) {
-                let Some(colon_idx) = ability_tokens
-                    .iter()
-                    .position(|token| token.is_colon())
+            let split_keyword_and_activated = if ability_tokens.iter().any(|token| token.is_colon())
+            {
+                let Some(colon_idx) = ability_tokens.iter().position(|token| token.is_colon())
                 else {
                     return Ok(None);
                 };
@@ -3038,9 +3047,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                     let Some(actions) = parse_ability_line(&keyword_head) else {
                         return Ok(None);
                     };
-                    let has_colon = activated_tail
-                        .iter()
-                        .any(|token| token.is_colon());
+                    let has_colon = activated_tail.iter().any(|token| token.is_colon());
                     let Some(parsed) = parse_activated_line(&activated_tail)? else {
                         if has_colon {
                             return Err(CardTextError::ParseError(format!(
@@ -3073,13 +3080,8 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                 None
             } else if let Some(actions) = parse_ability_line(&ability_tokens) {
                 Some(actions)
-            } else if ability_tokens
-                .iter()
-                .any(|token| token.is_colon())
-            {
-                let Some(colon_idx) = ability_tokens
-                    .iter()
-                    .position(|token| token.is_colon())
+            } else if ability_tokens.iter().any(|token| token.is_colon()) {
+                let Some(colon_idx) = ability_tokens.iter().position(|token| token.is_colon())
                 else {
                     return Ok(None);
                 };
@@ -3097,9 +3099,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                 let Some(actions) = parse_ability_line(&keyword_head) else {
                     return Ok(None);
                 };
-                let has_colon = activated_tail
-                    .iter()
-                    .any(|token| token.is_colon());
+                let has_colon = activated_tail.iter().any(|token| token.is_colon());
                 let Some(parsed) = parse_activated_line(&activated_tail)? else {
                     if has_colon {
                         return Err(CardTextError::ParseError(format!(
@@ -3184,15 +3184,15 @@ pub(crate) fn parse_conditional_all_creatures_able_to_block_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
     let all_words_storage = normalize_cant_words(tokens);
-    let all_words = all_words_storage.iter().map(String::as_str).collect::<Vec<_>>();
+    let all_words = all_words_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if !all_words.starts_with(&["as", "long", "as"]) {
         return Ok(None);
     }
 
-    let Some(comma_idx) = tokens
-        .iter()
-        .position(|token| token.is_comma())
-    else {
+    let Some(comma_idx) = tokens.iter().position(|token| token.is_comma()) else {
         return Ok(None);
     };
     if comma_idx <= 3 {
@@ -3345,10 +3345,7 @@ pub(crate) fn parse_as_long_as_condition_can_attack_as_though_no_defender_line(
     }) else {
         return Ok(None);
     };
-    let Some(comma_idx) = tokens
-        .iter()
-        .position(|token| token.is_comma())
-    else {
+    let Some(comma_idx) = tokens.iter().position(|token| token.is_comma()) else {
         return Ok(None);
     };
     let Some(can_token_idx) = token_index_for_word_index(tokens, can_idx) else {
@@ -3472,7 +3469,9 @@ pub(crate) fn parse_anthem_and_granted_ability_line(
     Ok(Some(result))
 }
 
-pub(crate) fn parse_anthem_line(tokens: &[OwnedLexToken]) -> Result<Option<StaticAbility>, CardTextError> {
+pub(crate) fn parse_anthem_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
     let words = words(tokens);
     // Targeted "gets +N/+N" text is usually a one-shot spell/ability effect,
     // not a global/static anthem.
@@ -3587,10 +3586,7 @@ pub(crate) fn parse_isnt_creature_line(
 
     let mut condition: Option<crate::ConditionExpr> = None;
     let clause_tokens_buf = if all_words.starts_with(&["as", "long", "as"]) {
-        let Some(comma_idx) = tokens
-            .iter()
-            .position(|token| token.is_comma())
-        else {
+        let Some(comma_idx) = tokens.iter().position(|token| token.is_comma()) else {
             return Ok(None);
         };
         if comma_idx <= 3 {
@@ -3830,9 +3826,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
         return Ok(None);
     }
     let ability_tokens = trim_edge_punctuation(&tokens[has_idx + 1..]);
-    let has_colon = ability_tokens
-        .iter()
-        .any(|token| token.is_colon());
+    let has_colon = ability_tokens.iter().any(|token| token.is_colon());
     let looks_like_trigger = ability_tokens.first().is_some_and(|token| {
         token.is_word("when")
             || token.is_word("whenever")
@@ -3854,7 +3848,9 @@ pub(crate) fn parse_filter_has_granted_ability_line(
     } else if let Some(parsed) = parse_cycling_line(&ability_tokens)? {
         granted_object_abilities.push((parsed, display_text_for_tokens(&ability_tokens, false)));
     } else if looks_like_trigger {
-        match parse_triggered_line(&ability_tokens)? {
+        match crate::cards::builders::parser::clause_support::rewrite_parse_triggered_line_lexed(
+            &ability_tokens,
+        )? {
             LineAst::Triggered {
                 trigger,
                 effects,
@@ -3908,7 +3904,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
             },
             display_text_for_tokens(&ability_tokens, false),
         ));
-    } else if let Some(abilities) = parse_static_ability_ast_line(&ability_tokens)? {
+    } else if let Some(abilities) = super::parse_static_ability_ast_line_lexed(&ability_tokens)? {
         granted_static = abilities;
     } else {
         return Ok(None);

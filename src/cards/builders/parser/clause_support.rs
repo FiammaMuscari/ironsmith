@@ -428,22 +428,10 @@ pub(crate) fn rewrite_parse_ability_line_lexed(
     }
 }
 
-pub(crate) fn rewrite_parse_effect_sentences(
-    tokens: &[OwnedLexToken],
-) -> Result<Vec<EffectAst>, CardTextError> {
-    super::effect_sentences::parse_effect_sentences(tokens)
-}
-
 pub(crate) fn rewrite_parse_effect_sentences_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
     super::effect_sentences::parse_effect_sentences_lexed(tokens)
-}
-
-pub(crate) fn rewrite_parse_triggered_line(
-    tokens: &[OwnedLexToken],
-) -> Result<LineAst, CardTextError> {
-    super::activation_and_restrictions::parse_triggered_line(tokens)
 }
 
 pub(crate) fn rewrite_parse_triggered_line_lexed(
@@ -1003,22 +991,10 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
     )))
 }
 
-pub(crate) fn rewrite_parse_trigger_clause(
-    tokens: &[OwnedLexToken],
-) -> Result<TriggerSpec, CardTextError> {
-    super::activation_and_restrictions::parse_trigger_clause(tokens)
-}
-
 pub(crate) fn rewrite_parse_trigger_clause_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<TriggerSpec, CardTextError> {
     super::activation_and_restrictions::parse_trigger_clause_lexed(tokens)
-}
-
-pub(crate) fn rewrite_parse_static_ability_ast_line(
-    tokens: &[OwnedLexToken],
-) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
-    super::keyword_static::parse_static_ability_ast_line(tokens)
 }
 
 pub(crate) fn rewrite_parse_static_ability_ast_line_lexed(

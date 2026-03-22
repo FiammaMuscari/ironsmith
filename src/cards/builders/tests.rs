@@ -6580,6 +6580,43 @@ fn test_parse_this_or_another_creature_dies_is_not_this_dies_only() {
 }
 
 #[test]
+fn test_compile_this_or_another_ally_enters_trigger_surface() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ally Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature or another Ally you control enters, you may put a +1/+1 counter on this creature.",
+        )
+        .expect("parse ally enter trigger");
+
+    let rendered = compiled_lines(&def).join(" | ");
+    let trigger_debug = match &def.abilities[0].kind {
+        AbilityKind::Triggered(triggered) => format!("{:#?}", triggered.trigger),
+        _ => panic!("expected triggered ability"),
+    };
+    assert!(
+        rendered.contains("Whenever this creature or another Ally you control enters"),
+        "expected ally enter trigger surface, got {rendered}\ntrigger={trigger_debug}"
+    );
+}
+
+#[test]
+fn test_compile_this_or_another_ally_enters_team_buff_surface() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ally Team Buff Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature or another Ally you control enters, creatures you control get +1/+1 until end of turn.",
+        )
+        .expect("parse ally team buff trigger");
+
+    let rendered = compiled_lines(&def).join(" | ");
+    assert!(
+        rendered.contains("Whenever this creature or another Ally you control enters")
+            && rendered.contains("+1/+1 until end of turn"),
+        "expected ally team-buff trigger surface, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_equal_or_lesser_mana_value_adds_tagged_lte_constraint() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Jailbreak Variant")
         .card_types(vec![CardType::Sorcery])

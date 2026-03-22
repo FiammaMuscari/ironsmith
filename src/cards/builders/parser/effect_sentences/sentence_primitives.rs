@@ -16,7 +16,7 @@ use super::{
     parse_delayed_when_that_dies_this_turn_sentence, parse_destroy_or_exile_all_split_sentence,
     parse_each_player_choose_and_sacrifice_rest,
     parse_each_player_put_permanent_cards_exiled_with_source_sentence, parse_earthbend_sentence,
-    parse_effect_chain, parse_effect_chain_inner, parse_effect_clause, parse_effect_sentence,
+    parse_effect_chain, parse_effect_chain_inner, parse_effect_clause, parse_effect_sentence_lexed,
     parse_enchant_sentence, parse_exile_hand_and_graveyard_bundle_sentence,
     parse_exile_instead_of_graveyard_sentence, parse_exile_then_return_same_object_sentence,
     parse_exile_up_to_one_each_target_type_sentence, parse_for_each_counter_removed_sentence,
@@ -129,35 +129,6 @@ fn run_sentence_primitive(
             Err(err)
         }
     }
-}
-
-pub(crate) fn run_sentence_primitives(
-    tokens: &[OwnedLexToken],
-    primitives: &'static [SentencePrimitive],
-    index: &SentencePrimitiveIndex,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let head = words(tokens).first().copied().unwrap_or("");
-    let mut tried = vec![false; primitives.len()];
-
-    if let Some(candidate_indices) = index.by_head.get(head) {
-        for &idx in candidate_indices {
-            tried[idx] = true;
-            if let Some(effects) = run_sentence_primitive(&primitives[idx], tokens)? {
-                return Ok(Some(effects));
-            }
-        }
-    }
-
-    for (idx, primitive) in primitives.iter().enumerate() {
-        if tried[idx] {
-            continue;
-        }
-        if let Some(effects) = run_sentence_primitive(primitive, tokens)? {
-            return Ok(Some(effects));
-        }
-    }
-
-    Ok(None)
 }
 
 fn lowercase_word_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
@@ -4548,7 +4519,7 @@ pub(crate) fn try_build_unless(
         }
     }
 
-    if let Ok(mut alternative) = parse_effect_sentence(after_unless) {
+    if let Ok(mut alternative) = parse_effect_sentence_lexed(after_unless) {
         if !alternative.is_empty() {
             for effect in &mut alternative {
                 bind_implicit_player_context(effect, player);
@@ -4574,7 +4545,7 @@ pub(crate) fn try_build_unless(
         }
     }
 
-    if let Ok(mut alternative) = parse_effect_sentence(action_tokens) {
+    if let Ok(mut alternative) = parse_effect_sentence_lexed(action_tokens) {
         if !alternative.is_empty() {
             for effect in &mut alternative {
                 bind_implicit_player_context(effect, player);

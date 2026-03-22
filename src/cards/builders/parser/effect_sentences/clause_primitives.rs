@@ -1,4 +1,4 @@
-use super::super::activation_and_restrictions::parse_triggered_line;
+use super::super::clause_support::rewrite_parse_triggered_line_lexed;
 use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
 use super::super::object_filters::parse_object_filter;
 use super::super::permission_helpers::{
@@ -847,19 +847,20 @@ pub(crate) fn parse_until_duration_triggered_clause(
         return Ok(None);
     }
 
-    let (trigger, effects, max_triggers_per_turn) = match parse_triggered_line(&trigger_tokens)? {
-        LineAst::Triggered {
-            trigger,
-            effects,
-            max_triggers_per_turn,
-        } => (trigger, effects, max_triggers_per_turn),
-        _ => {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported duration-triggered clause (clause: '{}')",
-                clause_words.join(" ")
-            )));
-        }
-    };
+    let (trigger, effects, max_triggers_per_turn) =
+        match rewrite_parse_triggered_line_lexed(&trigger_tokens)? {
+            LineAst::Triggered {
+                trigger,
+                effects,
+                max_triggers_per_turn,
+            } => (trigger, effects, max_triggers_per_turn),
+            _ => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported duration-triggered clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+        };
 
     let trigger_text = trigger_words.join(" ");
     let granted = GrantedAbilityAst::ParsedObjectAbility {

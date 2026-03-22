@@ -83,9 +83,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::ThisAttacks => Trigger::this_attacks(),
         TriggerSpec::ThisAttacksAndIsntBlocked => Trigger::this_attacks_and_isnt_blocked(),
         TriggerSpec::ThisAttacksWhileSaddled => Trigger::this_attacks_while_saddled(),
-        TriggerSpec::ThisAttacksWithNOthers(other_count) => {
-            Trigger::this_attacks_with_n_others(other_count as usize)
-        }
         TriggerSpec::Attacks(filter) => Trigger::attacks(filter),
         TriggerSpec::AttacksAndIsntBlocked(filter) => Trigger::attacks_and_isnt_blocked(filter),
         TriggerSpec::AttacksWhileSaddled(filter) => Trigger::attacks_while_saddled(filter),
@@ -103,9 +100,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::ThisBlocksObject(filter) => Trigger::this_blocks_object(filter),
         TriggerSpec::Blocks(filter) => Trigger::blocks(filter),
         TriggerSpec::ThisBecomesBlocked => Trigger::this_becomes_blocked(),
-        TriggerSpec::BecomesBlocked(filter) => Trigger::becomes_blocked(filter),
-        TriggerSpec::BlocksOrBecomesBlocked(filter) => Trigger::blocks_or_becomes_blocked(filter),
-        TriggerSpec::ThisBlocksOrBecomesBlocked => Trigger::this_blocks_or_becomes_blocked(),
         TriggerSpec::ThisDies => Trigger::this_dies(),
         TriggerSpec::ThisLeavesBattlefield => Trigger::this_leaves_battlefield(),
         TriggerSpec::ThisBecomesMonstrous => Trigger::this_becomes_monstrous(),
@@ -174,11 +168,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
                 .to(crate::zone::Zone::Graveyard)
                 .filter(filter),
         ),
-        TriggerSpec::CardsLeaveYourGraveyard {
-            filter,
-            one_or_more,
-            during_your_turn,
-        } => Trigger::cards_leave_your_graveyard(filter, one_or_more, during_your_turn),
         TriggerSpec::CounterPutOn {
             filter,
             counter_type,
@@ -254,7 +243,6 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::BeginningOfUpkeep(player) => Trigger::beginning_of_upkeep(player),
         TriggerSpec::BeginningOfDrawStep(player) => Trigger::beginning_of_draw_step(player),
         TriggerSpec::BeginningOfCombat(player) => Trigger::beginning_of_combat(player),
-        TriggerSpec::EndOfCombat => Trigger::end_of_combat(),
         TriggerSpec::BeginningOfEndStep(player) => Trigger::beginning_of_end_step(player),
         TriggerSpec::BeginningOfPrecombatMain(player) => {
             Trigger::beginning_of_precombat_main_phase(player)

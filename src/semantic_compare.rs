@@ -510,8 +510,7 @@ fn strip_implicit_you_control_in_sacrifice_phrases(text: &str) -> String {
                 idx += " you control".len();
                 continue;
             }
-        } else if lower[idx..].starts_with("sacrifice") || lower[idx..].starts_with("sacrifices")
-        {
+        } else if lower[idx..].starts_with("sacrifice") || lower[idx..].starts_with("sacrifices") {
             in_sacrifice = true;
         }
 
@@ -595,91 +594,120 @@ fn push_semantic_clauses(line: &str, clauses: &mut Vec<String>) {
     }
 }
 
+fn looks_like_named_subject(subject: &str) -> bool {
+    let trimmed = subject.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains(" or ") {
+        return false;
+    }
+
+    for banned in [
+        "this ",
+        "another ",
+        "target ",
+        "enchanted ",
+        "equipped ",
+        "creature",
+        "artifact",
+        "enchantment",
+        "land",
+        "permanent",
+        "player",
+        "opponent",
+        "you ",
+        "your ",
+        "card",
+    ] {
+        if lower.contains(banned) {
+            return false;
+        }
+    }
+
+    trimmed.chars().any(|ch| ch.is_ascii_uppercase())
+        || trimmed.contains(',')
+        || trimmed.split_whitespace().count() >= 2
+}
+
 fn normalize_trigger_subject_for_compare(line: &str) -> String {
     let trimmed = line.trim();
+
     for prefix in ["When ", "Whenever "] {
         if !trimmed.starts_with(prefix) {
             continue;
         }
+
         let lower = trimmed.to_ascii_lowercase();
-        let marker = [
+        let mut marker_idx = None;
+        for marker in [
+            " becomes tapped",
+            " become tapped",
+            " becomes untapped",
+            " become untapped",
             " becomes ",
             " become ",
             " enters",
+            " dies",
             " attacks",
             " blocks",
-            " dies",
             " deals ",
             " is turned face up",
-        ]
-        .iter()
-        .filter_map(|needle| lower.find(needle))
-        .min();
-        let Some(idx) = marker else {
+        ] {
+            if let Some(idx) = lower.find(marker) {
+                marker_idx = Some(idx);
+                break;
+            }
+        }
+        let Some(idx) = marker_idx else {
             continue;
         };
+
         if idx <= prefix.len() {
             continue;
         }
+
         let subject = trimmed[prefix.len()..idx].trim();
-        if subject.is_empty() {
+
+        if !looks_like_named_subject(subject) {
             continue;
         }
-        let subject_lower = subject.to_ascii_lowercase();
-        let starts_with_generic = [
-            "a ",
-            "an ",
-            "the ",
-            "this ",
-            "that ",
-            "target ",
-            "another ",
-            "other ",
-            "each ",
-            "all ",
-            "any ",
-            "up to ",
-            "one or more ",
-        ]
-        .iter()
-        .any(|start| subject_lower.starts_with(start));
-        if starts_with_generic {
-            continue;
-        }
-        let contains_generic_noun = [
-            " creature",
-            " permanent",
-            " land",
-            " artifact",
-            " enchantment",
-            " planeswalker",
-            " battle",
-            " token",
-            " player",
-            " opponent",
-            " spell",
-            " card",
-        ]
-        .iter()
-        .any(|needle| subject_lower.contains(needle));
-        if contains_generic_noun {
-            continue;
-        }
-        if !subject
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_uppercase())
-        {
-            continue;
-        }
+
         let tail = &trimmed[idx..];
         let replacement_subject = if tail.starts_with(" enters") {
             "this permanent"
         } else {
             "this creature"
         };
-        return format!("{prefix}{replacement_subject}{tail}");
+
+        let normalized = format!("{prefix}{replacement_subject}{tail}");
+        if let Some((subject, rest)) = normalized.split_once("'s power and toughness")
+            && looks_like_named_subject(subject)
+        {
+            return format!("this creature's power and toughness{rest}");
+        }
+        if let Some((subject, rest)) = normalized.split_once("'s power")
+            && looks_like_named_subject(subject)
+        {
+            return format!("this creature's power{rest}");
+        }
+
+        return normalized;
     }
+
+    if let Some((subject, rest)) = trimmed.split_once("'s power and toughness")
+        && looks_like_named_subject(subject)
+    {
+        return format!("this creature's power and toughness{rest}");
+    }
+    if let Some((subject, rest)) = trimmed.split_once("'s power")
+        && looks_like_named_subject(subject)
+    {
+        return format!("this creature's power{rest}");
+    }
+
     trimmed.to_string()
 }
 
@@ -889,6 +917,8 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     }
     if normalized_lower.starts_with(
         "whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn",
+    ) || normalized_lower.starts_with(
+        "whenever this creature attacks, other attacking creatures get +1/+0 until end of turn",
     ) || normalized_lower.starts_with(
         "whenever this creature attacks, other attacking creatures you control get +1/+0 until end of turn",
     ) || normalized_lower.starts_with(
@@ -1144,6 +1174,14 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         "each creature you control gets ",
         "creatures you control get ",
     );
+    normalized = normalized.replace(
+        "Each other attacking creature gets ",
+        "Other attacking creatures get ",
+    );
+    normalized = normalized.replace(
+        "each other attacking creature gets ",
+        "other attacking creatures get ",
+    );
 
     if normalized.starts_with("You draw ") {
         normalized = normalized.replace(" and you lose ", " and lose ");
@@ -1318,6 +1356,98 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             "Counter target spell and Deal {}",
             right.trim_end_matches('.')
         );
+    }
+    if let Some((left, right)) = normalized.split_once(". Add ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        let left_lower = left_trimmed.to_ascii_lowercase();
+        if (left_lower.contains(" lose ")
+            || left_lower.starts_with("lose ")
+            || left_lower.contains("put a +1/+1 counter")
+            || left_lower.contains("put one or more +1/+1 counters"))
+            && !right.trim().is_empty()
+        {
+            normalized = format!("{left_trimmed} and add {}", right.trim_end_matches('.'));
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". Put ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        let left_lower = left_trimmed.to_ascii_lowercase();
+        let right_trimmed = right.trim_end_matches('.').trim();
+        let right_lower = right_trimmed.to_ascii_lowercase();
+        if left_lower.starts_with("tap target ") && right_lower.contains(" on it") {
+            normalized = format!("{left_trimmed} and put {right_trimmed}");
+        } else if (left_lower.ends_with("draw a card") || left_lower.ends_with("you draw a card"))
+            && right_lower.contains(" counter on ")
+        {
+            normalized = format!("{left_trimmed} and put {right_trimmed}");
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". target opponent gains ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        if left_trimmed.to_ascii_lowercase().ends_with("draw a card") {
+            normalized = format!(
+                "{left_trimmed} and target opponent gains {}",
+                right.trim_end_matches('.')
+            );
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". Target opponent gains ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        if left_trimmed.to_ascii_lowercase().ends_with("draw a card") {
+            normalized = format!(
+                "{left_trimmed} and target opponent gains {}",
+                right.trim_end_matches('.')
+            );
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". You gain ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        if left_trimmed.to_ascii_lowercase().ends_with("draw a card") {
+            normalized = format!(
+                "{left_trimmed} and you gain {}",
+                right.trim_end_matches('.')
+            );
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". it gets ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        let left_lower = left_trimmed.to_ascii_lowercase();
+        let capitalize = |text: &str| {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        };
+        if let Some(target) = left_trimmed.strip_prefix("Untap ")
+            && left_lower.starts_with("untap target ")
+        {
+            normalized = format!("{left_trimmed}. {} gets {}", capitalize(target), right);
+        } else if let Some(target) = left_trimmed.strip_prefix("untap ")
+            && left_lower.starts_with("untap target ")
+        {
+            normalized = format!("{left_trimmed}. {} gets {}", capitalize(target), right);
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". It gets ") {
+        let left_trimmed = left.trim_end_matches('.').trim();
+        let left_lower = left_trimmed.to_ascii_lowercase();
+        let capitalize = |text: &str| {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        };
+        if let Some(target) = left_trimmed.strip_prefix("Untap ")
+            && left_lower.starts_with("untap target ")
+        {
+            normalized = format!("{left_trimmed}. {} gets {}", capitalize(target), right);
+        } else if let Some(target) = left_trimmed.strip_prefix("untap ")
+            && left_lower.starts_with("untap target ")
+        {
+            normalized = format!("{left_trimmed}. {} gets {}", capitalize(target), right);
+        }
     }
     if let Some((left, right)) = normalized.split_once(". Untap ")
         && left.to_ascii_lowercase().starts_with("earthbend ")
@@ -1865,7 +1995,10 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized = format!("This spell deals {amount} damage to each opponent");
     }
-    if let Some((left, right)) = normalized.split_once(". ") {
+    if let Some((left, right)) = normalized
+        .split_once(". ")
+        .map(|(left, right)| (left.to_string(), right.to_string()))
+    {
         let chooser_lower = left.to_ascii_lowercase();
         let action_lower = right.to_ascii_lowercase();
         if chooser_lower.starts_with("choose target ") && action_lower.starts_with("target ") {
@@ -1893,6 +2026,25 @@ fn split_common_clause_conjunctions(text: &str) -> String {
                 } else {
                     format!("Target {chooser_core}. {action}")
                 };
+            }
+        }
+        if chooser_lower.starts_with("choose target ") {
+            let chooser_target = left
+                .trim_start_matches("Choose ")
+                .trim_start_matches("choose ")
+                .trim();
+            if let Some(rest) = right.strip_prefix("that creature ") {
+                normalized = format!("{chooser_target} {rest}");
+            } else if let Some(rest) = right.strip_prefix("That creature ") {
+                normalized = format!("{chooser_target} {rest}");
+            } else if let Some(rest) = right.strip_prefix("that permanent ") {
+                normalized = format!("{chooser_target} {rest}");
+            } else if let Some(rest) = right.strip_prefix("That permanent ") {
+                normalized = format!("{chooser_target} {rest}");
+            } else if let Some(rest) = right.strip_prefix("it ") {
+                normalized = format!("{chooser_target} {rest}");
+            } else if let Some(rest) = right.strip_prefix("It ") {
+                normalized = format!("{chooser_target} {rest}");
             }
         }
     }
@@ -1986,6 +2138,21 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace(" and this spell deals ", ". Deal ")
         .replace(" and it deals ", ". Deal ")
         .replace(" and you gain ", ". You gain ")
+        .replace(" and you lose ", ". You lose ")
+        .replace("That player's ", "Their ")
+        .replace("that player's ", "their ")
+        .replace("that player's,", "their,")
+        .replace("that player's.", "their.")
+        .replace("that player's:", "their:")
+        .replace("that player controls", "they control")
+        .replace("that player draws", "they draw")
+        .replace("that player loses", "they lose")
+        .replace("that player discards", "they discard")
+        .replace("that player sacrifices", "they sacrifice")
+        .replace("that player ", "they ")
+        .replace("That player ", "They ")
+        .replace(", that player ", ", they ")
+        .replace("that player, ", "they, ")
         .replace(" to their owners' hands", " to their owner's hand")
         .replace(" to their owners hand", " to their owner's hand")
         .replace(" to its owner's hand", " to their owner's hand")
@@ -2140,7 +2307,10 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             "create a token that's a copy of enchanted creature",
             "create a token that's a copy of that creature",
         );
-    if normalized.to_ascii_lowercase().contains("draw a card and lose ") {
+    if normalized
+        .to_ascii_lowercase()
+        .contains("draw a card and lose ")
+    {
         normalized = normalized.replace(" and lose ", ". You lose ");
     }
 
@@ -2332,11 +2502,30 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         }
     }
 
-    let normalized = normalized
+    let mut normalized = normalized
         .replace("they pays", "they pay")
         .replace("They pays", "They pay")
         .replace("they pays ", "they pay ")
         .replace("They pays ", "They pay ");
+
+    for amount in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "X"] {
+        normalized = normalized.replace(
+            &format!(", Pay {amount} life:"),
+            &format!(", Lose {amount} life:"),
+        );
+        normalized = normalized.replace(
+            &format!(", pay {amount} life:"),
+            &format!(", lose {amount} life:"),
+        );
+        normalized = normalized.replace(
+            &format!("Pay {amount} life:"),
+            &format!("Lose {amount} life:"),
+        );
+        normalized = normalized.replace(
+            &format!("pay {amount} life:"),
+            &format!("lose {amount} life:"),
+        );
+    }
 
     normalize_target_count_wording(&normalized)
 }
@@ -2510,6 +2699,41 @@ fn normalize_for_each_player_conditional_for_compare(line: &str) -> String {
 }
 
 fn normalize_explicit_damage_source_for_compare(line: &str) -> String {
+    fn normalize_damage_clause_tail(text: &str) -> Option<String> {
+        let lower = text.to_ascii_lowercase();
+        if lower.starts_with("deal ") {
+            return Some(
+                text.replace(" to this creature", " to itself")
+                    .replace(" to This creature", " to itself")
+                    .replace(" to this Creature", " to itself"),
+            );
+        }
+
+        for prefix in [
+            "this creature deals ",
+            "this permanent deals ",
+            "this spell deals ",
+            "this enchantment deals ",
+            "this artifact deals ",
+            "this land deals ",
+            "this token deals ",
+            "that creature deals ",
+            "that permanent deals ",
+            "it deals ",
+        ] {
+            if lower.starts_with(prefix) {
+                let rest = text[prefix.len()..]
+                    .trim_start()
+                    .replace(" to this creature", " to itself")
+                    .replace(" to This creature", " to itself")
+                    .replace(" to this Creature", " to itself");
+                return Some(format!("Deal {rest}"));
+            }
+        }
+
+        None
+    }
+
     let mut normalized = line;
     let starts_with_damage_subject = |text: &str| -> bool {
         let lower = text.to_ascii_lowercase();
@@ -2541,55 +2765,18 @@ fn normalize_explicit_damage_source_for_compare(line: &str) -> String {
         normalized = rest[end + 3..].trim_start();
     }
 
-    let lower = normalized.to_ascii_lowercase();
-    if lower.starts_with("deal ") && lower.contains(" to this creature") {
-        return normalized
-            .replace(" to this creature", " to itself")
-            .replace(" to This creature", " to itself")
-            .replace(" to this Creature", " to itself");
+    if let Some(normalized_damage) = normalize_damage_clause_tail(normalized) {
+        return normalized_damage;
     }
-    for prefix in [
-        "this creature deals ",
-        "this permanent deals ",
-        "this spell deals ",
-        "this enchantment deals ",
-        "this artifact deals ",
-        "this land deals ",
-        "this token deals ",
-        "that creature deals ",
-        "that permanent deals ",
-        "it deals ",
-    ] {
-        if lower.starts_with(prefix) {
-            let subject = if lower.starts_with("this creature") {
-                "This creature"
-            } else if lower.starts_with("this permanent") {
-                "This permanent"
-            } else if lower.starts_with("this spell") {
-                "This spell"
-            } else if lower.starts_with("this enchantment") {
-                "This enchantment"
-            } else if lower.starts_with("this artifact") {
-                "This artifact"
-            } else if lower.starts_with("this land") {
-                "This land"
-            } else if lower.starts_with("this token") {
-                "This token"
-            } else if lower.starts_with("that creature") {
-                "That creature"
-            } else if lower.starts_with("that permanent") {
-                "That permanent"
-            } else {
-                "It"
-            };
-            let mut rest = normalized[prefix.len()..].trim_start().to_string();
-            rest = rest
-                .replace(" to this creature", " to itself")
-                .replace(" to This creature", " to itself")
-                .replace(" to itself", " to itself");
-            return format!("{subject} deals {rest}");
+
+    for separator in [": ", ". "] {
+        if let Some((left, right)) = normalized.split_once(separator)
+            && let Some(normalized_tail) = normalize_damage_clause_tail(right.trim_start())
+        {
+            return format!("{left}{separator}{normalized_tail}");
         }
     }
+
     normalized.to_string()
 }
 
@@ -2770,8 +2957,14 @@ fn reminder_clauses(text: &str) -> Vec<String> {
             for reminder in split_compiled_activation_restriction_clauses(&clause) {
                 reminders.push(
                     reminder
-                        .replace("Activate only if this creature ", "Activate only if this permanent ")
-                        .replace("activate only if this creature ", "activate only if this permanent "),
+                        .replace(
+                            "Activate only if this creature ",
+                            "Activate only if this permanent ",
+                        )
+                        .replace(
+                            "activate only if this creature ",
+                            "activate only if this permanent ",
+                        ),
                 );
             }
         }
@@ -4440,8 +4633,9 @@ pub fn compare_semantics(
 #[cfg(test)]
 mod tests {
     use super::{
-        EmbeddingConfig, compare_semantics_scored, compiled_comparison_tokens, reminder_clauses,
-        semantic_clauses, strip_reminder_text_for_comparison,
+        EmbeddingConfig, compare_semantics_scored, compiled_comparison_tokens,
+        normalize_trigger_subject_for_compare, reminder_clauses, semantic_clauses,
+        strip_reminder_text_for_comparison,
     };
 
     fn strict_embedding() -> Option<EmbeddingConfig> {
@@ -4904,6 +5098,201 @@ mod tests {
             "expected each-draw wording normalization to stay above strict threshold, got {similarity}"
         );
         assert!(!mismatch, "expected no mismatch for each-draw wording");
+    }
+
+    #[test]
+    fn normalize_trigger_subject_for_compare_skips_multi_subject_triggers() {
+        let line = "Whenever this creature or another Ally you control enters, you may put a +1/+1 counter on this creature.";
+        assert_eq!(normalize_trigger_subject_for_compare(line), line);
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_sacrifice_damage_source_wording() {
+        let oracle = "Sacrifice this artifact: It deals 2 damage to any target.";
+        let compiled = vec![String::from(
+            "Activated ability 1: Sacrifice this artifact: this artifact deals 2 damage to any target.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected sacrifice damage-source wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for sacrifice damage-source wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_that_player_pronouns_globally() {
+        let oracle =
+            "When this creature enters, each opponent discards a card and you gain 3 life.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, for each opponent, that player discards a card and you gain 3 life.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected global that-player normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for global that-player normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_each_other_attacking_creature_plurality() {
+        let oracle = "Whenever this creature attacks, other attacking creatures get +1/+0 until end of turn.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected other-attacking-creatures plurality normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for other-attacking-creatures plurality normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_lose_then_add_split() {
+        let oracle = "Whenever a creature enters, you lose 1 life and add {B}.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: Whenever a creature enters, you lose 1 life. Add {B}.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected lose-then-add split normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for lose-then-add split normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_draw_then_target_opponent_gains_split() {
+        let oracle = "{3}{W}{W}: You draw a card and target opponent gains 3 life.";
+        let compiled = vec![String::from(
+            "Activated ability 1: {3}{W}{W}: you draw a card. target opponent gains 3 life.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected draw-then-gain split normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for draw-then-gain split normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_tap_then_put_split() {
+        let oracle = "Tap target creature and put three stun counters on it. Scry 1.";
+        let compiled = vec![String::from(
+            "Spell effects: Tap target creature. Put three stun counters on it. Scry 1.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected tap-then-put split normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for tap-then-put split normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_draw_then_put_counter_split() {
+        let oracle = "{6}: Draw a card and put a +1/+1 counter on this creature.";
+        let compiled = vec![String::from(
+            "Activated ability 2: {6}: you draw a card. Put a +1/+1 counter on this creature.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected draw-then-put split normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for draw-then-put split normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_choose_target_followup_scaffolding() {
+        let oracle = "Target creature you control deals damage equal to its power to target creature an opponent controls.";
+        let compiled = vec![String::from(
+            "Spell effects: Choose target creature you control. that creature deals damage equal to its power to target creature an opponent controls.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected choose-target followup normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for choose-target followup normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_pay_life_cost_wording() {
+        let oracle = "{2}, Pay 2 life: Draw a card.";
+        let compiled = vec![String::from(
+            "Activated ability 1: {2}, Lose 2 life: you draw a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected pay-life cost normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for pay-life cost normalization"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_untap_then_gets_and_gains_split() {
+        let oracle = "Untap target creature. It gets +2/+2 and gains reach until end of turn.";
+        let compiled = vec![String::from(
+            "Spell effects: Untap target creature. it gets +2/+2 until end of turn. it gains Reach until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected untap-then-buff split normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for untap-then-buff split normalization"
+        );
     }
 
     #[test]

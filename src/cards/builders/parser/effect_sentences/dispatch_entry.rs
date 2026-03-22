@@ -11,7 +11,7 @@ use super::super::util::{
 };
 use super::sentence_helpers::*;
 use super::{
-    parse_effect_sentence, parse_effect_sentence_lexed, parse_search_library_disjunction_filter,
+    parse_effect_sentence_lexed, parse_search_library_disjunction_filter,
     parse_token_copy_modifier_sentence, trim_edge_punctuation,
 };
 #[allow(unused_imports)]
@@ -58,15 +58,6 @@ struct SentenceInput {
 }
 
 impl SentenceInput {
-    fn from_tokens(tokens: Vec<OwnedLexToken>) -> Self {
-        let lowered = OnceCell::new();
-        let _ = lowered.set(tokens);
-        Self {
-            lowered,
-            lexed: None,
-        }
-    }
-
     fn from_lexed(tokens: &[OwnedLexToken]) -> Self {
         Self {
             lowered: OnceCell::new(),
@@ -456,7 +447,7 @@ fn parse_tap_all_then_they_dont_untap_while_source_tapped(
     first: &[OwnedLexToken],
     second: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let Ok(first_effects) = parse_effect_sentence(first) else {
+    let Ok(first_effects) = parse_effect_sentence_lexed(first) else {
         return Ok(None);
     };
     let [EffectAst::TapAll { filter }] = first_effects.as_slice() else {
@@ -595,7 +586,7 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
     second: &[OwnedLexToken],
     third: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let Ok(first_effects) = parse_effect_sentence(first) else {
+    let Ok(first_effects) = parse_effect_sentence_lexed(first) else {
         return Ok(None);
     };
     let [EffectAst::LookAtTopCards { player, count, .. }] = first_effects.as_slice() else {
@@ -908,7 +899,7 @@ fn parse_look_at_top_put_counted_into_hand_rest_bottom_with_kicker_override(
     third: &[OwnedLexToken],
     fourth: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let Ok(first_effects) = parse_effect_sentence(first) else {
+    let Ok(first_effects) = parse_effect_sentence_lexed(first) else {
         return Ok(None);
     };
     let [EffectAst::LookAtTopCards { player, .. }] = first_effects.as_slice() else {
@@ -950,7 +941,7 @@ fn parse_look_at_top_may_put_match_onto_battlefield_then_if_not_put_into_hand_re
     third: &[OwnedLexToken],
     fourth: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let Ok(first_effects) = parse_effect_sentence(first) else {
+    let Ok(first_effects) = parse_effect_sentence_lexed(first) else {
         return Ok(None);
     };
     let [EffectAst::LookAtTopCards { .. }] = first_effects.as_slice() else {
@@ -1387,7 +1378,7 @@ fn parse_mill_then_may_put_from_among_into_hand(
     first: &[OwnedLexToken],
     second: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let Ok(first_effects) = parse_effect_sentence(first) else {
+    let Ok(first_effects) = parse_effect_sentence_lexed(first) else {
         return Ok(None);
     };
     let [EffectAst::Mill { player, .. }] = first_effects.as_slice() else {
@@ -1983,15 +1974,9 @@ fn parse_effect_sentences_from_sentence_inputs(
             } else if let Some(lexed_sentence) = sentences[sentence_idx].lexed.as_deref()
                 && sentence_tokens.as_slice() == sentences[sentence_idx].lowered()
             {
-                if super::looks_like_multi_create_chain_lexed(lexed_sentence) {
-                    crate::cards::builders::parser::clause_support::rewrite_parse_effect_sentences(
-                        &sentence_tokens,
-                    )?
-                } else {
-                    parse_effect_sentence_lexed(lexed_sentence)?
-                }
+                parse_effect_sentence_lexed(lexed_sentence)?
             } else {
-                parse_effect_sentence(&sentence_tokens)?
+                parse_effect_sentence_lexed(&sentence_tokens)?
             };
         if wraps_as_if_did_not {
             sentence_effects = vec![EffectAst::IfResult {
@@ -2103,16 +2088,6 @@ fn parse_effect_sentences_from_sentence_inputs(
         parser_trace("parse_effect_sentences:done", last_sentence.lowered());
     }
     Ok(effects)
-}
-
-pub(crate) fn parse_effect_sentences(
-    tokens: &[OwnedLexToken],
-) -> Result<Vec<EffectAst>, CardTextError> {
-    let sentences = split_on_period(tokens)
-        .into_iter()
-        .map(SentenceInput::from_tokens)
-        .collect::<Vec<_>>();
-    parse_effect_sentences_from_sentence_inputs(sentences)
 }
 
 pub(crate) fn parse_effect_sentences_lexed(

@@ -14,8 +14,8 @@ pub(crate) use super::super::activation_and_restrictions::{
     parse_sentence_target_player_chooses_then_puts_on_top_of_library,
     parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield,
     parse_subject_object_filter, parse_target_player_chooses_then_other_cant_block,
-    parse_trigger_clause, parse_you_choose_player_clause, starts_with_target_indicator,
-    strip_embedded_token_rules_text, target_ast_to_object_filter,
+    parse_you_choose_player_clause, starts_with_target_indicator, strip_embedded_token_rules_text,
+    target_ast_to_object_filter,
 };
 pub(crate) use super::super::keyword_static::{
     parse_ability_line, parse_pt_modifier_values, reject_unimplemented_keyword_actions,
@@ -51,9 +51,7 @@ pub(crate) use super::clause_pattern_helpers::{
     parse_prevent_next_time_damage_sentence, parse_redirect_next_damage_sentence,
     parse_verb_first_clause, parse_win_the_game_clause,
 };
-pub(crate) use super::conditionals::{
-    parse_conditional_sentence, parse_conditional_sentence_lexed, parse_predicate,
-};
+pub(crate) use super::conditionals::{parse_conditional_sentence_lexed, parse_predicate};
 pub(crate) use super::conditionals::{parse_predicate_lexed, split_leading_result_prefix_lexed};
 pub(crate) use super::dispatch_entry::{
     apply_where_x_to_damage_amounts, parse_token_copy_followup_sentence_lexed,
@@ -88,7 +86,7 @@ pub(crate) use super::sentence_primitives::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_put_onto_battlefield_with_counters_on_it_lexed,
     parse_sentence_return_with_counters_on_it, parse_sentence_return_with_counters_on_it_lexed,
-    run_sentence_primitives, run_sentence_primitives_lexed, try_build_unless,
+    run_sentence_primitives_lexed, try_build_unless,
 };
 pub(crate) use super::zone_counter_helpers::{
     apply_exile_subject_hand_owner_context, apply_shuffle_subject_graveyard_owner_context,

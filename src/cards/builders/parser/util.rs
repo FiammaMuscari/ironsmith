@@ -18,7 +18,7 @@ use crate::zone::Zone;
 use crate::{ChoiceCount, PowerToughness, PtValue, TagKey};
 
 use super::activation_and_restrictions::{parse_ability_phrase, parse_activation_cost};
-use super::clause_support::{rewrite_parse_effect_sentences, rewrite_parse_effect_sentences_lexed};
+use super::clause_support::rewrite_parse_effect_sentences_lexed;
 use super::effect_sentences::{find_verb, parse_subtype_word, parse_supertype_word};
 use super::keyword_static::keyword_action_to_static_ability;
 use super::keyword_static::parse_this_spell_cost_condition;

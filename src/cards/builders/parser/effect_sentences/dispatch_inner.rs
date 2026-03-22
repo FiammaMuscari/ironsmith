@@ -17,9 +17,8 @@ use super::sentence_helpers::*;
 use super::zone_handlers::collapse_leading_signed_pt_modifier_tokens;
 use super::{
     LeadingResultPrefixKind, TokenCopyFollowup, parse_conditional_sentence_lexed,
-    parse_effect_chain_lexed, parse_search_library_sentence, parse_search_library_sentence_lexed,
-    parse_simple_gain_ability_clause, split_leading_result_prefix,
-    split_leading_result_prefix_lexed,
+    parse_effect_chain_lexed, parse_search_library_sentence_lexed,
+    parse_simple_gain_ability_clause, split_leading_result_prefix_lexed,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -65,16 +64,6 @@ const SENTENCE_PRIMITIVE_RULE_HEADS: &[&str] = &[
     "monstrosity",
 ];
 
-macro_rules! sentence_unsupported_adapters {
-    ($(($adapter:ident, $predicate:ident)),* $(,)?) => {
-        $(
-            fn $adapter(view: &ClauseView<'_>) -> bool {
-                $predicate(view.words.as_slice(), view.tokens)
-            }
-        )*
-    };
-}
-
 macro_rules! sentence_unsupported_adapters_lexed {
     ($(($adapter:ident, $predicate:ident)),* $(,)?) => {
         $(
@@ -86,14 +75,6 @@ macro_rules! sentence_unsupported_adapters_lexed {
     };
 }
 
-fn sentence_has_ring_tempts_clause(view: &ClauseView<'_>) -> bool {
-    is_ring_tempts_sentence(view.tokens)
-}
-
-fn sentence_has_enters_as_copy_rule(view: &ClauseView<'_>) -> bool {
-    is_enters_as_copy_clause(view.words.as_slice())
-}
-
 fn sentence_has_ring_tempts_clause_lexed(view: &LexClauseView<'_>) -> bool {
     is_ring_tempts_sentence(view.tokens)
 }
@@ -102,133 +83,6 @@ fn sentence_has_enters_as_copy_rule_lexed(view: &LexClauseView<'_>) -> bool {
     let words = view.words.to_word_refs();
     is_enters_as_copy_clause(words.as_slice())
 }
-
-sentence_unsupported_adapters!(
-    (
-        sentence_has_each_player_lose_discard_sacrifice_chain_rule,
-        sentence_has_each_player_lose_discard_sacrifice_chain
-    ),
-    (
-        sentence_has_each_player_exile_sacrifice_return_exiled_clause_rule,
-        sentence_has_each_player_exile_sacrifice_return_exiled_clause
-    ),
-    (
-        sentence_has_put_one_of_them_into_hand_rest_clause_rule,
-        sentence_has_put_one_of_them_into_hand_rest_clause
-    ),
-    (
-        sentence_has_loses_all_abilities_with_becomes_clause_rule,
-        sentence_has_loses_all_abilities_with_becomes_clause
-    ),
-    (
-        sentence_has_spent_to_cast_this_spell_without_condition_rule,
-        sentence_has_spent_to_cast_this_spell_without_condition
-    ),
-    (
-        sentence_has_would_enter_instead_replacement_clause_rule,
-        sentence_has_would_enter_instead_replacement_clause
-    ),
-    (
-        sentence_has_different_mana_value_constraint_rule,
-        sentence_has_different_mana_value_constraint
-    ),
-    (
-        sentence_has_most_common_color_constraint_rule,
-        sentence_has_most_common_color_constraint
-    ),
-    (
-        sentence_has_power_vs_count_constraint_rule,
-        sentence_has_power_vs_count_constraint
-    ),
-    (
-        sentence_has_put_into_graveyards_from_battlefield_this_turn_rule,
-        sentence_has_put_into_graveyards_from_battlefield_this_turn
-    ),
-    (
-        sentence_has_phase_out_until_leaves_clause_rule,
-        sentence_has_phase_out_until_leaves_clause
-    ),
-    (
-        sentence_has_unsupported_investigate_for_each_clause_rule,
-        sentence_has_unsupported_investigate_for_each_clause
-    ),
-    (
-        sentence_has_same_name_as_another_in_hand_clause_rule,
-        sentence_has_same_name_as_another_in_hand_clause
-    ),
-    (
-        sentence_has_for_each_mana_from_spent_to_cast_clause_rule,
-        sentence_has_for_each_mana_from_spent_to_cast_clause
-    ),
-    (
-        sentence_has_when_you_sacrifice_this_way_clause_rule,
-        sentence_has_when_you_sacrifice_this_way_clause
-    ),
-    (
-        sentence_has_sacrifice_any_number_then_draw_that_many_clause_rule,
-        sentence_has_sacrifice_any_number_then_draw_that_many_clause
-    ),
-    (
-        sentence_has_greatest_mana_value_clause_rule,
-        sentence_has_greatest_mana_value_clause
-    ),
-    (
-        sentence_has_least_power_among_creatures_clause_rule,
-        sentence_has_least_power_among_creatures_clause
-    ),
-    (
-        sentence_has_villainous_choice_clause_rule,
-        sentence_has_villainous_choice_clause
-    ),
-    (
-        sentence_has_divided_evenly_clause_rule,
-        sentence_has_divided_evenly_clause
-    ),
-    (
-        sentence_has_different_names_clause_rule,
-        sentence_has_different_names_clause
-    ),
-    (
-        sentence_has_chosen_at_random_clause_rule,
-        sentence_has_chosen_at_random_clause
-    ),
-    (
-        sentence_has_defending_players_choice_clause_rule,
-        sentence_has_defending_players_choice_clause
-    ),
-    (
-        sentence_has_target_creature_token_player_planeswalker_clause_rule,
-        sentence_has_target_creature_token_player_planeswalker_clause
-    ),
-    (
-        sentence_has_if_you_sacrifice_an_island_this_way_clause_rule,
-        sentence_has_if_you_sacrifice_an_island_this_way_clause
-    ),
-    (
-        sentence_has_commander_cast_count_clause_rule,
-        sentence_has_commander_cast_count_clause
-    ),
-    (
-        sentence_has_spent_to_cast_clause_rule,
-        sentence_has_spent_to_cast_clause
-    ),
-    (
-        sentence_has_face_down_clause_rule,
-        sentence_has_face_down_clause
-    ),
-    (
-        sentence_has_copy_spell_legendary_exception_clause_rule,
-        sentence_has_copy_spell_legendary_exception_clause
-    ),
-    (
-        sentence_has_return_each_creature_that_isnt_list_clause_rule,
-        sentence_has_return_each_creature_that_isnt_list_clause
-    ),
-    (
-        sentence_has_unsupported_negated_untap_clause_rule,
-        sentence_has_unsupported_negated_untap_clause
-    ),
-);
 
 sentence_unsupported_adapters_lexed!(
     (
@@ -356,276 +210,6 @@ sentence_unsupported_adapters_lexed!(
         sentence_has_unsupported_negated_untap_clause
     ),
 );
-
-const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 33] = [
-    UnsupportedRuleDef {
-        id: "ring-tempts",
-        priority: 10,
-        heads: &["the"],
-        shape_mask: 0,
-        message: "unsupported ring tempts clause",
-        predicate: sentence_has_ring_tempts_clause,
-    },
-    UnsupportedRuleDef {
-        id: "enters-as-copy",
-        priority: 20,
-        heads: &[],
-        shape_mask: 0,
-        message: "unsupported enters-as-copy replacement clause",
-        predicate: sentence_has_enters_as_copy_rule,
-    },
-    UnsupportedRuleDef {
-        id: "each-player-lose-discard-sacrifice-chain",
-        priority: 100,
-        heads: &["each"],
-        shape_mask: 0,
-        message: "unsupported each-player lose/discard/sacrifice chain clause",
-        predicate: sentence_has_each_player_lose_discard_sacrifice_chain_rule,
-    },
-    UnsupportedRuleDef {
-        id: "each-player-exile-sacrifice-return-this-way",
-        priority: 110,
-        heads: &["each"],
-        shape_mask: 0,
-        message: "unsupported each-player exile/sacrifice/return-this-way clause",
-        predicate: sentence_has_each_player_exile_sacrifice_return_exiled_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "put-one-into-hand-rest-zone",
-        priority: 115,
-        heads: &["put", "then"],
-        shape_mask: 0,
-        message: "unsupported put-into-hand with rest clause",
-        predicate: sentence_has_put_one_of_them_into_hand_rest_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "lose-all-abilities-with-becomes",
-        priority: 120,
-        heads: &["target", "that", "it", "this", "creatures"],
-        shape_mask: 0,
-        message: "unsupported loses-all-abilities with becomes clause",
-        predicate: sentence_has_loses_all_abilities_with_becomes_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "spent-to-cast-conditional",
-        priority: 130,
-        heads: &["if", "unless", "when", "as"],
-        shape_mask: 0,
-        message: "unsupported spent-to-cast conditional clause",
-        predicate: sentence_has_spent_to_cast_this_spell_without_condition_rule,
-    },
-    UnsupportedRuleDef {
-        id: "would-enter-instead",
-        priority: 140,
-        heads: &["if", "that", "it", "this"],
-        shape_mask: 0,
-        message: "unsupported would-enter replacement clause",
-        predicate: sentence_has_would_enter_instead_replacement_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "different-mana-value-constraint",
-        priority: 150,
-        heads: &[],
-        shape_mask: 0,
-        message: "unsupported different-mana-value constraint clause",
-        predicate: sentence_has_different_mana_value_constraint_rule,
-    },
-    UnsupportedRuleDef {
-        id: "most-common-color-constraint",
-        priority: 160,
-        heads: &["choose", "destroy", "exile", "return"],
-        shape_mask: 0,
-        message: "unsupported most-common-color constraint clause",
-        predicate: sentence_has_most_common_color_constraint_rule,
-    },
-    UnsupportedRuleDef {
-        id: "power-vs-count-constraint",
-        priority: 170,
-        heads: &["if", "target", "destroy", "exile", "return"],
-        shape_mask: 0,
-        message: "unsupported power-vs-count conditional clause",
-        predicate: sentence_has_power_vs_count_constraint_rule,
-    },
-    UnsupportedRuleDef {
-        id: "put-into-graveyards-from-battlefield-this-turn",
-        priority: 180,
-        heads: &["for", "choose", "target", "destroy"],
-        shape_mask: 0,
-        message: "unsupported put-into-graveyards-from-battlefield count clause",
-        predicate: sentence_has_put_into_graveyards_from_battlefield_this_turn_rule,
-    },
-    UnsupportedRuleDef {
-        id: "phase-out-until-leaves",
-        priority: 190,
-        heads: &["phase", "target", "it", "that"],
-        shape_mask: 0,
-        message: "unsupported phase-out-until-leaves clause",
-        predicate: sentence_has_phase_out_until_leaves_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "investigate-for-each",
-        priority: 200,
-        heads: &["investigate", "for"],
-        shape_mask: 0,
-        message: "unsupported investigate-for-each clause",
-        predicate: sentence_has_unsupported_investigate_for_each_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "same-name-as-another-in-hand",
-        priority: 210,
-        heads: &["target", "choose", "discard"],
-        shape_mask: 0,
-        message: "unsupported same-name-as-another-in-hand discard clause",
-        predicate: sentence_has_same_name_as_another_in_hand_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "for-each-mana-from-spent",
-        priority: 220,
-        heads: &["for"],
-        shape_mask: 0,
-        message: "unsupported for-each-mana-from-spent clause",
-        predicate: sentence_has_for_each_mana_from_spent_to_cast_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "when-you-sacrifice-this-way",
-        priority: 230,
-        heads: &["when"],
-        shape_mask: 0,
-        message: "unsupported when-you-sacrifice-this-way clause",
-        predicate: sentence_has_when_you_sacrifice_this_way_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "sacrifice-any-number-then-draw-that-many",
-        priority: 240,
-        heads: &["sacrifice", "each", "target", "you"],
-        shape_mask: 0,
-        message: "unsupported sacrifice-any-number-then-draw-that-many clause",
-        predicate: sentence_has_sacrifice_any_number_then_draw_that_many_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "greatest-mana-value",
-        priority: 250,
-        heads: &["choose", "destroy", "exile", "return"],
-        shape_mask: 0,
-        message: "unsupported greatest-mana-value selection clause",
-        predicate: sentence_has_greatest_mana_value_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "least-power-among-creatures",
-        priority: 260,
-        heads: &["choose", "destroy", "exile", "return"],
-        shape_mask: 0,
-        message: "unsupported least-power-among-creatures selection clause",
-        predicate: sentence_has_least_power_among_creatures_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "villainous-choice",
-        priority: 270,
-        heads: &["villainous"],
-        shape_mask: 0,
-        message: "unsupported villainous-choice clause",
-        predicate: sentence_has_villainous_choice_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "divided-evenly",
-        priority: 280,
-        heads: &["divide", "deals", "deal", "distribute"],
-        shape_mask: 0,
-        message: "unsupported divided-evenly damage clause",
-        predicate: sentence_has_divided_evenly_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "different-names",
-        priority: 290,
-        heads: &["choose", "target", "destroy", "exile"],
-        shape_mask: 0,
-        message: "unsupported different-names selection clause",
-        predicate: sentence_has_different_names_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "chosen-at-random",
-        priority: 300,
-        heads: &["choose", "target", "discard", "exile"],
-        shape_mask: 0,
-        message: "unsupported chosen-at-random clause",
-        predicate: sentence_has_chosen_at_random_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "defending-players-choice",
-        priority: 320,
-        heads: &["defending", "target", "of"],
-        shape_mask: 0,
-        message: "unsupported defending-players-choice clause",
-        predicate: sentence_has_defending_players_choice_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "creature-token-player-planeswalker-target",
-        priority: 330,
-        heads: &["target"],
-        shape_mask: 0,
-        message: "unsupported creature-token/player/planeswalker target clause",
-        predicate: sentence_has_target_creature_token_player_planeswalker_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "if-you-sacrifice-an-island-this-way",
-        priority: 340,
-        heads: &["if"],
-        shape_mask: 0,
-        message: "unsupported if-you-sacrifice-an-island-this-way clause",
-        predicate: sentence_has_if_you_sacrifice_an_island_this_way_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "commander-cast-count",
-        priority: 350,
-        heads: &["for"],
-        shape_mask: 0,
-        message: "unsupported commander-cast-count clause",
-        predicate: sentence_has_commander_cast_count_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "spent-to-cast-condition",
-        priority: 360,
-        heads: &["if", "unless", "when", "as"],
-        shape_mask: 0,
-        message: "unsupported spent-to-cast condition clause",
-        predicate: sentence_has_spent_to_cast_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "face-down",
-        priority: 370,
-        heads: &["face", "turn", "cast", "exile", "manifest"],
-        shape_mask: 0,
-        message: "unsupported face-down clause",
-        predicate: sentence_has_face_down_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "copy-spell-legendary-exception",
-        priority: 380,
-        heads: &["copy"],
-        shape_mask: 0,
-        message: "unsupported copy-spell legendary-exception clause",
-        predicate: sentence_has_copy_spell_legendary_exception_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "return-each-creature-that-isnt-list",
-        priority: 390,
-        heads: &["return"],
-        shape_mask: 0,
-        message: "unsupported return-each-creature-that-isnt-list clause",
-        predicate: sentence_has_return_each_creature_that_isnt_list_clause_rule,
-    },
-    UnsupportedRuleDef {
-        id: "negated-untap",
-        priority: 400,
-        heads: &["this", "that", "target", "it", "creatures", "players"],
-        shape_mask: 0,
-        message: "unsupported negated untap clause",
-        predicate: sentence_has_unsupported_negated_untap_clause_rule,
-    },
-];
-
-const SENTENCE_UNSUPPORTED_DIAGNOSER: UnsupportedDiagnoser =
-    UnsupportedDiagnoser::new(&SENTENCE_UNSUPPORTED_RULES);
 
 const SENTENCE_UNSUPPORTED_RULES_LEXED: [LexUnsupportedRuleDef; 33] = [
     LexUnsupportedRuleDef {
@@ -897,14 +481,6 @@ const SENTENCE_UNSUPPORTED_RULES_LEXED: [LexUnsupportedRuleDef; 33] = [
 const SENTENCE_UNSUPPORTED_DIAGNOSER_LEXED: LexUnsupportedDiagnoser =
     LexUnsupportedDiagnoser::new(&SENTENCE_UNSUPPORTED_RULES_LEXED);
 
-fn diagnose_sentence_unsupported(tokens: &[OwnedLexToken]) -> Option<CardTextError> {
-    if sentence_looks_like_supported_negated_untap_clause(tokens) {
-        return None;
-    }
-    let view = ClauseView::from_tokens(tokens);
-    SENTENCE_UNSUPPORTED_DIAGNOSER.diagnose(&view, "clause")
-}
-
 fn diagnose_sentence_unsupported_lexed(tokens: &[OwnedLexToken]) -> Option<CardTextError> {
     if sentence_looks_like_supported_negated_untap_clause(tokens) {
         return None;
@@ -928,76 +504,6 @@ fn sentence_looks_like_supported_negated_untap_clause(tokens: &[OwnedLexToken]) 
         && words.contains(&"remains")
         && words.contains(&"tapped");
     has_negated_untap && has_controllers_untap_step && has_tapped_duration
-}
-
-fn parse_redirect_next_damage_sentence_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_redirect_next_damage_sentence(view.tokens)
-}
-
-fn parse_prevent_next_time_damage_sentence_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_prevent_next_time_damage_sentence(view.tokens)
-}
-
-fn parse_double_target_power_sentence_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_double_target_power_sentence(view.tokens)
-}
-
-fn parse_preconditional_sentence_primitives_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    run_sentence_primitives(
-        view.tokens,
-        PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
-        &PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-    )
-}
-
-fn parse_spell_this_way_pay_life_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let sentence_words = view.words.as_slice();
-    if sentence_words.starts_with(&["if", "you", "cast", "a", "spell", "this", "way"])
-        && sentence_words.contains(&"rather")
-        && sentence_words.contains(&"mana")
-        && sentence_words.contains(&"cost")
-    {
-        return Ok(Some(vec![
-            EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
-                tag: TagKey::from(IT_TAG),
-                player: PlayerAst::You,
-            },
-        ]));
-    }
-    Ok(None)
-}
-
-fn parse_conditional_sentence_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    if view.key.head == "if" {
-        return parse_conditional_sentence(view.tokens).map(Some);
-    }
-    Ok(None)
-}
-
-fn parse_postconditional_sentence_primitives_rule(
-    view: &ClauseView<'_>,
-) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    run_sentence_primitives(
-        view.tokens,
-        POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-        &POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-    )
-}
-
-fn parse_effect_chain_rule(view: &ClauseView<'_>) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_effect_chain(view.tokens).map(Some)
 }
 
 fn parse_redirect_next_damage_sentence_rule_lexed(
@@ -1072,51 +578,6 @@ fn parse_effect_chain_rule_lexed(
     parse_effect_chain_lexed(view.tokens).map(Some)
 }
 
-const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 6] = [
-    RuleDef {
-        id: "redirect-next-damage",
-        priority: 100,
-        heads: &["the"],
-        shape_mask: 0,
-        run: parse_redirect_next_damage_sentence_rule,
-    },
-    RuleDef {
-        id: "prevent-next-time-damage",
-        priority: 110,
-        heads: &["the"],
-        shape_mask: 0,
-        run: parse_prevent_next_time_damage_sentence_rule,
-    },
-    RuleDef {
-        id: "double-target-power",
-        priority: 120,
-        heads: &["double"],
-        shape_mask: 0,
-        run: parse_double_target_power_sentence_rule,
-    },
-    RuleDef {
-        id: "spell-this-way-pay-life",
-        priority: 130,
-        heads: &["if"],
-        shape_mask: RULE_SHAPE_STARTS_IF,
-        run: parse_spell_this_way_pay_life_rule,
-    },
-    RuleDef {
-        id: "preconditional-primitives",
-        priority: 135,
-        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
-        shape_mask: 0,
-        run: parse_preconditional_sentence_primitives_rule,
-    },
-    RuleDef {
-        id: "conditional",
-        priority: 140,
-        heads: &["if"],
-        shape_mask: RULE_SHAPE_STARTS_IF,
-        run: parse_conditional_sentence_rule,
-    },
-];
-
 const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES_LEXED: [LexRuleDef<Vec<EffectAst>>; 6] = [
     LexRuleDef {
         id: "redirect-next-damage",
@@ -1162,23 +623,6 @@ const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES_LEXED: [LexRuleDef<Vec<EffectAst>>; 6]
     },
 ];
 
-const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 2] = [
-    RuleDef {
-        id: "postconditional-primitives",
-        priority: 160,
-        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
-        shape_mask: 0,
-        run: parse_postconditional_sentence_primitives_rule,
-    },
-    RuleDef {
-        id: "effect-chain",
-        priority: 170,
-        heads: &[],
-        shape_mask: 0,
-        run: parse_effect_chain_rule,
-    },
-];
-
 const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES_LEXED: [LexRuleDef<Vec<EffectAst>>; 2] = [
     LexRuleDef {
         id: "postconditional-primitives",
@@ -1196,44 +640,10 @@ const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES_LEXED: [LexRuleDef<Vec<EffectAst>>; 2
     },
 ];
 
-const SENTENCE_PRE_DIAGNOSTIC_PARSE_INDEX: RuleIndex<Vec<EffectAst>> =
-    RuleIndex::new(&SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES);
-const SENTENCE_POST_DIAGNOSTIC_PARSE_INDEX: RuleIndex<Vec<EffectAst>> =
-    RuleIndex::new(&SENTENCE_POST_DIAGNOSTIC_PARSE_RULES);
 const SENTENCE_PRE_DIAGNOSTIC_PARSE_INDEX_LEXED: LexRuleIndex<Vec<EffectAst>> =
     LexRuleIndex::new(&SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES_LEXED);
 const SENTENCE_POST_DIAGNOSTIC_PARSE_INDEX_LEXED: LexRuleIndex<Vec<EffectAst>> =
     LexRuleIndex::new(&SENTENCE_POST_DIAGNOSTIC_PARSE_RULES_LEXED);
-
-fn run_sentence_parse_rules(
-    tokens: &[OwnedLexToken],
-) -> Result<(&'static str, Vec<EffectAst>), CardTextError> {
-    let view = ClauseView::from_tokens(tokens);
-    match SENTENCE_PRE_DIAGNOSTIC_PARSE_INDEX.run_first(&view) {
-        Ok(Some((rule_id, effects))) => return Ok((rule_id, effects)),
-        Ok(None) => {}
-        Err(parse_err) => {
-            if let Some(diag) = diagnose_sentence_unsupported(tokens) {
-                return Err(diag);
-            }
-            return Err(parse_err);
-        }
-    }
-
-    // Keep unsupported sentence grammar ahead of the generic primitive/effect-chain fallback.
-    if let Some(diag) = diagnose_sentence_unsupported(tokens) {
-        return Err(diag);
-    }
-
-    if let Some((rule_id, effects)) = SENTENCE_POST_DIAGNOSTIC_PARSE_INDEX.run_first(&view)? {
-        return Ok((rule_id, effects));
-    }
-
-    Err(CardTextError::InvariantViolation(format!(
-        "missing sentence parse rule for clause: '{}'",
-        words(tokens).join(" ")
-    )))
-}
 
 fn run_sentence_parse_rules_lexed(
     tokens: &[OwnedLexToken],
@@ -1558,131 +968,6 @@ fn sentence_has_unsupported_negated_untap_clause(words: &[&str], _: &[OwnedLexTo
         && !has_supported_source_tapped_duration
         && words.contains(&"during")
         && (words.contains(&"step") || words.contains(&"steps"))
-}
-
-pub(crate) fn parse_effect_sentence(
-    tokens: &[OwnedLexToken],
-) -> Result<Vec<EffectAst>, CardTextError> {
-    // Generic support for trailing "where X is ..." clauses.
-    //
-    // Many Oracle texts define a computed X (not cost-derived X) using:
-    //   "... X ..., where X is <expression>."
-    //
-    // We parse the where-X value, strip the suffix clause for normal parsing,
-    // then substitute the parsed `Value::X` occurrences with that value.
-    let clause_words = words(tokens);
-    let Some(where_idx) = clause_words
-        .windows(3)
-        .position(|window| window == ["where", "x", "is"])
-    else {
-        return parse_effect_sentence_inner(tokens);
-    };
-    let Some(where_token_idx) = token_index_for_word_index(tokens, where_idx) else {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported where-x clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    };
-    let where_tokens = &tokens[where_token_idx..];
-    let where_segments = split_on_comma_or_semicolon(where_tokens);
-    let primary_where_tokens = where_segments
-        .first()
-        .cloned()
-        .unwrap_or_else(|| where_tokens.to_vec());
-    let trailing_after_where = if where_segments.len() > 1 {
-        let mut tail = Vec::new();
-        for (idx, segment) in where_segments.iter().enumerate().skip(1) {
-            if idx > 1 {
-                tail.push(OwnedLexToken::comma(TextSpan::synthetic()));
-            }
-            tail.extend(segment.iter().cloned());
-        }
-        tail
-    } else {
-        Vec::new()
-    };
-
-    let stripped = trim_edge_punctuation(&tokens[..where_token_idx]);
-    let stripped_words = words(&stripped);
-    let where_words = words(&primary_where_tokens);
-
-    // Special-case common "where X is its power/toughness/mana value" patterns, because
-    // resolving "its" depends on whether the main clause is targeting something.
-    let where_value = match where_words.get(3..) {
-        Some(["its", "power"]) => {
-            if stripped_words.iter().any(|w| *w == "target") {
-                Value::PowerOf(Box::new(crate::target::ChooseSpec::target(
-                    crate::target::ChooseSpec::Object(ObjectFilter::default()),
-                )))
-            } else {
-                Value::SourcePower
-            }
-        }
-        Some(["its", "toughness"]) => {
-            if stripped_words.iter().any(|w| *w == "target") {
-                Value::ToughnessOf(Box::new(crate::target::ChooseSpec::target(
-                    crate::target::ChooseSpec::Object(ObjectFilter::default()),
-                )))
-            } else {
-                Value::SourceToughness
-            }
-        }
-        Some(["its", "mana", "value"]) => {
-            Value::ManaValueOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
-                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-                    ObjectFilter::default(),
-                ))
-            } else {
-                crate::target::ChooseSpec::Source
-            }))
-        }
-        Some(["this", "creatures", "power"]) => Value::SourcePower,
-        Some(["this", "creatures", "toughness"]) => Value::SourceToughness,
-        Some(["this", "creatures", "mana", "value"]) => {
-            Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source))
-        }
-        Some(["that", "creatures", "power"]) => {
-            Value::PowerOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
-                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-                    ObjectFilter::default(),
-                ))
-            } else {
-                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
-            }))
-        }
-        Some(["that", "creatures", "toughness"]) => {
-            Value::ToughnessOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
-                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-                    ObjectFilter::default(),
-                ))
-            } else {
-                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
-            }))
-        }
-        Some(["that", "creatures", "mana", "value"]) => {
-            Value::ManaValueOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
-                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
-                    ObjectFilter::default(),
-                ))
-            } else {
-                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
-            }))
-        }
-        _ => parse_where_x_value_clause(&primary_where_tokens).ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "unsupported where-x clause (clause: '{}')",
-                clause_words.join(" ")
-            ))
-        })?,
-    };
-
-    let mut effects = parse_effect_sentence_inner(&stripped)?;
-    replace_unbound_x_in_effects_anywhere(&mut effects, &where_value, &clause_words.join(" "))?;
-    if !trailing_after_where.is_empty() {
-        let mut trailing_effects = parse_effect_sentence(&trailing_after_where)?;
-        effects.append(&mut trailing_effects);
-    }
-    Ok(effects)
 }
 
 pub(crate) fn parse_effect_sentence_lexed(
@@ -2084,140 +1369,6 @@ fn sentence_starts_with_supported_spent_to_cast_conditional(words: &[&str]) -> b
             .any(|window| window == ["spent", "to", "cast"])
 }
 
-pub(crate) fn parse_effect_sentence_inner(
-    tokens: &[OwnedLexToken],
-) -> Result<Vec<EffectAst>, CardTextError> {
-    parser_trace("parse_effect_sentence:entry", tokens);
-    let sentence_words = words(tokens);
-    if is_activate_only_restriction_sentence(tokens) {
-        return Ok(Vec::new());
-    }
-    if is_trigger_only_restriction_sentence(tokens) {
-        return Ok(Vec::new());
-    }
-    if sentence_words.starts_with(&["round", "up", "each", "time"]) {
-        // "Round up each time." is reminder text for half P/T copy effects.
-        // The semantic behavior is represented by the underlying token-copy primitive.
-        parser_trace("parse_effect_sentence:round-up-reminder", tokens);
-        return Ok(Vec::new());
-    }
-    if let Some(stripped) = strip_labeled_conditional_prefix(tokens) {
-        parser_trace("parse_effect_sentence:conditional-labeled", stripped);
-        return parse_conditional_sentence(stripped);
-    }
-    if tokens.first().is_some_and(|token| token.is_word("if"))
-        && let Some(mut effects) = run_sentence_primitives(
-            tokens,
-            PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
-            &PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-        )?
-    {
-        parser_trace("parse_effect_sentence:if-primitive", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if tokens.first().is_some_and(|token| token.is_word("if")) {
-        parser_trace("parse_effect_sentence:conditional", tokens);
-        return parse_conditional_sentence(tokens);
-    }
-    if sentence_starts_with_supported_spent_to_cast_conditional(sentence_words.as_slice()) {
-        parser_trace("parse_effect_sentence:conditional-spent-to-cast", tokens);
-        return parse_conditional_sentence(tokens);
-    }
-    if tokens.first().is_some_and(|token| token.is_word("then"))
-        && tokens.get(1).is_some_and(|token| token.is_word("if"))
-    {
-        parser_trace("parse_effect_sentence:conditional-then", &tokens[1..]);
-        return parse_conditional_sentence(&tokens[1..]);
-    }
-    if tokens.first().is_some_and(|token| token.is_word("then")) && tokens.len() > 1 {
-        parser_trace("parse_effect_sentence:leading-then", &tokens[1..]);
-        return parse_effect_sentence(&tokens[1..]);
-    }
-    if let Some((kind, predicate, stripped)) = split_leading_result_prefix(tokens) {
-        parser_trace("parse_effect_sentence:leading-result-gate", &stripped);
-        return Ok(vec![match kind {
-            LeadingResultPrefixKind::If => EffectAst::IfResult {
-                predicate,
-                effects: parse_effect_sentence(&stripped)?,
-            },
-            LeadingResultPrefixKind::When => EffectAst::WhenResult {
-                predicate,
-                effects: parse_effect_sentence(&stripped)?,
-            },
-        }]);
-    }
-    if tokens
-        .iter()
-        .any(|token| token.is_word("search") || token.is_word("searches"))
-        && let Some(mut effects) = parse_search_library_sentence(tokens)?
-    {
-        parser_trace("parse_effect_sentence:search-library", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if sentence_words.starts_with(&["exile", "all", "cards", "from"])
-        && (sentence_words.contains(&"hand") || sentence_words.contains(&"hands"))
-        && (sentence_words.contains(&"graveyard") || sentence_words.contains(&"graveyards"))
-        && let Some(mut effects) = run_sentence_primitives(
-            tokens,
-            POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-            &POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-        )?
-    {
-        parser_trace("parse_effect_sentence:bundle-primitive", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if sentence_words.first() == Some(&"enchant")
-        && let Some(mut effects) = run_sentence_primitives(
-            tokens,
-            POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-            &POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-        )?
-    {
-        parser_trace("parse_effect_sentence:enchant-primitive", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if sentence_words.contains(&"unless")
-        && let Some(mut effects) = super::parse_sentence_unless_pays(tokens)?
-    {
-        parser_trace("parse_effect_sentence:unless-direct", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if sentence_words.contains(&"unless")
-        && let Some(mut effects) = run_sentence_primitives(
-            tokens,
-            POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-            &POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-        )?
-    {
-        parser_trace("parse_effect_sentence:unless-primitive", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    if sentence_words
-        .iter()
-        .any(|word| matches!(*word, "gain" | "gains" | "lose" | "loses"))
-        && let Some(mut effects) = run_sentence_primitives(
-            tokens,
-            POST_CONDITIONAL_SENTENCE_PRIMITIVES,
-            &POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-        )?
-    {
-        parser_trace("parse_effect_sentence:gain-lose-primitive", tokens);
-        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-        return Ok(effects);
-    }
-    let (rule_id, mut effects) = run_sentence_parse_rules(tokens)?;
-    let stage = format!("parse_effect_sentence:rule={rule_id}");
-    parser_trace(stage.as_str(), tokens);
-    apply_where_x_to_damage_amounts(tokens, &mut effects)?;
-    Ok(effects)
-}
-
 pub(crate) fn is_enters_as_copy_clause(words: &[&str]) -> bool {
     let has_enter_before_as_copy = words
         .windows(3)
@@ -2236,56 +1387,6 @@ pub(crate) fn is_enters_as_copy_clause(words: &[&str]) -> bool {
                 .any(|word| *word == "enter" || *word == "enters")
         });
     has_enter_before_as_copy || has_enter_before_as_copy_no_article
-}
-
-pub(crate) fn strip_labeled_conditional_prefix(
-    tokens: &[OwnedLexToken],
-) -> Option<&[OwnedLexToken]> {
-    let if_idx = tokens.iter().position(|token| token.is_word("if"))?;
-    if !(1..=3).contains(&if_idx) {
-        return None;
-    }
-    if tokens[..if_idx].iter().any(|token| {
-        !matches!(
-            token.kind,
-            crate::cards::builders::parser::lexer::TokenKind::Word
-                | crate::cards::builders::parser::lexer::TokenKind::Dash
-                | crate::cards::builders::parser::lexer::TokenKind::EmDash
-        )
-    }) {
-        return None;
-    }
-
-    let prefix_words = words(&tokens[..if_idx]);
-    if prefix_words.is_empty() {
-        return None;
-    }
-    let is_known_label = matches!(
-        prefix_words[0],
-        "adamant"
-            | "addendum"
-            | "ascend"
-            | "battalion"
-            | "delirium"
-            | "domain"
-            | "ferocious"
-            | "formidable"
-            | "hellbent"
-            | "metalcraft"
-            | "morbid"
-            | "raid"
-            | "revolt"
-            | "spectacle"
-            | "spell"
-            | "surge"
-            | "threshold"
-            | "undergrowth"
-    );
-    if !is_known_label {
-        return None;
-    }
-
-    Some(&tokens[if_idx..])
 }
 
 pub(crate) fn is_negated_untap_clause(words: &[&str]) -> bool {
@@ -2720,7 +1821,7 @@ pub(crate) fn parse_sentence_delayed_trigger_this_turn(
         filter = filter.match_tagged(TagKey::from(IT_TAG), TaggedOpbjectRelation::IsTaggedObject);
         TriggerSpec::IsDealtDamage(filter)
     } else {
-        parse_trigger_clause(&trigger_core_tokens)?
+        super::super::parse_trigger_clause_lexed(&trigger_core_tokens)?
     };
     let remainder = trim_commas(&tokens[comma_idx + 1..]);
     if remainder.is_empty() {

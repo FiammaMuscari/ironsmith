@@ -1,7 +1,6 @@
 use super::activation_and_restrictions::parse_cycling_line;
 use super::activation_and_restrictions::{
     normalize_cant_words, parse_ability_phrase, parse_activated_line, parse_activation_cost,
-    parse_triggered_line,
 };
 use super::keyword_static_helpers::*;
 use super::lexer::{OwnedLexToken, TokenKind, trim_lexed_commas};
@@ -430,7 +429,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
 static STATIC_ABILITY_AST_LINE_RULE_INDEX: LazyLock<StaticAbilityLineRuleIndex> =
     LazyLock::new(|| build_static_ability_line_rule_index(static_ability_ast_line_rules()));
 
-pub(crate) fn parse_static_ability_ast_line(
+fn parse_static_ability_ast_line_lowered(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let rules = static_ability_ast_line_rules();
@@ -468,7 +467,7 @@ pub(crate) fn parse_static_ability_ast_line_lexed(
     }
 
     let lowered = lowercase_word_tokens(tokens);
-    parse_static_ability_ast_line(&lowered)
+    parse_static_ability_ast_line_lowered(&lowered)
 }
 
 pub(crate) fn parse_activated_abilities_cant_be_activated_line(

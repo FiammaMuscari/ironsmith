@@ -296,7 +296,10 @@ pub(crate) fn parse_enchanted_creature_has_line(
         if !action.lowers_to_static_ability() {
             continue;
         }
-        let ability_text = format!("{subject} has {}", action.display_text().to_ascii_lowercase());
+        let ability_text = format!(
+            "{subject} has {}",
+            action.display_text().to_ascii_lowercase()
+        );
         out.push(StaticAbilityAst::AttachedKeywordActionGrant {
             action,
             display: ability_text,
@@ -471,8 +474,7 @@ pub(crate) fn parse_attached_tap_abilities_cant_be_activated_line(
             "cant",
             "be",
             "activated",
-        ]
-    {
+        ] {
         "enchanted creature's activated abilities with {T} in their costs can't be activated"
     } else if normalized.as_slice()
         == [
@@ -577,13 +579,25 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    let subject = if line_words.windows(2).any(|window| window == ["enchanted", "permanent"]) {
+    let subject = if line_words
+        .windows(2)
+        .any(|window| window == ["enchanted", "permanent"])
+    {
         "enchanted permanent"
-    } else if line_words.windows(2).any(|window| window == ["enchanted", "creature"]) {
+    } else if line_words
+        .windows(2)
+        .any(|window| window == ["enchanted", "creature"])
+    {
         "enchanted creature"
-    } else if line_words.windows(2).any(|window| window == ["equipped", "permanent"]) {
+    } else if line_words
+        .windows(2)
+        .any(|window| window == ["equipped", "permanent"])
+    {
         "equipped permanent"
-    } else if line_words.windows(2).any(|window| window == ["equipped", "creature"]) {
+    } else if line_words
+        .windows(2)
+        .any(|window| window == ["equipped", "creature"])
+    {
         "equipped creature"
     } else {
         return Ok(None);
@@ -858,26 +872,29 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
     if trigger_tokens.is_empty() {
         return Ok(None);
     }
-    let triggered = match parse_triggered_line(&trigger_tokens)? {
-        LineAst::Triggered {
-            trigger,
-            effects,
-            max_triggers_per_turn,
-        } => parsed_triggered_ability(
-            trigger,
-            effects,
-            vec![Zone::Battlefield],
-            Some(words(&trigger_tokens).join(" ")),
-            max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-            ReferenceImports::default(),
-        ),
-        _ => {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported attached triggered grant clause (clause: '{}')",
-                clause_text
-            )));
-        }
-    };
+    let triggered =
+        match crate::cards::builders::parser::clause_support::rewrite_parse_triggered_line_lexed(
+            &trigger_tokens,
+        )? {
+            LineAst::Triggered {
+                trigger,
+                effects,
+                max_triggers_per_turn,
+            } => parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![Zone::Battlefield],
+                Some(words(&trigger_tokens).join(" ")),
+                max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                ReferenceImports::default(),
+            ),
+            _ => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported attached triggered grant clause (clause: '{}')",
+                    clause_text
+                )));
+            }
+        };
     if parsed_triggered_ability_is_empty(&triggered) {
         return Err(CardTextError::ParseError(format!(
             "unsupported empty attached triggered grant clause (clause: '{}')",
@@ -1097,9 +1114,7 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         }
     }
 
-    let has_colon = ability_tokens
-        .iter()
-        .any(|token| token.is_colon());
+    let has_colon = ability_tokens.iter().any(|token| token.is_colon());
     if let Some(parsed) = parse_activated_line(&ability_tokens)? {
         let display = display_text_for_tokens(&ability_tokens, false);
         let grant = grant_object_ability_for_anthem_subject(&clause, parsed, display);
@@ -1118,8 +1133,9 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         trigger,
         effects,
         max_triggers_per_turn,
-    } = parse_triggered_line(&ability_tokens)?
-    {
+    } = crate::cards::builders::parser::clause_support::rewrite_parse_triggered_line_lexed(
+        &ability_tokens,
+    )? {
         let parsed = parsed_triggered_ability(
             trigger,
             effects,
@@ -1163,9 +1179,7 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
     if ability_tokens.is_empty() {
         return Ok(None);
     }
-    let has_colon = ability_tokens
-        .iter()
-        .any(|token| token.is_colon());
+    let has_colon = ability_tokens.iter().any(|token| token.is_colon());
     let Some(parsed) = parse_activated_line(&ability_tokens)? else {
         if has_colon {
             return Err(CardTextError::ParseError(format!(
@@ -1206,7 +1220,6 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
 
     Ok(Some(static_abilities))
 }
-
 
 pub(crate) fn parse_enchanted_has_activated_ability_line(
     tokens: &[OwnedLexToken],

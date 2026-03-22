@@ -23,9 +23,9 @@ use super::activation_and_restrictions::{
     parse_channel_line_lexed, parse_cycling_line_lexed, parse_equip_line_lexed,
 };
 use super::clause_support::{
-    rewrite_parse_ability_line_lexed, rewrite_parse_effect_sentences,
-    rewrite_parse_effect_sentences_lexed, rewrite_parse_static_ability_ast_line_lexed,
-    rewrite_parse_trigger_clause_lexed, rewrite_parse_triggered_line_lexed,
+    rewrite_parse_ability_line_lexed, rewrite_parse_effect_sentences_lexed,
+    rewrite_parse_static_ability_ast_line_lexed, rewrite_parse_trigger_clause_lexed,
+    rewrite_parse_triggered_line_lexed,
 };
 use super::compile_support::{
     collect_tag_spans_from_effects_with_context,
