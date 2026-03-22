@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { parseNames } from "@/lib/constants";
 import { UI_NOTICE_EVENT } from "@/lib/ui-notices";
+import { decodeBase64UrlUtf8, normalizePuzzlePayload, PUZZLE_ZONE_ORDER } from "@/lib/puzzles";
 import useViewportLayout from "@/hooks/useViewportLayout";
 import Topbar from "./Topbar";
 import LobbyOverlay from "./LobbyOverlay";
@@ -30,12 +31,15 @@ export default function Shell() {
   const [lobbyOpen, setLobbyOpen] = useState(false);
   const [zoneViews, setZoneViews] = useState(["battlefield"]);
   const [deckLoadingMode, setDeckLoadingMode] = useState(false);
+  const [puzzleSetupMode, setPuzzleSetupMode] = useState(false);
   const [mobileOpponentIndex, setMobileOpponentIndex] = useState(0);
   const [notices, setNotices] = useState([]);
   const { landscapeMobileViewport } = useViewportLayout();
   const nextNoticeIdRef = useRef(1);
   const autoJoinAttemptedLobbyRef = useRef("");
+  const autoLoadAttemptedPuzzleRef = useRef(false);
   const initialLobbyQueryRef = useRef(readLobbyQueryParams());
+  const initialPuzzleQueryRef = useRef(readPuzzleQueryParams());
   const borderlessPreview = (
     typeof window !== "undefined"
     && (
@@ -117,6 +121,7 @@ export default function Shell() {
 
   useEffect(() => {
     if (loading || wasmError || !state || multiplayer.mode !== "idle") return;
+    if (initialPuzzleQueryRef.current) return;
 
     const queryLobby = initialLobbyQueryRef.current;
     const lobbyCode = queryLobby.lobbyId;
@@ -141,7 +146,9 @@ export default function Shell() {
           await game.setSemanticThreshold(semanticThreshold);
         }
         await game.reset(parseNames(playerNames), startingLife);
-        await addStartingBattlefieldPreset(game);
+        if (!initialPuzzleQueryRef.current) {
+          await addStartingBattlefieldPreset(game);
+        }
         await refresh("WASM loaded");
       } catch (err) {
         setStatus(`Init failed: ${err}`, true);
@@ -151,6 +158,62 @@ export default function Shell() {
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game]);
+
+  const loadPuzzle = useCallback(
+    async (payload, successMessage = "Puzzle loaded") => {
+      if (!game) return false;
+      if (multiplayer.mode !== "idle") {
+        setStatus("Puzzles are disabled while a lobby is active", true);
+        return false;
+      }
+
+      const normalized = normalizePuzzlePayload(payload);
+      if (!normalized) {
+        setStatus("Puzzle payload is invalid", true);
+        return false;
+      }
+
+      const playerNamesList = normalized.players.map((player, index) => (
+        String(player?.name || "").trim() || `Player ${index + 1}`
+      ));
+      const defaultStartingLife = Number(normalized.players[0]?.life) || 20;
+
+      try {
+        await game.reset(playerNamesList, defaultStartingLife);
+        for (const [playerIndex, player] of normalized.players.entries()) {
+          if (typeof game.setLife === "function") {
+            await game.setLife(playerIndex, Number(player?.life) || 20);
+          }
+          for (const zone of PUZZLE_ZONE_ORDER) {
+            for (const cardName of player.zones?.[zone] || []) {
+              await game.addCardToZone(playerIndex, cardName, zone, true);
+            }
+          }
+        }
+        setPlayerNames(playerNamesList.join(","));
+        setStartingLife(defaultStartingLife);
+        setDeckLoadingMode(false);
+        setPuzzleSetupMode(false);
+        setLobbyOpen(false);
+        await refresh(successMessage);
+        return true;
+      } catch (err) {
+        setStatus(`Load puzzle failed: ${err}`, true);
+        return false;
+      }
+    },
+    [game, multiplayer.mode, refresh, setStatus]
+  );
+
+  useEffect(() => {
+    if (loading || wasmError || !state || multiplayer.mode !== "idle") return;
+    if (autoLoadAttemptedPuzzleRef.current) return;
+    const initialPuzzle = initialPuzzleQueryRef.current;
+    if (!initialPuzzle) return;
+
+    autoLoadAttemptedPuzzleRef.current = true;
+    void loadPuzzle(initialPuzzle, "Puzzle loaded from link");
+  }, [loadPuzzle, loading, multiplayer.mode, state, wasmError]);
 
   const handleReset = useCallback(async () => {
     if (!game) return;
@@ -345,8 +408,20 @@ export default function Shell() {
         onChangePerspective={handleChangePerspective}
         onRefresh={() => refresh("Refreshed")}
         onToggleLog={() => setLogOpen((o) => !o)}
-        onEnterDeckLoading={() => setDeckLoadingMode((m) => !m)}
-        onOpenLobby={() => setLobbyOpen(true)}
+        onEnterDeckLoading={() => {
+          setPuzzleSetupMode(false);
+          setDeckLoadingMode((mode) => !mode);
+        }}
+        onOpenPuzzleSetup={() => {
+          setDeckLoadingMode(false);
+          setPuzzleSetupMode((mode) => !mode);
+        }}
+        puzzleSetupMode={puzzleSetupMode}
+        onOpenLobby={() => {
+          setDeckLoadingMode(false);
+          setPuzzleSetupMode(false);
+          setLobbyOpen(true);
+        }}
         deckLoadingMode={deckLoadingMode}
         onAddCardFailure={pushNotice}
         mobileOpponentIndex={mobileOpponentIndex}
@@ -358,16 +433,31 @@ export default function Shell() {
           zoneViews={zoneViews}
           setZoneViews={setZoneViews}
           onAddCardFailure={pushNotice}
-          onEnterDeckLoading={() => setDeckLoadingMode((m) => !m)}
-          onOpenLobby={() => setLobbyOpen(true)}
+          onEnterDeckLoading={() => {
+            setPuzzleSetupMode(false);
+            setDeckLoadingMode((mode) => !mode);
+          }}
+          onOpenPuzzleSetup={() => {
+            setDeckLoadingMode(false);
+            setPuzzleSetupMode((mode) => !mode);
+          }}
+          onOpenLobby={() => {
+            setDeckLoadingMode(false);
+            setPuzzleSetupMode(false);
+            setLobbyOpen(true);
+          }}
           deckLoadingMode={deckLoadingMode}
+          puzzleSetupMode={puzzleSetupMode}
         />
       ) : null}
       <Workspace
         zoneViews={zoneViews}
         deckLoadingMode={deckLoadingMode}
+        puzzleSetupMode={puzzleSetupMode}
         onLoadDecks={handleLoadCustomDecks}
         onCancelDeckLoading={() => setDeckLoadingMode(false)}
+        onLoadPuzzle={loadPuzzle}
+        onCancelPuzzleSetup={() => setPuzzleSetupMode(false)}
         notices={notices}
         onDismissNotice={dismissNotice}
         mobileOpponentIndex={mobileOpponentIndex}
@@ -412,24 +502,6 @@ async function addStartingBattlefieldPreset(game) {
   }
 }
 
-function decodeBase64Utf8(raw) {
-  if (!raw || typeof window === "undefined") return "";
-
-  try {
-    const normalized = String(raw)
-      .trim()
-      .replace(/-/g, "+")
-      .replace(/_/g, "/");
-    const padding = normalized.length % 4;
-    const padded = padding === 0 ? normalized : `${normalized}${"=".repeat(4 - padding)}`;
-    const binary = window.atob(padded);
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  } catch {
-    return "";
-  }
-}
-
 function readLobbyQueryParams() {
   if (typeof window === "undefined") {
     return {
@@ -454,7 +526,24 @@ function readLobbyQueryParams() {
   return {
     lobbyId,
     name: String(params.get("name") || "").trim(),
-    deckText: decodeBase64Utf8(params.get("deck")),
-    commanderText: decodeBase64Utf8(params.get("commander")),
+    deckText: decodeBase64UrlUtf8(params.get("deck")),
+    commanderText: decodeBase64UrlUtf8(params.get("commander")),
   };
+}
+
+function readPuzzleQueryParams() {
+  if (typeof window === "undefined") return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const rawPuzzle = String(params.get("puzzle") || "").trim();
+  if (!rawPuzzle) return null;
+
+  const decoded = decodeBase64UrlUtf8(rawPuzzle);
+  if (!decoded) return null;
+
+  try {
+    return normalizePuzzlePayload(JSON.parse(decoded));
+  } catch {
+    return null;
+  }
 }

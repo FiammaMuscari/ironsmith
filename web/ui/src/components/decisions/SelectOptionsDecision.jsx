@@ -72,12 +72,16 @@ function isColorChoiceDecision(decision) {
 function buildContextualOptions(
   options,
   hoveredObjectId,
-  { fallbackToAll = false } = {},
+   { fallbackToAll = false, includedObjectIds = null } = {},
 ) {
-  const hasObjectBoundOptions = options.some((opt) => opt.object_id != null);
+  const inclusionIds = includedObjectIds instanceof Set ? includedObjectIds : null;
+  const filteredOptions = inclusionIds && inclusionIds.size > 0
+    ? options.filter((opt) => opt.object_id == null || inclusionIds.has(String(opt.object_id)))
+    : options;
+  const hasObjectBoundOptions = filteredOptions.some((opt) => opt.object_id != null);
   if (!hasObjectBoundOptions) {
     return {
-      options,
+      options: filteredOptions,
       waitingForHover: false,
     };
   }
@@ -85,7 +89,7 @@ function buildContextualOptions(
   const hasHoveredObject = hoveredObjectId != null;
   const hasMatchedHover =
     hasHoveredObject &&
-    options.some(
+    filteredOptions.some(
       (opt) =>
         opt.object_id != null &&
         String(opt.object_id) === String(hoveredObjectId),
@@ -93,12 +97,12 @@ function buildContextualOptions(
 
   if (fallbackToAll && !hasMatchedHover) {
     return {
-      options,
+      options: filteredOptions,
       waitingForHover: false,
     };
   }
 
-  const contextualOptions = options.filter((opt) => {
+  const contextualOptions = filteredOptions.filter((opt) => {
     if (opt.object_id == null) return true;
     return hasMatchedHover && String(opt.object_id) === String(hoveredObjectId);
   });
@@ -107,6 +111,29 @@ function buildContextualOptions(
     options: contextualOptions,
     waitingForHover: !hasMatchedHover,
   };
+}
+
+function buildObjectFamilyIds(players, objectId) {
+  const ids = new Set();
+  if (objectId == null) return ids;
+
+  const objectKey = String(objectId);
+  ids.add(objectKey);
+
+  for (const player of players || []) {
+    for (const card of player?.battlefield || []) {
+      const rootId = card?.id != null ? String(card.id) : null;
+      const memberIds = Array.isArray(card?.member_ids)
+        ? card.member_ids.map((memberId) => String(memberId))
+        : [];
+      const familyIds = rootId ? [rootId, ...memberIds] : memberIds;
+      if (!familyIds.includes(objectKey)) continue;
+      for (const id of familyIds) ids.add(id);
+      return ids;
+    }
+  }
+
+  return ids;
 }
 
 function optionsSignature(options) {
@@ -525,7 +552,11 @@ function SingleSelectDecision({
         : options,
     [options, paymentDecision],
   );
-  const activeObjectId = hoveredObjectId ?? selectedObjectId;
+  const selectedObjectFamilyIds = useMemo(
+    () => buildObjectFamilyIds(state?.players, selectedObjectId),
+    [selectedObjectId, state?.players]
+  );
+  const activeObjectId = hoveredObjectId ?? null;
   const legalDisplayOptions = useMemo(
     () => displayOptions.filter((opt) => opt.legal !== false),
     [displayOptions],
@@ -553,8 +584,9 @@ function SingleSelectDecision({
     () =>
       buildContextualOptions(displayOptions, activeObjectId, {
         fallbackToAll: stripLayout,
+        includedObjectIds: stripLayout && hoveredObjectId == null ? selectedObjectFamilyIds : null,
       }),
-    [activeObjectId, displayOptions, stripLayout],
+    [activeObjectId, displayOptions, hoveredObjectId, selectedObjectFamilyIds, stripLayout],
   );
   const visibleOptions = useAnimatedRows(
     contextual.options,
@@ -748,7 +780,11 @@ function MultiSelectDecision({
     [rawOptions, paymentDecision],
   );
   const [selected, setSelected] = useState(new Set());
-  const activeObjectId = hoveredObjectId ?? selectedObjectId;
+  const selectedObjectFamilyIds = useMemo(
+    () => buildObjectFamilyIds(state?.players, selectedObjectId),
+    [selectedObjectId, state?.players]
+  );
+  const activeObjectId = hoveredObjectId ?? null;
   const min = decision.min ?? 0;
   const max = decision.max ?? options.length;
   const optionsMaxHeight = useMemo(() => {
@@ -761,8 +797,9 @@ function MultiSelectDecision({
     () =>
       buildContextualOptions(options, activeObjectId, {
         fallbackToAll: stripLayout,
+        includedObjectIds: stripLayout && hoveredObjectId == null ? selectedObjectFamilyIds : null,
       }),
-    [activeObjectId, options, stripLayout],
+    [activeObjectId, hoveredObjectId, options, selectedObjectFamilyIds, stripLayout],
   );
   const visibleOptions = useAnimatedRows(
     contextual.options,

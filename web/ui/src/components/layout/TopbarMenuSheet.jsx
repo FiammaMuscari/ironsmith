@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import useViewportLayout from "@/hooks/useViewportLayout";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import { buildPuzzleUrlFromGameState } from "@/lib/puzzles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,8 +54,10 @@ export default function TopbarMenuSheet({
   onRefresh,
   onToggleLog,
   onEnterDeckLoading,
+  onOpenPuzzleSetup,
   onOpenLobby,
   deckLoadingMode,
+  puzzleSetupMode = false,
   onAddCardFailure,
   triggerIcon = "settings",
   showQuickActions = false,
@@ -73,6 +77,7 @@ export default function TopbarMenuSheet({
     setConfirmEnabled,
     inspectorDebug,
     setInspectorDebug,
+    setStatus,
   } = useGame();
 
   const players = state?.players || [];
@@ -104,6 +109,21 @@ export default function TopbarMenuSheet({
   const handleRefresh = () => {
     setOpen(false);
     onRefresh();
+  };
+  const handleOpenPuzzleSetup = () => {
+    setOpen(false);
+    onOpenPuzzleSetup();
+  };
+  const handleShareCurrentTable = async () => {
+    setOpen(false);
+    const shareUrl = buildPuzzleUrlFromGameState(state);
+    if (!shareUrl) {
+      setStatus("Could not build a puzzle link from the current table", true);
+      return;
+    }
+
+    const copied = await copyTextToClipboard(shareUrl);
+    setStatus(copied ? "Copied current table puzzle link" : "Could not copy puzzle link", !copied);
   };
   const handleToggleLog = () => {
     setOpen(false);
@@ -201,6 +221,23 @@ export default function TopbarMenuSheet({
                   variant="secondary"
                   size="sm"
                   className="stone-pill justify-start"
+                  disabled={lobbyBusy}
+                  onClick={handleOpenPuzzleSetup}
+                >
+                  {puzzleSetupMode ? "Close Puzzle" : "Puzzle Setup"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
+                  onClick={handleShareCurrentTable}
+                >
+                  Share Table
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="stone-pill justify-start"
                   onClick={handleOpenLobby}
                 >
                   {lobbyBusy ? "Open Lobby" : "Create Lobby"}
@@ -281,6 +318,18 @@ export default function TopbarMenuSheet({
                 onClick={handleToggleDeckLoading}
               >
                 {deckLoadingMode ? "Cancel Deck Load" : "Load Decks"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="stone-pill"
+                disabled={lobbyBusy}
+                onClick={handleOpenPuzzleSetup}
+              >
+                {puzzleSetupMode ? "Close Puzzle" : "Puzzle Setup"}
+              </Button>
+              <Button variant="secondary" size="sm" className="stone-pill" onClick={handleShareCurrentTable}>
+                Share Table
               </Button>
               <Button variant="secondary" size="sm" className="stone-pill" onClick={handleOpenLobby}>
                 {lobbyBusy ? "Open Lobby" : "Create Lobby"}

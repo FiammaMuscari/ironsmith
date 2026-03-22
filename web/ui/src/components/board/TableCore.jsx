@@ -4,6 +4,7 @@ import useViewportLayout from "@/hooks/useViewportLayout";
 import OpponentZone from "./OpponentZone";
 import MyZone from "./MyZone";
 import DeckLoadingView from "./DeckLoadingView";
+import PuzzleSetupView from "./PuzzleSetupView";
 import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
 import MobileBattleScene from "./MobileBattleScene";
 export default function TableCore({
@@ -14,8 +15,11 @@ export default function TableCore({
   zoneViews,
   zoneActivityByPlayer = {},
   deckLoadingMode,
+  puzzleSetupMode = false,
   onLoadDecks,
   onCancelDeckLoading,
+  onLoadPuzzle,
+  onCancelPuzzleSetup,
   legalTargetPlayerIds = new Set(),
   legalTargetObjectIds = new Set(),
   myZoneHeaderControls = null,
@@ -38,6 +42,10 @@ export default function TableCore({
 
   if (deckLoadingMode) {
     return <DeckLoadingView onLoad={onLoadDecks} onCancel={onCancelDeckLoading} />;
+  }
+
+  if (puzzleSetupMode) {
+    return <PuzzleSetupView onLoadPuzzle={onLoadPuzzle} onCancel={onCancelPuzzleSetup} />;
   }
 
   const me = players.find((p) => p.id === perspective) || players[0];

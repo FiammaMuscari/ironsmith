@@ -34,8 +34,10 @@ export default function Topbar({
   onRefresh,
   onToggleLog,
   onEnterDeckLoading,
+  onOpenPuzzleSetup,
   onOpenLobby,
   deckLoadingMode,
+  puzzleSetupMode = false,
   onAddCardFailure,
   mobileOpponentIndex = 0,
   setMobileOpponentIndex,
@@ -208,14 +210,16 @@ export default function Topbar({
             setStartingLife={setStartingLife}
             onReset={onReset}
             onChangePerspective={onChangePerspective}
-            onRefresh={onRefresh}
-            onToggleLog={onToggleLog}
-            onEnterDeckLoading={onEnterDeckLoading}
-            onOpenLobby={onOpenLobby}
-            deckLoadingMode={deckLoadingMode}
-            onAddCardFailure={onAddCardFailure}
-            triggerIcon="menu"
-            showQuickActions
+             onRefresh={onRefresh}
+             onToggleLog={onToggleLog}
+             onEnterDeckLoading={onEnterDeckLoading}
+             onOpenPuzzleSetup={onOpenPuzzleSetup}
+             onOpenLobby={onOpenLobby}
+             deckLoadingMode={deckLoadingMode}
+             puzzleSetupMode={puzzleSetupMode}
+             onAddCardFailure={onAddCardFailure}
+             triggerIcon="menu"
+             showQuickActions
           />
         </div>
       </header>
@@ -352,8 +356,10 @@ export default function Topbar({
             onRefresh={onRefresh}
             onToggleLog={onToggleLog}
             onEnterDeckLoading={onEnterDeckLoading}
+            onOpenPuzzleSetup={onOpenPuzzleSetup}
             onOpenLobby={onOpenLobby}
             deckLoadingMode={deckLoadingMode}
+            puzzleSetupMode={puzzleSetupMode}
             onAddCardFailure={onAddCardFailure}
             triggerIcon={nonDesktopViewport ? "menu" : "settings"}
             showQuickActions={nonDesktopViewport}

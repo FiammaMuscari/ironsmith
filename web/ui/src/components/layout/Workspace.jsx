@@ -22,9 +22,17 @@ const HAND_PEEK_HEIGHT = 46;
 const HAND_REVEAL_HEIGHT = 164;
 const HAND_COLLAPSED_SHELL_HEIGHT = HAND_PEEK_HEIGHT;
 const HAND_LANE_HOVER_FUZZ = 6;
-const AUTO_REVEAL_ZONE_IDS = ["graveyard", "exile", "command"];
-const AUTO_REVEAL_DURATION_MS = 2000;
+const TRANSITION_TRACKED_ZONE_IDS = ["battlefield", "hand", "graveyard", "exile", "command"];
 const SINGLE_ACTION_AUTO_DROP_MIN_DISTANCE_SQ = 18 * 18;
+
+const ZONE_TRANSITION_LABELS = {
+  battlefield: "Battlefield",
+  hand: "Hand",
+  graveyard: "Graveyard",
+  exile: "Exile",
+  command: "Command",
+  hidden: "Hidden",
+};
 
 function objectExistsInState(state, objectId) {
   if (!state || objectId == null) return false;
@@ -125,8 +133,12 @@ function stackSelectionKeys(entry) {
   return Array.from(new Set(keys));
 }
 
-function getAutoRevealZoneCards(player, zone) {
+function getTrackedZoneCards(player, zone) {
   switch (zone) {
+    case "battlefield":
+      return player?.battlefield || [];
+    case "hand":
+      return player?.hand_cards || [];
     case "graveyard":
       return player?.graveyard_cards || [];
     case "exile":
@@ -149,14 +161,48 @@ function cloneZoneCardSnapshot(card) {
   };
 }
 
-function buildZoneActivitySnapshot(players) {
+function collectCardTrackingKeys(card) {
+  const keys = [];
+  if (Array.isArray(card?.member_stable_ids) && card.member_stable_ids.length > 0) {
+    for (const stableId of card.member_stable_ids) {
+      const normalized = Number(stableId);
+      if (Number.isFinite(normalized)) {
+        keys.push(`stable:${normalized}`);
+      }
+    }
+  }
+  const stableId = Number(card?.stable_id);
+  if (Number.isFinite(stableId)) {
+    keys.push(`stable:${stableId}`);
+  }
+  const objectId = Number(card?.id);
+  if (Number.isFinite(objectId)) {
+    keys.push(`object:${objectId}`);
+  }
+  return Array.from(new Set(keys));
+}
+
+function zoneTransitionLabel(zone) {
+  return ZONE_TRANSITION_LABELS[String(zone || "").toLowerCase()] || "Hidden";
+}
+
+function shouldShowTransitionPreviewForZones(fromZone, toZone) {
+  if (fromZone === toZone) return false;
+  if (fromZone === "hidden" && toZone === "hidden") return false;
+  if ((fromZone === "hidden" && toZone === "hand") || (fromZone === "hand" && toZone === "hidden")) {
+    return false;
+  }
+  return true;
+}
+
+function buildZoneTransitionSnapshot(players) {
   const snapshot = {};
   for (const player of players || []) {
     const playerKey = String(player?.id ?? player?.index ?? "");
     if (!playerKey) continue;
     snapshot[playerKey] = {};
-    for (const zone of AUTO_REVEAL_ZONE_IDS) {
-      snapshot[playerKey][zone] = getAutoRevealZoneCards(player, zone)
+    for (const zone of TRANSITION_TRACKED_ZONE_IDS) {
+      snapshot[playerKey][zone] = getTrackedZoneCards(player, zone)
         .map((card) => cloneZoneCardSnapshot(card))
         .filter(Boolean);
     }
@@ -164,43 +210,211 @@ function buildZoneActivitySnapshot(players) {
   return snapshot;
 }
 
-function summarizeZoneActivity(previousCards = [], nextCards = []) {
-  const previousIds = new Set(previousCards.map((card) => String(card?.id ?? "")));
-  const nextIds = new Set(nextCards.map((card) => String(card?.id ?? "")));
-  const entered = nextCards.filter((card) => !previousIds.has(String(card?.id ?? "")));
-  const left = previousCards.filter((card) => !nextIds.has(String(card?.id ?? "")));
-
-  if (entered.length === 0 && left.length === 0) {
-    return null;
+function buildZoneCardLocationMap(snapshot) {
+  const locationMap = new Map();
+  for (const zone of TRANSITION_TRACKED_ZONE_IDS) {
+    for (const card of snapshot?.[zone] || []) {
+      const trackingKeys = collectCardTrackingKeys(card);
+      for (const key of trackingKeys) {
+        if (locationMap.has(key)) continue;
+        locationMap.set(key, { zone, card });
+      }
+    }
   }
-
-  return entered.length >= left.length
-    ? { direction: "entered", cards: entered.length > 0 ? entered : left }
-    : { direction: "left", cards: left };
+  return locationMap;
 }
 
-function buildZoneActivityLabel(activity) {
-  const names = Array.from(new Set(
-    (activity?.cards || [])
-      .map((card) => String(card?.name || "").trim())
-      .filter(Boolean)
-  )).slice(0, 2);
-  const remainder = Math.max(0, (activity?.cards?.length || 0) - names.length);
-  const prefix = activity?.direction === "left" ? "-" : "+";
+function normalizeTransitionCardName(card) {
+  return String(card?.name || "")
+    .trim()
+    .toLowerCase();
+}
 
-  if (names.length > 0) {
-    return `${prefix} ${names.join(", ")}${remainder > 0 ? ` +${remainder}` : ""}`;
+function buildTransitionCardFingerprint(card, relaxed = false) {
+  const name = normalizeTransitionCardName(card);
+  if (!name) return null;
+
+  const owner = Number(card?.owner);
+  const controller = Number(card?.controller);
+  const typeLine = String(card?.type_line || "").trim().toLowerCase();
+  const power = card?.power != null ? String(card.power) : "";
+  const toughness = card?.toughness != null ? String(card.toughness) : "";
+
+  if (relaxed) {
+    return [
+      name,
+      Number.isFinite(owner) ? owner : "?",
+    ].join("|");
   }
 
-  const count = Math.max(1, activity?.cards?.length || 0);
-  return `${prefix} ${count} card${count === 1 ? "" : "s"}`;
+  return [
+    name,
+    Number.isFinite(owner) ? owner : "?",
+    Number.isFinite(controller) ? controller : "?",
+    typeLine,
+    power,
+    toughness,
+  ].join("|");
+}
+
+function buildZoneCardEntries(snapshot) {
+  const entries = [];
+  for (const zone of TRANSITION_TRACKED_ZONE_IDS) {
+    const zoneCards = Array.isArray(snapshot?.[zone]) ? snapshot[zone] : [];
+    for (const [index, card] of zoneCards.entries()) {
+      if (!card) continue;
+      entries.push({
+        entryKey: `${zone}:${index}`,
+        zone,
+        card,
+        trackingKeys: collectCardTrackingKeys(card),
+        strictFingerprint: buildTransitionCardFingerprint(card, false),
+        relaxedFingerprint: buildTransitionCardFingerprint(card, true),
+      });
+    }
+  }
+  return entries;
+}
+
+function chooseFallbackTransitionMatch(previousEntry, candidateEntries) {
+  if (!Array.isArray(candidateEntries) || candidateEntries.length === 0) return null;
+  if (candidateEntries.length === 1) return candidateEntries[0];
+
+  const preferredZones = previousEntry?.zone === "battlefield"
+    ? ["graveyard", "exile", "command", "hand", "battlefield"]
+    : [previousEntry?.zone, "graveyard", "exile", "command", "hand", "battlefield"];
+
+  for (const zone of preferredZones) {
+    const match = candidateEntries.find((entry) => entry.zone === zone);
+    if (match) return match;
+  }
+
+  return candidateEntries[0];
+}
+
+function buildTransitionPreview(playerKey, previousEntry, currentEntry, tokenSeed) {
+  const fromZone = previousEntry?.zone || "hidden";
+  const toZone = currentEntry?.zone || "hidden";
+  if (!shouldShowTransitionPreviewForZones(fromZone, toZone)) return null;
+
+  const card = cloneZoneCardSnapshot(currentEntry?.card || previousEntry?.card);
+  if (!card) return null;
+
+  return {
+    token: `${playerKey}:${tokenSeed}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    objectId: currentEntry?.card?.id ?? previousEntry?.card?.id ?? null,
+    card,
+    title: `${zoneTransitionLabel(fromZone)} -> ${zoneTransitionLabel(toZone)}`,
+  };
+}
+
+function buildZoneTransitionPreviews(previousSnapshot, currentSnapshot, playerKey) {
+  const previousEntries = buildZoneCardEntries(previousSnapshot);
+  const currentEntries = buildZoneCardEntries(currentSnapshot);
+  const previousMatched = new Set();
+  const currentMatched = new Set();
+  const previews = [];
+
+  const currentEntriesByTrackingKey = new Map();
+  for (const entry of currentEntries) {
+    for (const trackingKey of entry.trackingKeys) {
+      if (!currentEntriesByTrackingKey.has(trackingKey)) {
+        currentEntriesByTrackingKey.set(trackingKey, []);
+      }
+      currentEntriesByTrackingKey.get(trackingKey).push(entry);
+    }
+  }
+
+  for (const previousEntry of previousEntries) {
+    let matchedCurrentEntry = null;
+    let matchedTrackingKey = null;
+
+    for (const trackingKey of previousEntry.trackingKeys) {
+      const candidates = (currentEntriesByTrackingKey.get(trackingKey) || [])
+        .filter((entry) => !currentMatched.has(entry.entryKey));
+      if (candidates.length === 0) continue;
+      matchedCurrentEntry = candidates[0];
+      matchedTrackingKey = trackingKey;
+      break;
+    }
+
+    if (!matchedCurrentEntry) continue;
+    previousMatched.add(previousEntry.entryKey);
+    currentMatched.add(matchedCurrentEntry.entryKey);
+    const preview = buildTransitionPreview(playerKey, previousEntry, matchedCurrentEntry, matchedTrackingKey);
+    if (preview) previews.push(preview);
+  }
+
+  const unmatchedPreviousEntries = previousEntries.filter((entry) => !previousMatched.has(entry.entryKey));
+  const unmatchedCurrentEntries = currentEntries.filter((entry) => !currentMatched.has(entry.entryKey));
+
+  const currentEntriesByStrictFingerprint = new Map();
+  const currentEntriesByRelaxedFingerprint = new Map();
+  for (const entry of unmatchedCurrentEntries) {
+    if (entry.strictFingerprint) {
+      if (!currentEntriesByStrictFingerprint.has(entry.strictFingerprint)) {
+        currentEntriesByStrictFingerprint.set(entry.strictFingerprint, []);
+      }
+      currentEntriesByStrictFingerprint.get(entry.strictFingerprint).push(entry);
+    }
+    if (entry.relaxedFingerprint) {
+      if (!currentEntriesByRelaxedFingerprint.has(entry.relaxedFingerprint)) {
+        currentEntriesByRelaxedFingerprint.set(entry.relaxedFingerprint, []);
+      }
+      currentEntriesByRelaxedFingerprint.get(entry.relaxedFingerprint).push(entry);
+    }
+  }
+
+  for (const previousEntry of unmatchedPreviousEntries) {
+    let matchedCurrentEntry = null;
+    if (previousEntry.strictFingerprint) {
+      matchedCurrentEntry = chooseFallbackTransitionMatch(
+        previousEntry,
+        (currentEntriesByStrictFingerprint.get(previousEntry.strictFingerprint) || [])
+          .filter((entry) => !currentMatched.has(entry.entryKey))
+      );
+    }
+    if (!matchedCurrentEntry && previousEntry.relaxedFingerprint) {
+      matchedCurrentEntry = chooseFallbackTransitionMatch(
+        previousEntry,
+        (currentEntriesByRelaxedFingerprint.get(previousEntry.relaxedFingerprint) || [])
+          .filter((entry) => !currentMatched.has(entry.entryKey))
+      );
+    }
+
+    if (matchedCurrentEntry) {
+      currentMatched.add(matchedCurrentEntry.entryKey);
+      const preview = buildTransitionPreview(
+        playerKey,
+        previousEntry,
+        matchedCurrentEntry,
+        previousEntry.relaxedFingerprint || previousEntry.strictFingerprint || previousEntry.entryKey
+      );
+      if (preview) previews.push(preview);
+      continue;
+    }
+
+    const hiddenPreview = buildTransitionPreview(playerKey, previousEntry, null, previousEntry.entryKey);
+    if (hiddenPreview) previews.push(hiddenPreview);
+  }
+
+  for (const currentEntry of unmatchedCurrentEntries) {
+    if (currentMatched.has(currentEntry.entryKey)) continue;
+    const hiddenPreview = buildTransitionPreview(playerKey, null, currentEntry, currentEntry.entryKey);
+    if (hiddenPreview) previews.push(hiddenPreview);
+  }
+
+  return previews;
 }
 
 export default function Workspace({
   zoneViews,
   deckLoadingMode,
+  puzzleSetupMode = false,
   onLoadDecks,
   onCancelDeckLoading,
+  onLoadPuzzle,
+  onCancelPuzzleSetup,
   notices = [],
   onDismissNotice,
   mobileOpponentIndex = 0,
@@ -212,17 +426,18 @@ export default function Workspace({
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
   const [zoneActivityByPlayer, setZoneActivityByPlayer] = useState({});
+  const [transientInspectorPreviews, setTransientInspectorPreviews] = useState([]);
+  const [transientInspectorPreviewIndex, setTransientInspectorPreviewIndex] = useState(0);
   const [opponentsInspectorDockTop, setOpponentsInspectorDockTop] = useState(null);
   const [opponentsZoneHostRect, setOpponentsZoneHostRect] = useState(null);
   const [myZoneHostRect, setMyZoneHostRect] = useState(null);
   const workspaceRef = useRef(null);
   const previousStackIdsRef = useRef([]);
-  const previousZoneActivitySnapshotRef = useRef(null);
+  const previousZoneTransitionSnapshotRef = useRef(null);
+  const transitionInspectorRestoreRef = useRef(null);
   const handRevealShellRef = useRef(null);
   const handRevealMotionRef = useRef(null);
   const handHoverCloseTimerRef = useRef(null);
-  const zoneActivityTimersRef = useRef(new Map());
-  const inspectorSuppressTimerRef = useRef(null);
   const {
     game,
     state,
@@ -284,11 +499,67 @@ export default function Workspace({
     }
     return normalizeZoneViews(Array.from(merged));
   }, [temporaryZoneViews, zoneViews]);
-  const baseVisibleZones = useMemo(() => new Set(normalizeZoneViews(zoneViews)), [zoneViews]);
   const stackArrowSignature = useMemo(
     () => stackTargetPresentation.arrows.map((arrow) => arrow.key).join("|"),
     [stackTargetPresentation.arrows]
   );
+  const hasTransientInspectorPreview = transientInspectorPreviews.length > 0;
+  const activeTransientInspectorPreview = hasTransientInspectorPreview
+    ? transientInspectorPreviews[Math.min(transientInspectorPreviewIndex, transientInspectorPreviews.length - 1)] || null
+    : null;
+
+  const clearTransientInspectorPreviews = useCallback(() => {
+    transitionInspectorRestoreRef.current = null;
+    setTransientInspectorPreviews([]);
+    setTransientInspectorPreviewIndex(0);
+  }, []);
+
+  const restoreInspectorBeforeTransitionPreview = useCallback(() => {
+    const restoreState = transitionInspectorRestoreRef.current;
+    transitionInspectorRestoreRef.current = null;
+    setTransientInspectorPreviews([]);
+    setTransientInspectorPreviewIndex(0);
+    if (!restoreState) return;
+
+    setSelectedObjectId(restoreState.selectedObjectId);
+    setFocusedStackObjectId(restoreState.focusedStackObjectId);
+    setPinnedInspectorObjectId(restoreState.pinnedInspectorObjectId);
+    setSuppressFallbackInspector(Boolean(restoreState.suppressFallbackInspector));
+  }, []);
+
+  const showTransitionInspectorPreviews = useCallback((previews) => {
+    if (!Array.isArray(previews) || previews.length === 0) return;
+
+    if (!transitionInspectorRestoreRef.current) {
+      transitionInspectorRestoreRef.current = {
+        selectedObjectId,
+        focusedStackObjectId,
+        pinnedInspectorObjectId,
+        suppressFallbackInspector,
+      };
+    }
+
+    setSuppressFallbackInspector(true);
+    setTransientInspectorPreviews(previews);
+    setTransientInspectorPreviewIndex(0);
+    setZoneActivityByPlayer({});
+  }, [focusedStackObjectId, pinnedInspectorObjectId, selectedObjectId, suppressFallbackInspector]);
+
+  const showPreviousTransientInspectorPreview = useCallback(() => {
+    setTransientInspectorPreviewIndex((currentIndex) => {
+      const count = transientInspectorPreviews.length;
+      if (count <= 1) return currentIndex;
+      return (currentIndex - 1 + count) % count;
+    });
+  }, [transientInspectorPreviews.length]);
+
+  const showNextTransientInspectorPreview = useCallback(() => {
+    setTransientInspectorPreviewIndex((currentIndex) => {
+      const count = transientInspectorPreviews.length;
+      if (count <= 1) return currentIndex;
+      return (currentIndex + 1) % count;
+    });
+  }, [transientInspectorPreviews.length]);
 
   useEffect(() => {
     if (selectedObjectId == null) return;
@@ -344,11 +615,11 @@ export default function Workspace({
   }, [focusedStackObjectId, state]);
 
   useEffect(() => {
-    const currentSnapshot = buildZoneActivitySnapshot(players);
-    const previousSnapshot = previousZoneActivitySnapshotRef.current;
-    previousZoneActivitySnapshotRef.current = currentSnapshot;
+    const currentSnapshot = buildZoneTransitionSnapshot(players);
+    const previousSnapshot = previousZoneTransitionSnapshotRef.current;
+    previousZoneTransitionSnapshotRef.current = currentSnapshot;
 
-    if (deckLoadingMode || players.length === 0 || !previousSnapshot) {
+    if (deckLoadingMode || puzzleSetupMode || players.length === 0 || !previousSnapshot) {
       return;
     }
 
@@ -356,126 +627,40 @@ export default function Workspace({
       return;
     }
 
-    const activities = [];
+    const nextPreviews = [];
     for (const player of players) {
       const playerKey = String(player?.id ?? player?.index ?? "");
       const previousPlayerSnapshot = previousSnapshot[playerKey];
       const currentPlayerSnapshot = currentSnapshot[playerKey];
       if (!previousPlayerSnapshot || !currentPlayerSnapshot) continue;
 
-      for (const zone of AUTO_REVEAL_ZONE_IDS) {
-        const activity = summarizeZoneActivity(
-          previousPlayerSnapshot[zone],
-          currentPlayerSnapshot[zone]
-        );
-        if (!activity) continue;
-        activities.push({
-          playerKey,
-          zone,
-          direction: activity.direction,
-          label: buildZoneActivityLabel(activity),
-          replayCards: (
-            activity.direction === "left"
-            && !baseVisibleZones.has(zone)
-            && previousPlayerSnapshot[zone].length > 0
-          )
-            ? previousPlayerSnapshot[zone].map((card) => cloneZoneCardSnapshot(card)).filter(Boolean)
-            : null,
-          displayCount: (
-            activity.direction === "left"
-            && !baseVisibleZones.has(zone)
-            && previousPlayerSnapshot[zone].length > 0
-          )
-            ? previousPlayerSnapshot[zone].length
-            : null,
-          token: `${playerKey}:${zone}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        });
-      }
+      nextPreviews.push(...buildZoneTransitionPreviews(
+        previousPlayerSnapshot,
+        currentPlayerSnapshot,
+        playerKey
+      ));
     }
 
-    if (activities.length === 0) {
+    if (nextPreviews.length === 0) {
       return;
     }
 
     queueMicrotask(() => {
       startTransition(() => {
-        setSelectedObjectId(null);
-        setPinnedInspectorObjectId(null);
-        setSuppressFallbackInspector(true);
-        setZoneActivityByPlayer((current) => {
-          const next = { ...current };
-          for (const activity of activities) {
-            const playerActivities = { ...(next[activity.playerKey] || {}) };
-            playerActivities[activity.zone] = {
-              token: activity.token,
-              direction: activity.direction,
-              label: activity.label,
-              replayCards: activity.replayCards,
-              displayCount: activity.displayCount,
-            };
-            next[activity.playerKey] = playerActivities;
-          }
-          return next;
-        });
+        showTransitionInspectorPreviews(nextPreviews);
       });
     });
-
-    if (inspectorSuppressTimerRef.current) {
-      clearTimeout(inspectorSuppressTimerRef.current);
-    }
-    inspectorSuppressTimerRef.current = setTimeout(() => {
-      setSuppressFallbackInspector(false);
-      inspectorSuppressTimerRef.current = null;
-    }, AUTO_REVEAL_DURATION_MS);
-
-    for (const activity of activities) {
-      const timerKey = `${activity.playerKey}:${activity.zone}`;
-      const existingTimer = zoneActivityTimersRef.current.get(timerKey);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
-      }
-      const timeoutId = setTimeout(() => {
-        setZoneActivityByPlayer((current) => {
-          const playerActivities = current[activity.playerKey];
-          if (!playerActivities || playerActivities[activity.zone]?.token !== activity.token) {
-            return current;
-          }
-
-          const next = { ...current };
-          const nextPlayerActivities = { ...playerActivities };
-          delete nextPlayerActivities[activity.zone];
-          if (Object.keys(nextPlayerActivities).length === 0) {
-            delete next[activity.playerKey];
-          } else {
-            next[activity.playerKey] = nextPlayerActivities;
-          }
-          return next;
-        });
-        zoneActivityTimersRef.current.delete(timerKey);
-      }, AUTO_REVEAL_DURATION_MS);
-      zoneActivityTimersRef.current.set(timerKey, timeoutId);
-    }
-  }, [baseVisibleZones, deckLoadingMode, players]);
-
-  useEffect(() => () => {
-    if (inspectorSuppressTimerRef.current) {
-      clearTimeout(inspectorSuppressTimerRef.current);
-      inspectorSuppressTimerRef.current = null;
-    }
-    for (const timeoutId of zoneActivityTimersRef.current.values()) {
-      clearTimeout(timeoutId);
-    }
-    zoneActivityTimersRef.current.clear();
-  }, []);
+  }, [deckLoadingMode, players, puzzleSetupMode, showTransitionInspectorPreviews]);
 
   useEffect(() => {
     if (!combatDeclarationActive) return;
     queueMicrotask(() => {
+      clearTransientInspectorPreviews();
       setFocusedStackObjectId(null);
       setSelectedObjectId(null);
       setPinnedInspectorObjectId(null);
     });
-  }, [combatDeclarationActive]);
+  }, [clearTransientInspectorPreviews, combatDeclarationActive]);
 
   useEffect(() => {
     if (combatDeclarationActive || stackTargetPresentation.arrows.length === 0) {
@@ -655,6 +840,7 @@ export default function Workspace({
           return;
         }
       }
+      clearTransientInspectorPreviews();
       setSelectedObjectId(objectId);
       setFocusedStackObjectId(stackEntry?.id != null ? String(stackEntry.id) : null);
       setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
@@ -671,12 +857,14 @@ export default function Workspace({
       refresh,
       setStatus,
       state?.perspective,
+      clearTransientInspectorPreviews,
     ]
   );
 
   const handleFocusStackObject = useCallback((stackEntry) => {
     const stackObjectId = stackEntry?.id;
     if (stackObjectId == null) return;
+    clearTransientInspectorPreviews();
     clearHover();
     setSelectedObjectId(null);
     setPinnedInspectorObjectId(null);
@@ -686,7 +874,7 @@ export default function Workspace({
         ? null
         : String(stackObjectId)
     ));
-  }, [clearHover]);
+  }, [clearHover, clearTransientInspectorPreviews]);
 
   const mobileZoneHeaderControls = null;
 
@@ -880,6 +1068,12 @@ export default function Workspace({
       );
       if (!inDeadZone) return;
 
+      if (hasTransientInspectorPreview) {
+        clearHover();
+        restoreInspectorBeforeTransitionPreview();
+        return;
+      }
+
       setSelectedObjectId(null);
       setPinnedInspectorObjectId(null);
       setSuppressFallbackInspector(true);
@@ -890,7 +1084,13 @@ export default function Workspace({
     return () => {
       document.removeEventListener("pointerdown", onDeadZonePointerDown, true);
     };
-  }, [clearHover, decision, state?.perspective]);
+  }, [
+    clearHover,
+    decision,
+    hasTransientInspectorPreview,
+    restoreInspectorBeforeTransitionPreview,
+    state?.perspective,
+  ]);
 
   return (
     <section
@@ -983,8 +1183,11 @@ export default function Workspace({
           zoneViews={effectiveZoneViews}
           zoneActivityByPlayer={zoneActivityByPlayer}
           deckLoadingMode={deckLoadingMode}
+          puzzleSetupMode={puzzleSetupMode}
           onLoadDecks={onLoadDecks}
           onCancelDeckLoading={onCancelDeckLoading}
+          onLoadPuzzle={onLoadPuzzle}
+          onCancelPuzzleSetup={onCancelPuzzleSetup}
           legalTargetPlayerIds={legalTargetPlayerIds}
           legalTargetObjectIds={legalTargetObjectIds}
           myZoneHeaderControls={mobileZoneHeaderControls}
@@ -1000,8 +1203,13 @@ export default function Workspace({
           data-opponents-inspector-dock
         >
           <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
-            <RightRail
+          <RightRail
               pinnedObjectId={pinnedInspectorObjectId}
+              transientInspectorPreview={activeTransientInspectorPreview}
+              transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+              transientInspectorPreviewCount={transientInspectorPreviews.length}
+              onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+              onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -1012,6 +1220,11 @@ export default function Workspace({
             {inspectorDebug && (
               <RightRail
                 pinnedObjectId={pinnedInspectorObjectId}
+                transientInspectorPreview={activeTransientInspectorPreview}
+                transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+                transientInspectorPreviewCount={transientInspectorPreviews.length}
+                onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+                onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
                 onInspectObject={handleInspectObject}
                 suppressFallback={suppressFallbackInspector}
                 inline
@@ -1036,6 +1249,11 @@ export default function Workspace({
           <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
             <RightRail
               pinnedObjectId={pinnedInspectorObjectId}
+              transientInspectorPreview={activeTransientInspectorPreview}
+              transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+              transientInspectorPreviewCount={transientInspectorPreviews.length}
+              onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+              onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -1048,6 +1266,11 @@ export default function Workspace({
             {inspectorDebug && (
               <RightRail
                 pinnedObjectId={pinnedInspectorObjectId}
+                transientInspectorPreview={activeTransientInspectorPreview}
+                transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+                transientInspectorPreviewCount={transientInspectorPreviews.length}
+                onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+                onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
                 onInspectObject={handleInspectObject}
                 suppressFallback={suppressFallbackInspector}
                 inline
@@ -1063,7 +1286,7 @@ export default function Workspace({
           </div>
         </div>
       )}
-      {!nonDesktopViewport && (
+      {!nonDesktopViewport && !puzzleSetupMode && (
         <div
           className="pointer-events-none fixed inset-x-0 bottom-2 z-30 flex items-end gap-1.5 overflow-visible px-2"
           style={{ height: `${HAND_PEEK_HEIGHT}px` }}
@@ -1107,6 +1330,11 @@ export default function Workspace({
           <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
             <RightRail
               pinnedObjectId={pinnedInspectorObjectId}
+              transientInspectorPreview={activeTransientInspectorPreview}
+              transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+              transientInspectorPreviewCount={transientInspectorPreviews.length}
+              onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+              onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -1116,6 +1344,11 @@ export default function Workspace({
             {inspectorDebug && (
               <RightRail
                 pinnedObjectId={pinnedInspectorObjectId}
+                transientInspectorPreview={activeTransientInspectorPreview}
+                transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+                transientInspectorPreviewCount={transientInspectorPreviews.length}
+                onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+                onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
                 onInspectObject={handleInspectObject}
                 suppressFallback={suppressFallbackInspector}
                 inline
@@ -1139,6 +1372,11 @@ export default function Workspace({
           <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
             <RightRail
               pinnedObjectId={pinnedInspectorObjectId}
+              transientInspectorPreview={activeTransientInspectorPreview}
+              transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+              transientInspectorPreviewCount={transientInspectorPreviews.length}
+              onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+              onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -1150,6 +1388,11 @@ export default function Workspace({
             {inspectorDebug && (
               <RightRail
                 pinnedObjectId={pinnedInspectorObjectId}
+                transientInspectorPreview={activeTransientInspectorPreview}
+                transientInspectorPreviewIndex={transientInspectorPreviewIndex}
+                transientInspectorPreviewCount={transientInspectorPreviews.length}
+                onShowPreviousTransientInspectorPreview={showPreviousTransientInspectorPreview}
+                onShowNextTransientInspectorPreview={showNextTransientInspectorPreview}
                 onInspectObject={handleInspectObject}
                 suppressFallback={suppressFallbackInspector}
                 inline

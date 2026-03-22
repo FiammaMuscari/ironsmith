@@ -3,6 +3,8 @@ import { useGame } from "@/context/GameContext";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import ZoneViewer from "@/components/board/ZoneViewer";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import { buildPuzzleUrlFromGameState } from "@/lib/puzzles";
 import CreateCardForgeSheet from "./CreateCardForgeSheet";
 import AddCardSheet from "./AddCardSheet";
 
@@ -14,8 +16,10 @@ export default function AddCardBar({
   setZoneViews,
   onAddCardFailure,
   onEnterDeckLoading,
+  onOpenPuzzleSetup,
   onOpenLobby,
   deckLoadingMode = false,
+  puzzleSetupMode = false,
 }) {
   const {
     state,
@@ -27,6 +31,7 @@ export default function AddCardBar({
     setAutoPassEnabled,
     holdRule,
     setHoldRule,
+    setStatus,
   } = useGame();
   const [zone, setZone] = useState("hand");
   const [playerIndex, setPlayerIndex] = useState(null);
@@ -38,6 +43,17 @@ export default function AddCardBar({
   const addLocked = multiplayer.mode !== "idle";
   const matchLocked = multiplayer.matchStarted;
   const lobbyBusy = multiplayer.mode !== "idle";
+
+  const handleShareCurrentTable = async () => {
+    const shareUrl = buildPuzzleUrlFromGameState(state);
+    if (!shareUrl) {
+      setStatus("Could not build a puzzle link from the current table", true);
+      return;
+    }
+
+    const copied = await copyTextToClipboard(shareUrl);
+    setStatus(copied ? "Copied current table puzzle link" : "Could not copy puzzle link", !copied);
+  };
 
   return (
     <div className="add-card-toolbar table-toolbar table-toolbar--secondary rounded-none px-3 py-2">
@@ -71,6 +87,21 @@ export default function AddCardBar({
           onClick={onEnterDeckLoading}
         >
           {deckLoadingMode ? "Cancel Deck Load" : "Load Decks"}
+        </button>
+        <button
+          type="button"
+          className={triggerPill}
+          disabled={lobbyBusy}
+          onClick={onOpenPuzzleSetup}
+        >
+          {puzzleSetupMode ? "Close Puzzle" : "Puzzle Setup"}
+        </button>
+        <button
+          type="button"
+          className={triggerPill}
+          onClick={handleShareCurrentTable}
+        >
+          Share Table
         </button>
         <button
           type="button"

@@ -1857,7 +1857,7 @@ function MobileBattleDecisionLayer({
             ) : null}
           >
             <MobilePriorityActionList
-              groups={actionGroups}
+              groups={visibleActionGroups}
               canAct={canAct}
               onActionClick={triggerPriorityAction}
               onActionHoverStart={handleActionHoverStart}
@@ -2155,7 +2155,6 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     () => buildPriorityActionGroups(otherActions, battlefieldFamilies),
     [otherActions, battlefieldFamilies]
   );
-  const priorityActionCount = otherActions.length;
   const objectNameById = useMemo(
     () => buildObjectNameById(state),
     [state]
@@ -2250,6 +2249,19 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     }
     return ids;
   }, [otherActions, selectedObjectFamilyIds, selectedObjectId, selectedObjectNameLower]);
+  const visibleActionGroups = useMemo(() => {
+    if (selectedObjectId == null && !selectedObjectNameLower) return actionGroups;
+    return actionGroups.filter((group) => {
+      for (const linkedObjectId of group.linkedObjectIds) {
+        if (selectedObjectFamilyIds.has(linkedObjectId)) return true;
+      }
+      for (const actionIndex of group.actionIndices) {
+        if (selectedActionIndices.has(actionIndex)) return true;
+      }
+      return false;
+    });
+  }, [actionGroups, selectedActionIndices, selectedObjectFamilyIds, selectedObjectId, selectedObjectNameLower]);
+  const priorityActionCount = visibleActionGroups.length;
   const triggerPriorityAction = useCallback(
     (action) => {
       if (!canAct || !action) return;
@@ -2442,7 +2454,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                   </Button>
                 )}
                 <PriorityActionStrip
-                  groups={actionGroups}
+                  groups={visibleActionGroups}
                   canAct={canAct}
                   players={state?.players || []}
                   perspective={state?.perspective}
@@ -2736,7 +2748,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
           ) : (
             <div className="flex min-h-[46px] items-stretch gap-2">
               <PriorityActionStrip
-                groups={actionGroups}
+                groups={visibleActionGroups}
                 canAct={canAct}
                 players={state?.players || []}
                 perspective={state?.perspective}
