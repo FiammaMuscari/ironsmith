@@ -539,9 +539,10 @@ pub(crate) fn parse_search_library_sentence(
             leading_tokens.pop();
         }
         if !leading_tokens.is_empty() {
-            leading_effects = super::chain_carry::parse_effect_chain_with_sentence_primitives_lexed(
-                &lowercase_word_tokens(&leading_tokens),
-            )?;
+            leading_effects =
+                super::chain_carry::parse_effect_chain_with_sentence_primitives_lexed(
+                    &lowercase_word_tokens(&leading_tokens),
+                )?;
         }
         subject_tokens = &[];
     }
@@ -976,9 +977,9 @@ pub(crate) fn parse_search_library_sentence(
     let mut filter = if let Some(named_idx) = filter_words.iter().position(|word| *word == "named")
     {
         let name = filter_words
-        .iter()
-        .skip(named_idx + 1)
-        .copied()
+            .iter()
+            .skip(named_idx + 1)
+            .copied()
             .collect::<Vec<_>>()
             .join(" ");
         if name.is_empty() {
@@ -1579,7 +1580,8 @@ pub(crate) fn parse_exile_hand_and_graveyard_bundle_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     fn normalize_possessive_words<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
-        words.iter()
+        words
+            .iter()
             .filter_map(|word| match *word {
                 "s" | "'" | "’" => None,
                 _ => Some(

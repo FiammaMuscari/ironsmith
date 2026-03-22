@@ -18,7 +18,8 @@ use super::zone_handlers::collapse_leading_signed_pt_modifier_tokens;
 use super::{
     LeadingResultPrefixKind, TokenCopyFollowup, parse_conditional_sentence_lexed,
     parse_effect_chain_lexed, parse_search_library_sentence, parse_search_library_sentence_lexed,
-    parse_simple_gain_ability_clause, split_leading_result_prefix, split_leading_result_prefix_lexed,
+    parse_simple_gain_ability_clause, split_leading_result_prefix,
+    split_leading_result_prefix_lexed,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -1932,7 +1933,9 @@ pub(crate) fn parse_effect_sentence_inner_lexed(
         apply_where_x_to_damage_amounts(tokens, &mut effects)?;
         return Ok(effects);
     }
-    if sentence_words.iter().any(|word| *word == "vote" || *word == "votes")
+    if sentence_words
+        .iter()
+        .any(|word| *word == "vote" || *word == "votes")
         && let Some(mut effects) = run_sentence_primitives_lexed(
             tokens,
             POST_CONDITIONAL_SENTENCE_PRIMITIVES,
@@ -2020,15 +2023,13 @@ fn strip_labeled_conditional_prefix_lexed(tokens: &[OwnedLexToken]) -> Option<&[
 }
 
 fn strip_labeled_effect_prefix_lexed(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
-    let dash_idx = tokens
-        .iter()
-        .position(|token| {
-            matches!(
-                token.kind,
-                crate::cards::builders::parser::lexer::TokenKind::Dash
-                    | crate::cards::builders::parser::lexer::TokenKind::EmDash
-            )
-        })?;
+    let dash_idx = tokens.iter().position(|token| {
+        matches!(
+            token.kind,
+            crate::cards::builders::parser::lexer::TokenKind::Dash
+                | crate::cards::builders::parser::lexer::TokenKind::EmDash
+        )
+    })?;
     if !(1..=3).contains(&dash_idx) || dash_idx + 1 >= tokens.len() {
         return None;
     }
@@ -3798,9 +3799,10 @@ fn split_full_shared_color_target(target: &TargetAst) -> Option<(TargetAst, Obje
     let TargetAst::Object(filter, explicit_span, extra_span) = target else {
         return None;
     };
-    let has_shared_color = filter.tagged_constraints.iter().any(|constraint| {
-        constraint.relation == TaggedOpbjectRelation::SharesColorWithTagged
-    });
+    let has_shared_color = filter
+        .tagged_constraints
+        .iter()
+        .any(|constraint| constraint.relation == TaggedOpbjectRelation::SharesColorWithTagged);
     if !filter.other || !has_shared_color {
         return None;
     }
@@ -4339,10 +4341,8 @@ pub(crate) fn parse_same_name_gets_fanout_sentence(
     };
 
     let modifier_tokens = &tokens[verb_idx + 1..];
-    let collapsed_modifier_tokens =
-        collapse_leading_signed_pt_modifier_tokens(modifier_tokens).unwrap_or_else(|| {
-            modifier_tokens.to_vec()
-        });
+    let collapsed_modifier_tokens = collapse_leading_signed_pt_modifier_tokens(modifier_tokens)
+        .unwrap_or_else(|| modifier_tokens.to_vec());
     let modifier_word = collapsed_modifier_tokens
         .first()
         .and_then(OwnedLexToken::as_word)
@@ -4891,8 +4891,7 @@ pub(crate) fn parse_gain_life_equal_to_power_sentence(
 pub(crate) fn parse_double_target_power_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let word_view =
-        crate::cards::builders::parser::native_tokens::LowercaseWordView::new(tokens);
+    let word_view = crate::cards::builders::parser::native_tokens::LowercaseWordView::new(tokens);
     let words = word_view.to_word_refs();
     if !words.starts_with(&["double", "target"]) {
         return Ok(None);

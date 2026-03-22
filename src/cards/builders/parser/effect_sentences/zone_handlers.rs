@@ -18,12 +18,12 @@ use super::super::activation_and_restrictions::{
     controller_filter_for_token_player, parse_devotion_value_from_add_clause,
     target_ast_to_object_filter,
 };
-use super::super::lexer::TokenKind;
 use super::super::keyword_static::parse_where_x_is_number_of_filter_value;
 use super::super::keyword_static::{
     parse_add_mana_equal_amount_value, parse_add_mana_that_much_value,
     parse_dynamic_cost_modifier_value, parse_pt_modifier, parse_pt_modifier_values,
 };
+use super::super::lexer::TokenKind;
 use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
@@ -2298,7 +2298,10 @@ pub(crate) fn parse_or_mana_color_choices(
         let Some(word) = token.as_word() else {
             continue;
         };
-        if matches!(word.to_ascii_lowercase().as_str(), "to" | "your" | "their" | "its" | "mana" | "pool") {
+        if matches!(
+            word.to_ascii_lowercase().as_str(),
+            "to" | "your" | "their" | "its" | "mana" | "pool"
+        ) {
             continue;
         }
         return Ok(None);

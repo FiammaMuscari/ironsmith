@@ -1480,50 +1480,52 @@ pub(crate) fn parse_document_cst(
                     let is_named_label = is_named_ability_label(label);
                     let preserve_as_choice_label =
                         labeled_choice_block_has_peer(&preprocessed.items, idx);
-                        if !preserve_keyword_prefix_for_parse(label) {
-                            let body_line = rewrite_line_normalized(line, body)?;
-                            if parse_trigger_intro(normalized_first_word(body)).is_some() {
-                                if let Ok(mut triggered) = parse_triggered_line_cst(&body_line) {
-                                    if preserve_as_choice_label {
-                                        triggered.chosen_option_label =
-                                            Some(label.to_ascii_lowercase());
-                                    }
-                                    lines.push(RewriteLineCst::Triggered(triggered));
-                                    idx += 1;
-                                    continue;
+                    if !preserve_keyword_prefix_for_parse(label) {
+                        let body_line = rewrite_line_normalized(line, body)?;
+                        if parse_trigger_intro(normalized_first_word(body)).is_some() {
+                            if let Ok(mut triggered) = parse_triggered_line_cst(&body_line) {
+                                if preserve_as_choice_label {
+                                    triggered.chosen_option_label =
+                                        Some(label.to_ascii_lowercase());
                                 }
-                                if let Some(mut triggered) =
-                                    try_parse_triggered_line_with_named_source_rewrite(
-                                        &preprocessed.builder,
-                                        line,
-                                        body,
-                                    )?
-                                {
-                                    if preserve_as_choice_label {
-                                        triggered.chosen_option_label =
-                                            Some(label.to_ascii_lowercase());
-                                    }
-                                    lines.push(RewriteLineCst::Triggered(triggered));
-                                    idx += 1;
-                                    continue;
+                                lines.push(RewriteLineCst::Triggered(triggered));
+                                idx += 1;
+                                continue;
+                            }
+                            if let Some(mut triggered) =
+                                try_parse_triggered_line_with_named_source_rewrite(
+                                    &preprocessed.builder,
+                                    line,
+                                    body,
+                                )?
+                            {
+                                if preserve_as_choice_label {
+                                    triggered.chosen_option_label =
+                                        Some(label.to_ascii_lowercase());
                                 }
-                                if allow_unsupported && is_named_label {
-                                    lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
-                                        info: line.info.clone(),
-                                        reason_code: "triggered-line-not-yet-supported",
-                                    }));
-                                    idx += 1;
-                                    continue;
-                                }
-                                if is_named_label {
-                                    return Err(parse_triggered_line_cst(&body_line).err().unwrap_or_else(
-                                        || CardTextError::ParseError(format!(
+                                lines.push(RewriteLineCst::Triggered(triggered));
+                                idx += 1;
+                                continue;
+                            }
+                            if allow_unsupported && is_named_label {
+                                lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
+                                    info: line.info.clone(),
+                                    reason_code: "triggered-line-not-yet-supported",
+                                }));
+                                idx += 1;
+                                continue;
+                            }
+                            if is_named_label {
+                                return Err(parse_triggered_line_cst(&body_line)
+                                    .err()
+                                    .unwrap_or_else(|| {
+                                        CardTextError::ParseError(format!(
                                             "unsupported triggered line: '{}'",
                                             body
-                                        )),
-                                    ));
-                                }
+                                        ))
+                                    }));
                             }
+                        }
 
                         if is_named_label
                             && let Some(keyword_line) = parse_keyword_line_cst(&body_line)?
@@ -1598,10 +1600,12 @@ pub(crate) fn parse_document_cst(
                                         continue;
                                     }
                                     if allow_unsupported {
-                                        lines.push(RewriteLineCst::Unsupported(UnsupportedLineCst {
-                                            info: line.info.clone(),
-                                            reason_code: "triggered-line-not-yet-supported",
-                                        }))
+                                        lines.push(RewriteLineCst::Unsupported(
+                                            UnsupportedLineCst {
+                                                info: line.info.clone(),
+                                                reason_code: "triggered-line-not-yet-supported",
+                                            },
+                                        ))
                                     } else {
                                         return Err(parse_triggered_line_cst(&chunk_line)
                                             .err()
@@ -1645,12 +1649,14 @@ pub(crate) fn parse_document_cst(
                                 idx += 1;
                                 continue;
                             }
-                            return Err(parse_triggered_line_cst(line).err().unwrap_or_else(|| {
-                                CardTextError::ParseError(format!(
-                                    "unsupported triggered line: '{}'",
-                                    line.info.raw_line
-                                ))
-                            }));
+                            return Err(parse_triggered_line_cst(line).err().unwrap_or_else(
+                                || {
+                                    CardTextError::ParseError(format!(
+                                        "unsupported triggered line: '{}'",
+                                        line.info.raw_line
+                                    ))
+                                },
+                            ));
                         }
                     }
                 }
@@ -1704,21 +1710,20 @@ pub(crate) fn parse_document_cst(
 
                 if let Some(PreprocessedItem::Line(next_line)) = preprocessed.items.get(idx + 1) {
                     let normalized_next = next_line.info.normalized.normalized.as_str();
-                    let should_try_combined_static = (
-                        normalized.starts_with("as this land enters")
-                            && normalized.contains("you may reveal")
-                            && normalized.contains("from your hand")
-                            && (normalized_next.starts_with("if you dont, this land enters tapped")
-                                || normalized_next.starts_with("if you don't, this land enters tapped")
-                                || normalized_next.starts_with("if you dont, it enters tapped")
-                                || normalized_next.starts_with("if you don't, it enters tapped"))
-                    ) || (
-                        normalized.starts_with("if this card is in your opening hand")
+                    let should_try_combined_static = (normalized
+                        .starts_with("as this land enters")
+                        && normalized.contains("you may reveal")
+                        && normalized.contains("from your hand")
+                        && (normalized_next.starts_with("if you dont, this land enters tapped")
+                            || normalized_next
+                                .starts_with("if you don't, this land enters tapped")
+                            || normalized_next.starts_with("if you dont, it enters tapped")
+                            || normalized_next.starts_with("if you don't, it enters tapped")))
+                        || (normalized.starts_with("if this card is in your opening hand")
                             && normalized.contains("you may begin the game with")
                             && normalized.contains("on the battlefield")
                             && (normalized_next.starts_with("if you do, exile ")
-                                || normalized_next.starts_with("if you do exile "))
-                    );
+                                || normalized_next.starts_with("if you do exile ")));
 
                     if should_try_combined_static {
                         let combined_text = format!(

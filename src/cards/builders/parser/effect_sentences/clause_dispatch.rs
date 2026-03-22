@@ -1,8 +1,8 @@
 use super::super::activation_and_restrictions::{
     find_negation_span, parse_cant_restrictions, parse_choose_color_phrase_words,
     parse_choose_creature_type_phrase_words, parse_choose_player_phrase_words,
-    parse_single_word_keyword_action, parse_target_player_choose_objects_clause, parse_you_choose_objects_clause,
-    parse_you_choose_player_clause,
+    parse_single_word_keyword_action, parse_target_player_choose_objects_clause,
+    parse_you_choose_objects_clause, parse_you_choose_player_clause,
 };
 use super::super::keyword_static::{
     keyword_action_to_static_ability, parse_ability_line, parse_pt_modifier,
@@ -11,9 +11,9 @@ use super::super::keyword_static::{
 use super::super::lexer::OwnedLexToken;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    contains_until_end_of_turn, parse_card_type, parse_color, parse_subject,
-    parse_target_phrase, parse_value, parser_trace, parser_trace_stack, span_from_tokens,
-    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
+    contains_until_end_of_turn, parse_card_type, parse_color, parse_subject, parse_target_phrase,
+    parse_value, parser_trace, parser_trace_stack, span_from_tokens, starts_with_until_end_of_turn,
+    token_index_for_word_index, trim_commas, words,
 };
 use super::chain_carry::{parse_leading_player_may, remove_first_word, remove_through_first_word};
 use super::clause_pattern_helpers::extract_subject_player;
@@ -102,8 +102,7 @@ pub(crate) fn parse_effect_clause(tokens: &[OwnedLexToken]) -> Result<EffectAst,
         let main_tokens = trim_commas(&tokens[..unless_idx]);
         if !main_tokens.is_empty()
             && let Ok(main_effect) = parse_effect_clause(&main_tokens)
-            && let Some(unless_effect) =
-                try_build_unless(vec![main_effect], tokens, unless_idx)?
+            && let Some(unless_effect) = try_build_unless(vec![main_effect], tokens, unless_idx)?
         {
             return Ok(unless_effect);
         }

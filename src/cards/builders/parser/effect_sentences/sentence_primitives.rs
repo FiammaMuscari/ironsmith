@@ -4,7 +4,8 @@ use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
     is_article, is_source_reference_words, mana_pips_from_token, parse_card_type, parse_color,
-    parse_counter_type_from_tokens, split_on_and, split_on_period, token_index_for_word_index, words,
+    parse_counter_type_from_tokens, split_on_and, split_on_period, token_index_for_word_index,
+    words,
 };
 use super::super::util::{parse_target_phrase, parse_value, span_from_tokens};
 use super::sentence_helpers::*;
@@ -15,16 +16,17 @@ use super::{
     parse_delayed_when_that_dies_this_turn_sentence, parse_destroy_or_exile_all_split_sentence,
     parse_each_player_choose_and_sacrifice_rest,
     parse_each_player_put_permanent_cards_exiled_with_source_sentence, parse_earthbend_sentence,
-    parse_effect_chain, parse_effect_chain_inner, parse_effect_clause, parse_enchant_sentence,
-    parse_exile_hand_and_graveyard_bundle_sentence, parse_exile_instead_of_graveyard_sentence,
-    parse_exile_then_return_same_object_sentence, parse_exile_up_to_one_each_target_type_sentence,
-    parse_for_each_counter_removed_sentence, parse_for_each_destroyed_this_way_sentence,
-    parse_for_each_exiled_this_way_sentence, parse_for_each_opponent_doesnt,
-    parse_for_each_player_doesnt, parse_for_each_vote_clause, parse_gain_ability_sentence,
-    parse_gain_ability_to_source_sentence, parse_gain_life_equal_to_age_sentence,
-    parse_gain_life_equal_to_power_sentence, parse_gain_x_plus_life_sentence,
-    parse_look_at_hand_sentence, parse_look_at_top_then_exile_one_sentence, parse_mana_symbol,
-    parse_monstrosity_sentence, parse_play_from_graveyard_sentence, parse_prevent_damage_sentence,
+    parse_effect_chain, parse_effect_chain_inner, parse_effect_clause, parse_effect_sentence,
+    parse_enchant_sentence, parse_exile_hand_and_graveyard_bundle_sentence,
+    parse_exile_instead_of_graveyard_sentence, parse_exile_then_return_same_object_sentence,
+    parse_exile_up_to_one_each_target_type_sentence, parse_for_each_counter_removed_sentence,
+    parse_for_each_destroyed_this_way_sentence, parse_for_each_exiled_this_way_sentence,
+    parse_for_each_opponent_doesnt, parse_for_each_player_doesnt, parse_for_each_vote_clause,
+    parse_gain_ability_sentence, parse_gain_ability_to_source_sentence,
+    parse_gain_life_equal_to_age_sentence, parse_gain_life_equal_to_power_sentence,
+    parse_gain_x_plus_life_sentence, parse_look_at_hand_sentence,
+    parse_look_at_top_then_exile_one_sentence, parse_mana_symbol, parse_monstrosity_sentence,
+    parse_play_from_graveyard_sentence, parse_prevent_damage_sentence,
     parse_same_name_gets_fanout_sentence, parse_same_name_target_fanout_sentence,
     parse_search_library_sentence, parse_sentence_counter_target_spell_if_it_was_kicked,
     parse_sentence_counter_target_spell_thats_second_cast_this_turn,
@@ -33,8 +35,7 @@ use super::{
     parse_shared_color_target_fanout_sentence, parse_shuffle_graveyard_into_library_sentence,
     parse_shuffle_object_into_library_sentence, parse_subtype_word, parse_take_extra_turn_sentence,
     parse_target_player_exiles_creature_and_graveyard_sentence, parse_vote_extra_sentence,
-    parse_vote_start_sentence, parse_you_and_each_opponent_voted_with_you_sentence,
-    trim_commas, parse_effect_sentence,
+    parse_vote_start_sentence, parse_you_and_each_opponent_voted_with_you_sentence, trim_commas,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -1131,7 +1132,8 @@ pub(crate) fn parse_return_with_counters_on_it_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     fn normalize_destination_words<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
-        words.iter()
+        words
+            .iter()
             .filter(|word| !is_article(word))
             .filter_map(|word| match *word {
                 "s" | "'" | "’" => None,
@@ -1278,7 +1280,8 @@ pub(crate) fn parse_put_onto_battlefield_with_counters_on_it_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     fn normalize_destination_words<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
-        words.iter()
+        words
+            .iter()
             .filter(|word| !is_article(word))
             .filter_map(|word| match *word {
                 "s" | "'" | "’" => None,
@@ -2241,7 +2244,8 @@ pub(crate) fn parse_sentence_comma_then_chain_special(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     fn normalize_words<'a>(words: &'a [&'a str]) -> Vec<&'a str> {
-        words.iter()
+        words
+            .iter()
             .filter_map(|word| match *word {
                 "s" | "'" | "’" => None,
                 _ => Some(
@@ -4204,7 +4208,11 @@ pub(crate) fn parse_sentence_delayed_next_upkeep_unless_pays_lose_game(
             trim_commas(&segments[2]),
         )
     } else {
-        (Vec::new(), trim_commas(&segments[0]), trim_commas(&segments[1]))
+        (
+            Vec::new(),
+            trim_commas(&segments[0]),
+            trim_commas(&segments[1]),
+        )
     };
     let upkeep_words = words(&upkeep_tokens);
     let pay_idx = if upkeep_words.starts_with(&[

@@ -1052,27 +1052,29 @@ pub(crate) fn parse_if_result_predicate(tokens: &[OwnedLexToken]) -> Option<IfRe
     let is_exact_negated_result = |subject: &str| {
         (words.len() == 2
             && words[0] == subject
-            && matches!(words[1], "dont" | "didnt" | "can't" | "cant" | "don't" | "didn't"))
+            && matches!(
+                words[1],
+                "dont" | "didnt" | "can't" | "cant" | "don't" | "didn't"
+            ))
             || (words.len() == 3
                 && words[0] == subject
                 && (matches!(words[1], "do" | "did" | "can") && words[2] == "not"))
     };
     let is_negated_this_way_result = |subject: &str| {
-        let action_idx =
-            if words.len() >= 5
-                && words[0] == subject
-                && matches!(words[1], "dont" | "didnt" | "don't" | "didn't")
-            {
-                2
-            } else if words.len() >= 6
-                && words[0] == subject
-                && matches!(words[1], "do" | "did")
-                && words[2] == "not"
-            {
-                3
-            } else {
-                return false;
-            };
+        let action_idx = if words.len() >= 5
+            && words[0] == subject
+            && matches!(words[1], "dont" | "didnt" | "don't" | "didn't")
+        {
+            2
+        } else if words.len() >= 6
+            && words[0] == subject
+            && matches!(words[1], "do" | "did")
+            && words[2] == "not"
+        {
+            3
+        } else {
+            return false;
+        };
 
         if words[words.len() - 2] != "this" || words[words.len() - 1] != "way" {
             return false;

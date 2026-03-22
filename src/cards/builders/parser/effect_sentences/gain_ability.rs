@@ -181,10 +181,9 @@ fn parse_simple_ability_modifier_clause_lexed(
     {
         let subject_words = LowercaseWordView::new(subject_tokens);
         let subject_word_refs = subject_words.to_word_refs();
-        let target_phrase_with_controller_tail =
-            subject_word_refs.first().copied() == Some("target")
-                && (subject_word_refs.contains(&"control")
-                    || subject_word_refs.contains(&"controls"));
+        let target_phrase_with_controller_tail = subject_word_refs.first().copied()
+            == Some("target")
+            && (subject_word_refs.contains(&"control") || subject_word_refs.contains(&"controls"));
         if !target_phrase_with_controller_tail {
             return Ok(None);
         }

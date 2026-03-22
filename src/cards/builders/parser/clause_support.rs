@@ -701,15 +701,14 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
         let trigger_body = &tokens[start_idx..];
         let trigger_body_view = LowercaseWordView::new(trigger_body);
         let trigger_body_words = trigger_body_view.to_word_refs();
-        let blocked_prefix_len = if trigger_body_words
-            .starts_with(&["this", "creature", "becomes", "blocked"])
-        {
-            Some(4usize)
-        } else if trigger_body_words.starts_with(&["this", "becomes", "blocked"]) {
-            Some(3usize)
-        } else {
-            None
-        };
+        let blocked_prefix_len =
+            if trigger_body_words.starts_with(&["this", "creature", "becomes", "blocked"]) {
+                Some(4usize)
+            } else if trigger_body_words.starts_with(&["this", "becomes", "blocked"]) {
+                Some(3usize)
+            } else {
+                None
+            };
         if let Some(prefix_len) = blocked_prefix_len
             && let Some(effect_start_rel) = trigger_body_view.token_index_after_words(prefix_len)
         {
@@ -726,15 +725,20 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
             }
         }
 
-        let leaves_prefix_len = if trigger_body_words.starts_with(&["this", "leaves", "the", "battlefield"]) {
-            Some(4usize)
-        } else if trigger_body_words
-            .starts_with(&["this", "creature", "leaves", "the", "battlefield"])
-        {
-            Some(5usize)
-        } else {
-            None
-        };
+        let leaves_prefix_len =
+            if trigger_body_words.starts_with(&["this", "leaves", "the", "battlefield"]) {
+                Some(4usize)
+            } else if trigger_body_words.starts_with(&[
+                "this",
+                "creature",
+                "leaves",
+                "the",
+                "battlefield",
+            ]) {
+                Some(5usize)
+            } else {
+                None
+            };
         if let Some(prefix_len) = leaves_prefix_len
             && let Some(effect_start_rel) = trigger_body_view.token_index_after_words(prefix_len)
         {
@@ -754,7 +758,10 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
         }
     }
 
-    if let Some(split_idx) = tokens.iter().position(|token| token.kind == TokenKind::Comma) {
+    if let Some(split_idx) = tokens
+        .iter()
+        .position(|token| token.kind == TokenKind::Comma)
+    {
         let trigger_tokens = &tokens[start_idx..split_idx];
         let trigger_word_view = LowercaseWordView::new(trigger_tokens);
         let trigger_words = trigger_word_view.to_word_refs();
@@ -765,10 +772,12 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
         {
             let subject_words = &trigger_words[..attack_idx];
             if let Some(player) =
-                super::activation_and_restrictions::parse_trigger_subject_player_filter(subject_words)
+                super::activation_and_restrictions::parse_trigger_subject_player_filter(
+                    subject_words,
+                )
             {
-                let Some(with_object_start) = trigger_word_view
-                    .token_index_for_word_index(attack_idx + 2)
+                let Some(with_object_start) =
+                    trigger_word_view.token_index_for_word_index(attack_idx + 2)
                 else {
                     return Err(CardTextError::ParseError(format!(
                         "missing attacking-object filter in trigger clause (clause: '{}')",
@@ -779,7 +788,9 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
                 let mut min_total_attackers = None;
                 let mut one_or_more = false;
                 if let Some((count, stripped)) =
-                    super::activation_and_restrictions::parse_leading_or_more_quantifier(object_tokens)
+                    super::activation_and_restrictions::parse_leading_or_more_quantifier(
+                        object_tokens,
+                    )
                 {
                     one_or_more = true;
                     object_tokens = stripped;
@@ -961,8 +972,8 @@ pub(crate) fn rewrite_parse_triggered_line_lexed(
                 trigger_tokens,
                 effects_tokens,
             );
-            let effects = rewrite_parse_effect_sentences_lexed(&rewritten_effects_tokens)
-                .or_else(|_| {
+            let effects =
+                rewrite_parse_effect_sentences_lexed(&rewritten_effects_tokens).or_else(|_| {
                     let Some(stripped) = super::activation_and_restrictions::
                         maybe_strip_leading_damage_subject_tokens(&rewritten_effects_tokens)
                     else {

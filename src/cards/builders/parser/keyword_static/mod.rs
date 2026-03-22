@@ -9,10 +9,10 @@ use super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggere
 use super::native_tokens::LowercaseWordView;
 use super::object_filters::{parse_object_filter, parse_object_filter_lexed};
 use super::util::{
-    is_source_reference_words, parse_card_type, parse_color, parse_counter_type_from_tokens,
-    parse_counter_type_word, parse_flashback_keyword_line, parse_subtype_flexible, parse_value,
-    parse_zone_word, mana_pips_from_token, split_on_and, split_on_comma_or_semicolon,
-    split_on_period, trim_commas, words,
+    is_source_reference_words, mana_pips_from_token, parse_card_type, parse_color,
+    parse_counter_type_from_tokens, parse_counter_type_word, parse_flashback_keyword_line,
+    parse_subtype_flexible, parse_value, parse_zone_word, split_on_and,
+    split_on_comma_or_semicolon, split_on_period, trim_commas, words,
 };
 #[allow(unused_imports)]
 use crate::ability::{Ability, AbilityKind, TriggeredAbility};
@@ -2132,8 +2132,7 @@ pub(crate) fn parse_enter_as_copy_as_enters_line(
             && matches!(tail.get(2).copied(), Some("a" | "an"))
         {
             (2usize, 3usize)
-        } else if (tail.get(1..3) == Some(&["it", "is"])
-            || tail.get(1..3) == Some(&["it", "s"]))
+        } else if (tail.get(1..3) == Some(&["it", "is"]) || tail.get(1..3) == Some(&["it", "s"]))
             && matches!(tail.get(3).copied(), Some("a" | "an"))
         {
             (3usize, 4usize)
@@ -4040,10 +4039,12 @@ pub(crate) fn parse_cost_modifier_mana_cost(
         let Some(group) = mana_pips_from_token(token) else {
             break;
         };
-        if group
-            .iter()
-            .any(|symbol| matches!(symbol, ManaSymbol::X | ManaSymbol::Snow | ManaSymbol::Life(_)))
-        {
+        if group.iter().any(|symbol| {
+            matches!(
+                symbol,
+                ManaSymbol::X | ManaSymbol::Snow | ManaSymbol::Life(_)
+            )
+        }) {
             break;
         }
         pips.push(group);

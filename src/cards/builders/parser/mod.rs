@@ -5,6 +5,7 @@ mod activation_helpers;
 mod clause_support;
 mod compile_support;
 mod cst;
+mod document_parser;
 mod effect_ast_normalization;
 mod effect_ast_traversal;
 mod effect_pipeline;
@@ -32,7 +33,6 @@ mod shared_types;
 mod static_ability_helpers;
 mod util;
 mod value_helpers;
-mod document_parser;
 pub(crate) use activation_and_restrictions::*;
 pub(crate) use document_parser::*;
 pub(crate) use effect_pipeline::*;
@@ -53,6 +53,8 @@ pub(crate) use shared_types::{
     CompileContext, EffectLoweringContext, IdGenContext, LineInfo, LoweringFrame, MetadataLine,
     NormalizedLine,
 };
+#[cfg(test)]
+pub(crate) use util::tokenize_line;
 pub(crate) use util::{
     SubjectAst, contains_until_end_of_turn, find_activation_cost_start, is_basic_color_word,
     is_sentence_helper_tag, parse_counter_type_from_tokens, parse_counter_type_word, parse_number,
@@ -60,8 +62,6 @@ pub(crate) use util::{
     split_on_comma, split_on_comma_or_semicolon, split_on_period, starts_with_activation_cost,
     value_contains_unbound_x, words,
 };
-#[cfg(test)]
-pub(crate) use util::tokenize_line;
 
 #[cfg(test)]
 mod tests;

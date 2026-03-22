@@ -6,8 +6,8 @@ use super::super::lexer::{OwnedLexToken, split_lexed_sentences};
 use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    is_article, mana_pips_from_token, parse_number, parse_subject, parse_target_phrase, span_from_tokens,
-    token_index_for_word_index, trim_commas, words,
+    is_article, mana_pips_from_token, parse_number, parse_subject, parse_target_phrase,
+    span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
 use super::sentence_helpers::*;
 use super::{
@@ -1478,9 +1478,7 @@ fn parse_search_then_delayed_next_upkeep_unless_pays_lose_game(
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let first_effects = parse_effect_chain(first)?;
     let first_words = words(first);
-    if first_effects.is_empty()
-        || !first_words.starts_with(&["search", "your", "library"])
-    {
+    if first_effects.is_empty() || !first_words.starts_with(&["search", "your", "library"]) {
         return Ok(None);
     }
 
@@ -1946,10 +1944,9 @@ fn parse_effect_sentences_from_sentence_inputs(
         }
         if is_generic_token_reminder_sentence(&sentence_tokens) {
             let reminder_words = words(&sentence_tokens);
-            let delayed_pronoun_lifecycle = matches!(
-                reminder_words.first().copied(),
-                Some("exile" | "sacrifice")
-            ) && (reminder_words.contains(&"it") || reminder_words.contains(&"them"));
+            let delayed_pronoun_lifecycle =
+                matches!(reminder_words.first().copied(), Some("exile" | "sacrifice"))
+                    && (reminder_words.contains(&"it") || reminder_words.contains(&"them"));
             let pronoun_followup_clause = reminder_words.starts_with(&["when", "it"])
                 || reminder_words.starts_with(&["whenever", "it"])
                 || reminder_words.starts_with(&["when", "they"])
@@ -1972,31 +1969,30 @@ fn parse_effect_sentences_from_sentence_inputs(
             continue;
         }
 
-        let mut sentence_effects = if let Some(followup) =
-            parse_token_copy_followup_sentence(&sentence_tokens)
-        {
-            if try_apply_token_copy_followup(&mut effects, followup)? {
-                parser_trace(
-                    "parse_effect_sentences:token-copy-followup",
-                    &sentence_tokens,
-                );
-                sentence_idx += 1;
-                continue;
-            }
-            apply_unapplied_token_copy_followup(sentence, &sentence_tokens, followup)?
-        } else if let Some(lexed_sentence) = sentences[sentence_idx].lexed.as_deref()
-            && sentence_tokens.as_slice() == sentences[sentence_idx].lowered()
-        {
-            if super::looks_like_multi_create_chain_lexed(lexed_sentence) {
-                crate::cards::builders::parser::clause_support::rewrite_parse_effect_sentences(
+        let mut sentence_effects =
+            if let Some(followup) = parse_token_copy_followup_sentence(&sentence_tokens) {
+                if try_apply_token_copy_followup(&mut effects, followup)? {
+                    parser_trace(
+                        "parse_effect_sentences:token-copy-followup",
+                        &sentence_tokens,
+                    );
+                    sentence_idx += 1;
+                    continue;
+                }
+                apply_unapplied_token_copy_followup(sentence, &sentence_tokens, followup)?
+            } else if let Some(lexed_sentence) = sentences[sentence_idx].lexed.as_deref()
+                && sentence_tokens.as_slice() == sentences[sentence_idx].lowered()
+            {
+                if super::looks_like_multi_create_chain_lexed(lexed_sentence) {
+                    crate::cards::builders::parser::clause_support::rewrite_parse_effect_sentences(
                         &sentence_tokens,
                     )?
+                } else {
+                    parse_effect_sentence_lexed(lexed_sentence)?
+                }
             } else {
-                parse_effect_sentence_lexed(lexed_sentence)?
-            }
-        } else {
-            parse_effect_sentence(&sentence_tokens)?
-        };
+                parse_effect_sentence(&sentence_tokens)?
+            };
         if wraps_as_if_did_not {
             sentence_effects = vec![EffectAst::IfResult {
                 predicate: IfResultPredicate::DidNot,

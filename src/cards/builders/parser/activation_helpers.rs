@@ -470,7 +470,10 @@ pub(crate) fn parse_or_mana_color_choices(
         let Some(word) = token.as_word() else {
             continue;
         };
-        if matches!(word.to_ascii_lowercase().as_str(), "to" | "your" | "their" | "its" | "mana" | "pool") {
+        if matches!(
+            word.to_ascii_lowercase().as_str(),
+            "to" | "your" | "their" | "its" | "mana" | "pool"
+        ) {
             continue;
         }
         return Ok(None);

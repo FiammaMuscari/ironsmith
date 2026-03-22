@@ -946,7 +946,8 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
 }
 
 pub(crate) fn parse_counter_type_from_tokens(tokens: &[OwnedLexToken]) -> Option<CounterType> {
-    let token_word_view = crate::cards::builders::parser::native_tokens::LowercaseWordView::new(tokens);
+    let token_word_view =
+        crate::cards::builders::parser::native_tokens::LowercaseWordView::new(tokens);
     let token_words = token_word_view.to_word_refs();
 
     if let Some(counter_idx) = token_words
@@ -1905,7 +1906,10 @@ fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, Card
     let mut explicit_target = false;
 
     let all_words = words(tokens);
-    if matches!(all_words.as_slice(), ["any"] | ["any", "target"] | ["any", "targets"]) {
+    if matches!(
+        all_words.as_slice(),
+        ["any"] | ["any", "target"] | ["any", "targets"]
+    ) {
         return Ok(TargetAst::AnyTarget(span));
     }
     if matches!(
@@ -3504,10 +3508,7 @@ pub(crate) fn parse_transmute_line(
             crate::effect::Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source)),
         )))
     };
-    let text = format!(
-        "Transmute {}",
-        base_mana_cost.to_oracle()
-    );
+    let text = format!("Transmute {}", base_mana_cost.to_oracle());
 
     Ok(Some(ParsedAbility {
         ability: Ability {
@@ -3961,7 +3962,10 @@ pub(crate) fn parse_additional_cost_choice_options(
         .map(|option| lowercase_word_tokens(&option))
         .collect::<Vec<_>>();
 
-    if normalized_options.iter().any(|option| find_verb(option).is_none()) {
+    if normalized_options
+        .iter()
+        .any(|option| find_verb(option).is_none())
+    {
         return Ok(None);
     }
 
@@ -4032,20 +4036,22 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
         return Ok(None);
     }
 
-    let (condition_tokens, tail_tokens) = if let Some(comma_idx) =
-        tokens.iter().position(|token| token.is_comma())
-    {
-        (
-            trim_commas(&tokens[1..comma_idx]),
-            trim_commas(tokens.get(comma_idx + 1..).unwrap_or_default()),
-        )
-    } else if let Some(may_idx) = tokens.windows(3).position(|window| {
-        window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay")
-    }) {
-        (trim_commas(&tokens[1..may_idx]), trim_commas(&tokens[may_idx..]))
-    } else {
-        return Ok(None);
-    };
+    let (condition_tokens, tail_tokens) =
+        if let Some(comma_idx) = tokens.iter().position(|token| token.is_comma()) {
+            (
+                trim_commas(&tokens[1..comma_idx]),
+                trim_commas(tokens.get(comma_idx + 1..).unwrap_or_default()),
+            )
+        } else if let Some(may_idx) = tokens.windows(3).position(|window| {
+            window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay")
+        }) {
+            (
+                trim_commas(&tokens[1..may_idx]),
+                trim_commas(&tokens[may_idx..]),
+            )
+        } else {
+            return Ok(None);
+        };
     if parse_self_free_cast_alternative_cost_line(&tail_tokens).is_none()
         && parse_you_may_rather_than_spell_cost_line(&tail_tokens, line)?.is_none()
     {
@@ -4065,7 +4071,8 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
             } else {
                 6usize
             };
-            if let Some((n, _)) = parse_number(condition_tokens.get(count_start..).unwrap_or_default())
+            if let Some((n, _)) =
+                parse_number(condition_tokens.get(count_start..).unwrap_or_default())
             {
                 crate::static_abilities::ThisSpellCostCondition::YouWereDealtDamageByCreaturesThisTurnOrMore(n)
             } else {
