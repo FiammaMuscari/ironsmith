@@ -1,9 +1,9 @@
 use super::super::lexer::{OwnedLexToken, TokenKind, lex_line, trim_lexed_commas};
 use super::super::native_tokens::LowercaseWordView;
-use super::super::object_filters::{parse_object_filter, split_on_or};
+use super::super::object_filters::{parse_object_filter, parse_object_filter_lexed, split_on_or};
 use super::super::util::{
-    compat_tokens_from_lexed, is_article, parse_number, parse_subject, parse_target_phrase,
-    parse_zone_word, span_from_tokens, token_index_for_word_index, trim_commas, words,
+    is_article, parse_number, parse_subject, parse_target_phrase, parse_zone_word,
+    span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
 use super::sentence_helpers::*;
 use super::{
@@ -23,6 +23,16 @@ enum SearchLibraryManaConstraint {
     LessThanOrEqual(u32),
     GreaterThanOrEqual(u32),
     OneOf(Vec<u32>),
+}
+
+fn lowercase_word_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut lowered = tokens.to_vec();
+    for token in &mut lowered {
+        if let Some(word) = token.word_mut() {
+            *word = word.to_ascii_lowercase();
+        }
+    }
+    lowered
 }
 
 pub(crate) fn parse_search_library_disjunction_filter(
@@ -57,7 +67,7 @@ pub(crate) fn parse_search_library_disjunction_filter(
 pub(crate) fn parse_search_library_sentence_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_search_library_sentence(&compat_tokens_from_lexed(tokens))
+    parse_search_library_sentence(tokens)
 }
 
 pub(crate) fn parse_cant_effect_sentence_lexed(
@@ -79,22 +89,22 @@ pub(crate) fn parse_cant_effect_sentence_lexed(
         return Ok(None);
     }
 
-    let clause_compat = compat_tokens_from_lexed(&clause_tokens);
-    if find_negation_span(&clause_compat).is_none() {
+    let clause_tokens = lowercase_word_tokens(&clause_tokens);
+    if find_negation_span(&clause_tokens).is_none() {
         return Ok(None);
     }
-    if let Some((neg_start, _)) = find_negation_span(&clause_compat)
-        && clause_compat[..neg_start]
+    if let Some((neg_start, _)) = find_negation_span(&clause_tokens)
+        && clause_tokens[..neg_start]
             .iter()
             .any(|token| token.is_word("and"))
     {
         return Ok(None);
     }
 
-    let Some(restrictions) = parse_cant_restrictions(&clause_compat)? else {
+    let Some(restrictions) = parse_cant_restrictions(&clause_tokens)? else {
         return Err(CardTextError::ParseError(format!(
             "unsupported restriction clause body (clause: '{}')",
-            words(&clause_compat).join(" ")
+            words(&clause_tokens).join(" ")
         )));
     };
 
@@ -106,7 +116,7 @@ pub(crate) fn parse_cant_effect_sentence_lexed(
                 if *existing != parsed_target {
                     return Err(CardTextError::ParseError(format!(
                         "unsupported mixed restriction targets (clause: '{}')",
-                        words(&clause_compat).join(" ")
+                        words(&clause_tokens).join(" ")
                     )));
                 }
             } else {
@@ -132,7 +142,7 @@ fn remainder_after_prefix_words_lexed(
 ) -> Vec<OwnedLexToken> {
     let words = LowercaseWordView::new(tokens);
     let start = words
-        .token_index_for_word_index(consumed_word_count)
+        .token_index_after_words(consumed_word_count)
         .unwrap_or(tokens.len());
     trim_lexed_commas(&tokens[start..]).to_vec()
 }
@@ -318,12 +328,13 @@ pub(crate) fn parse_restriction_duration_lexed(
 fn extract_search_library_mana_constraint(
     filter_tokens: &[OwnedLexToken],
 ) -> Option<(Vec<OwnedLexToken>, SearchLibraryManaConstraint)> {
-    let filter_words = words(filter_tokens);
+    let filter_word_view = LowercaseWordView::new(filter_tokens);
+    let filter_words = filter_word_view.to_word_refs();
     let with_idx = filter_words.windows(3).position(|window| {
         window[0] == "with" && window[1] == "mana" && matches!(window[2], "cost" | "value")
     })?;
     let clause_word_start = with_idx + 3;
-    let clause_token_start = token_index_for_word_index(filter_tokens, with_idx)?;
+    let clause_token_start = filter_word_view.token_index_for_word_index(with_idx)?;
     let base_filter_tokens = trim_commas(&filter_tokens[..clause_token_start]);
     if base_filter_tokens.is_empty() {
         return None;
@@ -399,7 +410,8 @@ fn apply_search_library_mana_constraint(
 pub(crate) fn split_search_same_name_reference_filter(
     tokens: &[OwnedLexToken],
 ) -> Option<(Vec<OwnedLexToken>, Vec<OwnedLexToken>)> {
-    let words_all = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words_all = word_view.to_word_refs();
     let (start_word_idx, phrase_len) = if let Some(idx) = words_all
         .windows(5)
         .position(|window| window == ["with", "the", "same", "name", "as"])
@@ -414,9 +426,10 @@ pub(crate) fn split_search_same_name_reference_filter(
         return None;
     };
 
-    let start_token_idx = token_index_for_word_index(tokens, start_word_idx)?;
-    let end_token_idx =
-        token_index_for_word_index(tokens, start_word_idx + phrase_len).unwrap_or(tokens.len());
+    let start_token_idx = word_view.token_index_for_word_index(start_word_idx)?;
+    let end_token_idx = word_view
+        .token_index_for_word_index(start_word_idx + phrase_len)
+        .unwrap_or(tokens.len());
     let base_filter_tokens = trim_commas(&tokens[..start_token_idx]);
     let reference_tokens = trim_commas(&tokens[end_token_idx..]);
     Some((base_filter_tokens, reference_tokens))
@@ -477,7 +490,8 @@ pub(crate) fn normalize_search_library_filter(filter: &mut ObjectFilter) {
 pub(crate) fn parse_search_library_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let words_all = words(tokens);
+    let words_view = LowercaseWordView::new(tokens);
+    let words_all = words_view.to_word_refs();
     let Some(search_idx) = tokens
         .iter()
         .position(|token| token.is_word("search") || token.is_word("searches"))
@@ -513,7 +527,10 @@ pub(crate) fn parse_search_library_sentence(
         subject_tokens = &subject_tokens[..subject_tokens.len().saturating_sub(1)];
     }
     let mut leading_effects = Vec::new();
-    if !subject_tokens.is_empty() && find_verb(subject_tokens).is_some() {
+    if !subject_tokens.is_empty()
+        && super::lex_chain_helpers::find_verb_lexed(&lowercase_word_tokens(subject_tokens))
+            .is_some()
+    {
         let mut leading_tokens = trim_commas(subject_tokens);
         while leading_tokens
             .last()
@@ -522,7 +539,9 @@ pub(crate) fn parse_search_library_sentence(
             leading_tokens.pop();
         }
         if !leading_tokens.is_empty() {
-            leading_effects = parse_effect_chain_with_sentence_primitives(&leading_tokens)?;
+            leading_effects = super::chain_carry::parse_effect_chain_with_sentence_primitives_lexed(
+                &lowercase_word_tokens(&leading_tokens),
+            )?;
         }
         subject_tokens = &[];
     }
@@ -533,7 +552,8 @@ pub(crate) fn parse_search_library_sentence(
     let mut player = chooser;
 
     let search_tokens = &tokens[search_idx..];
-    let search_words = words(search_tokens);
+    let search_word_view = LowercaseWordView::new(search_tokens);
+    let search_words = search_word_view.to_word_refs();
     let Some(search_verb) = search_words.first().copied() else {
         return Ok(None);
     };
@@ -605,7 +625,10 @@ pub(crate) fn parse_search_library_sentence(
         "library",
         "for",
     ]) {
-        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        search_player_target = Some(TargetAst::Player(
+            PlayerFilter::target_player(),
+            span_from_tokens(&search_tokens[1..3]),
+        ));
         forced_library_owner = Some(PlayerFilter::target_player());
         search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
     } else if search_body_words.starts_with(&[
@@ -625,18 +648,27 @@ pub(crate) fn parse_search_library_sentence(
         "library",
         "for",
     ]) {
-        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        search_player_target = Some(TargetAst::Player(
+            PlayerFilter::target_opponent(),
+            span_from_tokens(&search_tokens[1..3]),
+        ));
         forced_library_owner = Some(PlayerFilter::target_opponent());
         search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
     } else if search_body_words.starts_with(&["target", "player", "library", "for"])
         || search_body_words.starts_with(&["target", "players", "library", "for"])
     {
-        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        search_player_target = Some(TargetAst::Player(
+            PlayerFilter::target_player(),
+            span_from_tokens(&search_tokens[1..3]),
+        ));
         forced_library_owner = Some(PlayerFilter::target_player());
     } else if search_body_words.starts_with(&["target", "opponent", "library", "for"])
         || search_body_words.starts_with(&["target", "opponents", "library", "for"])
     {
-        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        search_player_target = Some(TargetAst::Player(
+            PlayerFilter::target_opponent(),
+            span_from_tokens(&search_tokens[1..3]),
+        ));
         forced_library_owner = Some(PlayerFilter::target_opponent());
     } else if search_body_words.starts_with(&["that", "player", "library", "for"])
         || search_body_words.starts_with(&["that", "players", "library", "for"])
@@ -728,7 +760,8 @@ pub(crate) fn parse_search_library_sentence(
         if !(token.is_word("exile") || token.is_word("exiles")) {
             return None;
         }
-        let tail = words(&search_tokens[idx + 1..]);
+        let tail_view = LowercaseWordView::new(&search_tokens[idx + 1..]);
+        let tail = tail_view.to_word_refs();
         (tail.starts_with(&["it"])
             || tail.starts_with(&["them"])
             || tail.starts_with(&["that", "card"])
@@ -863,25 +896,29 @@ pub(crate) fn parse_search_library_sentence(
         (raw_filter_tokens.clone(), None)
     };
     let mut same_name_reference: Option<SameNameReference> = None;
-    let raw_filter_words = words(&raw_filter_tokens);
+    let raw_filter_word_view = LowercaseWordView::new(&raw_filter_tokens);
+    let raw_filter_words = raw_filter_word_view.to_word_refs();
     if raw_filter_words.len() >= 3
         && raw_filter_words[raw_filter_words.len() - 3..] == ["with", "that", "name"]
     {
-        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 3)
+        let base_end = raw_filter_word_view
+            .token_index_for_word_index(raw_filter_words.len() - 3)
             .unwrap_or(raw_filter_tokens.len());
         filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
         same_name_reference = Some(SameNameReference::TaggedIt);
     } else if raw_filter_words.len() >= 4
         && raw_filter_words[raw_filter_words.len() - 4..] == ["with", "the", "chosen", "name"]
     {
-        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 4)
+        let base_end = raw_filter_word_view
+            .token_index_for_word_index(raw_filter_words.len() - 4)
             .unwrap_or(raw_filter_tokens.len());
         filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
         same_name_reference = Some(SameNameReference::TaggedIt);
     } else if raw_filter_words.len() >= 3
         && raw_filter_words[raw_filter_words.len() - 3..] == ["with", "chosen", "name"]
     {
-        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 3)
+        let base_end = raw_filter_word_view
+            .token_index_for_word_index(raw_filter_words.len() - 3)
             .unwrap_or(raw_filter_tokens.len());
         filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
         same_name_reference = Some(SameNameReference::TaggedIt);
@@ -930,16 +967,18 @@ pub(crate) fn parse_search_library_sentence(
         };
     }
 
-    let filter_words: Vec<&str> = words(&filter_tokens)
+    let filter_word_view = LowercaseWordView::new(&filter_tokens);
+    let filter_words: Vec<&str> = filter_word_view
+        .to_word_refs()
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
     let mut filter = if let Some(named_idx) = filter_words.iter().position(|word| *word == "named")
     {
         let name = filter_words
-            .iter()
-            .skip(named_idx + 1)
-            .copied()
+        .iter()
+        .skip(named_idx + 1)
+        .copied()
             .collect::<Vec<_>>()
             .join(" ");
         if name.is_empty() {
@@ -1184,7 +1223,9 @@ pub(crate) fn parse_search_library_sentence(
 
         let discard_tokens = trim_commas(&search_tokens[discard_idx..discard_end]);
         if !discard_tokens.is_empty() {
-            effects.push(parse_effect_clause(&discard_tokens)?);
+            effects.push(super::clause_dispatch::parse_effect_clause_lexed(
+                &lowercase_word_tokens(&discard_tokens),
+            )?);
         }
         effects.push(EffectAst::ShuffleLibrary { player });
     }
@@ -1201,12 +1242,15 @@ pub(crate) fn parse_search_library_sentence(
     {
         let trailing_tokens = trim_commas(&search_tokens[and_idx + 1..]);
         if !trailing_tokens.is_empty() {
-            let trailing_words = words(&trailing_tokens);
+            let trailing_word_view = LowercaseWordView::new(&trailing_tokens);
+            let trailing_words = trailing_word_view.to_word_refs();
             let starts_with_life_clause = trailing_words.starts_with(&["you", "gain"])
                 || trailing_words.starts_with(&["target", "player", "gains"])
                 || trailing_words.starts_with(&["target", "player", "gain"]);
             if starts_with_life_clause {
-                let trailing_effect = parse_effect_clause(&trailing_tokens)?;
+                let trailing_effect = super::clause_dispatch::parse_effect_clause_lexed(
+                    &lowercase_word_tokens(&trailing_tokens),
+                )?;
                 effects.push(trailing_effect);
             }
         }
@@ -1719,9 +1763,8 @@ pub(crate) fn parse_for_each_exiled_this_way_sentence(
         return Ok(None);
     }
 
-    let filter_tokens =
-        compat_tokens_from_lexed(&lex_line("a permanent that shares a card type with it", 0)?);
-    let filter = parse_object_filter(&filter_tokens, false)?;
+    let filter_tokens = lex_line("a permanent that shares a card type with it", 0)?;
+    let filter = parse_object_filter_lexed(&filter_tokens, false)?;
 
     Ok(Some(vec![EffectAst::ForEachTagged {
         tag: IT_TAG.into(),

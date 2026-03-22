@@ -3,10 +3,10 @@ use super::super::compile_support::compile_statement_effects;
 use super::super::lexer::{OwnedLexToken, lexed_words, trim_lexed_commas};
 use super::super::lowering_support::rewrite_parsed_triggered_ability as parsed_triggered_ability;
 use super::super::native_tokens::LowercaseWordView;
-use super::super::object_filters::{parse_object_filter, split_on_or};
+use super::super::object_filters::{parse_object_filter, parse_object_filter_lexed, split_on_or};
 use super::super::util::{
-    compat_tokens_from_lexed, is_article, is_source_reference_words, parse_mana_symbol,
-    parse_target_phrase, span_from_tokens, token_index_for_word_index, trim_commas, words,
+    is_article, is_source_reference_words, parse_mana_symbol, parse_target_phrase,
+    span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
 use super::dispatch_inner::trim_edge_punctuation;
 use super::lex_chain_helpers::find_verb_lexed;
@@ -199,8 +199,7 @@ fn parse_simple_ability_modifier_clause_lexed(
         return Ok(None);
     }
 
-    let ability_compat = compat_tokens_from_lexed(ability_tokens);
-    let mut abilities = if let Some(actions) = parse_ability_line(&ability_compat) {
+    let mut abilities = if let Some(actions) = parse_ability_line(ability_tokens) {
         reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
         actions
             .into_iter()
@@ -211,7 +210,7 @@ fn parse_simple_ability_modifier_clause_lexed(
     };
     if abilities.is_empty()
         && let Some(granted) =
-            parse_granted_activated_or_triggered_ability_for_gain(&ability_compat, &clause_words)?
+            parse_granted_activated_or_triggered_ability_for_gain(ability_tokens, &clause_words)?
     {
         abilities.push(granted);
     }
@@ -250,12 +249,11 @@ fn parse_simple_ability_modifier_clause_lexed(
         }));
     }
 
-    let subject_compat = compat_tokens_from_lexed(subject_tokens);
     let is_demonstrative_subject = subject_words
         .first()
         .is_some_and(|word| word == "that" || word == "those");
     if is_demonstrative_subject || subject_words.find("target").is_some() {
-        let target = parse_target_phrase(&subject_compat)?;
+        let target = parse_target_phrase(subject_tokens)?;
         if losing {
             return Ok(Some(EffectAst::RemoveAbilitiesFromTarget {
                 target,
@@ -270,7 +268,7 @@ fn parse_simple_ability_modifier_clause_lexed(
         }));
     }
 
-    let filter = parse_object_filter(&subject_compat, false).map_err(|_| {
+    let filter = parse_object_filter_lexed(subject_tokens, false).map_err(|_| {
         CardTextError::ParseError(format!(
             "unsupported subject in {}-ability clause (clause: '{}')",
             if losing { "lose" } else { "gain" },

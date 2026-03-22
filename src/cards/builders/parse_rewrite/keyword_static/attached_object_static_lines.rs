@@ -379,7 +379,11 @@ pub(crate) fn parse_attached_has_and_loses_keywords_line(
 pub(crate) fn parse_attached_cant_attack_or_block_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let normalized = normalize_cant_words(tokens);
+    let normalized_storage = normalize_cant_words(tokens);
+    let normalized = normalized_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if normalized.len() < 4 {
         return Ok(None);
     }
@@ -489,7 +493,11 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
     }
 
     let tail_tokens = trim_edge_punctuation(&tokens[and_idx + 1..]);
-    let tail_words = normalize_cant_words(&tail_tokens);
+    let tail_words_storage = normalize_cant_words(&tail_tokens);
+    let tail_words = tail_words_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let subject = if is_enchanted {
         "enchanted creature"
     } else {

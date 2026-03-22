@@ -51,7 +51,9 @@ pub(crate) use super::clause_pattern_helpers::{
     parse_prevent_next_time_damage_sentence, parse_redirect_next_damage_sentence,
     parse_verb_first_clause, parse_win_the_game_clause,
 };
-pub(crate) use super::conditionals::{parse_conditional_sentence, parse_predicate};
+pub(crate) use super::conditionals::{
+    parse_conditional_sentence, parse_conditional_sentence_lexed, parse_predicate,
+};
 pub(crate) use super::conditionals::{parse_predicate_lexed, split_leading_result_prefix_lexed};
 pub(crate) use super::dispatch_entry::{
     apply_where_x_to_damage_amounts, parse_token_copy_followup_sentence_lexed,

@@ -1990,7 +1990,8 @@ pub(crate) fn parse_effect_sentences_lexed(
 }
 
 pub(crate) fn is_cant_be_regenerated_followup_sentence(tokens: &[OwnedLexToken]) -> bool {
-    let words = normalize_cant_words(tokens);
+    let words_storage = normalize_cant_words(tokens);
+    let words = words_storage.iter().map(String::as_str).collect::<Vec<_>>();
     matches!(
         words.as_slice(),
         ["it", "cant", "be", "regenerated"]
@@ -2001,7 +2002,8 @@ pub(crate) fn is_cant_be_regenerated_followup_sentence(tokens: &[OwnedLexToken])
 }
 
 pub(crate) fn is_cant_be_regenerated_this_turn_followup_sentence(tokens: &[OwnedLexToken]) -> bool {
-    let words = normalize_cant_words(tokens);
+    let words_storage = normalize_cant_words(tokens);
+    let words = words_storage.iter().map(String::as_str).collect::<Vec<_>>();
     matches!(
         words.as_slice(),
         ["it", "cant", "be", "regenerated", "this", "turn"]

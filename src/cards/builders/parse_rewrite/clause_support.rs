@@ -11,8 +11,8 @@ use super::keyword_static::parse_static_ability_ast_line_lexed;
 use super::lexer::{OwnedLexToken, TokenKind, split_lexed_sentences};
 use super::native_tokens::LowercaseWordView;
 use super::util::{
-    compat_tokens_from_lexed, parse_card_type, parse_color, parse_flashback_keyword_line,
-    parse_subtype_flexible, split_on_and, split_on_comma_or_semicolon, words,
+    parse_card_type, parse_color, parse_flashback_keyword_line, parse_subtype_flexible,
+    split_on_and, split_on_comma_or_semicolon, words,
 };
 
 fn parse_protection_chain(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAction>> {
@@ -379,8 +379,7 @@ pub(crate) fn rewrite_parse_ability_line_lexed(
                     actions.push(action);
                     continue;
                 }
-                let compat = compat_tokens_from_lexed(part);
-                if let Some(action) = parse_ability_phrase(&compat) {
+                if let Some(action) = parse_ability_phrase(part) {
                     actions.push(action);
                 } else {
                     all_ok = false;
@@ -393,13 +392,12 @@ pub(crate) fn rewrite_parse_ability_line_lexed(
             continue;
         }
 
-        let compat = compat_tokens_from_lexed(segment);
-        if let Some(action) = parse_ability_phrase(&compat) {
+        if let Some(action) = parse_ability_phrase(segment) {
             actions.push(action);
             continue;
         }
 
-        let and_parts = split_on_and(&compat);
+        let and_parts = split_on_lexed_and(segment);
         if and_parts.len() > 1 {
             let mut all_ok = true;
             for part in &and_parts {

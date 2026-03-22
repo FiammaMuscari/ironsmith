@@ -196,19 +196,19 @@ pub(crate) fn run_sentence_primitives_lexed(
 pub(crate) fn parse_sentence_return_with_counters_on_it_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_sentence_return_with_counters_on_it(&compat_tokens_from_lexed(tokens))
+    parse_sentence_return_with_counters_on_it(tokens)
 }
 
 pub(crate) fn parse_sentence_put_onto_battlefield_with_counters_on_it_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_sentence_put_onto_battlefield_with_counters_on_it(&compat_tokens_from_lexed(tokens))
+    parse_sentence_put_onto_battlefield_with_counters_on_it(tokens)
 }
 
 pub(crate) fn parse_sentence_exile_source_with_counters_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    parse_sentence_exile_source_with_counters(&compat_tokens_from_lexed(tokens))
+    parse_sentence_exile_source_with_counters(tokens)
 }
 
 pub(crate) fn parse_you_and_target_player_each_draw_sentence(

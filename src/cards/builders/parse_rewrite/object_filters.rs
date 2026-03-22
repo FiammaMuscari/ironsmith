@@ -9,15 +9,28 @@ use super::keyword_static::parse_pt_modifier;
 use super::lexer::OwnedLexToken;
 use super::native_tokens::LowercaseWordView;
 use super::util::{
-    apply_filter_keyword_constraint, compat_tokens_from_lexed, is_article,
-    is_demonstrative_object_head, is_non_outlaw_word, is_outlaw_word, is_permanent_type,
-    is_source_reference_words, parse_alternative_cast_words, parse_card_type, parse_color,
-    parse_counter_type_word, parse_filter_counter_constraint_words,
+    apply_filter_keyword_constraint, is_article, is_demonstrative_object_head, is_non_outlaw_word,
+    is_outlaw_word, is_permanent_type, is_source_reference_words, parse_alternative_cast_words,
+    parse_card_type, parse_color, parse_counter_type_word, parse_filter_counter_constraint_words,
     parse_filter_keyword_constraint_words, parse_non_color, parse_non_subtype, parse_non_supertype,
     parse_non_type, parse_subtype_flexible, parse_unsigned_pt_word, parse_zone_word,
-    push_outlaw_subtypes, split_on_and, token_index_for_word_index, trim_commas, words,
+    push_outlaw_subtypes, split_on_and, trim_commas, words,
 };
 use super::value_helpers::parse_filter_comparison_tokens;
+
+fn normalized_token_index_for_word_index(
+    tokens: &[OwnedLexToken],
+    word_idx: usize,
+) -> Option<usize> {
+    LowercaseWordView::new(tokens).token_index_for_word_index(word_idx)
+}
+
+fn normalized_token_index_after_words(
+    tokens: &[OwnedLexToken],
+    word_count: usize,
+) -> Option<usize> {
+    LowercaseWordView::new(tokens).token_index_after_words(word_count)
+}
 
 fn lower_words_end_with(words: &[&str], suffix: &[&str]) -> bool {
     words.len() >= suffix.len() && words[words.len() - suffix.len()..] == *suffix
@@ -339,11 +352,15 @@ fn parse_attached_reference_or_another_disjunction(
         return Ok(None);
     }
 
-    let first_words: Vec<&str> = words(&segments[0])
+    let first_view = LowercaseWordView::new(&segments[0]);
+    let first_words: Vec<&str> = first_view
+        .to_word_refs()
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
-    let second_words: Vec<&str> = words(&segments[1])
+    let second_view = LowercaseWordView::new(&segments[1]);
+    let second_words: Vec<&str> = second_view
+        .to_word_refs()
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
@@ -402,7 +419,8 @@ pub(crate) fn parse_object_filter(
             (Option<PlayerFilter>, Option<ObjectFilter>),
             CardTextError,
         > {
-            let target_words = words(fragment_tokens);
+            let target_view = LowercaseWordView::new(fragment_tokens);
+            let target_words = target_view.to_word_refs();
             if target_words.starts_with(&["you"]) {
                 return Ok((Some(PlayerFilter::You), None));
             }
@@ -429,9 +447,11 @@ pub(crate) fn parse_object_filter(
             ))
         };
 
-        let target_words = words(target_tokens);
+        let target_view = LowercaseWordView::new(target_tokens);
+        let target_words = target_view.to_word_refs();
         if let Some(or_word_idx) = target_words.iter().position(|word| *word == "or")
-            && let Some(or_token_idx) = token_index_for_word_index(target_tokens, or_word_idx)
+            && let Some(or_token_idx) =
+                normalized_token_index_for_word_index(target_tokens, or_word_idx)
         {
             let left_tokens = trim_commas(&target_tokens[..or_token_idx]);
             let right_tokens = trim_commas(&target_tokens[or_token_idx + 1..]);
@@ -516,7 +536,9 @@ pub(crate) fn parse_object_filter(
     }
     let mut segment_tokens = base_tokens.clone();
 
-    let all_words_with_articles: Vec<&str> = words(&base_tokens)
+    let all_words_view = LowercaseWordView::new(&base_tokens);
+    let all_words_with_articles: Vec<&str> = all_words_view
+        .to_word_refs()
         .into_iter()
         .filter(|word| *word != "instead")
         .collect();
@@ -587,7 +609,8 @@ pub(crate) fn parse_object_filter(
             filter.entered_graveyard_from_battlefield_this_turn = true;
             all_words.drain(word_start..word_start + 8);
 
-            let segment_words = words(&segment_tokens);
+            let segment_view = LowercaseWordView::new(&segment_tokens);
+            let segment_words = segment_view.to_word_refs();
             let mut segment_match: Option<(usize, usize)> = None;
             for (len, segment_phrase) in if phrase[1] == "was" {
                 vec![
@@ -660,11 +683,12 @@ pub(crate) fn parse_object_filter(
             }
             if let Some((seg_start, len)) = segment_match
                 && let Some(start_token_idx) =
-                    token_index_for_word_index(&segment_tokens, seg_start)
+                    normalized_token_index_for_word_index(&segment_tokens, seg_start)
             {
                 let end_word_idx = seg_start + len;
-                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
-                    .unwrap_or(segment_tokens.len());
+                let end_token_idx =
+                    normalized_token_index_after_words(&segment_tokens, end_word_idx)
+                        .unwrap_or(segment_tokens.len());
                 segment_tokens.drain(start_token_idx..end_token_idx);
             }
             break;
@@ -696,14 +720,16 @@ pub(crate) fn parse_object_filter(
             filter.entered_graveyard_this_turn = true;
             all_words.drain(word_start..word_start + 8);
 
-            let segment_words = words(&segment_tokens);
+            let segment_view = LowercaseWordView::new(&segment_tokens);
+            let segment_words = segment_view.to_word_refs();
             if let Some(seg_start) = segment_words.windows(8).position(|window| window == phrase)
                 && let Some(start_token_idx) =
-                    token_index_for_word_index(&segment_tokens, seg_start)
+                    normalized_token_index_for_word_index(&segment_tokens, seg_start)
             {
                 let end_word_idx = seg_start + 8;
-                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
-                    .unwrap_or(segment_tokens.len());
+                let end_token_idx =
+                    normalized_token_index_after_words(&segment_tokens, end_word_idx)
+                        .unwrap_or(segment_tokens.len());
                 segment_tokens.drain(start_token_idx..end_token_idx);
             }
             break;
@@ -720,7 +746,8 @@ pub(crate) fn parse_object_filter(
             filter.entered_graveyard_from_battlefield_this_turn = true;
             all_words.drain(word_start + 1..word_start + 5);
 
-            let segment_words = words(&segment_tokens);
+            let segment_view = LowercaseWordView::new(&segment_tokens);
+            let segment_words = segment_view.to_word_refs();
             let mut segment_match: Option<(usize, usize)> = None;
             for (len, phrase) in [
                 (
@@ -747,11 +774,12 @@ pub(crate) fn parse_object_filter(
             }
             if let Some((seg_start, len)) = segment_match
                 && let Some(start_token_idx) =
-                    token_index_for_word_index(&segment_tokens, seg_start + 1)
+                    normalized_token_index_for_word_index(&segment_tokens, seg_start + 1)
             {
                 let end_word_idx = seg_start + len;
-                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
-                    .unwrap_or(segment_tokens.len());
+                let end_token_idx =
+                    normalized_token_index_after_words(&segment_tokens, end_word_idx)
+                        .unwrap_or(segment_tokens.len());
                 segment_tokens.drain(start_token_idx..end_token_idx);
             }
             break;
@@ -791,7 +819,8 @@ pub(crate) fn parse_object_filter(
         filter.zone = Some(Zone::Battlefield);
         all_words.drain(word_start..word_start + len);
 
-        let segment_words = words(&segment_tokens);
+        let segment_view = LowercaseWordView::new(&segment_tokens);
+        let segment_words = segment_view.to_word_refs();
         let mut segment_match: Option<(usize, usize)> = None;
         for (len, phrase) in [
             (
@@ -881,10 +910,11 @@ pub(crate) fn parse_object_filter(
             }
         }
         if let Some((seg_start, len)) = segment_match
-            && let Some(start_token_idx) = token_index_for_word_index(&segment_tokens, seg_start)
+            && let Some(start_token_idx) =
+                normalized_token_index_for_word_index(&segment_tokens, seg_start)
         {
             let end_word_idx = seg_start + len;
-            let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
+            let end_token_idx = normalized_token_index_after_words(&segment_tokens, end_word_idx)
                 .unwrap_or(segment_tokens.len());
             segment_tokens.drain(start_token_idx..end_token_idx);
         }
@@ -916,7 +946,8 @@ pub(crate) fn parse_object_filter(
             // Also drop the reference phrase from the token-backed segment list so later
             // card-type/subtype extraction doesn't incorrectly treat "artifact" as part of the
             // filtered object's identity.
-            let segment_words = words(&segment_tokens);
+            let segment_view = LowercaseWordView::new(&segment_tokens);
+            let segment_words = segment_view.to_word_refs();
             let mut segment_match: Option<(usize, usize)> = None;
             for len in [13usize, 12usize] {
                 let Some(idx) = segment_words.windows(len).position(|window| {
@@ -956,11 +987,12 @@ pub(crate) fn parse_object_filter(
             }
             if let Some((start_word_idx, len)) = segment_match
                 && let Some(start_token_idx) =
-                    token_index_for_word_index(&segment_tokens, start_word_idx)
+                    normalized_token_index_for_word_index(&segment_tokens, start_word_idx)
             {
                 let end_word_idx = start_word_idx + len;
-                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
-                    .unwrap_or(segment_tokens.len());
+                let end_token_idx =
+                    normalized_token_index_after_words(&segment_tokens, end_word_idx)
+                        .unwrap_or(segment_tokens.len());
                 if start_token_idx < end_token_idx && end_token_idx <= segment_tokens.len() {
                     segment_tokens.drain(start_token_idx..end_token_idx);
                 }
@@ -2392,7 +2424,9 @@ pub(crate) fn parse_object_filter(
     let mut segment_words_lists: Vec<Vec<String>> = Vec::new();
 
     for segment in &segments {
-        let segment_words: Vec<String> = words(segment)
+        let segment_view = LowercaseWordView::new(segment);
+        let segment_words: Vec<String> = segment_view
+            .to_word_refs()
             .into_iter()
             .filter(|word| !is_article(word))
             .map(ToString::to_string)
@@ -2514,7 +2548,8 @@ pub(crate) fn parse_object_filter(
     let and_segment_words_lists: Vec<Vec<String>> = and_segments
         .iter()
         .map(|segment| {
-            words(segment)
+            LowercaseWordView::new(segment)
+                .to_word_refs()
                 .into_iter()
                 .filter(|word| !is_article(word))
                 .map(ToString::to_string)
@@ -3043,8 +3078,7 @@ pub(crate) fn parse_object_filter_lexed(
     if let Some(filter) = parse_simple_object_filter_lexed(tokens, other) {
         return Ok(filter);
     }
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_object_filter(&compat, other)
+    parse_object_filter(tokens, other)
 }
 
 pub(crate) fn parse_spell_filter_lexed(tokens: &[OwnedLexToken]) -> ObjectFilter {

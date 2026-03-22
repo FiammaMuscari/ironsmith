@@ -9,9 +9,8 @@ use super::lexer::{OwnedLexToken, TokenKind, trim_lexed_commas};
 use super::native_tokens::LowercaseWordView;
 use super::object_filters::{parse_object_filter, parse_object_filter_lexed};
 use super::util::{
-    compat_tokens_from_lexed, is_article, parse_counter_type_word, parse_number,
-    parse_number_word_i32, parse_value, parse_value_expr_words, token_index_for_word_index,
-    trim_commas, words,
+    is_article, parse_counter_type_word, parse_number, parse_number_word_i32, parse_value,
+    parse_value_expr_words, token_index_for_word_index, trim_commas, words,
 };
 
 fn parse_spells_cast_this_turn_matching_count_value(tokens: &[OwnedLexToken]) -> Option<Value> {
@@ -376,8 +375,7 @@ pub(crate) fn parse_equal_to_number_of_filter_value_lexed(
     let value_start_token_idx = words_all.token_index_for_word_index(number_word_idx)?;
     let value_tokens = trim_lexed_edge_punctuation(&tokens[value_start_token_idx..]);
     if let Some((value, used)) = parse_value_from_lexed(value_tokens) {
-        let compat_value_tokens = compat_tokens_from_lexed(value_tokens);
-        if words(&compat_value_tokens[used..]).is_empty() {
+        if words(&value_tokens[used..]).is_empty() {
             return Some(value);
         }
     }
@@ -429,8 +427,7 @@ pub(crate) fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value_lexed(
     let offset_start_token_idx = clause_words.token_index_for_word_index(operator_word_idx + 1)?;
     let offset_tokens = trim_lexed_commas(&tokens[offset_start_token_idx..]);
     let (offset_value, used) = parse_number_from_lexed(offset_tokens)?;
-    let compat_offset_tokens = compat_tokens_from_lexed(offset_tokens);
-    if !words(&compat_offset_tokens[used..]).is_empty() {
+    if !words(&offset_tokens[used..]).is_empty() {
         return None;
     }
 

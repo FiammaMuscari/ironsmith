@@ -12,6 +12,7 @@ use crate::{ChoiceCount, Supertype};
 use super::super::activation_and_restrictions::{
     starts_with_target_indicator, title_case_token_word,
 };
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
     parse_card_type, parse_color, parse_counter_type_from_tokens, parse_counter_type_word,
@@ -951,7 +952,8 @@ pub(crate) fn parse_can_attack_as_though_no_defender_clause(
 pub(crate) fn parse_prevent_next_time_damage_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if !clause_words.starts_with(&["the", "next", "time"]) {
         return Ok(None);
     }
@@ -1060,7 +1062,8 @@ pub(crate) fn parse_prevent_next_time_damage_sentence(
 pub(crate) fn parse_redirect_next_damage_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if clause_words.starts_with(&["the", "next", "time"]) {
         let Some(would_idx) = clause_words.iter().position(|word| *word == "would") else {
             return Ok(None);

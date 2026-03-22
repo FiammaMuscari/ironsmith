@@ -4437,7 +4437,9 @@ impl GameState {
 
     /// Returns true when the match is using commander designations.
     pub fn is_commander_game(&self) -> bool {
-        self.players.iter().any(|player| !player.commanders.is_empty())
+        self.players
+            .iter()
+            .any(|player| !player.commanders.is_empty())
     }
 
     /// Returns true if this player's turn-one draw-step draw should be skipped.

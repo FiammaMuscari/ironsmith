@@ -10764,7 +10764,8 @@ fn test_boseiju_channel_lets_destroyed_permanent_controller_search_for_land() {
         .expect("Boseiju text should parse");
 
     let source_id = game.create_object_from_definition(&boseiju, alice, Zone::Hand);
-    let target_land_id = game.create_object_from_definition(&command_tower(), bob, Zone::Battlefield);
+    let target_land_id =
+        game.create_object_from_definition(&command_tower(), bob, Zone::Battlefield);
     let library_basic_id = game.create_object_from_definition(&basic_forest(), bob, Zone::Library);
     let bob_library_before = game.player(bob).expect("bob exists").library.len();
 
@@ -10801,11 +10802,12 @@ fn test_boseiju_channel_lets_destroyed_permanent_controller_search_for_land() {
         "Boseiju should let the destroyed permanent's controller find a basic land"
     );
     assert!(
-        game.player(bob).is_some_and(|player| player.graveyard.iter().any(|&id| {
-            game.object(id)
-                .map(|obj| obj.name == "Command Tower" && obj.owner == bob)
-                .unwrap_or(false)
-        })),
+        game.player(bob)
+            .is_some_and(|player| player.graveyard.iter().any(|&id| {
+                game.object(id)
+                    .map(|obj| obj.name == "Command Tower" && obj.owner == bob)
+                    .unwrap_or(false)
+            })),
         "the destroyed nonbasic land should be in Bob's graveyard"
     );
     assert_eq!(
@@ -10880,7 +10882,8 @@ fn test_boseiju_channel_activation_flow_preserves_land_search_after_destroying_t
             )
         })
         .expect("Boseiju should expose its channel ability from hand");
-    let target_land_id = game.create_object_from_definition(&command_tower(), bob, Zone::Battlefield);
+    let target_land_id =
+        game.create_object_from_definition(&command_tower(), bob, Zone::Battlefield);
     let library_basic_id = game.create_object_from_definition(&basic_forest(), bob, Zone::Library);
     let bob_library_before = game.player(bob).expect("bob exists").library.len();
 
@@ -10921,9 +10924,9 @@ fn test_boseiju_channel_activation_flow_preserves_land_search_after_destroying_t
     .expect("Boseiju should accept its target");
 
     let next_cost_ctx = match progress {
-        GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::SelectOptions(
-            ctx,
-        )) => ctx,
+        GameProgress::NeedsDecisionCtx(
+            crate::decisions::context::DecisionContext::SelectOptions(ctx),
+        ) => ctx,
         other => panic!("expected Boseiju to ask for its next cost, got {other:?}"),
     };
 
@@ -10982,11 +10985,12 @@ fn test_boseiju_channel_activation_flow_preserves_land_search_after_destroying_t
         "Boseiju should still let the destroyed permanent's controller search during real activation"
     );
     assert!(
-        game.player(bob).is_some_and(|player| player.graveyard.iter().any(|&id| {
-            game.object(id)
-                .map(|obj| obj.name == "Command Tower" && obj.owner == bob)
-                .unwrap_or(false)
-        })),
+        game.player(bob)
+            .is_some_and(|player| player.graveyard.iter().any(|&id| {
+                game.object(id)
+                    .map(|obj| obj.name == "Command Tower" && obj.owner == bob)
+                    .unwrap_or(false)
+            })),
         "the destroyed nonbasic land should end up in Bob's graveyard"
     );
     assert_eq!(
@@ -11026,11 +11030,16 @@ fn test_boseiju_channel_assigns_multiplayer_search_prompt_to_destroyed_controlle
             _game: &GameState,
             ctx: &crate::decisions::context::SelectObjectsContext,
         ) -> Vec<ObjectId> {
-            if ctx.candidates.iter().any(|candidate| candidate.name == "Forest") {
+            if ctx
+                .candidates
+                .iter()
+                .any(|candidate| candidate.name == "Forest")
+            {
                 self.search_prompt_player = Some(ctx.player);
-                self.saw_forest_candidate = ctx.candidates.iter().any(|candidate| {
-                    candidate.legal && candidate.name == "Forest"
-                });
+                self.saw_forest_candidate = ctx
+                    .candidates
+                    .iter()
+                    .any(|candidate| candidate.legal && candidate.name == "Forest");
             }
 
             ctx.candidates
@@ -11079,7 +11088,8 @@ fn test_boseiju_channel_assigns_multiplayer_search_prompt_to_destroyed_controlle
             )
         })
         .expect("Boseiju should expose its channel ability from hand");
-    let target_artifact_id = game.create_object_from_definition(&ornithopter(), bob, Zone::Battlefield);
+    let target_artifact_id =
+        game.create_object_from_definition(&ornithopter(), bob, Zone::Battlefield);
     let bob_library_before = game.player(bob).expect("bob exists").library.len();
     game.create_object_from_definition(&basic_forest(), bob, Zone::Library);
 
@@ -11123,9 +11133,9 @@ fn test_boseiju_channel_assigns_multiplayer_search_prompt_to_destroyed_controlle
     .expect("Boseiju should accept its multiplayer target");
 
     let next_cost_ctx = match progress {
-        GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::SelectOptions(
-            ctx,
-        )) => ctx,
+        GameProgress::NeedsDecisionCtx(
+            crate::decisions::context::DecisionContext::SelectOptions(ctx),
+        ) => ctx,
         other => panic!("expected Boseiju to ask for its next cost, got {other:?}"),
     };
 

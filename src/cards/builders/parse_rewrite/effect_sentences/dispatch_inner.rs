@@ -488,7 +488,8 @@ fn diagnose_sentence_unsupported(tokens: &[OwnedLexToken]) -> Option<CardTextErr
 }
 
 fn sentence_looks_like_supported_negated_untap_clause(tokens: &[OwnedLexToken]) -> bool {
-    let words = normalize_cant_words(tokens);
+    let words_storage = normalize_cant_words(tokens);
+    let words = words_storage.iter().map(String::as_str).collect::<Vec<_>>();
     let has_negated_untap = words.windows(3).any(|window| {
         window == ["dont", "untap", "during"] || window == ["doesnt", "untap", "during"]
     });
@@ -576,22 +577,19 @@ fn parse_effect_chain_rule(view: &ClauseView<'_>) -> Result<Option<Vec<EffectAst
 fn parse_redirect_next_damage_sentence_rule_lexed(
     view: &LexClauseView<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let compat = compat_tokens_from_lexed(view.tokens);
-    parse_redirect_next_damage_sentence(&compat)
+    parse_redirect_next_damage_sentence(view.tokens)
 }
 
 fn parse_prevent_next_time_damage_sentence_rule_lexed(
     view: &LexClauseView<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let compat = compat_tokens_from_lexed(view.tokens);
-    parse_prevent_next_time_damage_sentence(&compat)
+    parse_prevent_next_time_damage_sentence(view.tokens)
 }
 
 fn parse_double_target_power_sentence_rule_lexed(
     view: &LexClauseView<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let compat = compat_tokens_from_lexed(view.tokens);
-    parse_double_target_power_sentence(&compat)
+    parse_double_target_power_sentence(view.tokens)
 }
 
 fn parse_preconditional_sentence_primitives_rule_lexed(
@@ -627,8 +625,7 @@ fn parse_conditional_sentence_rule_lexed(
     view: &LexClauseView<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     if view.head() == "if" {
-        let compat = compat_tokens_from_lexed(view.tokens);
-        return parse_conditional_sentence(&compat).map(Some);
+        return parse_conditional_sentence_lexed(view.tokens).map(Some);
     }
     Ok(None)
 }
@@ -1281,7 +1278,8 @@ pub(crate) fn parse_effect_sentence_lexed(
 pub(crate) fn parse_effect_sentence_inner_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
-    let sentence_words = crate::cards::builders::parse_rewrite::lexed_words(tokens);
+    let word_view = LexClauseView::from_tokens(tokens);
+    let sentence_words = word_view.words.to_word_refs();
     if is_activate_only_restriction_sentence_lexed(tokens) {
         return Ok(Vec::new());
     }
@@ -1294,8 +1292,8 @@ pub(crate) fn parse_effect_sentence_inner_lexed(
 
     let starts_with_legacy_prefix = matches!(
         sentence_words.first().copied(),
-        Some("then" | "if" | "when" | "may")
-    );
+        Some("then" | "when" | "may")
+    ) || lexed_if_clause_prefers_legacy_path(&sentence_words);
     let needs_legacy_path = strip_labeled_conditional_prefix_lexed(tokens).is_some()
         || starts_with_legacy_prefix
         || super::parse_leading_player_may_lexed(tokens).is_some()
@@ -1308,6 +1306,24 @@ pub(crate) fn parse_effect_sentence_inner_lexed(
 
     let (_, effects) = run_sentence_parse_rules_lexed(tokens)?;
     Ok(effects)
+}
+
+fn lexed_if_clause_prefers_legacy_path(words: &[&str]) -> bool {
+    if words.first().copied() != Some("if") || words.len() < 3 {
+        return false;
+    }
+
+    let subject = words[1];
+    let aux = words[2];
+    matches!(subject, "you" | "they" | "player" | "players")
+        && matches!(
+            aux,
+            "do" | "does" | "did" | "can" | "dont" | "didnt" | "cant"
+        )
+        || (matches!(subject, "you" | "they" | "player" | "players")
+            && words.len() >= 4
+            && matches!(aux, "do" | "does" | "did" | "can")
+            && words[3] == "not")
 }
 
 fn lexed_sentence_uses_native_chain_path(tokens: &[OwnedLexToken], words: &[&str]) -> bool {
@@ -3908,7 +3924,9 @@ pub(crate) fn parse_gain_life_equal_to_power_sentence(
 pub(crate) fn parse_double_target_power_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let words = words(tokens);
+    let word_view =
+        crate::cards::builders::parse_rewrite::native_tokens::LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
     if !words.starts_with(&["double", "target"]) {
         return Ok(None);
     }

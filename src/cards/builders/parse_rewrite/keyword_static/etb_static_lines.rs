@@ -705,8 +705,7 @@ pub(crate) fn parse_where_x_value_clause(tokens: &[OwnedLexToken]) -> Option<Val
 pub(crate) fn parse_where_x_value_clause_lexed(
     tokens: &[crate::cards::builders::parse_rewrite::lexer::OwnedLexToken],
 ) -> Option<Value> {
-    let compat = crate::cards::builders::parse_rewrite::util::compat_tokens_from_lexed(tokens);
-    parse_where_x_value_clause(&compat)
+    parse_where_x_value_clause(tokens)
 }
 
 pub(crate) fn parse_where_x_source_stat_value(tokens: &[OwnedLexToken]) -> Option<Value> {

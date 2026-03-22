@@ -296,27 +296,26 @@ mod tests {
                 "",  // [1] Priority (draw) - Alice pass
                 "",  // [2] Priority (main) - Alice pass (go to combat)
                 "",  // [3] Priority (begin combat) - Alice pass
-                "",  // [4] Priority - Alice pass
-                "0", // [5] Attackers: declare Tivit (index 0) as attacker
-                "",  // [6] Priority (declare attackers step) - Alice pass
-                "",  // [7] Blockers: Bob doesn't block
-                "",  // [8] Priority (after blockers) - pass
-                "",  // [9] Priority - pass
+                "0", // [4] Attackers: declare Tivit (index 0) as attacker
+                "",  // [5] Priority (declare attackers step) - Alice pass
+                "",  // [6] Blockers: Bob doesn't block
+                "",  // [7] Priority (after blockers) - pass
+                "",  // [8] Priority - pass
                 // Tivit deals combat damage → council's dilemma triggers
                 // Voting: Alice may vote an additional time
-                "1", // [10] Boolean: Alice chooses to vote an additional time
-                "0", // [11] Options: Alice vote 1 = "evidence"
-                "0", // [12] Options: Alice vote 2 = "evidence"
-                "0", // [13] Options: Bob vote = "evidence"
+                "1", // [9] Boolean: Alice chooses to vote an additional time
+                "0", // [10] Options: Alice vote 1 = "evidence"
+                "0", // [11] Options: Alice vote 2 = "evidence"
+                "0", // [12] Options: Bob vote = "evidence"
                 // After votes, Tivit's trigger resolves (creates 3 Clues)
                 // Then Model of Unity triggers
+                "", // [13] Priority - pass
                 "", // [14] Priority - pass
-                "", // [15] Priority - pass
                 // May scry prompts for Model of Unity
-                "1", // [16] Boolean: Bob may scry 2 (1=yes)
-                "1", // [17] Boolean: Alice may scry 2 (1=yes)
+                "1", // [15] Boolean: Bob may scry 2 (1=yes)
+                "1", // [16] Boolean: Alice may scry 2 (1=yes)
                 // Scry decisions
-                "0", // [18+] Scry choices
+                "0", // [17+] Scry choices
                 "0", "0", "0",
             ],
             ReplayTestConfig::new()

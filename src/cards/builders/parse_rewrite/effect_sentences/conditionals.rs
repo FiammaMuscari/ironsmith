@@ -1,14 +1,15 @@
 use super::super::activation_and_restrictions::{contains_word_sequence, parse_named_number};
 use super::super::lexer::{OwnedLexToken, trim_lexed_commas};
 use super::super::modal_helpers::parse_if_result_predicate_lexed;
+use super::super::native_tokens::LowercaseWordView;
 use super::super::object_filters::parse_object_filter;
 use super::super::util::{
-    compat_tokens_from_lexed, is_article, is_permanent_type, parse_card_type,
-    parse_counter_type_word, parse_mana_symbol_word_flexible, parse_number, parse_target_phrase,
-    span_from_tokens, token_index_for_word_index, trim_commas, words,
+    is_article, is_permanent_type, parse_card_type, parse_counter_type_word,
+    parse_mana_symbol_word_flexible, parse_number, parse_target_phrase, span_from_tokens,
+    token_index_for_word_index, trim_commas, words,
 };
 use super::super::value_helpers::parse_filter_comparison_tokens;
-use super::parse_effect_chain;
+use super::{parse_effect_chain, parse_effect_chain_lexed};
 use crate::card::{PowerToughness, PtValue};
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -886,6 +887,92 @@ pub(crate) fn parse_conditional_sentence(
     return Ok(vec![EffectAst::IfResult { predicate, effects }]);
 }
 
+pub(crate) fn parse_conditional_sentence_lexed(
+    tokens: &[OwnedLexToken],
+) -> Result<Vec<EffectAst>, CardTextError> {
+    let comma_indices = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, token)| token.is_comma().then_some(idx))
+        .collect::<Vec<_>>();
+    if comma_indices.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing comma in if clause".to_string(),
+        ));
+    }
+
+    let first_comma_idx = comma_indices[0];
+    if first_comma_idx > 1 {
+        let predicate_tokens = &tokens[1..first_comma_idx];
+        if let Ok(predicate) = parse_predicate_lexed(predicate_tokens) {
+            let effect_tokens = &tokens[first_comma_idx + 1..];
+            let comma_fragment_looks_like_effect = if comma_indices.len() > 1 {
+                let fragment_tokens = &tokens[first_comma_idx + 1..comma_indices[1]];
+                parse_effect_chain_lexed(fragment_tokens)
+                    .map(|effects| !effects.is_empty())
+                    .unwrap_or(false)
+            } else {
+                true
+            };
+            if comma_fragment_looks_like_effect
+                && let Ok(effects) = parse_effect_chain_lexed(effect_tokens)
+                && !effects.is_empty()
+            {
+                return Ok(vec![EffectAst::Conditional {
+                    predicate,
+                    if_true: effects,
+                    if_false: Vec::new(),
+                }]);
+            }
+        }
+        if let Some(predicate) = parse_if_result_predicate_lexed(predicate_tokens) {
+            let effect_tokens = &tokens[first_comma_idx + 1..];
+            let effects = parse_effect_chain_lexed(effect_tokens)?;
+            return Ok(vec![EffectAst::IfResult { predicate, effects }]);
+        }
+    }
+
+    let mut split: Option<(usize, Vec<EffectAst>)> = None;
+    for idx in comma_indices.iter().rev().copied() {
+        let effect_tokens = &tokens[idx + 1..];
+        if effect_tokens.is_empty() {
+            continue;
+        }
+        if let Ok(effects) = parse_effect_chain_lexed(effect_tokens)
+            && !effects.is_empty()
+        {
+            split = Some((idx, effects));
+            break;
+        }
+    }
+
+    let (comma_idx, effects) = if let Some(split) = split {
+        split
+    } else {
+        let first_idx = comma_indices[0];
+        let effect_tokens = &tokens[first_idx + 1..];
+        (first_idx, parse_effect_chain_lexed(effect_tokens)?)
+    };
+    let predicate_tokens = &tokens[1..comma_idx];
+
+    if let Ok(predicate) = parse_predicate_lexed(predicate_tokens) {
+        return Ok(vec![EffectAst::Conditional {
+            predicate,
+            if_true: effects,
+            if_false: Vec::new(),
+        }]);
+    }
+    let Some(predicate) = parse_if_result_predicate_lexed(predicate_tokens) else {
+        let predicate = parse_predicate_lexed(predicate_tokens)?;
+        return Ok(vec![EffectAst::Conditional {
+            predicate,
+            if_true: effects,
+            if_false: Vec::new(),
+        }]);
+    };
+    Ok(vec![EffectAst::IfResult { predicate, effects }])
+}
+
 pub(crate) fn parse_if_result_predicate(tokens: &[OwnedLexToken]) -> Option<IfResultPredicate> {
     let words: Vec<&str> = words(tokens)
         .into_iter()
@@ -1131,11 +1218,12 @@ pub(crate) fn split_leading_result_prefix_lexed(
 pub(crate) fn parse_predicate_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<PredicateAst, CardTextError> {
-    parse_predicate(&compat_tokens_from_lexed(tokens))
+    parse_predicate(tokens)
 }
 
 pub(crate) fn parse_predicate(tokens: &[OwnedLexToken]) -> Result<PredicateAst, CardTextError> {
-    let raw_words = words(tokens);
+    let raw_word_view = LowercaseWordView::new(tokens);
+    let raw_words = raw_word_view.to_word_refs();
     let mut filtered: Vec<&str> = raw_words
         .iter()
         .copied()

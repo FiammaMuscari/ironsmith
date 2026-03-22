@@ -2790,7 +2790,11 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             continue;
         }
 
-        let segment_words = normalize_cant_words(&segment);
+        let segment_words_storage = normalize_cant_words(&segment);
+        let segment_words = segment_words_storage
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         if segment_words.as_slice() == ["cant", "block"] {
             extras.push(grant_for_anthem_subject(&clause, StaticAbility::cant_block()).into());
             continue;
@@ -2806,7 +2810,8 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             let Some((count, used)) = parse_number(count_tokens) else {
                 return Ok(None);
             };
-            let tail = normalize_cant_words(&count_tokens[used..]);
+            let tail_storage = normalize_cant_words(&count_tokens[used..]);
+            let tail = tail_storage.iter().map(String::as_str).collect::<Vec<_>>();
             if tail.as_slice() != ["creature"] && tail.as_slice() != ["creatures"] {
                 return Ok(None);
             }
@@ -2883,7 +2888,11 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             }
 
             let mut grant_must_attack = false;
-            let ability_words = normalize_cant_words(&ability_tokens);
+            let ability_words_storage = normalize_cant_words(&ability_tokens);
+            let ability_words = ability_words_storage
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
             if let Some(and_idx) = ability_words.windows(6).position(|window| {
                 window == ["and", "attacks", "each", "combat", "if", "able"]
                     || window == ["and", "attack", "each", "combat", "if", "able"]
@@ -3014,7 +3023,8 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
 pub(crate) fn parse_conditional_all_creatures_able_to_block_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
-    let all_words = normalize_cant_words(tokens);
+    let all_words_storage = normalize_cant_words(tokens);
+    let all_words = all_words_storage.iter().map(String::as_str).collect::<Vec<_>>();
     if !all_words.starts_with(&["as", "long", "as"]) {
         return Ok(None);
     }
@@ -3036,7 +3046,11 @@ pub(crate) fn parse_conditional_all_creatures_able_to_block_line(
     let condition = parse_static_condition_clause(&condition_tokens)?;
 
     let remainder = trim_commas(&tokens[comma_idx + 1..]);
-    let remainder_words = normalize_cant_words(&remainder);
+    let remainder_words_storage = normalize_cant_words(&remainder);
+    let remainder_words = remainder_words_storage
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if remainder_words.as_slice()
         == [
             "all",

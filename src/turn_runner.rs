@@ -1048,7 +1048,10 @@ mod tests {
 
         let action = runner.advance(&mut game, &mut tq).unwrap();
         assert!(matches!(action, TurnAction::RunPriority));
-        assert_eq!(game.player(alice).expect("alice should exist").hand.len(), 0);
+        assert_eq!(
+            game.player(alice).expect("alice should exist").hand.len(),
+            0
+        );
         assert_eq!(game.turn_history.cards_drawn_by_player(alice), 0);
     }
 
@@ -1076,7 +1079,10 @@ mod tests {
 
         let action = runner.advance(&mut game, &mut tq).unwrap();
         assert!(matches!(action, TurnAction::RunPriority));
-        assert_eq!(game.player(alice).expect("alice should exist").hand.len(), 1);
+        assert_eq!(
+            game.player(alice).expect("alice should exist").hand.len(),
+            1
+        );
         assert_eq!(game.turn_history.cards_drawn_by_player(alice), 1);
     }
 }

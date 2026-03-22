@@ -765,8 +765,14 @@ mod tests {
         let mut dm = AlwaysNoDecisionMaker;
         let events = execute_draw_step_with(&mut game, &mut dm);
 
-        assert!(events.is_empty(), "normal games should skip the opening draw");
-        assert_eq!(game.player(alice).expect("alice should exist").hand.len(), 0);
+        assert!(
+            events.is_empty(),
+            "normal games should skip the opening draw"
+        );
+        assert_eq!(
+            game.player(alice).expect("alice should exist").hand.len(),
+            0
+        );
         assert_eq!(game.turn_history.cards_drawn_by_player(alice), 0);
     }
 
@@ -788,8 +794,15 @@ mod tests {
         let mut dm = AlwaysNoDecisionMaker;
         let events = execute_draw_step_with(&mut game, &mut dm);
 
-        assert_eq!(events.len(), 1, "commander games should keep the opening draw");
-        assert_eq!(game.player(alice).expect("alice should exist").hand.len(), 1);
+        assert_eq!(
+            events.len(),
+            1,
+            "commander games should keep the opening draw"
+        );
+        assert_eq!(
+            game.player(alice).expect("alice should exist").hand.len(),
+            1
+        );
         assert_eq!(game.turn_history.cards_drawn_by_player(alice), 1);
     }
 }

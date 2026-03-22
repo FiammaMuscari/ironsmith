@@ -18,11 +18,12 @@ use crate::zone::Zone;
 use crate::{ChoiceCount, PowerToughness, PtValue, TagKey};
 
 use super::activation_and_restrictions::{parse_ability_phrase, parse_activation_cost};
-use super::clause_support::rewrite_parse_effect_sentences;
+use super::clause_support::{rewrite_parse_effect_sentences, rewrite_parse_effect_sentences_lexed};
 use super::effect_sentences::{find_verb, parse_subtype_word, parse_supertype_word};
 use super::keyword_static::keyword_action_to_static_ability;
 use super::keyword_static::parse_this_spell_cost_condition;
 use super::lexer::{OwnedLexToken, TokenKind, lex_line};
+use super::native_tokens::LowercaseWordView;
 use super::object_filters::{parse_object_filter, split_on_or};
 
 fn push_legacy_compat_words(
@@ -163,6 +164,16 @@ pub(crate) fn compat_tokens_from_lexed(lexed: &[OwnedLexToken]) -> Vec<OwnedLexT
     }
 
     tokens
+}
+
+fn lowercase_word_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut lowered = tokens.to_vec();
+    for token in &mut lowered {
+        if let Some(word) = token.word_mut() {
+            *word = word.to_ascii_lowercase();
+        }
+    }
+    lowered
 }
 
 #[allow(dead_code)]
@@ -328,7 +339,13 @@ pub(crate) fn replace_unbound_x_with_value(
 }
 
 pub(crate) fn starts_with_activation_cost(tokens: &[OwnedLexToken]) -> bool {
-    let Some(word) = tokens.first().and_then(OwnedLexToken::as_word) else {
+    let Some(first_token) = tokens.first() else {
+        return false;
+    };
+    if mana_pips_from_token(first_token).is_some() {
+        return true;
+    }
+    let Some(word) = first_token.as_word() else {
         return false;
     };
     if matches!(
@@ -350,7 +367,7 @@ pub(crate) fn starts_with_activation_cost(tokens: &[OwnedLexToken]) -> bool {
     if word.contains('/') {
         return parse_mana_symbol_group(word).is_ok();
     }
-    parse_mana_symbol(word).is_ok()
+    false
 }
 
 pub(crate) fn find_activation_cost_start(tokens: &[OwnedLexToken]) -> Option<usize> {
@@ -1223,7 +1240,7 @@ pub(crate) fn parse_scryfall_mana_cost(raw: &str) -> Result<ManaCost, CardTextEr
 
 pub(crate) fn parse_number_or_x_value(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
     let token = tokens.first()?;
-    let word = token.as_word()?;
+    let word = token.as_word()?.to_ascii_lowercase();
 
     if word == "x" {
         return Some((Value::X, 1));
@@ -1233,7 +1250,7 @@ pub(crate) fn parse_number_or_x_value(tokens: &[OwnedLexToken]) -> Option<(Value
         return Some((Value::Fixed(value as i32), 1));
     }
 
-    let value = match word {
+    let value = match word.as_str() {
         "a" | "an" | "one" => 1,
         "two" => 2,
         "three" => 3,
@@ -1251,8 +1268,7 @@ pub(crate) fn parse_number_or_x_value(tokens: &[OwnedLexToken]) -> Option<(Value
 }
 
 pub(crate) fn parse_number_or_x_value_lexed(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_number_or_x_value(&compat)
+    parse_number_or_x_value(tokens)
 }
 
 pub(crate) fn parse_number_word_i32(word: &str) -> Option<i32> {
@@ -1579,7 +1595,8 @@ pub(crate) enum SubjectAst {
 }
 
 pub(crate) fn parse_subject(tokens: &[OwnedLexToken]) -> SubjectAst {
-    let words = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words = word_view.to_word_refs();
     if words.is_empty() {
         return SubjectAst::This;
     }
@@ -1712,13 +1729,13 @@ pub(crate) fn span_from_tokens(tokens: &[OwnedLexToken]) -> Option<TextSpan> {
 
 pub(crate) fn parse_number(tokens: &[OwnedLexToken]) -> Option<(u32, usize)> {
     let token = tokens.first()?;
-    let word = token.as_word()?;
+    let word = token.as_word()?.to_ascii_lowercase();
 
     if let Ok(value) = word.parse::<u32>() {
         return Some((value, 1));
     }
 
-    let value = match word {
+    let value = match word.as_str() {
         "a" | "an" | "one" => 1,
         "two" => 2,
         "three" => 3,
@@ -2786,26 +2803,13 @@ fn parse_pt_value(raw: &str) -> Option<PtValue> {
 pub(crate) fn parse_level_up_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let token_words = words(tokens);
-    if token_words.len() < 3 || token_words[0] != "level" || token_words[1] != "up" {
+    let word_view = LowercaseWordView::new(tokens);
+    if !word_view.starts_with(&["level", "up"]) {
         return Ok(None);
     }
 
-    let mut symbols = Vec::new();
-    for word in token_words.iter().skip(2) {
-        if let Ok(symbol) = parse_mana_symbol(word) {
-            symbols.push(symbol);
-        }
-    }
-
-    if symbols.is_empty() {
-        return Err(CardTextError::ParseError(
-            "level up missing mana cost".to_string(),
-        ));
-    }
-
-    let pips = symbols.into_iter().map(|symbol| vec![symbol]).collect();
-    let mana_cost = ManaCost::from_pips(pips);
+    let (mana_cost, _) = leading_mana_cost_from_tokens(tokens.get(2..).unwrap_or_default())
+        .ok_or_else(|| CardTextError::ParseError("level up missing mana cost".to_string()))?;
     let level_up_text = format!("Level up {}", mana_cost.to_oracle());
 
     Ok(Some(ParsedAbility {
@@ -2835,8 +2839,7 @@ pub(crate) fn parse_level_up_line(
 pub(crate) fn parse_level_up_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_level_up_line(&compat)
+    parse_level_up_line(tokens)
 }
 
 pub(crate) fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
@@ -2874,7 +2877,8 @@ pub(crate) fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
 pub(crate) fn parse_self_free_cast_alternative_cost_line(
     tokens: &[OwnedLexToken],
 ) -> Option<AlternativeCastingMethod> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     let is_self_free_cast_clause = clause_words
         == [
             "you", "may", "cast", "this", "spell", "without", "paying", "its", "mana", "cost",
@@ -2897,8 +2901,7 @@ pub(crate) fn parse_self_free_cast_alternative_cost_line(
 pub(crate) fn parse_self_free_cast_alternative_cost_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Option<AlternativeCastingMethod> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_self_free_cast_alternative_cost_line(&compat)
+    parse_self_free_cast_alternative_cost_line(tokens)
 }
 
 fn leading_mana_symbols_to_oracle(words_all: &[&str]) -> Option<(String, usize)> {
@@ -2915,6 +2918,40 @@ fn leading_mana_symbols_to_oracle(words_all: &[&str]) -> Option<(String, usize)>
         return None;
     }
     Some((ManaCost::from_symbols(symbols).to_oracle(), consumed))
+}
+
+pub(crate) fn mana_pips_from_token(token: &OwnedLexToken) -> Option<Vec<ManaSymbol>> {
+    match token.kind {
+        TokenKind::Word => parse_mana_symbol(token.slice.as_str())
+            .ok()
+            .map(|symbol| vec![symbol]),
+        TokenKind::ManaGroup => {
+            let inner = token.slice.trim_start_matches('{').trim_end_matches('}');
+            if inner.is_empty() {
+                return None;
+            }
+            parse_mana_symbol_group(inner)
+                .ok()
+                .filter(|group| !group.is_empty())
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn leading_mana_cost_from_tokens(tokens: &[OwnedLexToken]) -> Option<(ManaCost, usize)> {
+    let mut pips = Vec::new();
+    let mut consumed = 0usize;
+    for token in tokens {
+        let Some(group) = mana_pips_from_token(token) else {
+            break;
+        };
+        pips.push(group);
+        consumed += 1;
+    }
+    if pips.is_empty() {
+        return None;
+    }
+    Some((ManaCost::from_pips(pips), consumed))
 }
 
 pub(crate) fn parse_madness_line(
@@ -2953,8 +2990,7 @@ pub(crate) fn parse_madness_line(
 pub(crate) fn parse_madness_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_madness_line(&compat)
+    parse_madness_line(tokens)
 }
 
 pub(crate) fn parse_buyback_line(
@@ -2999,8 +3035,7 @@ pub(crate) fn parse_buyback_line(
 pub(crate) fn parse_buyback_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_buyback_line(&compat)
+    parse_buyback_line(tokens)
 }
 
 pub(crate) fn parse_optional_cost_keyword_line(
@@ -3054,8 +3089,7 @@ pub(crate) fn parse_kicker_line(
 pub(crate) fn parse_kicker_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_kicker_line(&compat)
+    parse_kicker_line(tokens)
 }
 
 pub(crate) fn parse_multikicker_line(
@@ -3067,8 +3101,7 @@ pub(crate) fn parse_multikicker_line(
 pub(crate) fn parse_multikicker_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_multikicker_line(&compat)
+    parse_multikicker_line(tokens)
 }
 
 pub(crate) fn parse_squad_line(
@@ -3080,8 +3113,7 @@ pub(crate) fn parse_squad_line(
 pub(crate) fn parse_squad_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_squad_line(&compat)
+    parse_squad_line(tokens)
 }
 
 pub(crate) fn parse_offspring_line(
@@ -3093,8 +3125,7 @@ pub(crate) fn parse_offspring_line(
 pub(crate) fn parse_offspring_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_offspring_line(&compat)
+    parse_offspring_line(tokens)
 }
 
 pub(crate) fn parse_entwine_line(
@@ -3106,14 +3137,14 @@ pub(crate) fn parse_entwine_line(
 pub(crate) fn parse_entwine_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<OptionalCost>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_entwine_line(&compat)
+    parse_entwine_line(tokens)
 }
 
 pub(crate) fn parse_morph_keyword_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let Some(first_word) = tokens.first().and_then(OwnedLexToken::as_word) else {
+    let word_view = LowercaseWordView::new(tokens);
+    let Some(first_word) = word_view.first() else {
         return Ok(None);
     };
 
@@ -3123,27 +3154,18 @@ pub(crate) fn parse_morph_keyword_line(
         _ => return Ok(None),
     };
 
-    let mut symbols = Vec::new();
-    let mut consumed = 1usize;
-    for token in tokens.iter().skip(1) {
-        let Some(word) = token.as_word() else {
-            break;
-        };
-        let Ok(symbol) = parse_mana_symbol(word) else {
-            break;
-        };
-        symbols.push(symbol);
-        consumed += 1;
-    }
-
-    if symbols.is_empty() {
+    let Some((cost, consumed_cost_tokens)) =
+        leading_mana_cost_from_tokens(tokens.get(1..).unwrap_or_default())
+    else {
         let mechanic = if is_megamorph { "megamorph" } else { "morph" };
         return Err(CardTextError::ParseError(format!(
             "{mechanic} keyword missing mana cost"
         )));
-    }
+    };
+    let consumed = 1 + consumed_cost_tokens;
 
-    let trailing_words = words(&tokens[consumed..]);
+    let trailing_view = LowercaseWordView::new(tokens.get(consumed..).unwrap_or_default());
+    let trailing_words = trailing_view.to_word_refs();
     if !trailing_words.is_empty() {
         let mechanic = if is_megamorph { "megamorph" } else { "morph" };
         return Err(CardTextError::ParseError(format!(
@@ -3152,7 +3174,6 @@ pub(crate) fn parse_morph_keyword_line(
         )));
     }
 
-    let cost = ManaCost::from_symbols(symbols);
     let label = if is_megamorph { "Megamorph" } else { "Morph" };
     let text = format!("{label} {}", cost.to_oracle());
     let static_ability = if is_megamorph {
@@ -3172,8 +3193,7 @@ pub(crate) fn parse_morph_keyword_line(
 pub(crate) fn parse_morph_keyword_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_morph_keyword_line(&compat)
+    parse_morph_keyword_line(tokens)
 }
 
 pub(crate) fn parse_escape_line(
@@ -3267,8 +3287,7 @@ pub(crate) fn parse_escape_line(
 pub(crate) fn parse_escape_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_escape_line(&compat)
+    parse_escape_line(tokens)
 }
 
 pub(crate) fn parse_flashback_line(
@@ -3301,8 +3320,7 @@ pub(crate) fn parse_flashback_line(
 pub(crate) fn parse_flashback_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_flashback_line(&compat)
+    parse_flashback_line(tokens)
 }
 
 pub(crate) fn parse_warp_line(
@@ -3312,20 +3330,15 @@ pub(crate) fn parse_warp_line(
         return Ok(None);
     }
 
-    let words_all = words(tokens);
-    let (cost_text, _) = leading_mana_symbols_to_oracle(&words_all[1..])
+    let (cost, _) = leading_mana_cost_from_tokens(tokens.get(1..).unwrap_or_default())
         .ok_or_else(|| CardTextError::ParseError("warp keyword missing mana cost".to_string()))?;
-    let cost = parse_scryfall_mana_cost(&cost_text).map_err(|err| {
-        CardTextError::ParseError(format!("invalid warp mana cost '{cost_text}': {err:?}"))
-    })?;
     Ok(Some(AlternativeCastingMethod::Warp { cost }))
 }
 
 pub(crate) fn parse_warp_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_warp_line(&compat)
+    parse_warp_line(tokens)
 }
 
 pub(crate) fn parse_bestow_line(
@@ -3335,31 +3348,12 @@ pub(crate) fn parse_bestow_line(
         return Ok(None);
     }
 
-    let words_all = words(tokens);
-    let (mana_cost_text, mana_word_count) = leading_mana_symbols_to_oracle(&words_all[1..])
-        .ok_or_else(|| CardTextError::ParseError("bestow keyword missing mana cost".to_string()))?;
-    let mana_cost = parse_scryfall_mana_cost(&mana_cost_text).map_err(|err| {
-        CardTextError::ParseError(format!(
-            "invalid bestow mana cost '{mana_cost_text}': {err:?}"
-        ))
-    })?;
+    let (mana_cost, consumed_mana_tokens) =
+        leading_mana_cost_from_tokens(tokens.get(1..).unwrap_or_default()).ok_or_else(|| {
+            CardTextError::ParseError("bestow keyword missing mana cost".to_string())
+        })?;
     let mut total_cost = TotalCost::mana(mana_cost.clone());
-
-    let mut consumed_mana_tokens = 0usize;
-    for token in tokens.iter().skip(1) {
-        let Some(word) = token.as_word() else {
-            break;
-        };
-        if parse_mana_symbol(word).is_ok() {
-            consumed_mana_tokens += 1;
-            continue;
-        }
-        break;
-    }
-    if consumed_mana_tokens == 0 {
-        consumed_mana_tokens = mana_word_count;
-    }
-    consumed_mana_tokens = consumed_mana_tokens.min(tokens.len().saturating_sub(1));
+    let consumed_mana_tokens = consumed_mana_tokens.min(tokens.len().saturating_sub(1));
 
     let mut cost_tokens = tokens
         .get(1..1 + consumed_mana_tokens)
@@ -3393,14 +3387,14 @@ pub(crate) fn parse_bestow_line(
 pub(crate) fn parse_bestow_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_bestow_line(&compat)
+    parse_bestow_line(tokens)
 }
 
 pub(crate) fn parse_transmute_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let words_all = words(tokens);
+    let word_view = LowercaseWordView::new(tokens);
+    let words_all = word_view.to_word_refs();
     if words_all.first().copied() != Some("transmute") {
         return Ok(None);
     }
@@ -3411,35 +3405,27 @@ pub(crate) fn parse_transmute_line(
         return Ok(None);
     }
 
-    let mut consumed = 1usize;
-    while consumed < tokens.len() {
-        let Some(word) = tokens[consumed].as_word() else {
-            break;
-        };
-        if parse_mana_symbol(word).is_ok() {
-            consumed += 1;
-        } else {
-            break;
-        }
-    }
-    if consumed <= 1 {
+    let Some((base_mana_cost, _consumed_cost_tokens)) =
+        leading_mana_cost_from_tokens(tokens.get(1..).unwrap_or_default())
+    else {
         return Err(CardTextError::ParseError(format!(
             "transmute keyword missing mana cost (clause: '{}')",
             words_all.join(" ")
         )));
-    }
-
-    let cost_tokens = &tokens[1..consumed];
-    let base_cost = parse_activation_cost(cost_tokens)?;
+    };
+    let base_cost = TotalCost::mana(base_mana_cost.clone());
     let mut merged_costs = base_cost.costs().to_vec();
     merged_costs.push(crate::costs::Cost::discard_source());
     let mana_cost = crate::cost::TotalCost::from_costs(merged_costs);
 
     let mut parsed_mana_value: Option<u32> = None;
-    for idx in 0..tokens.len().saturating_sub(2) {
-        if tokens[idx].is_word("mana") && tokens[idx + 1].is_word("value") {
+    for idx in 0..word_view.len().saturating_sub(2) {
+        if word_view.slice_eq(idx, &["mana", "value"]) {
+            let start = word_view
+                .token_index_for_word_index(idx + 2)
+                .unwrap_or(tokens.len());
             parsed_mana_value =
-                parse_number_or_x_value(&tokens[idx + 2..]).and_then(|(value, _)| match value {
+                parse_number_or_x_value(&tokens[start..]).and_then(|(value, _)| match value {
                     Value::Fixed(n) if n >= 0 => Some(n as u32),
                     _ => None,
                 });
@@ -3457,10 +3443,7 @@ pub(crate) fn parse_transmute_line(
     };
     let text = format!(
         "Transmute {}",
-        base_cost
-            .mana_cost()
-            .map(|cost| cost.to_oracle())
-            .unwrap_or_else(|| words(cost_tokens).join(" "))
+        base_mana_cost.to_oracle()
     );
 
     Ok(Some(ParsedAbility {
@@ -3490,14 +3473,14 @@ pub(crate) fn parse_transmute_line(
 pub(crate) fn parse_transmute_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_transmute_line(&compat)
+    parse_transmute_line(tokens)
 }
 
 pub(crate) fn parse_reinforce_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let words_all = words(tokens);
+    let words_view = LowercaseWordView::new(tokens);
+    let words_all = words_view.to_word_refs();
     if words_all.first().copied() != Some("reinforce") {
         return Ok(None);
     }
@@ -3531,26 +3514,15 @@ pub(crate) fn parse_reinforce_line(
         )));
     }
 
-    let mut cost_end = cost_start;
-    while cost_end < tokens.len() {
-        let Some(word) = tokens[cost_end].as_word() else {
-            break;
-        };
-        if parse_mana_symbol(word).is_ok() {
-            cost_end += 1;
-        } else {
-            break;
-        }
-    }
-    if cost_end == cost_start {
+    let Some((base_mana_cost, _consumed_cost_tokens)) =
+        leading_mana_cost_from_tokens(tokens.get(cost_start..).unwrap_or_default())
+    else {
         return Err(CardTextError::ParseError(format!(
             "reinforce line missing mana symbols (clause: '{}')",
             words_all.join(" ")
         )));
-    }
-
-    let cost_tokens = &tokens[cost_start..cost_end];
-    let base_cost = parse_activation_cost(cost_tokens)?;
+    };
+    let base_cost = TotalCost::mana(base_mana_cost.clone());
     let mut merged_costs = base_cost.costs().to_vec();
     merged_costs.push(crate::costs::Cost::discard_source());
     let mana_cost = crate::cost::TotalCost::from_costs(merged_costs);
@@ -3562,10 +3534,7 @@ pub(crate) fn parse_reinforce_line(
     let target = ChooseSpec::target(ChooseSpec::Object(creature_filter));
     let effect = Effect::put_counters(CounterType::PlusOnePlusOne, amount, target);
 
-    let cost_text = base_cost
-        .mana_cost()
-        .map(|cost| cost.to_oracle())
-        .unwrap_or_else(|| words(cost_tokens).join(" "));
+    let cost_text = base_mana_cost.to_oracle();
     let render_text = format!("Reinforce {amount} {cost_text}");
 
     Ok(Some(ParsedAbility {
@@ -3593,14 +3562,14 @@ pub(crate) fn parse_reinforce_line(
 pub(crate) fn parse_reinforce_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_reinforce_line(&compat)
+    parse_reinforce_line(tokens)
 }
 
 pub(crate) fn parse_cast_this_spell_only_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let line_words = words(tokens);
+    let line_word_view = LowercaseWordView::new(tokens);
+    let line_words = line_word_view.to_word_refs();
     if !line_words.starts_with(&["cast", "this", "spell", "only"]) {
         return Ok(None);
     }
@@ -3820,30 +3789,23 @@ pub(crate) fn parse_cast_this_spell_only_line(
 pub(crate) fn parse_cast_this_spell_only_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_cast_this_spell_only_line(&compat)
+    parse_cast_this_spell_only_line(tokens)
 }
 
 pub(crate) fn parse_you_may_rather_than_spell_cost_line(
     tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    if !(tokens
-        .first()
-        .is_some_and(|token| token.as_word() == Some("you"))
-        && tokens
-            .get(1)
-            .is_some_and(|token| token.as_word() == Some("may")))
+    if !(tokens.first().is_some_and(|token| token.is_word("you"))
+        && tokens.get(1).is_some_and(|token| token.is_word("may")))
     {
         return Ok(None);
     }
-    let Some(rather_idx) = tokens
-        .iter()
-        .position(|token| token.as_word() == Some("rather"))
-    else {
+    let Some(rather_idx) = tokens.iter().position(|token| token.is_word("rather")) else {
         return Ok(None);
     };
-    let rather_tail = words(tokens.get(rather_idx + 1..).unwrap_or_default());
+    let rather_tail_view = LowercaseWordView::new(tokens.get(rather_idx + 1..).unwrap_or_default());
+    let rather_tail = rather_tail_view.to_word_refs();
     let is_spell_cost_clause = rather_tail.starts_with(&["than", "pay", "this"])
         && rather_tail.contains(&"mana")
         && rather_tail.contains(&"cost")
@@ -3889,14 +3851,14 @@ pub(crate) fn parse_you_may_rather_than_spell_cost_line_lexed(
     tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_you_may_rather_than_spell_cost_line(&compat, line)
+    parse_you_may_rather_than_spell_cost_line(tokens, line)
 }
 
 pub(crate) fn parse_additional_cost_choice_options(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<AdditionalCostChoiceOptionAst>>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_view.to_word_refs();
     if clause_words
         .windows(3)
         .any(|window| window == ["one", "or", "more"])
@@ -3931,16 +3893,18 @@ pub(crate) fn parse_additional_cost_choice_options(
         return Ok(None);
     }
 
-    if normalized_options
-        .iter()
-        .any(|option| find_verb(option).is_none())
-    {
+    let normalized_options = normalized_options
+        .into_iter()
+        .map(|option| lowercase_word_tokens(&option))
+        .collect::<Vec<_>>();
+
+    if normalized_options.iter().any(|option| find_verb(option).is_none()) {
         return Ok(None);
     }
 
     let mut options = Vec::new();
     for option in normalized_options {
-        let effects = rewrite_parse_effect_sentences(&option)?;
+        let effects = rewrite_parse_effect_sentences_lexed(&option)?;
         if effects.is_empty() {
             return Err(CardTextError::ParseError(format!(
                 "additional cost option parsed to no effects (clause: '{}')",
@@ -3963,8 +3927,7 @@ pub(crate) fn parse_additional_cost_choice_options(
 pub(crate) fn parse_additional_cost_choice_options_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<AdditionalCostChoiceOptionAst>>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_additional_cost_choice_options(&compat)
+    parse_additional_cost_choice_options(tokens)
 }
 
 fn trap_condition_from_this_spell_cost_condition(
@@ -4000,7 +3963,8 @@ pub(crate) fn parse_if_conditional_alternative_cost_line(
     tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let clause_words = words(tokens);
+    let clause_word_view = LowercaseWordView::new(tokens);
+    let clause_words = clause_word_view.to_word_refs();
     if !clause_words.starts_with(&["if"]) {
         return Ok(None);
     }
@@ -4065,6 +4029,5 @@ pub(crate) fn parse_if_conditional_alternative_cost_line_lexed(
     tokens: &[OwnedLexToken],
     line: &str,
 ) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
-    let compat = compat_tokens_from_lexed(tokens);
-    parse_if_conditional_alternative_cost_line(&compat, line)
+    parse_if_conditional_alternative_cost_line(tokens, line)
 }
