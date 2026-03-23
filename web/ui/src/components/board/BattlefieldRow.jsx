@@ -19,7 +19,7 @@ const BOTTOM_BATTLEFIELD_SAFE_INSET = 60;
 const LIVE_DAMAGE_ANIMATION_MS = 300;
 const GHOST_BASE_ANIMATION_MS = 520;
 const MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO = 0.15;
-const BATTLEFIELD_GRID_GAP_PX = 8;
+const BATTLEFIELD_GRID_GAP_PX = 4;
 const COMPACT_SCROLL_COLUMN_MAX_WIDTH = 200;
 const ABSOLUTE_MIN_CARD_WIDTH = 10;
 const ABSOLUTE_MIN_CARD_HEIGHT = 14;
@@ -471,6 +471,11 @@ export default function BattlefieldRow({
     };
   }, [layoutOverride]);
   const isMobileBattleSingleRowLayout = paperLayoutMode === "single-row" && normalizedLayoutOverride != null;
+  const useMobileBattlefieldToken = (
+    isMobileBattleTopLayout
+    || isMobileBattleBottomLayout
+    || isMobileBattleSingleRowLayout
+  );
   const suppressTooltip = isMobileBattleTopLayout || isMobileBattleBottomLayout || isMobileBattleSingleRowLayout;
   const paperLayout = useMemo(
     () => buildPaperBattlefieldLayout(cards, battlefieldSide, alignStart, {
@@ -1370,6 +1375,7 @@ export default function BattlefieldRow({
             isNew={isNew}
             isBumped={isBumped}
             bumpDirection={bumpDir}
+            battlefieldVisualMode={useMobileBattlefieldToken ? "mobile-token" : "classic"}
             suppressTooltip={suppressTooltip}
             onClick={(event) => handleCardSelectionClick(event, card)}
             onPointerDown={(event) => handleCardPointerPressStart(event, card, isCombatCandidate)}

@@ -262,6 +262,28 @@ function handCardFooterStat(card) {
   return null;
 }
 
+function battlefieldPrimaryInfo(card) {
+  if (card?.power_toughness) {
+    return {
+      label: String(card.power_toughness),
+      title: `Power/Toughness ${card.power_toughness}`,
+    };
+  }
+  if (card?.loyalty != null) {
+    return {
+      label: String(card.loyalty),
+      title: `Loyalty ${card.loyalty}`,
+    };
+  }
+  if (card?.defense != null) {
+    return {
+      label: String(card.defense),
+      title: `Defense ${card.defense}`,
+    };
+  }
+  return null;
+}
+
 export default function GameCard({
   card,
   compact = false,
@@ -288,11 +310,13 @@ export default function GameCard({
   handCircuitMode = "full",
   hideDebugBadge = false,
   suppressTooltip = false,
+  battlefieldVisualMode = "classic",
 }) {
   const { game, inspectorDebug } = useGame();
   const name = card.name || "";
   const artVersion = variant === "hand" ? "normal" : "art_crop";
   const artUrl = scryfallImageUrl(name, artVersion);
+  const useTokenBattlefield = variant === "battlefield" && battlefieldVisualMode === "mobile-token";
   const count = Number(card.count);
   const groupSize = Number.isFinite(count) && count > 1 ? count : 1;
   const battlefieldStackDepth = variant === "battlefield"
@@ -307,7 +331,6 @@ export default function GameCard({
   const auraRot1Neg = `${-0.85 * rotationSign}deg`;
   const auraRot2Pos = `${1.2 * rotationSign}deg`;
   const auraRot2Neg = `${-1.2 * rotationSign}deg`;
-  const battlefieldManaIconSize = compact ? 10 : 11;
   const stableId = card?.stable_id ?? card?.id ?? "";
   const directSemanticScore = normalizeSemanticScore(card?.semantic_score);
   if (directSemanticScore != null) {
@@ -361,6 +384,29 @@ export default function GameCard({
       .map(buildCounterBadge)
       .filter(Boolean)
     : [];
+  const totalBattlefieldCounters = counterBadges.reduce((sum, badge) => sum + badge.amount, 0);
+  const primaryBattlefieldInfo = variant === "battlefield" ? battlefieldPrimaryInfo(card) : null;
+  const secondaryBattlefieldInfo = variant !== "battlefield"
+    ? null
+    : groupSize > 1
+      ? {
+        label: groupSize > 99 ? "99+" : String(groupSize),
+        title: `${groupSize} grouped permanents`,
+      }
+      : totalBattlefieldCounters > 0
+        ? {
+          label: totalBattlefieldCounters > 99 ? "99+" : String(totalBattlefieldCounters),
+          title: `${totalBattlefieldCounters} counter${totalBattlefieldCounters === 1 ? "" : "s"}`,
+        }
+        : null;
+  const battlefieldSvgIdBase = `battlefield-${String(stableId || card?.id || name || "card")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "card"}`;
+  const battlefieldBaseGradientId = `${battlefieldSvgIdBase}-base-gradient`;
+  const battlefieldRingGradientId = `${battlefieldSvgIdBase}-ring-gradient`;
+  const battlefieldBadgeGradientId = `${battlefieldSvgIdBase}-badge-gradient`;
+  const battlefieldSideBadgeGradientId = `${battlefieldSvgIdBase}-side-badge-gradient`;
+  const battlefieldImageClipId = `${battlefieldSvgIdBase}-image-clip`;
   const handFooterStat = variant === "hand" ? handCardFooterStat(card) : null;
   const debugSimilarityLabel = semanticScore != null ? formatSemanticScore(semanticScore) : null;
   const showDebugSimilarityBadge = (
@@ -679,8 +725,10 @@ export default function GameCard({
     <div
       ref={rootRef}
       className={cn(
-        "game-card p-1.5 grid content-start",
+        "game-card grid content-start",
+        useTokenBattlefield ? "p-0.5" : "p-1.5",
         variant === "battlefield" && "field-card",
+        useTokenBattlefield && "battlefield-token-card",
         variant === "hand" && "hand-card",
         compact && "w-[96px] min-w-[96px] min-h-[134px] p-1 text-[14px]",
         !compact && variant === "hand" && "flex-1 basis-0 min-w-0 max-w-[124px] min-h-[100px]",
@@ -762,7 +810,7 @@ export default function GameCard({
         </div>
       )}
       <div className="game-card-surface">
-        {artUrl && (
+        {artUrl && (variant !== "battlefield" || !useTokenBattlefield) && (
           <img
             className={cn(
               "absolute inset-0 w-full h-full z-0 pointer-events-none",
@@ -775,7 +823,7 @@ export default function GameCard({
             referrerPolicy="no-referrer"
           />
         )}
-        {variant === "battlefield" && (
+        {variant === "battlefield" && !useTokenBattlefield && (
           <span className="battlefield-frame" aria-hidden="true" />
         )}
         {showCircuitAnimation && (
@@ -814,7 +862,138 @@ export default function GameCard({
             </svg>
           </div>
         )}
-        {variant === "hand" ? (
+        {useTokenBattlefield ? (
+          <div className="battlefield-token-shell">
+            <svg
+              className="battlefield-token-svg"
+              viewBox="0 0 120 120"
+              role="img"
+              aria-label={name}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <defs>
+                <linearGradient id={battlefieldBaseGradientId} x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#c8cdd3" />
+                  <stop offset="38%" stopColor="#7d8691" />
+                  <stop offset="72%" stopColor="#39424d" />
+                  <stop offset="100%" stopColor="#191f26" />
+                </linearGradient>
+                <linearGradient id={battlefieldRingGradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#edf1f5" />
+                  <stop offset="28%" stopColor="#b1b8c0" />
+                  <stop offset="62%" stopColor="#5a636e" />
+                  <stop offset="100%" stopColor="#1b2129" />
+                </linearGradient>
+                <linearGradient id={battlefieldBadgeGradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#5a616c" />
+                  <stop offset="48%" stopColor="#2a313a" />
+                  <stop offset="100%" stopColor="#10151b" />
+                </linearGradient>
+                <linearGradient id={battlefieldSideBadgeGradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#646c77" />
+                  <stop offset="52%" stopColor="#313843" />
+                  <stop offset="100%" stopColor="#12171d" />
+                </linearGradient>
+                <clipPath id={battlefieldImageClipId}>
+                  <circle cx="60" cy="45" r="38" />
+                </clipPath>
+              </defs>
+
+              <path
+                d="M24 72 Q60 82 96 72 L86 100 L60 114 L34 100 Z"
+                className="battlefield-token-base"
+                fill={`url(#${battlefieldBaseGradientId})`}
+              />
+
+              <path
+                d="M28 75 Q60 84 92 75"
+                className="battlefield-token-base-edge"
+              />
+
+              <circle
+                cx="60"
+                cy="45"
+                r="42"
+                fill={`url(#${battlefieldRingGradientId})`}
+                className="battlefield-token-ring"
+              />
+
+              <circle
+                cx="60"
+                cy="45"
+                r="38"
+                className="battlefield-token-inner-ring"
+              />
+
+              <path
+                d="M33 22 A34 34 0 0 1 87 22"
+                className="battlefield-token-ring-glint"
+              />
+
+              {artUrl && (
+                <image
+                  href={artUrl}
+                  x="22"
+                  y="7"
+                  width="76"
+                  height="76"
+                  clipPath={`url(#${battlefieldImageClipId})`}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              )}
+
+              <polygon
+                points="60,78 71,84.5 71,97 60,103.5 49,97 49,84.5"
+                className="battlefield-token-main-badge"
+                fill={`url(#${battlefieldBadgeGradientId})`}
+              />
+
+              {primaryBattlefieldInfo ? (
+                <text
+                  x="60"
+                  y="97"
+                  textAnchor="middle"
+                  className="battlefield-token-main-text"
+                >
+                  {primaryBattlefieldInfo.label}
+                </text>
+              ) : null}
+
+              {secondaryBattlefieldInfo ? (
+                <>
+                  <rect
+                    x="77"
+                    y="83.5"
+                    width="26"
+                    height="19"
+                    rx="3.5"
+                    className="battlefield-token-side-badge"
+                    fill={`url(#${battlefieldSideBadgeGradientId})`}
+                  />
+                  <text
+                    x="90"
+                    y="97"
+                    textAnchor="middle"
+                    className="battlefield-token-side-text"
+                  >
+                    {secondaryBattlefieldInfo.label}
+                  </text>
+                </>
+              ) : null}
+            </svg>
+
+            {primaryBattlefieldInfo ? (
+              <span className="sr-only">
+                {primaryBattlefieldInfo.title}
+              </span>
+            ) : null}
+            {secondaryBattlefieldInfo ? (
+              <span className="sr-only">
+                {secondaryBattlefieldInfo.title}
+              </span>
+            ) : null}
+          </div>
+        ) : variant === "hand" ? (
           <div className="hand-card-header absolute top-0 left-0 right-0 z-2 px-1.5 py-1">
             <div className="hand-card-title whitespace-nowrap overflow-hidden text-ellipsis text-shadow-[0_1px_1px_rgba(0,0,0,0.85)]">
               {name}
@@ -851,14 +1030,14 @@ export default function GameCard({
               )}
               {visibleBattlefieldManaCost && (
                 <span className="battlefield-mana-rack">
-                  <ManaCostIcons cost={visibleBattlefieldManaCost} size={battlefieldManaIconSize} />
+                  <ManaCostIcons cost={visibleBattlefieldManaCost} size={compact ? 10 : 11} />
                 </span>
               )}
             </span>
           </div>
         )}
 
-        {variant === "battlefield" && counterBadges.length > 0 && (
+        {variant === "battlefield" && !useTokenBattlefield && counterBadges.length > 0 && (
           <div className="battlefield-counter-rail">
             {counterBadges.map((badge, index) => (
               <BattlefieldCounterBadge
@@ -877,13 +1056,11 @@ export default function GameCard({
           </div>
         )}
 
-        {variant === "battlefield" && card.power_toughness && (
+        {variant === "battlefield" && !useTokenBattlefield && card.power_toughness && (
           <div className="battlefield-footer">
-            {card.power_toughness && (
-              <span className="battlefield-pt-badge">
-                {card.power_toughness}
-              </span>
-            )}
+            <span className="battlefield-pt-badge">
+              {card.power_toughness}
+            </span>
           </div>
         )}
 
