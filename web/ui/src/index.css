@@ -849,6 +849,36 @@
   text-rendering: geometricPrecision;
 }
 
+.game-card.field-card.battlefield-token-card .battlefield-token-symbol {
+  fill: none;
+  stroke: #f4f7fb;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.game-card.field-card.battlefield-token-card .battlefield-token-mana-symbol {
+  overflow: visible;
+}
+
+.game-card.field-card.battlefield-token-card .battlefield-token-choice-half {
+  opacity: 0.48;
+}
+
+.game-card.field-card.battlefield-token-card .battlefield-token-choice-divider {
+  stroke: rgba(244, 247, 251, 0.94);
+  stroke-width: 1.5;
+}
+
+.game-card.field-card.battlefield-token-card .battlefield-token-choice-indicator {
+  fill: none;
+  stroke: rgba(244, 247, 251, 0.86);
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .game-card.field-card.battlefield-token-card .battlefield-token-main-text {
   font-size: 18px;
 }
@@ -861,6 +891,14 @@
 
 .game-card.field-card.battlefield-token-card .battlefield-token-side-text {
   font-size: 13px;
+}
+
+.game-card.field-card.battlefield-token-card .battlefield-token-main-divider,
+.game-card.field-card.battlefield-token-card .battlefield-token-side-divider {
+  fill: none;
+  stroke: rgba(208, 217, 226, 0.8);
+  stroke-width: 1.1;
+  stroke-linecap: round;
 }
 
 .battlefield-frame {
