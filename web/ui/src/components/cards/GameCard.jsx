@@ -291,7 +291,7 @@ export default function GameCard({
 }) {
   const { game, inspectorDebug } = useGame();
   const name = card.name || "";
-  const artVersion = "art_crop";
+  const artVersion = variant === "hand" ? "normal" : "art_crop";
   const artUrl = scryfallImageUrl(name, artVersion);
   const count = Number(card.count);
   const groupSize = Number.isFinite(count) && count > 1 ? count : 1;
@@ -329,20 +329,11 @@ export default function GameCard({
     || glowKind === "attack-selected"
     || glowKind === "spell"
   );
-  const battlefieldFullBrightness = variant === "battlefield" && (
-    isInspected
-    || isPlayable
-    || Boolean(glowKind)
-  );
   const artTreatmentClass = variant === "battlefield"
-    ? (
-      battlefieldFullBrightness
-        ? "opacity-100 saturate-[1.12] contrast-[1.08] brightness-[1]"
-        : "opacity-100 saturate-[1.02] contrast-[1.01] brightness-[0.85]"
-    )
+    ? "opacity-100"
     : variant === "hand"
-      ? "opacity-100 saturate-[1.08] contrast-[1.05] brightness-[1]"
-      : "opacity-72 saturate-[1.05] contrast-[1.04]";
+      ? "opacity-100"
+      : "opacity-72";
   const showBattlefieldCircuit = battlefieldCircuitActive;
   const showHandCircuit = variant === "hand" && (Boolean(glowKind) || isPlayable || isInspected);
   const showCircuitAnimation = showBattlefieldCircuit || showHandCircuit;
@@ -766,7 +757,6 @@ export default function GameCard({
                 />
               )}
               <span className="battlefield-frame" aria-hidden="true" />
-              <span className="game-card-shade battlefield-card-shade" aria-hidden="true" />
             </div>
           ))}
         </div>
@@ -775,7 +765,8 @@ export default function GameCard({
         {artUrl && (
           <img
             className={cn(
-              "absolute inset-0 w-full h-full object-cover z-0 pointer-events-none",
+              "absolute inset-0 w-full h-full z-0 pointer-events-none",
+              variant === "battlefield" ? "object-contain" : "object-cover",
               artTreatmentClass,
             )}
             src={artUrl}
@@ -823,14 +814,6 @@ export default function GameCard({
             </svg>
           </div>
         )}
-        <span
-          className={cn(
-            "game-card-shade",
-            variant === "battlefield" && "battlefield-card-shade",
-          )}
-          aria-hidden="true"
-        />
-
         {variant === "hand" ? (
           <div className="hand-card-header absolute top-0 left-0 right-0 z-2 px-1.5 py-1">
             <div className="hand-card-title whitespace-nowrap overflow-hidden text-ellipsis text-shadow-[0_1px_1px_rgba(0,0,0,0.85)]">

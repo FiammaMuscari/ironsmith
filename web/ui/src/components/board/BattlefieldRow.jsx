@@ -486,6 +486,13 @@ export default function BattlefieldRow({
     [alignStart, battlefieldSide, cards, paperLayoutMode, paperMinSlotsPerRow]
   );
   const displayCards = isPaperBattlefieldLayout ? paperLayout.orderedCards : cards;
+  const displayCardById = useMemo(() => {
+    const index = new Map();
+    for (const card of displayCards) {
+      index.set(String(card?.id), card);
+    }
+    return index;
+  }, [displayCards]);
   const hasMobileBottomBackRowCards = useMemo(
     () => (
       isMobileBattleBottomLayout
@@ -1155,6 +1162,26 @@ export default function BattlefieldRow({
     onMobileCardActionMenu,
   ]);
 
+  const handleRowClickFallback = useCallback((event) => {
+    if (!isMobileBattleSingleRowLayout) return;
+    if (event.defaultPrevented) return;
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest(".battlefield-row-card[data-object-id]")) return;
+    if (event.target.closest("button, a, input, textarea, select, [role='button']")) return;
+
+    const hitElement = document.elementFromPoint(event.clientX, event.clientY);
+    const hitCardEl = hitElement?.closest?.(".battlefield-row-card[data-object-id]");
+    const fallbackCardId = hitCardEl?.dataset?.objectId;
+    if (!fallbackCardId) return;
+
+    const fallbackCard = displayCardById.get(String(fallbackCardId));
+    if (!fallbackCard) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    handleCardSelectionClick(event, fallbackCard);
+  }, [displayCardById, handleCardSelectionClick, isMobileBattleSingleRowLayout]);
+
   const handleCardPointerPressStart = useCallback((event, card, isCombatCandidate = false) => {
     if (isCombatCandidate) {
       handleCombatPointerDown(event, card);
@@ -1200,6 +1227,7 @@ export default function BattlefieldRow({
       ref={rowRef}
       className={`battlefield-row ${displayCards.length === 0 ? "battlefield-row-empty" : ""} ${alignStart ? "battlefield-row--align-start" : ""} ${isMobileBattleBottomLayout ? "battlefield-row--mobile-bottom-inline-fit" : ""} relative grid gap-1.5 content-start justify-center min-h-0 h-full`}
       data-bf-side={battlefieldSide}
+      onClick={handleRowClickFallback}
       style={{
         "--bf-gap": `${BATTLEFIELD_GRID_GAP_PX}px`,
         gap: `${BATTLEFIELD_GRID_GAP_PX}px`,
