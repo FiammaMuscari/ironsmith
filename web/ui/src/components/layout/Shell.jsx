@@ -20,6 +20,7 @@ import LobbyOverlay from "./LobbyOverlay";
 import AddCardBar from "./AddCardBar";
 import TableActionControls from "./TableActionControls";
 import Workspace from "./Workspace";
+import EmergencyDiagnosticsButton from "./EmergencyDiagnosticsButton";
 import MobileLandscapeGate from "./MobileLandscapeGate";
 import LogDrawer from "@/components/overlays/LogDrawer";
 
@@ -607,6 +608,7 @@ export default function Shell() {
         middleAddCardBar={null}
         zoneActionControls={zoneActionControlsElement}
       />
+      <EmergencyDiagnosticsButton />
       <LogDrawer open={logOpen} onOpenChange={setLogOpen} />
       {lobbyOpen ? (
         <LobbyOverlay
