@@ -22,9 +22,10 @@ export async function resolveCardNameForGame({ game, cardName, locale, resolveEx
   const external = await resolveExternal(requestedName, locale);
   if (!external?.canonicalName) return { status: "not-found", requestedName };
 
-  const known = compactNames(await game.filterKnownCardNames(
-    compactNames([external.canonicalName, ...(external.aliases || [])])
-  ));
+  // A face name is a lookup/display alias only. It must never make a distinct
+  // whole card addable (for example Cheerful Osteomancer // Raise Dead must
+  // not silently become the unrelated single-card sorcery Raise Dead).
+  const known = compactNames(await game.filterKnownCardNames([external.canonicalName]));
   if (known.length > 0) {
     return {
       status: "available",
