@@ -50,3 +50,18 @@ test("a resolved card outside the embedded registry is never treated as addable"
   assert.equal(result.status, "not-embedded");
   assert.equal(result.canonicalName, "Vanille, Cheerful L'cie");
 });
+
+test("a known face never substitutes for an unavailable whole card", async () => {
+  const result = await resolveCardNameForGame({
+    game: { filterKnownCardNames: async (names) => names.filter((name) => name === "Raise Dead") },
+    cardName: "Cheerful Osteomancer",
+    locale: "en",
+    resolveExternal: async () => ({
+      canonicalName: "Cheerful Osteomancer // Raise Dead",
+      aliases: ["Cheerful Osteomancer", "Raise Dead"],
+    }),
+  });
+
+  assert.equal(result.status, "not-embedded");
+  assert.equal(result.canonicalName, "Cheerful Osteomancer // Raise Dead");
+});
