@@ -826,6 +826,72 @@ function localizedCardPayload(card, locale) {
 }
 
 const localizedImageRequests = new Map();
+const canonicalCardNameRequests = new Map();
+
+function printedCardNameMatchRank(card, cardName) {
+  const queryKey = customArtKey(cardName);
+  if (!queryKey || !card || typeof card !== "object") return 0;
+  // An exact English card name is the strongest identity match. A localized
+  // printed name comes next; face matches are retained only for split cards.
+  if (customArtKey(card.name) === queryKey) return 4;
+  if (customArtKey(card.printed_name) === queryKey) return 3;
+  for (const face of card.card_faces || []) {
+    if (customArtKey(face?.name) === queryKey) return 2;
+    if (customArtKey(face?.printed_name) === queryKey) return 1;
+  }
+  return 0;
+}
+
+// Resolve a user-facing name to Scryfall's canonical English identity. This is
+// intentionally separate from image and text translation: callers can use the
+// result to ask the embedded game registry whether that exact card is playable.
+// It never guesses with fuzzy matching, which is what previously let a face
+// named "Raise Dead" replace the whole card named "Raise Dead".
+export async function resolveScryfallCanonicalCardName(cardName, locale = "en") {
+  const query = String(cardName || "").trim();
+  const targetLang = String(locale || "en").trim().toLowerCase() || "en";
+  if (!query || isHiddenCardName(query)) return null;
+
+  const cacheKey = `${targetLang}:${customArtKey(query)}`;
+  if (canonicalCardNameRequests.has(cacheKey)) return canonicalCardNameRequests.get(cacheKey);
+
+  const request = (async () => {
+    const escaped = query.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const params = new URLSearchParams({
+      q: `lang:${targetLang} !"${escaped}"`,
+      unique: "cards",
+      order: "released",
+      dir: "desc",
+    });
+    const response = await fetchScryfallApiJson(
+      `https://api.scryfall.com/cards/search?${params.toString()}`
+    );
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const card = (payload?.data || [])
+      .map((candidate) => ({ candidate, rank: printedCardNameMatchRank(candidate, query) }))
+      .filter(({ rank }) => rank > 0)
+      .sort((left, right) => right.rank - left.rank)[0]?.candidate;
+    if (!card?.name) return null;
+
+    return {
+      canonicalName: String(card.name),
+      oracleId: String(card.oracle_id || ""),
+      // A full card name is the only mutation candidate. Faces are display and
+      // lookup aliases, never an alternate engine identity.
+      aliases: [
+        card.name,
+        ...(card.card_faces || []).map((face) => face?.name),
+      ].filter(Boolean).map(String),
+    };
+  })().catch((error) => {
+    canonicalCardNameRequests.delete(cacheKey);
+    throw error;
+  });
+  canonicalCardNameRequests.set(cacheKey, request);
+  return request;
+}
+
 export async function resolveScryfallLocalizedImageUrl(cardName, locale, version = "normal") {
   const targetLang = String(locale || "").trim().toLowerCase();
   if (!targetLang || targetLang === "en" || isHiddenCardName(cardName)) return "";

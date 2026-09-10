@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect, useRef, useId } from "react";
 import { useGame } from "@/context/GameContext";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useI18n } from "@/i18n/I18nContext";
+import { resolveCardNameForGame } from "@/lib/card-name-resolution";
 import {
   Sheet,
   SheetContent,
@@ -41,6 +43,7 @@ export default function AddCardSheet({
     setStatus,
     multiplayer,
   } = useGame();
+  const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [cardName, setCardName] = useState("");
   const [zone, setZone] = useState("hand");
@@ -78,7 +81,13 @@ export default function AddCardSheet({
     autocompleteRequestRef.current = requestId;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const matches = await game.autocompleteCardNames(query, 5);
+        let matches = await game.autocompleteCardNames(query, 5);
+        // The embedded registry is fast and authoritative. Only when it has
+        // no match do we ask Scryfall to resolve a localized printed name.
+        if (matches.length === 0 && query.length >= 3) {
+          const resolved = await resolveCardNameForGame({ game, cardName: query, locale });
+          if (resolved.status === "available") matches = [resolved.canonicalName];
+        }
         if (autocompleteRequestRef.current !== requestId) return;
         setAutocompleteOptions(matches);
         setAutocompleteOpen(matches.length > 0);
@@ -95,7 +104,7 @@ export default function AddCardSheet({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [addLocked, cardName, game]);
+  }, [addLocked, cardName, game, locale]);
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -131,8 +140,8 @@ export default function AddCardSheet({
         setStatus("Card injection is disabled while a lobby is active", true);
         return;
       }
-      const name = String(requestedName || "").trim();
-      if (!name) {
+      const requestedCardName = String(requestedName || "").trim();
+      if (!requestedCardName) {
         setStatus("Enter a card name to add", true);
         return;
       }
@@ -141,6 +150,30 @@ export default function AddCardSheet({
         return;
       }
       try {
+        const resolution = await resolveCardNameForGame({
+          game,
+          cardName: requestedCardName,
+          locale,
+        });
+        if (resolution.status === "not-embedded") {
+          const message = `${resolution.canonicalName} exists, but is not embedded in this game build`;
+          setStatus(message, true);
+          if (typeof onAddCardNotice === "function") {
+            onAddCardNotice({
+              tone: "error",
+              title: `Card is unavailable: ${resolution.canonicalName}`,
+              body: "The name was resolved safely, but this engine build does not contain that card.",
+              copyText: formatAddCardFailureClipboard(resolution.canonicalName, zone, message),
+              copyStatusMessage: `Copied diagnostics for ${resolution.canonicalName}`,
+            });
+          }
+          return;
+        }
+        if (resolution.status !== "available") {
+          setStatus(`No exact card match found for ${requestedCardName}`, true);
+          return;
+        }
+        const name = resolution.canonicalName;
         await game.addCardToZone(selectedPlayer, name, zone, skipTriggers);
         const injectedDuringMatch = Boolean(multiplayer.matchStarted);
         setCardName("");
@@ -158,6 +191,7 @@ export default function AddCardSheet({
         );
       } catch (err) {
         const errMsg = String(err?.message || err);
+        const name = requestedCardName;
         setStatus(`Add card failed: ${errMsg}`, true);
         if (typeof onAddCardNotice === "function") {
           onAddCardNotice({
@@ -175,6 +209,7 @@ export default function AddCardSheet({
     cardName,
     closeSheet,
     game,
+    locale,
     onAddCardNotice,
     refresh,
     runWasmInteraction,
@@ -206,19 +241,19 @@ export default function AddCardSheet({
         className={`fantasy-sheet add-card-sheet w-[min(92vw,460px)] p-0 ${triggerClassName}`}
       >
         <SheetHeader className="fantasy-sheet-header pr-12">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-[#cdb27a]">Tools</div>
+          <div className="text-[11px] uppercase tracking-[0.24em] text-[#cdb27a]">{t("addCard.eyebrow")}</div>
           <SheetTitle className="text-[22px] uppercase tracking-[0.18em] text-foreground">
-            Add Card
+            {t("addCard.title")}
           </SheetTitle>
           <SheetDescription className="max-w-[34ch] text-[13px] leading-5">
-            Inject a card directly into a player zone for testing and board setup.
+            {t("addCard.description")}
           </SheetDescription>
         </SheetHeader>
 
         <div className="add-card-sheet-body grid gap-4 p-4">
           <div className="relative grid gap-1" ref={autocompleteRef}>
             <label className={labelClass}>
-              Card Name
+              {t("addCard.cardName")}
               <input
                 ref={cardNameInputRef}
                 role="combobox"
@@ -227,7 +262,7 @@ export default function AddCardSheet({
                 aria-controls={autocompleteVisible ? autocompleteId : undefined}
                 aria-activedescendant={autocompleteVisible && autocompleteIndex >= 0 ? `${autocompleteId}-${autocompleteIndex}` : undefined}
                 className={inputClass}
-                placeholder="Card name"
+                placeholder={t("addCard.cardName")}
                 value={cardName}
                 disabled={addLocked}
                 onChange={(event) => {
@@ -311,7 +346,7 @@ export default function AddCardSheet({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className={labelClass}>
-              Player
+              {t("addCard.player")}
               <select
                 className={selectClass}
                 value={selectedPlayer}
@@ -327,19 +362,19 @@ export default function AddCardSheet({
             </label>
 
             <label className={labelClass}>
-              Zone
+              {t("addCard.zone")}
               <select
                 className={selectClass}
                 value={zone}
                 disabled={addLocked}
                 onChange={(event) => setZone(event.target.value)}
               >
-                <option value="hand">Hand</option>
-                <option value="battlefield">Battlefield</option>
-                <option value="graveyard">GY</option>
-                <option value="exile">Exile</option>
-                <option value="library">Library</option>
-                <option value="command">Command</option>
+                <option value="hand">{t("zone.hand")}</option>
+                <option value="battlefield">{t("zone.battlefield")}</option>
+                <option value="graveyard">{t("zone.graveyard")}</option>
+                <option value="exile">{t("zone.exile")}</option>
+                <option value="library">{t("zone.library")}</option>
+                <option value="command">{t("zone.command")}</option>
               </select>
             </label>
           </div>
@@ -351,7 +386,7 @@ export default function AddCardSheet({
               onCheckedChange={(checked) => setSkipTriggers(checked === true)}
               className="h-3.5 w-3.5"
             />
-            Skip triggers
+            {t("addCard.skipTriggers")}
           </label>
 
           <div className="add-card-sheet-footer grid gap-2 sm:grid-cols-2">
@@ -362,7 +397,7 @@ export default function AddCardSheet({
               className="stone-pill"
               onClick={closeSheet}
             >
-              Cancel
+              {t("addCard.cancel")}
             </Button>
             <Button
               type="button"
@@ -371,7 +406,7 @@ export default function AddCardSheet({
               onClick={() => handleAdd()}
               disabled={addLocked || !cardName.trim()}
             >
-              Add to Game
+              {t("addCard.submit")}
             </Button>
           </div>
         </div>
