@@ -27,6 +27,9 @@ export function useScryfallImage(cardName, version = "normal") {
       return undefined;
     }
 
+    // `resolveScryfallLocalizedImageUrl` follows the canonical card's oracle
+    // id. This restores the Spanish printing and its frame metadata without
+    // letting a translated face select a different game card.
     resolveScryfallLocalizedImageUrl(query, locale, imageVersion)
       .then((url) => {
         if (!cancelled) setLocalized({ key, url: url || "", settled: true });
