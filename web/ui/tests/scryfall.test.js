@@ -10,6 +10,7 @@ import {
   setCustomCardArtUrls,
   setPreferredCardPrints,
   fetchScryfallCardMeta,
+  fetchScryfallLocalizedCardTranslation,
   resolveScryfallLocalizedImageUrl,
 } from "../src/lib/scryfall.js";
 
@@ -79,6 +80,38 @@ test("hidden card names use the local SVG cardback instead of Scryfall", () => {
   assert.equal(scryfallImageUrl("Hidden Card", "art_crop"), HIDDEN_CARD_BACK_IMAGE_URL);
   assert.equal(scryfallImageUrl("hidden card"), HIDDEN_CARD_BACK_IMAGE_URL);
   assert.match(HIDDEN_CARD_BACK_IMAGE_URL, /^data:image\/svg\+xml;charset=utf-8,/);
+});
+
+test("localized text lookup honors a supplied oracle id instead of a colliding face name", async () => {
+  const originalFetch = globalThis.fetch;
+  const oracleId = "raise-dead-identity-test";
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    assert.match(String(url), /^https:\/\/api\.scryfall\.com\/cards\/search\?/);
+    assert.match(String(url), new RegExp(`oracleid%3A${oracleId}`));
+    return {
+      ok: true,
+      json: async () => ({
+        data: [{
+          oracle_id: oracleId,
+          printed_name: "Levantar a los muertos",
+          printed_type_line: "Conjuro",
+          printed_text: "Regresa una carta de criatura objetivo de tu cementerio a tu mano.",
+        }],
+      }),
+      headers: { get: () => null },
+    };
+  };
+
+  try {
+    const translation = await fetchScryfallLocalizedCardTranslation("Raise Dead", "es", oracleId);
+    assert.equal(translation?.name, "Levantar a los muertos");
+    assert.equal(translation?.oracleId, oracleId);
+    assert.equal(requestedUrls.length, 1, "the fallback must not perform a name-based English lookup");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("preloading resolves and caches Scryfall image URLs by card name", async () => {
@@ -165,6 +198,37 @@ test("Scryfall API fallback resolves CDN image URLs without using format=image",
       "https://cards.example.test/api-fallback-normal.jpg"
     );
     assert.equal(urls.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an exact card name wins over a newer card face with the same name", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedName = "Identity Collision Test";
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith("http://localhost/cards/identity-collision-test.json")) {
+      return { status: 404, ok: false, json: async () => ({}) };
+    }
+    assert.match(String(url), /^https:\/\/api\.scryfall\.com\/cards\/search\?/);
+    return {
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            name: "New Creature // Identity Collision Test",
+            card_faces: [{ name: "New Creature", image_uris: { normal: "https://cards.example.test/wrong.jpg" } }, { name: requestedName }],
+            image_uris: { normal: "https://cards.example.test/wrong.jpg" },
+          },
+          { name: requestedName, image_uris: { normal: "https://cards.example.test/right.jpg" } },
+        ],
+      }),
+      headers: { get: () => null },
+    };
+  };
+
+  try {
+    assert.equal(await resolveScryfallImageUrl(requestedName, "normal"), "https://cards.example.test/right.jpg");
   } finally {
     globalThis.fetch = originalFetch;
   }

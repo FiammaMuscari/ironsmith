@@ -64,6 +64,15 @@ export async function loadOfficialCardTranslation(locale, cardName, oracleId = n
     officialCardTranslationCache.set(cacheKey, (async () => {
       const byOracle = await lookupCardI18nBucket(locale, "by-oracle", oracleKey);
       if (byOracle) return byOracle;
+
+      // An oracle id is the game's stable card identity. Do not fall through
+      // to a name route when we have one: a split/adventure face can share a
+      // route with an unrelated card (for example, Raise Dead). In that case
+      // a route match would make the locale appear to replace the card.
+      if (oracleKey) {
+        return fetchScryfallLocalizedCardTranslation(cardName, locale, oracleKey).catch(() => null);
+      }
+
       // A by-name hit can be another card whose face shares this name (older
       // buckets let "Emeritus of Conflict // Lightning Bolt" take the Lightning
       // Bolt route). If nothing for this face survives, ask Scryfall instead.

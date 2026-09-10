@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useGame } from "@/context/GameContext";
+import { useI18n } from "@/i18n/I18nContext";
 import { useCombatArrows } from "@/context/useCombatArrows";
 import { getCardRect, centerOf } from "@/hooks/useCardPositions";
 import { buildObjectControllerById } from "@/lib/decision-object-meta";
@@ -14,9 +15,12 @@ import { cn } from "@/lib/utils";
 
 const ATTACKER_COLOR = "#ff6b5f";
 
-function attackerSubmitLabel(count) {
-  if (count === 0) return "Declare no attackers";
-  return `Declare ${count} attacker${count === 1 ? "" : "s"}`;
+function attackerSubmitLabel(t, count) {
+  if (count === 0) return t("combat.declare.noAttackers", null, "Declare no attackers");
+  return t("combat.declare.attackersCount", {
+    count,
+    suffix: count === 1 ? "" : "s",
+  }, `Declare ${count} attacker${count === 1 ? "" : "s"}`);
 }
 
 function focusTargetPlayer(playerId) {
@@ -104,6 +108,7 @@ export default function AttackersDecision({
   onCompactActionChange = null,
 }) {
   const { dispatch, state, multiplayer, playerAccentOverrides } = useGame();
+  const { t } = useI18n();
   const { updateArrows, clearArrows, startDragArrow, updateDragArrow, endDragArrow, setCombatMode } = useCombatArrows();
   const options = useMemo(() => decision.attacker_options || [], [decision.attacker_options]);
   const players = state?.players || [];
@@ -378,7 +383,7 @@ export default function AttackersDecision({
     }
 
     onCompactActionChange({
-      label: attackerSubmitLabel(declarations.length),
+      label: attackerSubmitLabel(t, declarations.length),
       disabled: !canAct || attackButtonTransition.locked,
       onSubmit: () =>
         dispatch(
@@ -386,7 +391,7 @@ export default function AttackersDecision({
           `Declared ${declarations.length} attacker(s)`
         ),
     });
-  }, [attackButtonTransition.locked, canAct, compact, declarations, dispatch, onCompactActionChange]);
+  }, [attackButtonTransition.locked, canAct, compact, declarations, dispatch, onCompactActionChange, t]);
 
   if (compact) {
     return null;
@@ -396,7 +401,7 @@ export default function AttackersDecision({
     <div className="flex h-full min-h-0 w-full flex-col gap-2 overflow-x-hidden">
       <ScrollArea className="flex-1 min-h-0 w-full overflow-x-hidden">
         <div className="flex flex-col gap-2 pr-1 overflow-x-hidden">
-          <div className="px-0.5 text-[13px] font-bold uppercase tracking-wider text-[#d8c18c]">Declare attackers</div>
+          <div className="px-0.5 text-[13px] font-bold uppercase tracking-wider text-[#d8c18c]">{t("combat.declare.attackers", null, "Declare attackers")}</div>
           {options.map((opt) => {
             const creatureId = Number(opt.creature);
             const attacking = isAttacking(creatureId);
@@ -513,7 +518,7 @@ export default function AttackersDecision({
             {peerWaiting ? (
               <PeerWaitButtonContent />
             ) : (
-              <>{attackerSubmitLabel(declarations.length)}</>
+              <>{attackerSubmitLabel(t, declarations.length)}</>
             )}
           </Button>
         </PeerWaitPopover>

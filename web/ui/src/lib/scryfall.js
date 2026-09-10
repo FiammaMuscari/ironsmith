@@ -299,11 +299,18 @@ function standardPrintingSearchUrl(cardName, printPreference = null) {
 }
 
 function scryfallCardMatchesName(card, cardName) {
+  return scryfallCardNameMatchRank(card, cardName) > 0;
+}
+
+// A face may share its name with a different, whole card. Keep face matching
+// as a fallback for actual split/adventure faces, but never let a newer
+// multi-face printing displace the exact card requested by the game.
+function scryfallCardNameMatchRank(card, cardName) {
   const queryKey = customArtKey(cardName);
-  if (!queryKey || !card || typeof card !== "object") return false;
-  if (customArtKey(card.name) === queryKey) return true;
+  if (!queryKey || !card || typeof card !== "object") return 0;
+  if (customArtKey(card.name) === queryKey) return 2;
   return Array.isArray(card.card_faces)
-    && card.card_faces.some((face) => customArtKey(face?.name) === queryKey);
+    && card.card_faces.some((face) => customArtKey(face?.name) === queryKey) ? 1 : 0;
 }
 
 function imageUrlFromScryfallCard(card, version = "normal") {
@@ -519,9 +526,10 @@ async function fetchScryfallCardJson(cardName, printPreference = null) {
         if (response.status === 404) break;
         if (!response.ok) throw new Error(`Standard printing search failed: HTTP ${response.status}`);
         const payload = await response.json();
-        const card = (payload.data || []).find(candidate =>
-          scryfallCardMatchesName(candidate, query) && isStandardPrinting(candidate)
-          && imageUrlFromScryfallCard(candidate));
+        const card = (payload.data || [])
+          .filter(candidate => scryfallCardMatchesName(candidate, query)
+            && isStandardPrinting(candidate) && imageUrlFromScryfallCard(candidate))
+          .sort((left, right) => scryfallCardNameMatchRank(right, query) - scryfallCardNameMatchRank(left, query))[0];
         if (card) {
           cacheResolvedImageUrls(query, card, preference);
           return card;
@@ -847,19 +855,22 @@ export async function resolveScryfallLocalizedImageUrl(cardName, locale, version
   return imageUrlFromScryfallCard(await localizedImageRequests.get(key), version);
 }
 
-export async function fetchScryfallLocalizedCardTranslation(cardName, locale) {
+export async function fetchScryfallLocalizedCardTranslation(cardName, locale, expectedOracleId = null) {
   const query = String(cardName || "").trim();
   const targetLang = String(locale || "").trim().toLowerCase();
   if (!query || !targetLang || targetLang === "en" || isHiddenCardName(query)) return null;
 
-  const cacheKey = `${targetLang}:${cardJsonCacheKey(query)}`;
+  const stableOracleId = String(expectedOracleId || "").trim();
+  const cacheKey = `${targetLang}:${stableOracleId || cardJsonCacheKey(query)}`;
   if (localizedCardTranslationCache.has(cacheKey)) {
     return localizedCardTranslationCache.get(cacheKey);
   }
 
   const request = (async () => {
-    const englishCard = await fetchScryfallCardJson(query).catch(() => null);
-    const oracleId = String(englishCard?.oracle_id || "").trim();
+    // The game already knows the oracle id for normal cards. Prefer it to a
+    // fresh name lookup, since a name can also be a face of another printing.
+    const englishCard = stableOracleId ? null : await fetchScryfallCardJson(query).catch(() => null);
+    const oracleId = stableOracleId || String(englishCard?.oracle_id || "").trim();
     if (!oracleId) return null;
 
     const params = new URLSearchParams({
@@ -879,6 +890,7 @@ export async function fetchScryfallLocalizedCardTranslation(cardName, locale) {
     const englishTokens = wordTokens(firstFaceValue(englishCard, "oracle_text"));
     const candidates = (payload?.data || [])
       .map((card) => localizedCardPayload(card, targetLang))
+      .filter((card) => card && String(card.oracleId || "").trim() === oracleId)
       // Basic lands carry their large mana symbol as a bare letter ("B"): text
       // without a single word is not a translation either.
       .map((card) => (

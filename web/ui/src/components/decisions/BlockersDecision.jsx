@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useGame } from "@/context/GameContext";
+import { useI18n } from "@/i18n/I18nContext";
 import { useCombatArrows } from "@/context/useCombatArrows";
 import { getCardRect, centerOf } from "@/hooks/useCardPositions";
 import { buildObjectControllerById } from "@/lib/decision-object-meta";
@@ -13,9 +14,12 @@ import { cn } from "@/lib/utils";
 
 const BLOCKER_COLOR = "#ff8b63";
 
-function blockerSubmitLabel(count) {
-  if (count === 0) return "Declare no blockers";
-  return `Declare ${count} blocker${count === 1 ? "" : "s"}`;
+function blockerSubmitLabel(t, count) {
+  if (count === 0) return t("combat.declare.noBlockers", null, "Declare no blockers");
+  return t("combat.declare.blockersCount", {
+    count,
+    suffix: count === 1 ? "" : "s",
+  }, `Declare ${count} blocker${count === 1 ? "" : "s"}`);
 }
 
 /**
@@ -56,6 +60,7 @@ export default function BlockersDecision({
   onCompactActionChange = null,
 }) {
   const { dispatch, state, multiplayer, playerAccentOverrides } = useGame();
+  const { t } = useI18n();
   const {
     updateArrows,
     clearArrows,
@@ -267,7 +272,7 @@ export default function BlockersDecision({
     }
 
     onCompactActionChange({
-      label: blockerSubmitLabel(declarations.length),
+      label: blockerSubmitLabel(t, declarations.length),
       disabled: !canAct,
       onSubmit: () =>
         dispatch(
@@ -275,7 +280,7 @@ export default function BlockersDecision({
           `Declared ${declarations.length} blocker(s)`
         ),
     });
-  }, [canAct, compact, declarations, dispatch, onCompactActionChange]);
+  }, [canAct, compact, declarations, dispatch, onCompactActionChange, t]);
 
   const attackerNameById = useMemo(() => {
     const map = new Map();
@@ -294,7 +299,7 @@ export default function BlockersDecision({
     <div className="flex h-full min-h-0 w-full flex-col gap-2 overflow-x-hidden">
       <ScrollArea className="flex-1 min-h-0 w-full overflow-x-hidden">
         <div className="flex flex-col gap-2 pr-1 overflow-x-hidden">
-          <div className="px-0.5 text-[13px] font-bold uppercase tracking-wider text-[#d8c18c]">Declare blockers</div>
+          <div className="px-0.5 text-[13px] font-bold uppercase tracking-wider text-[#d8c18c]">{t("combat.declare.blockers", null, "Declare blockers")}</div>
           {blockerOptions.map((opt) => {
             const blockerId = opt.blocker;
             const name = opt.name;
@@ -404,7 +409,7 @@ export default function BlockersDecision({
             {peerWaiting ? (
               <PeerWaitButtonContent />
             ) : (
-              <>{blockerSubmitLabel(declarations.length)}</>
+              <>{blockerSubmitLabel(t, declarations.length)}</>
             )}
           </Button>
         </PeerWaitPopover>
