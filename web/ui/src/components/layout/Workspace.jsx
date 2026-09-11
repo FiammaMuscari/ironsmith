@@ -37,7 +37,9 @@ import {
   plainRect,
   pointIsOutsideRect,
   shouldBeginTargetCastIntent,
+  targetDecisionAllowsNoTargets,
 } from "@/lib/hand-drag-intent";
+import { requestObjectSelection } from "@/lib/object-selection";
 import {
   HAND_KEYBOARD_CAST_EVENT,
   handKeyboardCastNeedsPointer,
@@ -763,7 +765,7 @@ export default function Workspace({
     playerAccentOverrides,
   } = useGame();
   const { updateStackArrows, clearStackArrows } = useCombatArrows();
-  const { endDrag, markCastIntent, setCastTargetPreview, startDrag } = useDragActions();
+  const { endDrag, markCastIntent, resumeDrag, setCastTargetPreview, startDrag } = useDragActions();
   const dragState = useDragState();
   const {
     clearPendingPlacement,
@@ -1220,11 +1222,9 @@ export default function Workspace({
           && candidateIds.some((candidateId) => String(candidate?.id) === String(candidateId))
         );
         if (matchedCandidate) {
-          window.dispatchEvent(
-            new CustomEvent("ironsmith:select-object-choice", {
-              detail: { objectId: matchedCandidate.id },
-            })
-          );
+          // A click on a card only ever chooses it; the check badge on the
+          // card is what gives it back.
+          requestObjectSelection(matchedCandidate.id, "add");
           return;
         }
       }
@@ -1485,11 +1485,6 @@ export default function Workspace({
       return () => cancelAnimationFrame(clearFrameId);
     }
     const frameId = requestAnimationFrame(() => {
-      if (pendingCastTargetDrop.cancelCast) {
-        setPendingCastTargetDrop(null);
-        if (samePlayerId(decision.player, state?.perspective)) cancelDecision();
-        return;
-      }
       // Payment and additional-cost decisions can sit between declaring the
       // cast and choosing targets. Keep the remembered release target through
       // those steps, but note that returning to priority means the cast was
@@ -1526,10 +1521,10 @@ export default function Workspace({
         currentCandidate,
       ]);
       setPendingCastTargetDrop(null);
-      if (!target) {
-        cancelDecision();
-        return;
-      }
+      // The release looked like a target when it happened but is not one now
+      // that the engine has asked. Leave the decision open to be aimed again
+      // rather than throwing the cast away.
+      if (!target) return;
 
       window.dispatchEvent(new CustomEvent("ironsmith:target-choice", {
         detail: {
@@ -1540,7 +1535,7 @@ export default function Workspace({
       }));
     });
     return () => cancelAnimationFrame(frameId);
-  }, [cancelDecision, decision, pendingCastTargetDrop, state]);
+  }, [decision, pendingCastTargetDrop, state]);
 
   // Handle drag drop — if user drops on the battlefield area, dispatch the action
   useEffect(() => {
@@ -1554,18 +1549,28 @@ export default function Workspace({
         const targetDecision = state?.decision?.kind === "targets"
           ? state.decision
           : ds.castIntent.targetDecision;
-        const cancelCast = !candidate || (targetDecision?.kind === "targets"
+        const optionalTargets = targetDecisionAllowsNoTargets(targetDecision);
+        const missedTarget = !optionalTargets && (!candidate || (targetDecision?.kind === "targets"
           && !legalTargetForDropCandidates(targetDecision, [candidate])
-          && !zoneHasLegalTargets(state, targetDecision, candidate));
+          && !zoneHasLegalTargets(state, targetDecision, candidate)));
         clearHover();
-        if (cancelCast && ds.actions.length > 1) {
-          // Provisional gestures have not started a cast in the engine yet.
+        // Letting go over dead space is not a decision to cancel. The cast
+        // stays where it is and its targeting arrow goes back to following the
+        // mouse, so the player can keep aiming; only a deliberate click on
+        // dead space cancels it. A provisional gesture — several ways to cast
+        // the card — has started nothing in the engine, so it just ends.
+        if (missedTarget) {
           setPendingCastTargetDrop(null);
+          // With one way to cast it the spell is already on the stack, so the
+          // decision's own arrow takes over the aiming. With several, nothing
+          // has entered the engine yet and there would be nothing to aim at,
+          // so the gesture keeps going without the button until a click picks
+          // a target or a second release over dead space lets it go.
+          if (ds.actions.length > 1 && !ds.held) resumeDrag(ds);
           return;
         }
         const pendingTargetDrop = {
           candidate,
-          cancelCast,
           x: e.clientX,
           y: e.clientY,
           sourceObjectId: ds.objectId,
@@ -1710,6 +1715,7 @@ export default function Workspace({
     endDrag,
     nonDesktopViewport,
     requestHandCardAction,
+    resumeDrag,
     state,
     triggerPriorityCardAction,
   ]);

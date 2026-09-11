@@ -71,7 +71,12 @@ impl GameState {
 
     /// Clears the transient deathtouch-damage tracker used by SBA evaluation.
     pub fn clear_deathtouch_damage_since_sba(&mut self) {
-        for id in self.battlefield_flags.dealt_deathtouch_damage_since_sba.iter().copied() {
+        for id in self
+            .battlefield_flags
+            .dealt_deathtouch_damage_since_sba
+            .iter()
+            .copied()
+        {
             self.object_store.changes.record(id);
         }
         self.battlefield_flags_mut()
@@ -356,6 +361,120 @@ impl GameState {
             self.mark_source_designation_changed(id, Self::condition_reads_suspected_state);
         }
         removed
+    }
+
+    /// Check if a permanent is prepared.
+    pub fn is_prepared(&self, id: ObjectId) -> bool {
+        self.battlefield_flags.prepared.contains(&id)
+    }
+
+    /// Return all currently prepared permanents.
+    pub(crate) fn prepared_ids(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.battlefield_flags.prepared.iter().copied()
+    }
+
+    /// Mark a permanent as prepared, putting a copy of its prepare spell into
+    /// exile. Returns true if this changed game state.
+    ///
+    /// A permanent cannot become prepared twice: the second attempt is a no-op
+    /// rather than a second prepare spell copy.
+    pub fn set_prepared(&mut self, id: ObjectId) -> bool {
+        if !self.battlefield_flags_mut().prepared.insert(id) {
+            return false;
+        }
+        if let Some(definition) = self.prepare_spell_definition(id)
+            && let Some(controller) = self.object(id).map(|object| self.controller_of(object))
+        {
+            let copy_id = self.create_object_from_definition(&definition, controller, Zone::Exile);
+            self.cast_permission_flags_mut()
+                .prepared_spell_copies
+                .insert(id, copy_id);
+            self.cast_permission_flags_mut()
+                .prepared_spell_sources
+                .insert(copy_id, id);
+        }
+        self.mark_object_characteristics_dirty(id);
+        true
+    }
+
+    /// Clear the prepared designation from a permanent, and with it the prepare
+    /// spell copy waiting in exile.
+    ///
+    /// Used when the permanent leaves the battlefield or an effect unprepares
+    /// it. A copy that has already left exile is being cast, so it is left
+    /// alone; [`Self::unprepare_for_cast`] is that path.
+    pub fn clear_prepared(&mut self, id: ObjectId) -> bool {
+        // Read before writing: every object leaving the battlefield calls this,
+        // and `battlefield_flags_mut` would clone the copy-on-write flag block
+        // (and invalidate the batched layer rebuild) for objects that were
+        // never prepared.
+        if !self.battlefield_flags.prepared.contains(&id) {
+            return false;
+        }
+        self.battlefield_flags_mut().prepared.remove(&id);
+        if let Some(copy_id) = self.unlink_prepared_spell_copy(id)
+            && self
+                .object(copy_id)
+                .is_some_and(|object| object.zone == Zone::Exile)
+        {
+            self.remove_object(copy_id);
+        }
+        self.mark_object_characteristics_dirty(id);
+        true
+    }
+
+    /// The prepared permanent a prepare spell copy belongs to, if any.
+    pub fn prepared_spell_source(&self, copy_id: ObjectId) -> Option<ObjectId> {
+        self.cast_permission_flags
+            .prepared_spell_sources
+            .get(&copy_id)
+            .copied()
+    }
+
+    /// Whether an exiled object is a prepare spell copy its controller may cast.
+    pub fn is_prepared_spell_copy(&self, copy_id: ObjectId) -> bool {
+        self.cast_permission_flags
+            .prepared_spell_sources
+            .contains_key(&copy_id)
+    }
+
+    /// Drop the designation as the prepare spell copy is cast (CR: the creature
+    /// stops being prepared as the copy is cast). The copy is already on its way
+    /// to the stack, so it is not removed here.
+    pub fn unprepare_for_cast(&mut self, copy_id: ObjectId) {
+        let Some(source) = self.prepared_spell_source(copy_id) else {
+            return;
+        };
+        self.battlefield_flags_mut().prepared.remove(&source);
+        self.unlink_prepared_spell_copy(source);
+        self.mark_object_characteristics_dirty(source);
+    }
+
+    /// Re-establish a prepared permanent and its exiled copy from a restored
+    /// checkpoint, where both objects already exist.
+    ///
+    /// Unlike [`Self::set_prepared`] this creates nothing: the copy is part of
+    /// the restored exile zone, and creating a second one would duplicate it.
+    pub fn restore_prepared_link(&mut self, permanent: ObjectId, copy_id: ObjectId) {
+        self.battlefield_flags_mut().prepared.insert(permanent);
+        self.cast_permission_flags_mut()
+            .prepared_spell_copies
+            .insert(permanent, copy_id);
+        self.cast_permission_flags_mut()
+            .prepared_spell_sources
+            .insert(copy_id, permanent);
+        self.mark_object_characteristics_dirty(permanent);
+    }
+
+    fn unlink_prepared_spell_copy(&mut self, id: ObjectId) -> Option<ObjectId> {
+        let copy_id = self
+            .cast_permission_flags_mut()
+            .prepared_spell_copies
+            .remove(&id)?;
+        self.cast_permission_flags_mut()
+            .prepared_spell_sources
+            .remove(&copy_id);
+        Some(copy_id)
     }
 
     /// Check if a Case permanent has become solved.
@@ -1194,6 +1313,7 @@ impl GameState {
     /// Clear battlefield state for an object (when leaving battlefield).
     pub fn clear_battlefield_state(&mut self, id: ObjectId) {
         self.clear_soulbond_pair(id);
+        self.clear_prepared(id);
         {
             let flags = self.battlefield_flags_mut();
             flags.tapped_permanents.remove(&id);
@@ -1400,7 +1520,13 @@ impl GameState {
     }
 
     pub fn clear_soulbond_pair(&mut self, object_id: ObjectId) {
-        if !self.combat_transients.soulbond_pairs.contains_key(&object_id) { return; }
+        if !self
+            .combat_transients
+            .soulbond_pairs
+            .contains_key(&object_id)
+        {
+            return;
+        }
         let transients = self.combat_transients_mut();
         let partner = transients.soulbond_pairs.remove(&object_id);
         if let Some(partner_id) = partner {
@@ -1413,7 +1539,10 @@ impl GameState {
             return;
         }
         if self.combat_transients.soulbond_pairs.get(&left) == Some(&right)
-            && self.combat_transients.soulbond_pairs.get(&right) == Some(&left) { return; }
+            && self.combat_transients.soulbond_pairs.get(&right) == Some(&left)
+        {
+            return;
+        }
         self.clear_soulbond_pair(left);
         self.clear_soulbond_pair(right);
         let transients = self.combat_transients_mut();
@@ -1486,6 +1615,9 @@ impl GameState {
             flags.madness_exiled.remove(&id);
             flags.foretold_cards.remove(&id);
             flags.adventure_exiled.remove(&id);
+        }
+        if let Some(source) = self.prepared_spell_source(id) {
+            self.unlink_prepared_spell_copy(source);
         }
         {
             let tracking = self.exile_tracking_mut();

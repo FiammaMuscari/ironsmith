@@ -8,10 +8,10 @@ use crate::grammar::activated_lines::{
 };
 use crate::grammar::leaf::parse_leaf_fixed_mana_output_tokens;
 use crate::lexer::render_token_slice;
-use crate::model::ast::SubjectVerbActionAst;
-use crate::model::ast::StatChangeActionAst;
 use crate::model::ast::LifeResourceActionAst;
 use crate::model::ast::ManaActionAst;
+use crate::model::ast::StatChangeActionAst;
+use crate::model::ast::SubjectVerbActionAst;
 use crate::util::SubjectAst;
 
 pub type ActivationRestrictionCompatWords<'a> = grammar::TokenWordView<'a>;
@@ -712,8 +712,13 @@ fn replace_removed_counter_metric_with_x(effect: &mut EffectAst) {
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColor { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { amount })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor { amount, .. })
-            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce { amount, .. })
-            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount }) => replace_value(amount),
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
+                amount,
+                ..
+            })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount }) => {
+                replace_value(amount)
+            }
             _ => {}
         }
     }
@@ -786,7 +791,10 @@ pub fn mana_effect_contains_unbound_x(effect: &EffectAst) -> bool {
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColor { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { amount })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor { amount, .. })
-            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce { amount, .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
+                amount,
+                ..
+            })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount }) => {
                 value_contains_unbound_x(amount)
             }
@@ -1012,6 +1020,15 @@ pub fn parse_activation_condition_lexed(tokens: &[OwnedLexToken]) -> Option<Pred
 pub fn parse_cardinal_u32(word: &str) -> Option<u32> {
     let token = OwnedLexToken::word(word.to_string(), TextSpan::synthetic());
     parse_number(&[token]).map(|(value, _)| value)
+}
+
+pub fn parse_enters_prepared_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    Ok(
+        activated_line_grammar::parse_enters_prepared_line_shape(tokens)
+            .then(StaticAbility::enters_prepared_ability),
+    )
 }
 
 pub fn parse_enters_tapped_line(

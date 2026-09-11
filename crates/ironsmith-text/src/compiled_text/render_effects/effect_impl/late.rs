@@ -1834,6 +1834,9 @@
     if let Some(suspect) = effect.downcast_ref::<crate::effects::SuspectEffect>() {
         return format!("Suspect {}", describe_choose_spec(&suspect.target));
     }
+    if let Some(prepare) = effect.downcast_ref::<crate::effects::PrepareEffect>() {
+        return format!("{} becomes prepared", describe_choose_spec(&prepare.target));
+    }
     if let Some(clear) = effect.downcast_ref::<crate::effects::ClearGoadEffect>() {
         return match &clear.target {
             Some(ChooseSpec::All(filter)) => format!("Each {} is no longer goaded", strip_leading_article(&filter.description())),
@@ -5339,8 +5342,13 @@
                         plural_spell_text
                     };
                 return format!(
-                    "{} {} casts cost {} less to cast {}{}",
-                    plural_spell_text, caster_text, reduction, duration_text, where_suffix,
+                    "{} {} {} cost {} less to cast {}{}",
+                    plural_spell_text,
+                    caster_text,
+                    player_verb(&caster_text, "cast", "casts"),
+                    reduction,
+                    duration_text,
+                    where_suffix,
                 );
             }
             if grant_next_spell_cost_reduction.filter.cast_by.is_none()

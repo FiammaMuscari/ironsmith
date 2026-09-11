@@ -214,7 +214,13 @@ impl GameState {
                 },
             )
             .collect::<Vec<_>>();
-        self.execute_immediate_effect_programs(source, controller, programs, !for_turn_face_up, decision_maker)
+        self.execute_immediate_effect_programs(
+            source,
+            controller,
+            programs,
+            !for_turn_face_up,
+            decision_maker,
+        )
     }
 
     pub(crate) fn execute_as_transforms_effect_programs(
@@ -231,8 +237,13 @@ impl GameState {
             .iter()
             .filter_map(as_transforms_effect_program_from_ability)
             .collect::<Vec<_>>();
-        let execution =
-            self.execute_immediate_effect_programs(source, controller, programs, false, decision_maker)?;
+        let execution = self.execute_immediate_effect_programs(
+            source,
+            controller,
+            programs,
+            false,
+            decision_maker,
+        )?;
         if let Some(object) = self.object_mut(source) {
             merge_retained_tagged_objects(
                 &mut object.cast_tagged_objects,
@@ -1346,7 +1357,8 @@ impl GameState {
             }
             if let Some(spec) = static_ability.reveal_from_hand_choice_as_enters() {
                 choices.as_enters_tagged_objects.insert(
-                    crate::tag::TagKey::from(crate::effects::PUBLIC_REVEALED_TAG), Vec::new(),
+                    crate::tag::TagKey::from(crate::effects::PUBLIC_REVEALED_TAG),
+                    Vec::new(),
                 );
                 let filter_ctx = self.filter_context_for(prospective_controller, Some(old_id));
                 let candidates = self
@@ -1402,10 +1414,16 @@ impl GameState {
                         .take(max)
                         .collect::<Vec<_>>();
                     if revealed.len() >= min {
-                        let snapshots = revealed.iter().filter_map(|id| self.object(*id))
-                            .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, self)).collect();
+                        let snapshots = revealed
+                            .iter()
+                            .filter_map(|id| self.object(*id))
+                            .map(|object| {
+                                crate::snapshot::ObjectSnapshot::from_object(object, self)
+                            })
+                            .collect();
                         choices.as_enters_tagged_objects.insert(
-                            crate::tag::TagKey::from(crate::effects::PUBLIC_REVEALED_TAG), snapshots,
+                            crate::tag::TagKey::from(crate::effects::PUBLIC_REVEALED_TAG),
+                            snapshots,
                         );
                     }
                     if revealed.len() >= min && !revealed.is_empty() {
@@ -2160,6 +2178,21 @@ impl GameState {
             }
         }
 
+        // "This creature enters prepared." The permanent is on the battlefield
+        // by now, which is what the prepare spell copy's existence is tied to.
+        //
+        // This reads the printed abilities rather than the calculated ones:
+        // every battlefield entry runs through here, and asking for calculated
+        // characteristics would force a per-entry recomputation instead of the
+        // batched layer rebuild. Entering prepared is a printed property, and
+        // CR keeps the designation even if the permanent later loses abilities.
+        if self.object_printed_static_ability(
+            new_id,
+            crate::static_abilities::StaticAbilityId::EntersPrepared,
+        ) {
+            self.set_prepared(new_id);
+        }
+
         Some(EntersResult {
             new_id,
             enters_tapped: result.enters_tapped,
@@ -2169,7 +2202,9 @@ impl GameState {
     /// Removes an object from the game completely (e.g., tokens ceasing to exist).
     /// This does NOT create a new object - the object is simply gone.
     pub fn remove_object(&mut self, id: ObjectId) {
-        if !self.objects.contains_key(&id) { return; }
+        if !self.objects.contains_key(&id) {
+            return;
+        }
         self.mark_continuous_state_dirty();
         self.bump_mutation_revision();
         self.object_store.changes.record(id);
@@ -2517,12 +2552,16 @@ impl GameState {
 
     /// Gets a mutable reference to an object by ID.
     pub fn object_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
-        if !self.objects.contains_key(&id) { return None; }
+        if !self.objects.contains_key(&id) {
+            return None;
+        }
         let counter = &self.runtime_cache.work_counters.generic_object_mutations;
         counter.set(counter.get().saturating_add(1));
         self.mark_continuous_state_dirty();
         let revision = self.bump_mutation_revision();
-        self.runtime_cache.characteristics_cache.bump_object_revision(id, revision);
+        self.runtime_cache
+            .characteristics_cache
+            .bump_object_revision(id, revision);
         let object = self.object_store.object_mut(id)?;
         object.last_modified = revision;
         Some(object)
@@ -3566,6 +3605,24 @@ impl GameState {
         self.calculated_characteristics(id)
             .map(|c| c.static_abilities.contains(ability))
             .unwrap_or(false)
+    }
+
+    /// Whether an object's printed abilities include a static ability id.
+    ///
+    /// Unlike [`Self::current_has_static_ability_id`] this never asks for
+    /// calculated characteristics, so it is safe on hot paths that run for
+    /// every object.
+    pub(crate) fn object_printed_static_ability(
+        &self,
+        id: ObjectId,
+        ability_id: crate::static_abilities::StaticAbilityId,
+    ) -> bool {
+        self.object(id).is_some_and(|object| {
+            object.abilities.iter().any(|ability| {
+                matches!(&ability.kind, crate::ability::AbilityKind::Static(static_ability)
+                    if static_ability.id() == ability_id)
+            })
+        })
     }
 
     /// Check if an object has a static ability with the given ID.

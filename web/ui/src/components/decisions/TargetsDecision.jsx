@@ -5,6 +5,7 @@ import { useCombatArrows } from "@/context/useCombatArrows";
 import { useDragState } from "@/context/DragContext";
 import { Button } from "@/components/ui/button";
 import { deadZoneAimPoint } from "@/lib/aim-dead-zone";
+import { castHoverTargetAtPoint } from "@/lib/hand-drag-intent";
 import { cn } from "@/lib/utils";
 import { getCardRect, centerOf } from "@/hooks/useCardPositions";
 import {
@@ -146,6 +147,28 @@ function findMatchingVisibleStackSource(state, decision) {
 
   return visibleStackObjects[0] || null;
 }
+
+// Anything the player could be doing other than aiming: a control, a panel,
+// the inspector, a popover. A click on one of those is not a click on dead
+// space, so it must never abandon the cast being aimed.
+// Long enough to cover the click a browser fires after a gesture's pointerup,
+// short enough that the player's next real click still lands.
+const RELEASE_CLICK_GRACE_MS = 400;
+
+const TARGETING_CHROME = [
+  "button",
+  "a",
+  "input",
+  "select",
+  "textarea",
+  "label",
+  '[role="button"]',
+  '[role="dialog"]',
+  '[role="menu"]',
+  "[data-action-popover]",
+  ".interactive-card-frame-stage",
+  ".table-persistent-utility-strip",
+].join(", ");
 
 function resolveTargetDecisionSourceId(state, decision) {
   const matchingStackObject = findMatchingVisibleStackSource(state, decision);
@@ -477,7 +500,7 @@ export default function TargetsDecision({
   layout = "panel",
   showStripSummary = true,
 }) {
-  const { dispatch, state, playerAccentOverrides } = useGame();
+  const { cancelDecision, dispatch, state, playerAccentOverrides } = useGame();
   const {
     updateArrows,
     clearArrows,
@@ -673,6 +696,58 @@ export default function TargetsDecision({
       gestureSubmitTimerRef.current = null;
     }
   }, []);
+
+  // A hand gesture ends with a pointerup, and the browser may follow that with
+  // a click on whatever the release landed over. That click belongs to the
+  // release, not to a fresh decision. Waiting it out rather than swallowing
+  // the next click matters: the card being cast leaves the hand mid-gesture,
+  // so the release often has no common element left to fire a click on at all,
+  // and a swallowed click would be the player's real one.
+  const gestureEndedAtRef = useRef(-Infinity);
+  const gestureActiveRef = useRef(false);
+  useEffect(() => {
+    if (handCastTargetGestureActive) {
+      gestureActiveRef.current = true;
+    } else if (gestureActiveRef.current) {
+      gestureActiveRef.current = false;
+      gestureEndedAtRef.current = performance.now();
+    }
+  }, [handCastTargetGestureActive]);
+
+  // Letting go over dead space keeps the arrow live; clicking dead space is
+  // what abandons the cast. A click on a card, a player or a zone is left to
+  // that thing's own handler, which is what picks a target.
+  useEffect(() => {
+    if (
+      handCastTargetGestureActive
+      || !canAct
+      || requirements.length === 0
+      || allDone
+      || liveTargetSourceId == null
+      || !state?.cancelable
+    ) return undefined;
+
+    const onClick = (event) => {
+      if (event.button != null && event.button !== 0) return;
+      if (performance.now() - gestureEndedAtRef.current < RELEASE_CLICK_GRACE_MS) return;
+      const target = event.target;
+      if (typeof target?.closest !== "function") return;
+      if (!target.closest("[data-drop-zone]") || target.closest(TARGETING_CHROME)) return;
+      if (castHoverTargetAtPoint(event.clientX, event.clientY)) return;
+      cancelDecision();
+    };
+
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [
+    allDone,
+    canAct,
+    cancelDecision,
+    handCastTargetGestureActive,
+    liveTargetSourceId,
+    requirements.length,
+    state?.cancelable,
+  ]);
 
   useEffect(() => {
     if (

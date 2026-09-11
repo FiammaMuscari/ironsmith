@@ -6,8 +6,7 @@
 use crate::tag::TagKeyWalk;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TagKeyWalk)]
 pub enum StaticAbilityId {
     Flying,
     FirstStrike,
@@ -234,6 +233,7 @@ pub enum StaticAbilityId {
     MayChooseNotToUntapDuringUntapStep,
     ChooseCreatureTypeAsEnters,
     EntersTapped,
+    EntersPrepared,
     EntersTappedUnlessControlTwoOrMoreOtherLands,
     EntersTappedUnlessControlTwoOrFewerOtherLands,
     EntersTappedUnlessControlTwoOrMoreBasicLands,
@@ -547,6 +547,7 @@ impl StaticAbilityId {
             | MayChooseNotToUntapDuringUntapStep
             | ChooseCreatureTypeAsEnters
             | EntersTapped
+            | EntersPrepared
             | EntersTappedUnlessControlTwoOrMoreOtherLands
             | EntersTappedUnlessControlTwoOrFewerOtherLands
             | EntersTappedUnlessControlTwoOrMoreBasicLands
@@ -773,7 +774,7 @@ impl StaticAbilityId {
                 | CantAttackYouOrPlaneswalkersUnlessControllerPaysPerAttacker
                 | CantAttackYouUnlessControllerPaysPerAttackerBasicLandTypesAmongLandsYouControl
                 | BlockCost
-            | AttackCost
+                | AttackCost
                 | CantBlock
                 | MayAssignDamageAsUnblocked
                 | YouAssignCombatDamageOfCreaturesAttackingYou

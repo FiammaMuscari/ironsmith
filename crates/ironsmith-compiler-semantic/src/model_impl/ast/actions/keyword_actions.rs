@@ -2,8 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, PartialEq)]
-#[derive(TagKeyWalk)]
+#[derive(Clone, PartialEq, TagKeyWalk)]
 pub enum KeywordActionAst {
     Scry {
         count: Value,
@@ -123,6 +122,10 @@ pub enum KeywordActionAst {
         duration: Until,
     },
     Suspect {
+        target: TargetAst,
+    },
+    /// The Prepared keyword action: the subject becomes prepared.
+    Prepare {
         target: TargetAst,
     },
     ClearSuspected {

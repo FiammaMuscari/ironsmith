@@ -9,6 +9,12 @@ import { samePlayerId } from "@/lib/player-display";
 import { isFaceUpZoneCard, PILE_ZONES, zonePileCards } from "@/lib/zone-piles";
 import { cardArtCropUrl } from "@/lib/card-image-variants";
 import { prepareCardFrame } from "@/lib/card-frame-preparation";
+import { isObjectChosen, requestObjectSelection } from "@/lib/object-selection";
+import { useChosenObjectIds } from "@/context/ObjectSelectionContext";
+import SelectionCheckBadge from "@/components/cards/SelectionCheckBadge";
+
+// How long a zone takes to grow when it starts holding something to pick.
+const ZONE_TARGET_GROW_MS = 220;
 
 function ZoneArt({ card }) {
   const imageRef = useRef(null);
@@ -29,6 +35,7 @@ function ZoneArt({ card }) {
 
 function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverride, fading = false, onOpenChange }) {
   const { state } = useGame();
+  const chosenObjectIds = useChosenObjectIds();
   const { hoverCard, clearHover, showAnchoredCardPreview } = useHover();
   const castIntent = useCastTargeting();
   const castHover = useCastTargetHover();
@@ -103,70 +110,88 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     return () => window.removeEventListener("ironsmith:open-target-zone", openTargetZone);
   }, [player.id, player.index, zone]);
 
+  // A card chosen inside a closed pile is otherwise invisible: the pile shows
+  // only its top card's art. It wears the same check the cards themselves do,
+  // and clicking it unchooses that card without opening the strip. Once the
+  // strip is open the cards carry their own checks, so this one steps aside.
+  const chosenInPile = !open && choosingObject
+    ? cards.find((card) => isObjectChosen(chosenObjectIds, card.id))
+    : null;
+
   const renderCard = (card) => {
     const legal = canChoose && isLegal(card);
     const disabled = (choosingTarget || choosingObject) && !legal;
-    return <button type="button" key={card.id} className="zone-pile-card-row"
-      aria-label={card.name || "Face-down card"}
-      data-object-id={String(card.id).startsWith("look-top-") ? undefined : card.id} data-zone-card={zone}
-      data-target-legal={legal ? "true" : undefined} disabled={disabled}
-      onPointerEnter={(event) => {
-        if (event.pointerType === "touch" || disabled || !isFaceUpZoneCard(card) || String(card.id).startsWith("look-top-")) return;
-        hoverCard(card.id);
-      }}
-      onPointerLeave={(event) => {
-        if (event.pointerType !== "touch") clearHover();
-      }}
-      onFocus={() => {
-        if (!disabled && isFaceUpZoneCard(card) && !String(card.id).startsWith("look-top-")) hoverCard(card.id);
-      }}
-      onBlur={() => clearHover()}
-      onClick={(event) => {
-        if (castIntent && state?.decision?.kind !== "targets") return;
-        if (choosingObject && legal) {
-          window.dispatchEvent(new CustomEvent("ironsmith:select-object-choice", {
-            detail: { objectId: card.id },
-          }));
-          changeOpen(false);
-          return;
-        }
-        if (choosingTarget && legal) {
-          window.dispatchEvent(new CustomEvent("ironsmith:target-choice", {
-            detail: { target: { kind: "object", object: Number(card.id) } },
-          }));
-          changeOpen(false);
-          return;
-        }
-        if (choosingOption && legal) {
-          const option = (decision.options || []).find((candidate) =>
-            candidate.object_id != null && String(candidate.object_id) === String(card.id)
-          );
-          if (option) {
-            window.dispatchEvent(new CustomEvent("ironsmith:select-option-choice", {
-              detail: { optionIndex: option.index },
+    const chosen = choosingObject && isObjectChosen(chosenObjectIds, card.id);
+    // The check has to sit outside the row button to stay clickable, so the
+    // row gets a wrapper of its own strip width.
+    return <span key={card.id} className="zone-pile-card-slot">
+      <button type="button" className={`zone-pile-card-row${chosen ? " is-chosen" : ""}`}
+        aria-label={card.name || "Face-down card"}
+        data-object-id={String(card.id).startsWith("look-top-") ? undefined : card.id} data-zone-card={zone}
+        data-target-legal={legal ? "true" : undefined} disabled={disabled}
+        onPointerEnter={(event) => {
+          if (event.pointerType === "touch" || disabled || !isFaceUpZoneCard(card) || String(card.id).startsWith("look-top-")) return;
+          hoverCard(card.id);
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType !== "touch") clearHover();
+        }}
+        onFocus={() => {
+          if (!disabled && isFaceUpZoneCard(card) && !String(card.id).startsWith("look-top-")) hoverCard(card.id);
+        }}
+        onBlur={() => clearHover()}
+        onClick={(event) => {
+          if (castIntent && state?.decision?.kind !== "targets") return;
+          if (choosingObject && legal) {
+            // Searches take several picks: leave the zone open, add the card,
+            // and let its check be the only way back out.
+            requestObjectSelection(card.id, "add");
+            return;
+          }
+          if (choosingTarget && legal) {
+            window.dispatchEvent(new CustomEvent("ironsmith:target-choice", {
+              detail: { target: { kind: "object", object: Number(card.id) } },
             }));
             changeOpen(false);
             return;
           }
-        }
-        const anchor = event.currentTarget;
-        onCardClick?.(event, card);
-        // A zone card is an explicit selection, so show its full frame
-        // immediately while keeping the normal inspector selection in sync.
-        // Do this after onCardClick because that callback clears any previous
-        // anchored preview as part of changing the selected object.
-        if (isFaceUpZoneCard(card) && !String(card.id).startsWith("look-top-")) {
-          showAnchoredCardPreview(card.id, anchor, { placement: "zone" });
-        }
-        if (choosingTarget || choosingObject) changeOpen(false);
-      }}>
-      <ZoneArt card={card} />
-    </button>;
+          if (choosingOption && legal) {
+            const option = (decision.options || []).find((candidate) =>
+              candidate.object_id != null && String(candidate.object_id) === String(card.id)
+            );
+            if (option) {
+              window.dispatchEvent(new CustomEvent("ironsmith:select-option-choice", {
+                detail: { optionIndex: option.index },
+              }));
+              changeOpen(false);
+              return;
+            }
+          }
+          const anchor = event.currentTarget;
+          onCardClick?.(event, card);
+          // A zone card is an explicit selection, so show its full frame
+          // immediately while keeping the normal inspector selection in sync.
+          // Do this after onCardClick because that callback clears any previous
+          // anchored preview as part of changing the selected object.
+          if (isFaceUpZoneCard(card) && !String(card.id).startsWith("look-top-")) {
+            showAnchoredCardPreview(card.id, anchor, { placement: "zone" });
+          }
+          if (choosingTarget || choosingObject) changeOpen(false);
+        }}>
+        <ZoneArt card={card} />
+      </button>
+      {chosen && <SelectionCheckBadge objectId={card.id} />}
+    </span>;
   };
 
   return (
     <Popover open={open} onOpenChange={changeOpen}>
-      <div className="zone-pile-slot" style={{ opacity: fading ? 0 : 1, transition: fading ? `opacity ${LOOK_FADE_MS}ms linear` : "opacity 120ms ease" }}>
+      {/* The slot carries its transitions inline, so the growth a legal target
+          brings has to be listed here too or the stylesheet's is overridden. */}
+      <div className="zone-pile-slot" style={{
+        opacity: fading ? 0 : 1,
+        transition: `${fading ? `opacity ${LOOK_FADE_MS}ms linear` : "opacity 120ms ease"}, transform ${ZONE_TARGET_GROW_MS}ms ease`,
+      }}>
       <span className="zone-pile-label">{label} <strong>{count}</strong></span>
       <PopoverTrigger asChild>
         <button ref={triggerRef} type="button" className="zone-pile" data-zone-pile={zone}
@@ -189,6 +214,13 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
           <ZoneArt card={topCard} />
         </button>
       </PopoverTrigger>
+      {chosenInPile ? (
+        <SelectionCheckBadge
+          objectId={chosenInPile.id}
+          className="zone-pile-check"
+          label={`Deselect ${chosenInPile.name || "card"}`}
+        />
+      ) : null}
       </div>
       <PopoverContent ref={menuRef} className={`zone-pile-menu${zone === "look" ? " zone-pile-menu--look" : ""}`} side={zone === "look" ? "right" : "left"} align="start" sideOffset={-(stripBounds.cardWidth + 6)} alignOffset={-6} avoidCollisions={false}
         style={{ "--zone-strip-width": `${stripBounds.width}px`, "--zone-strip-card-width": `${stripBounds.cardWidth}px` }}

@@ -6,19 +6,20 @@ use crate::mana::{ManaCost, ManaSymbol};
 use crate::types::{CardType, Subtype, Supertype};
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TagKeyWalk)]
 pub enum LinkedFaceLayout {
     #[default]
     None,
     TransformLike,
     Split,
+    /// Two faces where the back is a prepare spell: never cast from hand, only
+    /// as a copy while the front permanent is prepared.
+    Prepare,
 }
 
 /// Represents power or toughness values that may be variable.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
 pub enum PtValue {
     /// Fixed numeric value (e.g., 4)
     Fixed(i32),
@@ -52,8 +53,7 @@ impl std::fmt::Display for PtValue {
 
 /// Power and toughness pair for creatures.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
 pub struct PowerToughness {
     pub power: PtValue,
     pub toughness: PtValue,
@@ -76,8 +76,7 @@ impl PowerToughness {
 /// Static, immutable card definition.
 /// This represents the printed characteristics of a card.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Clone, PartialEq, Eq, TagKeyWalk)]
 pub struct Card {
     pub id: CardId,
     pub name: String,
@@ -272,8 +271,7 @@ impl Card {
 
 /// Builder for constructing Card instances.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Default, Clone)]
-#[derive(TagKeyWalk)]
+#[derive(Debug, Default, Clone, TagKeyWalk)]
 pub struct CardBuilder {
     id: CardId,
     name: String,

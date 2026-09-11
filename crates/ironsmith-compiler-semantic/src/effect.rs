@@ -1782,6 +1782,10 @@ impl Effect {
         Self::new(crate::effects::GoadEffect::with_duration(target, duration))
     }
 
+    pub fn prepare(target: crate::target::ChooseSpec) -> Self {
+        Self::new(crate::effects::PrepareEffect::new(target))
+    }
+
     pub fn suspect(target: crate::target::ChooseSpec) -> Self {
         Self::new(crate::effects::SuspectEffect::new(target))
     }
@@ -1959,10 +1963,7 @@ impl Effect {
         count: impl Into<Value>,
         player: crate::target::PlayerFilter,
     ) -> Self {
-        Self::new(crate::effects::InvestigateEffect::new(
-            count.into(),
-            player,
-        ))
+        Self::new(crate::effects::InvestigateEffect::new(count.into(), player))
     }
 
     pub fn incubate(amount: impl Into<Value>, count: impl Into<Value>) -> Self {
