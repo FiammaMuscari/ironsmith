@@ -122,6 +122,7 @@ UNSCORED_SENTINEL = -1.0
 SingleEntry = Tuple[str, str, float, dict]
 FlipPair = Tuple[str, str, float, str, str, float, str, dict]
 SplitPair = Tuple[str, str, float, str, str, float, str, bool, dict]
+PreparePair = Tuple[str, str, float, str, str, float, str, dict]
 AliasEntry = Tuple[str, str]
 
 
@@ -137,10 +138,17 @@ def frontend_card_route_key(name: str) -> str:
 def collect_unique_blocks(
     db_path: Path,
     semantic_scores: Dict[str, float],
-) -> Tuple[Dict[str, SingleEntry], List[FlipPair], List[SplitPair], List[AliasEntry]]:
+) -> Tuple[
+    Dict[str, SingleEntry],
+    List[FlipPair],
+    List[SplitPair],
+    List[PreparePair],
+    List[AliasEntry],
+]:
     unique: Dict[str, SingleEntry] = {}
     flips: List[FlipPair] = []
     splits: List[SplitPair] = []
+    prepares: List[PreparePair] = []
     missing_scores: List[str] = []
     aliases_by_key: Dict[str, AliasEntry] = {}
     ambiguous_aliases: set[str] = set()
@@ -305,15 +313,15 @@ def collect_unique_blocks(
             register_face_print_aliases(card, [front, back])
             continue
 
-        # Multi-face layouts need both faces available at runtime. We treat
-        # transform/adventure-style cards the same as flip cards in the baked
-        # payload so front-face lookups still resolve even when the root card
-        # has no strict parser block of its own.
+        # Multi-face layouts need both faces available at runtime. Prepare is
+        # kept separate from transform-like cards because its spell face is a
+        # copy and must not be registered as an independent card identity.
         if layout in {
             "flip",
             "transform",
             "modal_dfc",
             "adventure",
+            "prepare",
         } and isinstance(faces, list) and len(faces) >= 2:
             front = faces[0]
             back = faces[1]
@@ -332,18 +340,20 @@ def collect_unique_blocks(
             front_score = require_score(front_name, front_name, combined_name)
             back_score = require_score(back_name, back_name, combined_name)
 
-            flips.append(
-                (
-                    front_name,
-                    front_parse_block,
-                    front_score,
-                    back_name,
-                    back_parse_block,
-                    back_score,
-                    combined_name,
-                    compact_linked_scryfall_metadata(card, front, back),
-                )
+            linked_entry = (
+                front_name,
+                front_parse_block,
+                front_score,
+                back_name,
+                back_parse_block,
+                back_score,
+                combined_name,
+                compact_linked_scryfall_metadata(card, front, back),
             )
+            if layout == "prepare":
+                prepares.append(linked_entry)
+            else:
+                flips.append(linked_entry)
             register_root_print_aliases(card, front_name)
             register_face_print_aliases(card, [front, back])
             continue
@@ -382,7 +392,7 @@ def collect_unique_blocks(
         )
 
     aliases = sorted(aliases_by_key.values(), key=lambda pair: pair[0].casefold())
-    return unique, flips, splits, aliases
+    return unique, flips, splits, prepares, aliases
 
 
 def write_generated_source(
@@ -1383,12 +1393,14 @@ def write_frontend_card_assets(
     cards: Dict[str, SingleEntry],
     flips: List[FlipPair],
     splits: List[SplitPair],
+    prepares: List[PreparePair],
     aliases: List[AliasEntry],
     cards_dir: Path,
 ) -> None:
     ordered = sorted(cards.values(), key=lambda pair: pair[0].casefold())
     flips_ordered = sorted(flips, key=lambda pair: pair[0].casefold())
     splits_ordered = sorted(splits, key=lambda pair: pair[0].casefold())
+    prepares_ordered = sorted(prepares, key=lambda pair: pair[0].casefold())
     aliases_ordered = sorted(aliases, key=lambda pair: pair[0].casefold())
 
     aliases_by_canonical: Dict[str, List[str]] = {}
@@ -1480,6 +1492,44 @@ def write_frontend_card_assets(
         for alias in aliases_by_canonical.get(front_name.casefold(), []):
             add_frontend_route(routes, alias, payload)
         for alias in aliases_by_canonical.get(back_name.casefold(), []):
+            add_frontend_route(routes, alias, payload)
+        index_cards.append(
+            {
+                "name": front_name,
+                "route": frontend_card_route_key(front_name),
+                "score": frontend_score(front_score),
+            }
+        )
+
+    for entry in prepares_ordered:
+        (
+            front_name,
+            front_block,
+            front_score,
+            back_name,
+            back_block,
+            back_score,
+            combined_name,
+            metadata,
+        ) = entry
+        payload = frontend_asset_payload_for_linked(
+            layout="prepare",
+            front_name=front_name,
+            front_block=front_block,
+            front_score=front_score,
+            back_name=back_name,
+            back_block=back_block,
+            back_score=back_score,
+            combined_name=combined_name,
+            has_fuse=False,
+            metadata=metadata,
+            aliases_by_canonical=aliases_by_canonical,
+        )
+        # The prepare spell face is a linked copy, not a standalone card;
+        # never let its name collide with a real card such as Seething Song.
+        for route_name in (front_name, combined_name):
+            add_frontend_route(routes, route_name, payload)
+        for alias in aliases_by_canonical.get(front_name.casefold(), []):
             add_frontend_route(routes, alias, payload)
         index_cards.append(
             {
@@ -1582,13 +1632,14 @@ def main() -> None:
             f"[generate_baked_registry] registry DB not found: {db_path}"
         )
     semantic_scores = load_latest_semantic_scores(db_path)
-    cards, flips, splits, aliases = collect_unique_blocks(db_path, semantic_scores)
+    cards, flips, splits, prepares, aliases = collect_unique_blocks(db_path, semantic_scores)
     write_generated_source(cards, flips, splits, aliases, output_path)
     if args.frontend_cards_dir:
         write_frontend_card_assets(
             cards,
             flips,
             splits,
+            prepares,
             aliases,
             Path(args.frontend_cards_dir),
         )
