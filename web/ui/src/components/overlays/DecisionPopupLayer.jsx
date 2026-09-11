@@ -27,6 +27,7 @@ import {
 import {
   buildBattlefieldFamilies,
   buildPriorityActionGroups,
+  isMultiCastActionGroup,
 } from "@/lib/priority-action-groups";
 import { findOpeningHandMulliganAction } from "@/lib/opening-hand-actions";
 import {
@@ -1781,7 +1782,9 @@ function MobileBattleDecisionLayer({
     (group) => {
       if (!canAct || !group) return;
       setHoverLinkedObjects(group.linkedObjectIds || []);
-      dispatchHandActionHover(group.hoverObjectId);
+      if (!isMultiCastActionGroup(group)) {
+        dispatchHandActionHover(group.hoverObjectId);
+      }
     },
     [canAct, setHoverLinkedObjects]
   );
@@ -2602,7 +2605,9 @@ function PriorityBar({
     (group) => {
       if (!canAct || !group) return;
       setHoverLinkedObjects(group.linkedObjectIds || []);
-      dispatchHandActionHover(group.hoverObjectId);
+      if (!isMultiCastActionGroup(group)) {
+        dispatchHandActionHover(group.hoverObjectId);
+      }
     },
     [canAct, setHoverLinkedObjects]
   );

@@ -2,7 +2,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHoverActions } from "@/context/HoverContext";
 import { SymbolText } from "@/lib/mana-symbols";
-import { buildPriorityActionGroups } from "@/lib/priority-action-groups";
+import { buildPriorityActionGroups, isMultiCastActionGroup } from "@/lib/priority-action-groups";
 
 /** Strip "Activate CardName: " or "Cast CardName" prefix for compact display. */
 function stripActionPrefix(label) {
@@ -211,6 +211,7 @@ export default function ActionPopover({
         )}
         {actionGroups.map((group, i) => {
           const action = group.firstAction;
+          const suppressCardPreview = isMultiCastActionGroup(group);
           const objId = group.hoverObjectId != null
             ? String(group.hoverObjectId)
             : action?.object_id != null ? String(action.object_id) : null;
@@ -239,7 +240,7 @@ export default function ActionPopover({
               }}
               onMouseEnter={() => {
                 setHoveredIdx(i);
-                if (previewCards) {
+                if (previewCards && !suppressCardPreview) {
                   if (objId) hoverCard(objId);
                   dispatchHandActionHover(objId);
                 }
@@ -251,7 +252,7 @@ export default function ActionPopover({
               }}
               onFocus={() => {
                 setHoveredIdx(i);
-                if (previewCards) {
+                if (previewCards && !suppressCardPreview) {
                   if (objId) hoverCard(objId);
                   dispatchHandActionHover(objId);
                 }

@@ -4,6 +4,7 @@ import {
   buildBattlefieldFamilies,
   buildPriorityActionGroups,
   formatCastActionGroupLabel,
+  isMultiCastActionGroup,
 } from "../src/lib/priority-action-groups.js";
 
 function castAction({
@@ -93,4 +94,15 @@ test("alternative-only casts still expose a generic cast group", () => {
   assert.equal(groups.length, 1);
   assert.equal(groups[0].label, "Cast Force of Will");
   assert.equal(groups[0].firstAction.index, 11);
+});
+
+test("multi-method cast groups suppress card previews while choosing a method", () => {
+  const [group] = buildPriorityActionGroups([
+    castAction({ index: 1, label: "Cast Fireball", castingMethod: { kind: "normal" } }),
+    castAction({ index: 2, label: "Cast Fireball (alternative #0)", castingMethod: { kind: "alternative", index: 0 } }),
+  ], buildBattlefieldFamilies([]));
+
+  assert.equal(isMultiCastActionGroup(group), true);
+  assert.equal(isMultiCastActionGroup({ actions: [{ kind: "cast_spell" }] }), false);
+  assert.equal(isMultiCastActionGroup({ actions: [{ kind: "activate_ability" }, { kind: "activate_ability" }] }), false);
 });

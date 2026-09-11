@@ -66,6 +66,13 @@ export function formatCastActionGroupLabel(label) {
   return castName ? `Cast ${castName}` : raw;
 }
 
+// A row can represent several legal casting methods for the same card.
+// Choosing one should not open the card inspector as a side effect of hover.
+export function isMultiCastActionGroup(group) {
+  const actions = Array.isArray(group?.actions) ? group.actions : [];
+  return actions.length > 1 && actions.some((action) => action?.kind === "cast_spell");
+}
+
 export function buildBattlefieldFamilies(players) {
   const familyIdByObjectId = new Map();
   const familyMembersByFamilyId = new Map();
