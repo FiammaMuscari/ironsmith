@@ -6,7 +6,9 @@ autobins = false
 
 [dependencies]
 ironsmith-card-source = { path = "../ironsmith-card-source", default-features = false }
-ironsmith-status-db = { path = "../ironsmith-status-db", default-features = false }
+# Keep the bundled SQLite feature enabled so the registry preflight also builds
+# on Windows hosts that do not have a system sqlite3.lib installed.
+ironsmith-status-db = { path = "../ironsmith-status-db" }
 serde_json = "1.0.149"
 
 [[bin]]

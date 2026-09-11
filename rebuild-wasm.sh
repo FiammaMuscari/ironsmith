@@ -394,6 +394,16 @@ esac
 cd "$ROOT_DIR"
 require_cmd cargo
 require_cmd wasm-bindgen
+# Windows commonly exposes the interpreter as `python.exe` (or `py.exe`)
+# instead of the Unix-style `python3`.  Normalize that command name so the
+# rest of this portable script can use one invocation everywhere.
+if ! command -v python3 >/dev/null 2>&1; then
+  if command -v python.exe >/dev/null 2>&1; then
+    python3() { python.exe "$@"; }
+  elif command -v py.exe >/dev/null 2>&1; then
+    python3() { py.exe -3 "$@"; }
+  fi
+fi
 require_cmd python3
 
 mkdir -p "$ROOT_DIR/target"
@@ -512,8 +522,23 @@ else
   echo "[INFO] wasm-opt: disabled (--no-opt)"
 fi
 
-# shellcheck source=scripts/lib/wasm-opt.sh
-source "$ROOT_DIR/scripts/lib/wasm-opt.sh"
+# The pinned Binaryen helper is optional for developer builds.  Some source
+# checkouts (including the upstream repository) do not carry that generated
+# helper, while the default path explicitly disables wasm-opt.  Keep rebuilds
+# usable in that case and still honor an explicit optimizer override.
+if [[ -f "$ROOT_DIR/scripts/lib/wasm-opt.sh" ]]; then
+  # shellcheck source=scripts/lib/wasm-opt.sh
+  source "$ROOT_DIR/scripts/lib/wasm-opt.sh"
+else
+  resolve_wasm_opt() {
+    if [[ -n "${IRONSMITH_WASM_OPT:-}" ]]; then
+      printf '%s\n' "$IRONSMITH_WASM_OPT"
+    else
+      command -v wasm-opt 2>/dev/null || return 1
+    fi
+  }
+  wasm_opt_matches_pin() { return 0; }
+fi
 
 build_split_wasm_package() {
   local engine_features
