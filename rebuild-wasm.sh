@@ -529,6 +529,16 @@ esac
 
 cd "$ROOT_DIR"
 require_cmd cargo
+require_cmd wasm-bindgen
+# Windows commonly exposes Python as python.exe or py.exe rather than
+# python3; normalize the command name used by the portable scripts.
+if ! command -v python3 >/dev/null 2>&1 || ! python3 --version >/dev/null 2>&1; then
+  if command -v python.exe >/dev/null 2>&1; then
+    python3() { python.exe "$@"; }
+  elif command -v py.exe >/dev/null 2>&1; then
+    python3() { py.exe -3 "$@"; }
+  fi
+fi
 require_cmd python3
 ensure_wasm_target
 ensure_wasm_bindgen_cli
