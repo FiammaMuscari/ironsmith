@@ -6,6 +6,8 @@ import {
   currentActionTrace,
   getDiagnosticsSnapshot,
   markActionStage,
+  recordMultiplayerEvent,
+  recordMultiplayerState,
   recordPeerMessage,
   recordPeerRtt,
   resetDiagnostics,
@@ -72,4 +74,23 @@ test("subscribers are told about every change", () => {
   unsubscribe();
   completeActionTrace(id);
   assert.equal(calls, 2);
+});
+
+test("multiplayer diagnostics are bounded, ordered, and sanitized", () => {
+  resetDiagnostics();
+  for (let i = 0; i < 90; i++) recordMultiplayerEvent(`event-${i}`, { seq: i, prefixHash: "1234567890abcdefSECRET", token: "hidden" });
+  const snapshot = getDiagnosticsSnapshot().multiplayer;
+  assert.equal(snapshot.events.length, 80);
+  assert.equal(snapshot.events[0].kind, "event-89");
+  assert.equal(snapshot.events.at(-1).kind, "event-10");
+  assert.equal(snapshot.events[0].prefixHash, "1234567890abcdef");
+  assert.equal("token" in snapshot.events[0], false);
+});
+
+test("multiplayer snapshot exposes current state without changing action bookkeeping", () => {
+  resetDiagnostics();
+  recordMultiplayerState({ connected: true, role: "guest", seq: 4, expectedSeq: 5, paused: false, resyncPending: true, hostConnection: "open", pendingCommands: 2, acceptedActions: 4, peerId: "peer-1" });
+  const snapshot = getDiagnosticsSnapshot();
+  assert.deepEqual(snapshot.multiplayer.current, { connected: true, role: "guest", peerId: "peer-1", connectionState: null, seq: 4, expectedSeq: 5, prefixHash: null, paused: false, resyncPending: true, hostConnection: "open", pendingCommands: 2, acceptedActions: 4, reconnects: 0 });
+  assert.equal(snapshot.traces.length, 0);
 });

@@ -13,6 +13,7 @@
 
 const MAX_TRACES = 40;
 const MAX_EVENTS = 240;
+const MAX_MULTIPLAYER_EVENTS = 80;
 const MAX_STALLS = 60;
 const STALL_WINDOW_MS = 60_000;
 const STALL_THRESHOLD_MS = 50;
@@ -24,6 +25,13 @@ const now = () => (globalThis.performance?.now?.() ?? Date.now());
 const store = {
   traces: [],
   events: [],
+  multiplayerEvents: [],
+  multiplayer: {
+    connected: null, role: null, peerId: null, connectionState: null,
+    seq: null, expectedSeq: null, prefixHash: null, paused: null,
+    resyncPending: null, hostConnection: null, pendingCommands: null,
+    acceptedActions: null, reconnects: 0,
+  },
   peers: new Map(),
   stalls: [],
   mainThread: { lagMs: 0, worstStallMs: 0, worstStallAt: null, lastTickAt: null, longTasks: 0 },
@@ -152,6 +160,45 @@ export function recordDiagnosticEvent(kind, meta = null) {
   store.events.push({ kind: String(kind), at: now(), atWall: Date.now(), meta: compact(meta) });
   if (store.events.length > MAX_EVENTS) store.events.splice(0, store.events.length - MAX_EVENTS);
   notify();
+}
+
+const multiplayerFields = new Set([
+  "connected", "role", "peerId", "connectionState", "seq", "expectedSeq",
+  "prefixHash", "paused", "resyncPending", "hostConnection", "pendingCommands",
+  "acceptedActions", "reconnects",
+]);
+
+function shortPrefix(value) {
+  return typeof value === "string" ? value.slice(0, 16) : value == null ? null : String(value).slice(0, 16);
+}
+
+function sanitizeMultiplayer(value = {}) {
+  const out = {};
+  for (const field of multiplayerFields) {
+    if (value[field] === undefined) continue;
+    out[field] = field === "prefixHash" ? shortPrefix(value[field])
+      : field === "peerId" ? String(value[field]).slice(0, 64) : value[field];
+  }
+  return out;
+}
+
+// Lightweight, bounded state for inspecting a live multiplayer freeze.
+export function recordMultiplayerState(state = {}) {
+  Object.assign(store.multiplayer, sanitizeMultiplayer(state));
+  notify();
+}
+
+export function recordMultiplayerEvent(kind, state = {}) {
+  store.multiplayerEvents.push({ kind: String(kind), at: now(), ...sanitizeMultiplayer(state) });
+  if (store.multiplayerEvents.length > MAX_MULTIPLAYER_EVENTS) {
+    store.multiplayerEvents.splice(0, store.multiplayerEvents.length - MAX_MULTIPLAYER_EVENTS);
+  }
+  Object.assign(store.multiplayer, sanitizeMultiplayer(state));
+  notify();
+}
+
+export function getMultiplayerDiagnostics() {
+  return { current: { ...store.multiplayer }, events: store.multiplayerEvents.slice().reverse() };
 }
 
 function peerEntry(peerId, name) {
@@ -304,6 +351,7 @@ export function getDiagnosticsSnapshot() {
     traces: store.traces.slice().reverse(),
     current: currentActionTrace(),
     events: store.events.slice().reverse(),
+    multiplayer: getMultiplayerDiagnostics(),
     peers: [...store.peers.values()].map((peer) => ({
       ...peer,
       rttAvgMs: peer.rttSamples.length ? peer.rttSamples.reduce((sum, value) => sum + value, 0) / peer.rttSamples.length : null,
@@ -337,6 +385,7 @@ export function exportDiagnostics(extra = null, gameState = null) {
     at: snapshot.at, atWall: snapshot.atWall,
     current: snapshot.current, engine: snapshot.engine, engineRequests: snapshot.engineRequests,
     peers: snapshot.peers, mainThread: snapshot.mainThread,
+    multiplayer: snapshot.multiplayer,
     events: snapshot.events,
     traces: snapshot.traces,
     perfEvents: typeof window !== "undefined" && Array.isArray(window.__ironsmithPerfEvents) ? window.__ironsmithPerfEvents.slice(-100) : [],
@@ -346,6 +395,13 @@ export function exportDiagnostics(extra = null, gameState = null) {
 export function resetDiagnostics() {
   store.traces = [];
   store.events = [];
+  store.multiplayerEvents = [];
+  store.multiplayer = {
+    connected: null, role: null, peerId: null, connectionState: null,
+    seq: null, expectedSeq: null, prefixHash: null, paused: null,
+    resyncPending: null, hostConnection: null, pendingCommands: null,
+    acceptedActions: null, reconnects: 0,
+  };
   store.stalls = [];
   store.mainThread = { lagMs: 0, worstStallMs: 0, worstStallAt: null, lastTickAt: null, longTasks: 0 };
   store.engine = null;
@@ -354,4 +410,5 @@ export function resetDiagnostics() {
 
 if (typeof window !== "undefined") {
   window.__ironsmithDiagnostics = { snapshot: getDiagnosticsSnapshot, export: exportDiagnostics, reset: resetDiagnostics };
+  window.__ironsmithMultiplayerDiagnostics = getMultiplayerDiagnostics;
 }
