@@ -8,6 +8,12 @@ const json = (body, status = 200) => Response.json(body, { status });
 const directory = (env) => env.DIRECTORY.get(env.DIRECTORY.idFromName('public'));
 const room = (env, id) => env.ROOMS.get(env.ROOMS.idFromName(id));
 const send = (ws, data) => { try { ws.send(JSON.stringify(data)); } catch { /* close event cleans up */ } };
+const authority = config => ({
+  currentHost: String(config?.currentHost || config?.host || ''),
+  authorityEpoch: Number.isSafeInteger(Number(config?.authorityEpoch))
+    ? Number(config.authorityEpoch) : 1,
+});
+const authorityError = (code, message) => Object.assign(new Error(message), { code });
 
 export default {
   async fetch(request, env) {
@@ -100,9 +106,12 @@ export class LobbyRoom {
               const rules = PUBLIC_FORMATS[msg.format];
               const desiredPlayers = rules.maxPlayers === 2 ? 2 : Number(msg.desiredPlayers);
               if (![2, 3, 4].includes(desiredPlayers)) throw new Error('Invalid player count');
-              await this.ctx.storage.put('config', { host: state.peer, format: msg.format, desiredPlayers });
+              await this.ctx.storage.put('config', {
+                host: state.peer, currentHost: state.peer, authorityEpoch: 1,
+                format: msg.format, desiredPlayers,
+              });
             } else if (!existing && !this.sockets().some(socket => {
-              const a = socket.deserializeAttachment(); return a.authenticated && a.peer === config.host;
+              const a = socket.deserializeAttachment(); return a.authenticated && a.peer === authority(config).currentHost;
             })) throw new Error('Lobby host is offline');
             const peers = await this.ctx.storage.list({ prefix: 'peer:' });
             if (!existing && peers.size >= 16) throw new Error('Room identity limit reached');
@@ -126,15 +135,26 @@ export class LobbyRoom {
       ws.serializeAttachment(state);
       if (msg.type === 'advertise') {
         const config = await this.ctx.storage.get('config');
-        if (state.peer !== config.host) return;
+        if (state.peer !== authority(config).currentHost) return;
         const listing = msg.lobby || {};
         const response = await directory(this.env).fetch('https://internal/update', { method: 'POST', body: JSON.stringify({
-          room: state.room, id: config.host, format: config.format, securityMode: 'trusted',
+          room: state.room, id: authority(config).currentHost, format: config.format, securityMode: 'trusted',
           name: String(listing.name || 'Lobby').slice(0, 60), desiredPlayers: config.desiredPlayers,
           playerCount: Math.max(1, Math.min(config.desiredPlayers, Number(listing.playerCount) || 1)),
           available: listing.available === true && Number(listing.playerCount) < config.desiredPlayers,
         }) });
         if (!response.ok) send(ws, { type: 'error', message: 'Public directory is full; lobby is still joinable by code' });
+        return;
+      }
+      // Authority controls are deliberately separate from gameplay frames;
+      // future migration code can opt into fencing without changing relay
+      // compatibility for existing offer/answer/data traffic.
+      if (msg.type === 'authority_probe' || msg.type === 'authority_lease') {
+        try {
+          await this.handleAuthorityMessage(ws, state, msg);
+        } catch (error) {
+          send(ws, { type: 'authority_error', code: error.code || 'authority_rejected', message: error.message });
+        }
         return;
       }
       if (!['offer', 'answer', 'data', 'close'].includes(msg.type) || !ID.test(msg.connectionId || '')) throw new Error('Invalid frame');
@@ -151,6 +171,51 @@ export class LobbyRoom {
       ws.close(1008, 'Invalid relay request');
     }
   }
+  async handleAuthorityMessage(ws, state, msg) {
+    let response = null;
+    let targetSocket = null;
+    let rejection = null;
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const config = await this.ctx.storage.get('config');
+      const current = authority(config);
+      if (state.peer !== current.currentHost
+          || !Number.isSafeInteger(Number(msg.authorityEpoch))
+          || Number(msg.authorityEpoch) !== current.authorityEpoch) {
+        rejection = authorityError('authority_fenced', 'Authority epoch is stale or not held by this peer');
+        return;
+      }
+      if (msg.type === 'authority_probe') {
+        response = { type: 'authority_probe_ack', currentHost: current.currentHost, authorityEpoch: current.authorityEpoch };
+        return;
+      }
+      const nextHost = String(msg.nextHost || '');
+      if (!PEER.test(nextHost) || nextHost.match(PEER)[1] !== state.room || nextHost === current.currentHost) {
+        rejection = authorityError('authority_lease_rejected', 'Lease target is invalid');
+        return;
+      }
+      targetSocket = this.sockets().find(socket => {
+        const attachment = socket.deserializeAttachment();
+        return attachment.authenticated && attachment.peer === nextHost;
+      });
+      if (!targetSocket) {
+        rejection = authorityError('authority_lease_rejected', 'Lease target is not connected');
+        return;
+      }
+      const nextEpoch = current.authorityEpoch + 1;
+      await this.ctx.storage.put('config', {
+        ...config, host: nextHost, currentHost: nextHost, authorityEpoch: nextEpoch,
+      });
+      response = {
+        type: 'authority_lease_granted', previousHost: current.currentHost,
+        currentHost: nextHost, authorityEpoch: nextEpoch,
+      };
+    });
+    if (rejection) throw rejection;
+    send(ws, response);
+    if (response?.type === 'authority_lease_granted') send(targetSocket, {
+      type: 'authority_lease', currentHost: response.currentHost, authorityEpoch: response.authorityEpoch,
+    });
+  }
   async webSocketClose(ws) {
     // Complete the close handshake explicitly, including in local runtimes.
     try { ws.close(1000, 'Connection closed'); } catch { /* already closed */ }
@@ -159,7 +224,7 @@ export class LobbyRoom {
     if (this.sockets().some(s => s !== ws && s.deserializeAttachment().peer === state.peer)) return;
     for (const other of this.sockets()) send(other, { type: 'offline', peer: state.peer });
     const config = await this.ctx.storage.get('config');
-    if (config?.host === state.peer) await directory(this.env).fetch('https://internal/update', {
+    if (authority(config).currentHost === state.peer) await directory(this.env).fetch('https://internal/update', {
       method: 'POST', body: JSON.stringify({ room: state.room, available: false })
     });
   }

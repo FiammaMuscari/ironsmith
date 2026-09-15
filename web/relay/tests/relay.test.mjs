@@ -57,3 +57,46 @@ test('an expired resume credential cannot create a replacement room', async t =>
   socket.send(JSON.stringify({ type: 'auth', token: id(), resume: true, format: 'modern', desiredPlayers: 2 }));
   assert.match((await next()).message, /expired/);
 });
+
+test('authority epochs fence stale peers and preserve the normal host flow', { timeout: 30000 }, async t => {
+  const mf = await startRelay(); t.after(() => mf.dispose());
+  const room = id(); const host = `ws-${room}-${id()}`; const guest = `ws-${room}-${id()}`;
+  async function connect(peer, token, format) {
+    const response = await mf.dispatchFetch(`http://localhost/rooms/${room}/socket?peer=${peer}`, { headers: { Origin: origin, Upgrade: 'websocket' } });
+    assert.equal(response.status, 101);
+    const socket = response.webSocket; socket.accept(); const next = inbox(socket);
+    socket.send(JSON.stringify({ type: 'auth', token, format, desiredPlayers: 2 }));
+    return { socket, next, first: await next() };
+  }
+  const hostToken = id();
+  const a = await connect(host, hostToken, 'modern');
+  const b = await connect(guest, id());
+  assert.equal(a.first.type, 'open');
+  assert.equal(a.first.config.currentHost, host);
+  assert.equal(a.first.config.authorityEpoch, 1);
+
+  a.socket.send(JSON.stringify({ type: 'authority_probe', authorityEpoch: 1 }));
+  assert.deepEqual(await a.next(), { type: 'authority_probe_ack', currentHost: host, authorityEpoch: 1 });
+
+  a.socket.send(JSON.stringify({ type: 'authority_lease', authorityEpoch: 1, nextHost: guest }));
+  assert.deepEqual(await a.next(), { type: 'authority_lease_granted', previousHost: host, currentHost: guest, authorityEpoch: 2 });
+  assert.deepEqual(await b.next(), { type: 'authority_lease', currentHost: guest, authorityEpoch: 2 });
+
+  a.socket.send(JSON.stringify({ type: 'authority_probe', authorityEpoch: 1 }));
+  assert.equal((await a.next()).code, 'authority_fenced');
+  b.socket.send(JSON.stringify({ type: 'authority_probe', authorityEpoch: 2 }));
+  assert.deepEqual(await b.next(), { type: 'authority_probe_ack', currentHost: guest, authorityEpoch: 2 });
+  a.socket.send(JSON.stringify({ type: 'authority_probe', authorityEpoch: 999 }));
+  assert.equal((await a.next()).code, 'authority_fenced');
+  a.socket.send(JSON.stringify({ type: 'authority_lease', authorityEpoch: 1, nextHost: guest }));
+  assert.equal((await a.next()).code, 'authority_fenced');
+
+  a.socket.close(1000, 'reconnect');
+  const resumed = await connect(host, hostToken);
+  assert.equal(resumed.first.type, 'open');
+  assert.equal(resumed.first.config.currentHost, guest);
+  assert.equal(resumed.first.config.authorityEpoch, 2);
+  resumed.socket.send(JSON.stringify({ type: 'authority_probe', authorityEpoch: 1 }));
+  assert.equal((await resumed.next()).code, 'authority_fenced');
+  b.socket.close(1000, 'leave'); resumed.socket.close(1000, 'leave');
+});
