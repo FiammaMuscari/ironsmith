@@ -630,12 +630,11 @@ impl ManaPaymentPlanner {
                 // declines anything it cannot model, so this only ever skips
                 // work the search would have repeated.
                 //
-                // Existence checks are the exception. They only need *a* plan,
-                // which the lazy search already reaches by following a single
-                // candidate line, while the assignment measures every candidate
-                // before it can solve. Ranking is where the search explodes and
-                // where measuring every candidate pays for itself.
-                if !self.lazy_candidates
+                // Existence checks and sliced analyses are the exceptions. The
+                // assignment measures every candidate before it can solve and
+                // cannot yield midway through that work.
+                if !self.sliced
+                    && !self.lazy_candidates
                     && let Some(candidates) =
                         super::analytic::try_candidates(&staged, &payment_request)
                 {
@@ -2121,10 +2120,11 @@ mod tests {
             );
             let expected = plan_first_mana_payment(&game, &request).map(|plan| plan.id);
             let mut analysis = ManaPaymentAnalysis::new(&game, request);
-            // A tap-only board is answered by the assignment, which does not
-            // spend search budget, so this may now settle on the first slice.
-            // What must still hold is that slicing reaches the same plan.
-            let mut slices = 0;
+            assert!(
+                analysis.step(1).is_none(),
+                "sliced analysis must yield before exploring a tap-only board"
+            );
+            let mut slices = 1;
             let actual = loop {
                 slices += 1;
                 assert!(slices < 10000);
