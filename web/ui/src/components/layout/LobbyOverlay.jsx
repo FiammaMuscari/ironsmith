@@ -364,7 +364,7 @@ export default function LobbyOverlay({
                 <small>{ui("Card legality snapshot:") + " "}{formatCatalogDate()?.slice(0, 10) || ui('loading')}</small>
               </div>}
           {!lobbyActive ? (
-            <div className="grid gap-4">
+            <div className="lobby-sheet-setup grid gap-4">
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -404,7 +404,7 @@ export default function LobbyOverlay({
                 {transport === 'websocket' && <p className="text-sm text-muted-foreground">{ui("Format rules are enforced. Open decklists are shared with the table. Reopen this lobby link in the same browser to recover your seat. Play waits while the host is offline.")}</p>}
               </div>}
               {mode === "create" ? (
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="lobby-sheet-setup-grid grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <div className="grid gap-4">
                     <div className="grid gap-4 md:grid-cols-2">
                       <label className={labelClass}>{ui("Your Name")}<input
@@ -558,7 +558,7 @@ export default function LobbyOverlay({
                   </div>
                 </div>
               ) : (
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="lobby-sheet-setup-grid grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <div className="grid gap-4">
                     <div className="grid gap-4 md:grid-cols-2">
                       <label className={labelClass}>{ui("Your Name")}<input
