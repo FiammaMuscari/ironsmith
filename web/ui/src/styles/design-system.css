@@ -4578,7 +4578,7 @@ html[data-hand-pointer-suspended="true"] * {
 .lobby-chat-compose input:focus-visible,
 .lobby-chat-compose button:focus,
 .lobby-chat-compose button:focus-visible {
-  outline: none;
-  box-shadow: none;
+  outline: none !important;
+  box-shadow: none !important;
 }
 .lobby-chat [role="alert"] { padding: 4px 6px; color: #ffb4a9; }
