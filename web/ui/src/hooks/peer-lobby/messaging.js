@@ -95,7 +95,29 @@ import { approximateMessageBytes, recordDiagnosticEvent, recordPeerMessage, reco
 import { describeSubstitutions, withSupportedCards } from "../../lib/unsupported-card-substitution.js";
 import { formatDeckRequirement } from "../../lib/lobby-deck.js";
 
-const MAX_LOBBY_CHAT_LENGTH = 240;
+const MAX_LOBBY_CHAT_LENGTH = 120;
+const LOBBY_CHAT_EMOJI_PATTERNS = [
+  new RegExp("\\p{Extended_Pictographic}", "u"),
+  new RegExp("\\p{Emoji_Presentation}", "u"),
+  new RegExp("\\p{Emoji_Modifier}", "u"),
+  new RegExp("\\p{Regional_Indicator}", "u"),
+];
+
+function normalizeLobbyChatText(value) {
+  const text = Array.from(String(value ?? "").normalize("NFKC"))
+    .filter((character) => {
+      const codePoint = character.codePointAt(0);
+      if (codePoint <= 0x1f || codePoint === 0x7f
+        || codePoint === 0x200b || codePoint === 0x200c || codePoint === 0x200d
+        || codePoint === 0xfe0f || codePoint === 0xfeff
+        || character === "<" || character === ">") return false;
+      return !LOBBY_CHAT_EMOJI_PATTERNS.some((pattern) => pattern.test(character));
+    })
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > MAX_LOBBY_CHAT_LENGTH ? "" : text;
+}
 
 function normalizeLobbyDeckOptions(value) {
   if (!Array.isArray(value)) return [];
@@ -2024,12 +2046,13 @@ export function usePeerLobbyMessaging(base, servicesRef) {
 
   const receiveLobbyChat = useCallback((entry) => {
     if (!entry || typeof entry.id !== "string" || typeof entry.text !== "string"
-      || !entry.text.trim() || entry.text.length > MAX_LOBBY_CHAT_LENGTH || typeof entry.name !== "string") return;
+      || !normalizeLobbyChatText(entry.text) || typeof entry.name !== "string") return;
+    const text = normalizeLobbyChatText(entry.text);
     updateMultiplayer((prev) => ({
       ...prev,
       chatMessages: (prev.chatMessages || []).some((item) => item.id === entry.id)
         ? prev.chatMessages
-      : [...(prev.chatMessages || []), entry].slice(-100),
+      : [...(prev.chatMessages || []), { ...entry, text }].slice(-100),
     }));
   }, [updateMultiplayer]);
 
@@ -2054,10 +2077,10 @@ export function usePeerLobbyMessaging(base, servicesRef) {
     const player = session.players.find((item) =>
       item.peerId === peerId || item.currentPeerId === peerId
     );
-    if (!player || player.connected === false || typeof text !== "string"
-      || !text.trim() || text.length > MAX_LOBBY_CHAT_LENGTH) return false;
+    const normalizedText = normalizeLobbyChatText(text);
+    if (!player || player.connected === false || !normalizedText) return false;
     const entry = { id: crypto.randomUUID(), peerId: player.peerId || peerId, name: player.name,
-      text: text.trim(), sentAt: Date.now() };
+      text: normalizedText, sentAt: Date.now() };
     receiveLobbyChat(entry);
     broadcastLobbyChat(entry);
     return true;
@@ -2065,10 +2088,11 @@ export function usePeerLobbyMessaging(base, servicesRef) {
 
   const sendLobbyChat = useCallback((text) => {
     const session = multiplayerRef.current;
-    if (!session.role || typeof text !== "string" || !text.trim() || text.length > MAX_LOBBY_CHAT_LENGTH) return false;
-    if (session.role === "host") return publishLobbyChat(session.localPeerId, text);
+    const normalizedText = normalizeLobbyChatText(text);
+    if (!session.role || !normalizedText) return false;
+    if (session.role === "host") return publishLobbyChat(session.localPeerId, normalizedText);
     const payload = {
-      type: "lobby_chat_send", protocolVersion: PROTOCOL_VERSION, text: text.trim(),
+      type: "lobby_chat_send", protocolVersion: PROTOCOL_VERSION, text: normalizedText,
     };
     if (safeSend(hostConnectionRef.current, payload)) return true;
     const host = session.players.find((player) =>

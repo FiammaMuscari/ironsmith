@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 // Exercise the messaging callbacks with the same session/transport boundaries
 // used by the hook, without starting an engine or signaling server.
 const source = readFileSync(new URL("../src/hooks/peer-lobby/messaging.js", import.meta.url), "utf8");
-const callbacks = "const MAX_LOBBY_CHAT_LENGTH = 240;\n" + source.slice(source.indexOf("  const receiveLobbyChat ="), source.indexOf("  const handleHostMessage ="));
+const callbacks = [
+  "const MAX_LOBBY_CHAT_LENGTH = 120;",
+  "const LOBBY_CHAT_EMOJI_PATTERNS = [new RegExp('\\\\p{Extended_Pictographic}', 'u'), new RegExp('\\\\p{Emoji_Presentation}', 'u'), new RegExp('\\\\p{Emoji_Modifier}', 'u'), new RegExp('\\\\p{Regional_Indicator}', 'u')];",
+  "function normalizeLobbyChatText(value) { const text = Array.from(String(value ?? '').normalize('NFKC')).filter((character) => { const codePoint = character.codePointAt(0); if (codePoint <= 0x1f || codePoint === 0x7f || codePoint === 0x200b || codePoint === 0x200c || codePoint === 0x200d || codePoint === 0xfe0f || codePoint === 0xfeff || character === '<' || character === '>') return false; return !LOBBY_CHAT_EMOJI_PATTERNS.some((pattern) => pattern.test(character)); }).join('').replace(/\\s+/g, ' ').trim(); return text.length > MAX_LOBBY_CHAT_LENGTH ? '' : text; }",
+  source.slice(source.indexOf("  const receiveLobbyChat ="), source.indexOf("  const handleHostMessage =")),
+].join("\n");
 function harness(role = "host") {
   const multiplayerRef = { current: { role, localPeerId: "a", players: [
     { peerId: "a", name: "Alice" }, { peerId: "b", currentPeerId: "b-current", name: "Bob" },
@@ -36,6 +41,11 @@ test("chat rejects empty/oversized messages and bounds retained history", () => 
   for (let i = 0; i < 110; i++) h.sendLobbyChat(String(i));
   assert.equal(h.multiplayerRef.current.chatMessages.length, 100);
   assert.equal(h.multiplayerRef.current.chatMessages[0].text, "10");
+});
+test("chat strips emoji, controls, and markup delimiters before broadcast", () => {
+  const h = harness();
+  assert.equal(h.sendLobbyChat("safe 🙂 <b>\n"), true);
+  assert.equal(h.multiplayerRef.current.chatMessages[0].text, "safe b");
 });
 test("clients send to host and wait for canonical echo", () => {
   const h = harness("client");
