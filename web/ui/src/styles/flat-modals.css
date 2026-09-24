@@ -726,12 +726,12 @@
   }
 
   .lobby-sheet-setup .lobby-deck-picker {
-    height: 292px !important;
+    height: 244px !important;
     padding: 8px !important;
   }
 
   .lobby-sheet-setup .lobby-sheet-main-deck {
-    min-height: 124px !important;
+    min-height: 120px !important;
     padding: 8px !important;
     font-size: 12px !important;
     line-height: 1.25 !important;
