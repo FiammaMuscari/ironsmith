@@ -2029,9 +2029,25 @@ export function usePeerLobbyMessaging(base, servicesRef) {
       ...prev,
       chatMessages: (prev.chatMessages || []).some((item) => item.id === entry.id)
         ? prev.chatMessages
-        : [...(prev.chatMessages || []), entry].slice(-100),
+      : [...(prev.chatMessages || []), entry].slice(-100),
     }));
   }, [updateMultiplayer]);
+
+  const broadcastLobbyChat = useCallback((entry) => {
+    const payload = { type: "lobby_chat", protocolVersion: PROTOCOL_VERSION, entry };
+    const sentConnections = new Set();
+    const sendOnce = (conn) => {
+      if (!conn || sentConnections.has(conn)) return;
+      sentConnections.add(conn);
+      safeSend(conn, payload);
+    };
+    // Before a match starts, clients are on their lobby connections. During a
+    // match, the host can also have direct peer connections; sending through
+    // both keeps chat alive across the same transport transition used by game
+    // actions without duplicating messages on shared connections.
+    for (const conn of clientConnectionsRef.current.values()) sendOnce(conn);
+    for (const conn of peerConnectionsRef.current.values()) sendOnce(conn);
+  }, [clientConnectionsRef, peerConnectionsRef]);
 
   const publishLobbyChat = useCallback((peerId, text) => {
     const session = multiplayerRef.current;
@@ -2041,18 +2057,21 @@ export function usePeerLobbyMessaging(base, servicesRef) {
     const entry = { id: crypto.randomUUID(), peerId, name: player.name,
       text: text.trim(), sentAt: Date.now() };
     receiveLobbyChat(entry);
-    broadcastToClients({ type: "lobby_chat", protocolVersion: PROTOCOL_VERSION, entry });
+    broadcastLobbyChat(entry);
     return true;
-  }, [multiplayerRef, receiveLobbyChat, broadcastToClients]);
+  }, [multiplayerRef, receiveLobbyChat, broadcastLobbyChat]);
 
   const sendLobbyChat = useCallback((text) => {
     const session = multiplayerRef.current;
     if (!session.role || typeof text !== "string" || !text.trim() || text.length > MAX_LOBBY_CHAT_LENGTH) return false;
     if (session.role === "host") return publishLobbyChat(session.localPeerId, text);
-    return safeSend(hostConnectionRef.current, {
+    const payload = {
       type: "lobby_chat_send", protocolVersion: PROTOCOL_VERSION, text: text.trim(),
-    });
-  }, [multiplayerRef, hostConnectionRef, publishLobbyChat]);
+    };
+    if (safeSend(hostConnectionRef.current, payload)) return true;
+    const hostPeerId = String(session.hostPeerId || "").trim();
+    return safeSend(hostPeerId ? peerConnectionsRef.current.get(hostPeerId) : null, payload);
+  }, [multiplayerRef, hostConnectionRef, peerConnectionsRef, publishLobbyChat]);
 
   const handleHostMessage = useCallback(
     async (message) => {
@@ -2413,6 +2432,12 @@ export function usePeerLobbyMessaging(base, servicesRef) {
     switch (message.type) {
       case "peer_ready":
         return;
+      case "lobby_chat":
+        receiveLobbyChat(message.entry);
+        return;
+      case "lobby_chat_send":
+        publishLobbyChat(conn.peer, message.text);
+        return;
       case "apply_action":
         if (isTrustedMultiplayerSecurityMode(sessionSecurityMode(multiplayerRef.current))) return;
         await applySequencedActionMessage(message);
@@ -2493,6 +2518,8 @@ export function usePeerLobbyMessaging(base, servicesRef) {
     resolveTimeoutVote,
     resolveZiffleRevealToken,
     resolveZiffleShuffleStep,
+    publishLobbyChat,
+    receiveLobbyChat,
   ]);
 
   const handlePeerDisconnect = useCallback(

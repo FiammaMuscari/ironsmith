@@ -123,6 +123,12 @@
   align-items: flex-end;
   pointer-events: none;
 }
+.player-zone-piles[data-local-zone-piles="true"] {
+  /* Keep local Graveyard and Exile above the bottom chat tab. The tab is a
+     sibling anchored to the battlefield shell, so this offset only moves the
+     local piles and their hover/expanded hit area. */
+  bottom: 54px;
+}
 .player-zone-piles > .zone-pile-slot,
 .player-look-pile { pointer-events: auto; }
 .player-look-pile { position: absolute; top: 0; left: 0; }
@@ -4521,11 +4527,12 @@ html[data-hand-pointer-suspended="true"] * {
   padding-block: 4px;
 }
 
-/* Keep the chat tab at the bottom edge; its open panel overlays the local
-   graveyard and exile without moving either pile or the battlefield. */
+/* Keep the chat tab at the bottom edge of the battlefield shell. It is a
+   sibling of the zone piles so their bottom clearance is independent of the
+   panel's open/closed height. */
 .player-zone-chat-dock {
   position: absolute;
-  right: 0;
+  right: 6px;
   bottom: 0;
   width: min(260px, calc(100vw - 24px));
   display: flex;
