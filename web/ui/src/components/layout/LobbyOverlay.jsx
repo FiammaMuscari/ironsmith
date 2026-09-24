@@ -406,7 +406,7 @@ export default function LobbyOverlay({
               {mode === "create" ? (
                 <div className="lobby-sheet-setup-grid grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <div className="grid gap-4">
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="lobby-sheet-setup-fields grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                       <label className={labelClass}>{ui("Your Name")}<input
                           className={inputClass}
                           value={createName}
@@ -427,8 +427,6 @@ export default function LobbyOverlay({
                           </>}
                         </select>
                       </label>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
                       <label className={labelClass}>{ui("Starting Life")}<input
                           className={inputClass}
                           type="number"

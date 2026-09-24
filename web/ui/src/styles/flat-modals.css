@@ -676,6 +676,7 @@
    keeps its own compact list scroll when there are many decks. */
 @media (min-width: 1024px) and (min-height: 700px) {
   .lobby-sheet:not(.lobby-sheet-active) {
+    height: calc(100dvh - 24px) !important;
     max-height: calc(100dvh - 24px) !important;
   }
 
@@ -695,13 +696,35 @@
   }
 
   .lobby-sheet:not(.lobby-sheet-active) .lobby-sheet-body {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
     gap: 8px !important;
+    min-height: 0;
+    overflow: hidden !important;
     padding: 8px 12px 10px !important;
   }
 
-  .lobby-sheet-setup,
-  .lobby-sheet-setup-grid,
-  .lobby-sheet-setup-grid > div:first-child {
+  .lobby-sheet-setup {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .lobby-sheet-setup-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .lobby-sheet-setup-grid > div {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .lobby-sheet-setup-fields {
     gap: 8px !important;
   }
 
@@ -727,7 +750,16 @@
 
   .lobby-sheet-setup .lobby-deck-picker {
     height: 220px !important;
+    flex: none;
+    min-height: 0;
+    overflow: hidden;
     padding: 8px !important;
+  }
+
+  .lobby-sheet-setup .lobby-deck-picker > section {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .lobby-sheet-setup .lobby-sheet-main-deck {
