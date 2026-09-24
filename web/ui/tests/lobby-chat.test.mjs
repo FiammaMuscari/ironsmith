@@ -8,7 +8,7 @@ const source = readFileSync(new URL("../src/hooks/peer-lobby/messaging.js", impo
 const callbacks = "const MAX_LOBBY_CHAT_LENGTH = 240;\n" + source.slice(source.indexOf("  const receiveLobbyChat ="), source.indexOf("  const handleHostMessage ="));
 function harness(role = "host") {
   const multiplayerRef = { current: { role, localPeerId: "a", players: [
-    { peerId: "a", name: "Alice" }, { peerId: "b", name: "Bob" },
+    { peerId: "a", name: "Alice" }, { peerId: "b", currentPeerId: "b-current", name: "Bob" },
   ], chatMessages: [] } };
   const sent = [];
   const clientConnection = { open: true, peer: "b" };
@@ -22,7 +22,7 @@ function harness(role = "host") {
 }
 test("host attributes remote messages to their connection and broadcasts once", () => {
   const h = harness();
-  assert.equal(h.publishLobbyChat("b", " hello "), true);
+  assert.equal(h.publishLobbyChat("b-current", " hello "), true);
   assert.equal(h.sent[0].entry.name, "Bob");
   assert.equal(h.sent[0].entry.text, "hello");
   assert.equal(h.publishLobbyChat("stranger", "spoof"), false);

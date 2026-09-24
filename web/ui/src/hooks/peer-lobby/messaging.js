@@ -2051,10 +2051,12 @@ export function usePeerLobbyMessaging(base, servicesRef) {
 
   const publishLobbyChat = useCallback((peerId, text) => {
     const session = multiplayerRef.current;
-    const player = session.players.find((item) => item.peerId === peerId);
+    const player = session.players.find((item) =>
+      item.peerId === peerId || item.currentPeerId === peerId
+    );
     if (!player || player.connected === false || typeof text !== "string"
       || !text.trim() || text.length > MAX_LOBBY_CHAT_LENGTH) return false;
-    const entry = { id: crypto.randomUUID(), peerId, name: player.name,
+    const entry = { id: crypto.randomUUID(), peerId: player.peerId || peerId, name: player.name,
       text: text.trim(), sentAt: Date.now() };
     receiveLobbyChat(entry);
     broadcastLobbyChat(entry);
@@ -2069,7 +2071,10 @@ export function usePeerLobbyMessaging(base, servicesRef) {
       type: "lobby_chat_send", protocolVersion: PROTOCOL_VERSION, text: text.trim(),
     };
     if (safeSend(hostConnectionRef.current, payload)) return true;
-    const hostPeerId = String(session.hostPeerId || "").trim();
+    const host = session.players.find((player) =>
+      player.peerId === session.hostPeerId || player.currentPeerId === session.hostPeerId
+    );
+    const hostPeerId = String(host?.currentPeerId || host?.peerId || session.hostPeerId || "").trim();
     return safeSend(hostPeerId ? peerConnectionsRef.current.get(hostPeerId) : null, payload);
   }, [multiplayerRef, hostConnectionRef, peerConnectionsRef, publishLobbyChat]);
 
