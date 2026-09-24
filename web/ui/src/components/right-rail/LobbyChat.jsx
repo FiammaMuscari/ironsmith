@@ -27,6 +27,10 @@ function cleanChatDraft(value) {
     .slice(0, MAX_CHAT_LENGTH);
 }
 
+function hasOpenLocalZone() {
+  return Boolean(document.querySelector('[data-local-zone-strip="true"][data-state="open"]'));
+}
+
 export default function LobbyChat() {
   const { multiplayer, sendLobbyChat } = useGame();
   const ui = useUiText();
@@ -55,15 +59,20 @@ export default function LobbyChat() {
       closeTimerRef.current = null;
     }, CHAT_CLOSE_DELAY_MS);
   }, [cancelCollapse, latestMessageId]);
+  const closeImmediately = useCallback(() => {
+    cancelCollapse();
+    setExpanded(false);
+    if (latestMessageId) setSeenMessageId(latestMessageId);
+  }, [cancelCollapse, latestMessageId]);
   useEffect(() => () => cancelCollapse(), [cancelCollapse]);
   useEffect(() => {
     if (!expanded) return undefined;
     const closeFromOutside = (event) => {
-      if (!chatRef.current?.contains(event.target)) scheduleCollapse();
+      if (!chatRef.current?.contains(event.target)) closeImmediately();
     };
     document.addEventListener("pointerdown", closeFromOutside, true);
     return () => document.removeEventListener("pointerdown", closeFromOutside, true);
-  }, [expanded, scheduleCollapse]);
+  }, [expanded, closeImmediately]);
   useEffect(() => {
     if (followRef.current && listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -82,6 +91,7 @@ export default function LobbyChat() {
     }}>
     <button type="button" className="lobby-chat-header" aria-expanded={!collapsed}
       onClick={() => {
+        if (collapsed && hasOpenLocalZone()) return;
         cancelCollapse();
         setExpanded((current) => {
           const next = !current;
