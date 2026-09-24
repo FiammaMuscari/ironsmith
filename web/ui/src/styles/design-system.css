@@ -4537,7 +4537,9 @@ html[data-hand-pointer-suspended="true"] * {
   width: min(260px, calc(100vw - 24px));
   display: flex;
   justify-content: flex-end;
-  z-index: 40;
+  /* Local Graveyard and Exile stay interactive when the chat is expanded;
+     hovering either zone closes the panel through LobbyChat's surface guard. */
+  z-index: 20;
   pointer-events: auto;
 }
 
