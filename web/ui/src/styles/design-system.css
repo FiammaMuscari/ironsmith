@@ -4574,5 +4574,11 @@ html[data-hand-pointer-suspended="true"] * {
 .lobby-chat-compose input { min-width: 0; width: 100%; padding: 6px; background: transparent; }
 .lobby-chat-compose button { padding: 4px 6px; border-left: 1px solid var(--ui-border-strong); }
 .lobby-chat-compose button:disabled { opacity: .4; }
-.lobby-chat-compose :focus-visible { outline: 1px solid #a9cbe5; outline-offset: -2px; }
+.lobby-chat-compose input:focus,
+.lobby-chat-compose input:focus-visible,
+.lobby-chat-compose button:focus,
+.lobby-chat-compose button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 .lobby-chat [role="alert"] { padding: 4px 6px; color: #ffb4a9; }

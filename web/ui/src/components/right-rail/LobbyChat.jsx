@@ -31,6 +31,14 @@ function hasOpenLocalZone() {
   return Boolean(document.querySelector('[data-local-zone-strip="true"][data-state="open"]'));
 }
 
+function isLocalZoneSurface(target) {
+  return target instanceof Element && Boolean(target.closest(
+    '[data-local-zone-piles="true"] [data-zone-pile="graveyard"], '
+      + '[data-local-zone-piles="true"] [data-zone-pile="exile"], '
+      + '[data-local-zone-strip="true"]',
+  ));
+}
+
 export default function LobbyChat() {
   const { multiplayer, sendLobbyChat } = useGame();
   const ui = useUiText();
@@ -74,8 +82,15 @@ export default function LobbyChat() {
       if (zoneOpen && insideChat && expanded) closeImmediately();
       else if (expanded && !insideChat) closeImmediately();
     };
+    const handlePointerOver = (event) => {
+      if (expanded && isLocalZoneSurface(event.target)) closeImmediately();
+    };
     document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("pointerover", handlePointerOver, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("pointerover", handlePointerOver, true);
+    };
   }, [expanded, closeImmediately]);
   useEffect(() => {
     if (followRef.current && listRef.current) {
