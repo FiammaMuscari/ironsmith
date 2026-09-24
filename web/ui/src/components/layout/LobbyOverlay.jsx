@@ -5,6 +5,13 @@ import { validateFormatDeck, formatCatalogDate } from '@/lib/relay/format-legali
 import { useMemo, useState } from "react";
 import LocalLobbySearch from "./LocalLobbySearch";
 import CompetitiveDeckPicker from "./CompetitiveDeckPicker";
+import LobbyDeckEditor, { LobbyDeckCatalogPicker } from "./LobbyDeckEditor";
+import {
+  commanderDeckTarget,
+  formatDeckRequirement,
+  formatName,
+  useLobbyDeckOptions,
+} from "@/lib/lobby-deck";
 import { useGame } from "@/context/GameContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +30,6 @@ import {
   MATCH_FORMAT_NORMAL,
   MATCH_FORMAT_PLANECHASE,
   PARTNER_DECK_SIZE,
-  listSavedDeckPresets,
   normalizeMatchFormat,
   parseCommanderList,
   parseDeckList,
@@ -65,14 +71,6 @@ const securityModeOptions = [
   },
 ];
 
-function formatName(format) {
-  if (PUBLIC_FORMATS[format]) return PUBLIC_FORMATS[format].label;
-  const normalized = normalizeMatchFormat(format);
-  if (normalized === MATCH_FORMAT_COMMANDER) return "Commander";
-  if (normalized === MATCH_FORMAT_PLANECHASE) return "Planechase";
-  return "Normal";
-}
-
 function securityModeName(mode) {
   return normalizeMultiplayerSecurityMode(mode) === MULTIPLAYER_SECURITY_VERIFIED
     ? "Verified"
@@ -83,10 +81,6 @@ function securityModeSummary(mode) {
   return normalizeMultiplayerSecurityMode(mode) === MULTIPLAYER_SECURITY_VERIFIED
     ? "Cryptographic anticheat and hidden-info proofs are enabled."
     : "Open decklists are used; cryptographic anticheat is off.";
-}
-
-function commanderDeckTarget(commanderCount) {
-  return commanderCount === 2 ? PARTNER_DECK_SIZE : COMMANDER_DECK_SIZE;
 }
 
 function formatPlayerStatus(player, localPeerId, format) {
@@ -109,8 +103,8 @@ function formatPlayerStatus(player, localPeerId, format) {
 
   const deckCount = Number(player.deckCount || 0);
   return player.peerId === localPeerId
-    ? `You / ${deckCount}/${LOBBY_DECK_SIZE}`
-    : `${deckCount}/${LOBBY_DECK_SIZE}`;
+    ? `You / ${deckCount}/${LOBBY_DECK_SIZE}+`
+    : `${deckCount}/${LOBBY_DECK_SIZE}+`;
 }
 
 function formatCountdown(ms) {
@@ -128,17 +122,6 @@ function offlinePlayerSummary(players) {
     .join(", ");
 }
 
-function formatDeckRequirement(format) {
-  if (PUBLIC_FORMATS[format] && format !== MATCH_FORMAT_COMMANDER) return "At least 60 main-deck cards; up to 15 sideboard cards. Format bans and copy limits apply.";
-  const normalized = normalizeMatchFormat(format);
-  if (normalized === MATCH_FORMAT_COMMANDER) {
-    return `Submit a ${COMMANDER_DECK_SIZE}-card main deck plus 1 commander, or a ${PARTNER_DECK_SIZE}-card main deck plus 2 commanders.`;
-  }
-  if (normalized === MATCH_FORMAT_PLANECHASE) {
-    return `Submit exactly ${LOBBY_DECK_SIZE} main-deck cards plus at least 10 uniquely named Plane or Phenomenon cards.`;
-  }
-  return `Submit exactly ${LOBBY_DECK_SIZE} main-deck cards.`;
-}
 
 export default function LobbyOverlay({
   onClose,
@@ -259,36 +242,12 @@ export default function LobbyOverlay({
     (player) => player.peerId === multiplayer.localPeerId
   );
   const localReady = Boolean(localPlayer?.ready);
-  const savedDeckOptions = useMemo(
-    () => listSavedDeckPresets().flatMap((preset) => (Array.isArray(preset?.texts) ? preset.texts : [])
-      .map((deckText, index) => ({
-        id: `saved:${preset.name}:${index}`,
-        label: `${preset.name}${preset.texts.length > 1 ? ` #${index + 1}` : ""} (${preset.playerNames?.[index] || `Jugador ${index + 1}`})`,
-        deckText: String(deckText || ""),
-      }))
-      .filter((option) => option.deckText.trim())),
-    [],
-  );
-  const deckOptions = useMemo(() => {
-    const prepared = Array.isArray(multiplayer.deckOptions) && multiplayer.deckOptions.length > 0
+  const deckOptions = useLobbyDeckOptions(
+    Array.isArray(multiplayer.deckOptions) && multiplayer.deckOptions.length > 0
       ? multiplayer.deckOptions
-      : initialCreateDeckOptions;
-    const seen = new Set();
-    return [...prepared, ...savedDeckOptions]
-      .filter((option) => {
-        const key = String(option?.deckText || "");
-        if (!key.trim() || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, 12);
-  }, [initialCreateDeckOptions, multiplayer.deckOptions, savedDeckOptions]);
-  const selectedDeckOptionId = useMemo(() => {
-    const current = String(multiplayer.localDeckText || "");
-    return deckOptions.find((option) => String(option?.deckText || "") === current)?.id || "";
-  }, [deckOptions, multiplayer.localDeckText]);
+      : initialCreateDeckOptions
+  );
   const startPending = !multiplayer.matchStarted && multiplayer.mode === "starting";
-  const activeCommanderTarget = commanderDeckTarget(multiplayer.localCommanderCount);
   const createCommanderTarget = commanderDeckTarget(createCommanderCount);
   const showLobbyStatus = Boolean(
     status?.msg
@@ -548,7 +507,7 @@ export default function LobbyOverlay({
                         placeholder={
                           ui(createFormat === MATCH_FORMAT_COMMANDER
                             ? `Paste a ${COMMANDER_DECK_SIZE}-card Commander main deck...\n\n1 Sol Ring\n1 Swords to Plowshares\n35 Plains`
-                            : `Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`)
+                            : `Paste a main deck with at least ${LOBBY_DECK_SIZE} cards...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`)
                         }
                       />
                     </label>
@@ -578,7 +537,7 @@ export default function LobbyOverlay({
                       <span>{ui("Main deck:")}{" "}
                         {createFormat === MATCH_FORMAT_COMMANDER
                           ? `${createDeckCount}/${createCommanderTarget}`
-                          : `${createDeckCount}/${LOBBY_DECK_SIZE}`}
+                          : `${createDeckCount}/${LOBBY_DECK_SIZE}+`}
                       </span>
                       {createFormat === MATCH_FORMAT_COMMANDER ? (
                         <span>{ui("Commander(s):") + " "}{createCommanderCount}/1-2</span>
@@ -629,7 +588,7 @@ export default function LobbyOverlay({
                         className={textareaClass}
                         value={joinDeckText}
                         onChange={(event) => setJoinDeckText(event.target.value)}
-                        placeholder={ui("Paste your main deck now or finish it inside the lobby.\n\nNormal and Planechase lobbies need {0} cards.\nCommander lobbies need {1} or {2} main-deck cards.", { 0: LOBBY_DECK_SIZE, 1: COMMANDER_DECK_SIZE, 2: PARTNER_DECK_SIZE })}
+                        placeholder={ui("Paste your main deck now or finish it inside the lobby.\n\nNormal and Planechase lobbies need at least {0} cards.\nCommander lobbies need {1} or {2} main-deck cards.", { 0: LOBBY_DECK_SIZE, 1: COMMANDER_DECK_SIZE, 2: PARTNER_DECK_SIZE })}
                       />
                     </label>
                     <label className={labelClass}>{ui("Commander(s) / Planar Deck")}<textarea
@@ -663,97 +622,26 @@ export default function LobbyOverlay({
               <div className="lobby-sheet-discovery">
                 {/* A player who already joined can still swap to a catalog
                     deck, to one the host prepared, or to their own list. */}
-                {!multiplayer.matchStarted && activeFormat === MATCH_FORMAT_NORMAL && !startPending ? (
-                  <CompetitiveDeckPicker
-                    format="modern"
-                    onApply={({ deckText, commanderText }) => {
-                      updateLobbyDeck({ deckText, commanderText: commanderText || "" });
-                    }}
-                  />
-                ) : null}
+                <LobbyDeckCatalogPicker
+                  format={activeFormat}
+                  disabled={multiplayer.matchStarted || startPending}
+                  onChange={updateLobbyDeck}
+                />
               </div>
 
               <div className="lobby-sheet-sidebar">
                 {!multiplayer.matchStarted ? (
-                  <div className="lobby-sheet-deck lobby-sheet-panel fantasy-sheet-section grid gap-3 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#d8bf7a]">{ui("Your Deck")}</span>
-                      <span className="text-[13px] text-muted-foreground">{ui("Format:") + " "}{ui(formatName(activeFormat))}
-                      </span>
-                    </div>
-                    {deckOptions.length > 1 ? (
-                      <label className={labelClass}>
-                        {ui("Available deck")}
-                        <select
-                          className={inputClass}
-                          value={selectedDeckOptionId}
-                          disabled={startPending}
-                          onChange={(event) => {
-                            const option = deckOptions.find((entry) => entry.id === event.target.value);
-                            if (!option) return;
-                            updateLobbyDeck({ deckText: option.deckText, commanderText: "" });
-                          }}
-                        >
-                          <option value="">{ui("Custom / edit below")}</option>
-                          {/* A prepared deck's label is a deck name and a
-                              player name, so it never goes through the
-                              translation catalog. */}
-                          {deckOptions.map((option) => (
-                            <option key={option.id} value={option.id}>{option.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                    <textarea
-                      aria-label={ui("Your Deck")}
-                      className={`${textareaClass} lobby-sheet-main-deck`}
-                      disabled={startPending}
-                      value={multiplayer.localDeckText}
-                      onChange={(event) =>
-                        updateLobbyDeck({ deckText: event.target.value })
-                      }
-                      placeholder={
-                        ui(activeFormat === MATCH_FORMAT_COMMANDER
-                          ? `Paste your Commander main deck...\n\n1 Sol Ring\n1 Brainstorm\n33 Island`
-                          : `Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Swords to Plowshares\n4 Brainstorm\n24 Plains`)
-                      }
-                    />
-                    <div className={infoTextClass}>
-                      <span>{ui("Main deck:")}{" "}
-                        {activeFormat === MATCH_FORMAT_COMMANDER
-                          ? `${multiplayer.localDeckCount}/${activeCommanderTarget}`
-                          : `${multiplayer.localDeckCount}/${LOBBY_DECK_SIZE}`}
-                      </span>
-                      {activeFormat === MATCH_FORMAT_COMMANDER
-                      || activeFormat === MATCH_FORMAT_PLANECHASE ? (
-                        <>
-                          <textarea
-                            className={commanderTextareaClass}
-                            disabled={startPending}
-                            value={multiplayer.localCommanderText}
-                            onChange={(event) =>
-                              updateLobbyDeck({ commanderText: event.target.value })
-                            }
-                            placeholder={
-                              ui(activeFormat === MATCH_FORMAT_PLANECHASE
-                                ? "1 Plane or Phenomenon per line"
-                                : "1 Commander\nor\nCommander One\nCommander Two")
-                            }
-                          />
-                          <span>
-                            {activeFormat === MATCH_FORMAT_PLANECHASE
-                              ? ui("Planar deck: {0}/10+", { 0: multiplayer.localCommanderCount })
-                              : ui("Commander(s): {0}/1-2", { 0: multiplayer.localCommanderCount })}
-                          </span>
-                        </>
-                      ) : null}
-                      <span>
-                        {localReady
-                          ? ui("Ready. The host has your current deck submission.")
-                          : formatDeckRequirement(activeFormat)}
-                      </span>
-                    </div>
-                  </div>
+                  <LobbyDeckEditor
+                    format={activeFormat}
+                    deckText={multiplayer.localDeckText}
+                    commanderText={multiplayer.localCommanderText}
+                    deckCount={multiplayer.localDeckCount}
+                    commanderCount={multiplayer.localCommanderCount}
+                    deckOptions={deckOptions}
+                    disabled={startPending}
+                    readyText={localReady ? "Ready. The host has your current deck submission." : ""}
+                    onChange={updateLobbyDeck}
+                  />
                 ) : null}
 
                 <div className="lobby-sheet-players lobby-sheet-panel fantasy-sheet-section grid gap-2 p-4">

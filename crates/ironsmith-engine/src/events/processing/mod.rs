@@ -404,6 +404,7 @@ fn push_enter_as_copy_effects_for_spec(
                             name_override: spec.name_override.clone(),
                             added_colors: spec.added_colors,
                             added_card_types: spec.added_card_types.clone(),
+                            removes_other_card_types: spec.removes_other_card_types,
                             added_supertypes: spec.added_supertypes.clone(),
                             removed_supertypes: spec.removed_supertypes.clone(),
                             added_subtypes: spec.added_subtypes.clone(),
@@ -458,6 +459,7 @@ fn push_enter_as_copy_effects_for_spec(
                     name_override: spec.name_override.clone(),
                     added_colors: spec.added_colors,
                     added_card_types: spec.added_card_types.clone(),
+                            removes_other_card_types: spec.removes_other_card_types,
                     added_supertypes: spec.added_supertypes.clone(),
                     removed_supertypes: spec.removed_supertypes.clone(),
                     added_subtypes: spec.added_subtypes.clone(),
@@ -2973,6 +2975,8 @@ pub struct EtbEventResult {
     pub added_colors: crate::color::ColorSet,
     /// Additional card types granted by an ETB copy choice.
     pub added_card_types: Vec<crate::types::CardType>,
+    /// The copy's card types are exactly `added_card_types`.
+    pub removes_other_card_types: bool,
     /// Supertypes removed by an ETB copy choice.
     pub added_supertypes: Vec<crate::types::Supertype>,
     pub removed_supertypes: Vec<crate::types::Supertype>,
@@ -3382,7 +3386,9 @@ fn collect_simultaneous_prevention_allocations(
             .iter()
             .enumerate()
             .filter_map(|(index, item)| {
-                if item.amount == 0 || item.unpreventable {
+                if item.amount == 0 || item.unpreventable
+                    || !game.can_prevent_damage_of_kind(item.is_combat)
+                {
                     return None;
                 }
                 let damage = crate::events::DamageEvent::with_cause(
@@ -3594,7 +3600,7 @@ fn process_damage_assignments_with_event_with_source_snapshot_opts_with_dm_and_a
     game.update_replacement_effects();
 
     // Check if damage can be prevented
-    let can_prevent = !unpreventable && game.can_prevent_damage();
+    let can_prevent = !unpreventable && game.can_prevent_damage_of_kind(is_combat);
 
     // Create the event using the new Event type
     let event = if can_prevent {
@@ -4345,6 +4351,7 @@ fn process_etb_with_event_and_dm_with_initial_counters_and_reservations(
             copy_name_override: None,
             added_colors: crate::color::ColorSet::new(),
             added_card_types: Vec::new(),
+            removes_other_card_types: false,
             added_supertypes: Vec::new(),
             removed_supertypes: Vec::new(),
             added_subtypes: Vec::new(),
@@ -4476,6 +4483,7 @@ fn process_etb_with_event_and_dm_with_initial_counters_and_reservations(
                         copy_name_override: etb.copy_name_override.clone(),
                         added_colors: etb.added_colors,
                         added_card_types: etb.added_card_types.clone(),
+                        removes_other_card_types: etb.removes_other_card_types,
                         added_supertypes: etb.added_supertypes.clone(),
                         removed_supertypes: etb.removed_supertypes.clone(),
                         added_subtypes: etb.added_subtypes.clone(),
@@ -5319,6 +5327,7 @@ mod tests {
                 name_override: None,
                 added_colors: crate::color::ColorSet::new(),
                 added_card_types: Vec::new(),
+                removes_other_card_types: false,
                 added_supertypes: Vec::new(),
                 removed_supertypes: Vec::new(),
                 added_subtypes: Vec::new(),
@@ -5464,6 +5473,7 @@ mod tests {
                         name_override: None,
                         added_colors: crate::color::ColorSet::new(),
                         added_card_types: Vec::new(),
+                        removes_other_card_types: false,
                         added_supertypes: Vec::new(),
                         removed_supertypes: Vec::new(),
                         added_subtypes: Vec::new(),
