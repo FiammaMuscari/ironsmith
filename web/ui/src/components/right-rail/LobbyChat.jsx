@@ -40,6 +40,7 @@ export default function LobbyChat() {
   const [seenMessageId, setSeenMessageId] = useState("");
   const chatRef = useRef(null);
   const closeTimerRef = useRef(null);
+  const blockedOpenRef = useRef(false);
   const listRef = useRef(null);
   const followRef = useRef(true);
   const messages = multiplayer?.chatMessages || EMPTY_MESSAGES;
@@ -66,12 +67,15 @@ export default function LobbyChat() {
   }, [cancelCollapse, latestMessageId]);
   useEffect(() => () => cancelCollapse(), [cancelCollapse]);
   useEffect(() => {
-    if (!expanded) return undefined;
-    const closeFromOutside = (event) => {
-      if (!chatRef.current?.contains(event.target)) closeImmediately();
+    const handlePointerDown = (event) => {
+      const insideChat = Boolean(chatRef.current?.contains(event.target));
+      const zoneOpen = hasOpenLocalZone();
+      blockedOpenRef.current = zoneOpen && insideChat;
+      if (zoneOpen && insideChat && expanded) closeImmediately();
+      else if (expanded && !insideChat) closeImmediately();
     };
-    document.addEventListener("pointerdown", closeFromOutside, true);
-    return () => document.removeEventListener("pointerdown", closeFromOutside, true);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [expanded, closeImmediately]);
   useEffect(() => {
     if (followRef.current && listRef.current) {
@@ -91,7 +95,9 @@ export default function LobbyChat() {
     }}>
     <button type="button" className="lobby-chat-header" aria-expanded={!collapsed}
       onClick={() => {
-        if (collapsed && hasOpenLocalZone()) return;
+        const blocked = blockedOpenRef.current || hasOpenLocalZone();
+        blockedOpenRef.current = false;
+        if (blocked) return;
         cancelCollapse();
         setExpanded((current) => {
           const next = !current;
