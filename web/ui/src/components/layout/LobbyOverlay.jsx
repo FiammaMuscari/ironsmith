@@ -384,7 +384,7 @@ export default function LobbyOverlay({
                 >{ui("Join")}</button>
               </div>
 
-              {mode === 'create' && <div className={panelClass}>
+              {mode === 'create' && <div className={`${panelClass} lobby-sheet-connection-panel`}>
                 <label className={labelClass}>{ui("Connection")}<select aria-label={ui("Connection")} className={inputClass} value={transport} onChange={event => {
                     const value = event.target.value;
                     setTransport(value);
@@ -402,6 +402,47 @@ export default function LobbyOverlay({
                 {transport === 'websocket' && <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={advertise} onChange={e => setAdvertise(e.target.checked)} />{ui("Advertise in public lobby search")}</label>}
                 {transport === 'websocket' && <p className="text-sm text-muted-foreground">{ui("Format rules are enforced. Open decklists are shared with the table. Reopen this lobby link in the same browser to recover your seat. Play waits while the host is offline.")}</p>}
+                <fieldset className="lobby-sheet-mode-panel grid gap-2">
+                  <legend className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground">{ui("Multiplayer Mode")}</legend>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {securityModeOptions.map((option) => {
+                      if (transport === 'websocket' && option.value === MULTIPLAYER_SECURITY_VERIFIED) return null;
+                      if (
+                        createFormat === MATCH_FORMAT_PLANECHASE
+                        && option.value === MULTIPLAYER_SECURITY_VERIFIED
+                      ) {
+                        return null;
+                      }
+                      const selected = createSecurityMode === option.value;
+                      const needsHttps = import.meta.env.VITE_LAN_LOBBY === "true"
+                        && option.value === MULTIPLAYER_SECURITY_VERIFIED && !globalThis.crypto?.subtle;
+                      return (
+                        <label
+                          key={option.value}
+                          className={`lobby-sheet-panel fantasy-sheet-section grid cursor-pointer gap-2 p-3 transition-all ${
+                            selected ? "brightness-125" : "opacity-75"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            className="sr-only"
+                            name="create-security-mode"
+                            value={option.value}
+                            checked={selected}
+                            disabled={needsHttps}
+                            onChange={() => setCreateSecurityMode(option.value)}
+                          />
+                          <span className="text-[13px] font-semibold uppercase tracking-[0.18em] text-foreground">
+                            {ui(option.label)}
+                          </span>
+                          <span className="text-[13px] leading-5 text-muted-foreground">
+                            {needsHttps ? ui("Open the LAN server's trusted HTTPS address to use Verified mode.") : option.description}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
               </div>}
               {mode === "create" ? (
                 <div className="lobby-sheet-setup-grid grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -490,47 +531,6 @@ export default function LobbyOverlay({
                   </div>
 
                   <div className={panelClass}>
-                    <fieldset className="lobby-sheet-mode-panel grid gap-2">
-                      <legend className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground">{ui("Multiplayer Mode")}</legend>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        {securityModeOptions.map((option) => {
-                          if (transport === 'websocket' && option.value === MULTIPLAYER_SECURITY_VERIFIED) return null;
-                          if (
-                            createFormat === MATCH_FORMAT_PLANECHASE
-                            && option.value === MULTIPLAYER_SECURITY_VERIFIED
-                          ) {
-                            return null;
-                          }
-                          const selected = createSecurityMode === option.value;
-                          const needsHttps = import.meta.env.VITE_LAN_LOBBY === "true"
-                            && option.value === MULTIPLAYER_SECURITY_VERIFIED && !globalThis.crypto?.subtle;
-                          return (
-                            <label
-                              key={option.value}
-                              className={`lobby-sheet-panel fantasy-sheet-section grid cursor-pointer gap-2 p-3 transition-all ${
-                                selected ? "brightness-125" : "opacity-75"
-                              }`}
-                            >
-                              <input
-                                type="radio"
-                                className="sr-only"
-                                name="create-security-mode"
-                                value={option.value}
-                                checked={selected}
-                                disabled={needsHttps}
-                                onChange={() => setCreateSecurityMode(option.value)}
-                              />
-                              <span className="text-[13px] font-semibold uppercase tracking-[0.18em] text-foreground">
-                                {ui(option.label)}
-                              </span>
-                              <span className="text-[13px] leading-5 text-muted-foreground">
-                                {needsHttps ? ui("Open the LAN server's trusted HTTPS address to use Verified mode.") : option.description}
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </fieldset>
                     <div className={infoTextClass}>
                       <span>{ui("Format:") + " "}{ui(formatName(createFormat))}</span>
                       <span>{ui("Main deck:")}{" "}

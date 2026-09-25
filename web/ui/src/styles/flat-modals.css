@@ -741,6 +741,26 @@
     gap: 8px !important;
   }
 
+  .lobby-sheet-connection-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 1fr);
+    align-items: start;
+    gap: 8px !important;
+  }
+
+  .lobby-sheet-connection-panel > label:first-child {
+    min-width: 0;
+  }
+
+  .lobby-sheet-connection-panel .lobby-sheet-mode-panel {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    min-width: 0;
+  }
+
+  .lobby-sheet-connection-panel .lobby-sheet-mode-panel > div {
+    gap: 4px !important;
+  }
+
   .lobby-sheet-setup > .flex {
     gap: 4px !important;
   }
