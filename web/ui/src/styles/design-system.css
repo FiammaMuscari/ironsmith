@@ -4542,6 +4542,13 @@ html[data-hand-pointer-suspended="true"] * {
   z-index: 20;
   pointer-events: auto;
 }
+.player-zone-chat-dock:has(.lobby-chat[data-collapsed="false"]) {
+  z-index: 32000 !important;
+}
+.player-zone-chat-dock:has(.lobby-chat[data-collapsed="false"]) .lobby-chat {
+  position: relative;
+  z-index: 32001 !important;
+}
 
 .lobby-chat {
   pointer-events: auto;
