@@ -766,9 +766,7 @@ function buildLobbyInviteLink({
   const trimmedLobbyId = String(lobbyId || "").trim();
   if (!trimmedLobbyId) return "";
 
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
+  const url = new URL(import.meta.env.BASE_URL || "/", window.location.origin);
   url.searchParams.set("lobby", trimmedLobbyId);
 
   const trimmedName = String(name || "").trim();
