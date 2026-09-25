@@ -724,6 +724,19 @@
     overflow: hidden;
   }
 
+  .lobby-sheet-setup-main {
+    display: flex !important;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .lobby-sheet-main-deck-field {
+    display: flex !important;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .lobby-sheet-setup-fields {
     gap: 8px !important;
   }
@@ -763,7 +776,10 @@
   }
 
   .lobby-sheet-setup .lobby-sheet-main-deck {
-    min-height: 120px !important;
+    flex: 1 1 auto;
+    height: 0;
+    min-height: 160px !important;
+    overflow-y: auto;
     padding: 8px !important;
     font-size: 12px !important;
     line-height: 1.25 !important;

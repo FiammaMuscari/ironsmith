@@ -405,7 +405,7 @@ export default function LobbyOverlay({
               </div>}
               {mode === "create" ? (
                 <div className="lobby-sheet-setup-grid grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <div className="grid gap-4">
+                  <div className="lobby-sheet-setup-main grid gap-4">
                     <div className="lobby-sheet-setup-fields grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                       <label className={labelClass}>{ui("Your Name")}<input
                           className={inputClass}
@@ -449,7 +449,48 @@ export default function LobbyOverlay({
                         </select>
                       </label>
                     </div>
-                    <fieldset className="grid gap-2">
+                    {createFormat === MATCH_FORMAT_NORMAL ? (
+                      <CompetitiveDeckPicker
+                        format="modern"
+                        onApply={({ deckText, commanderText }) => {
+                          setCreateDeckText(deckText);
+                          setCreateCommanderText(commanderText);
+                        }}
+                      />
+                    ) : null}
+                    <label className={`${labelClass} lobby-sheet-main-deck-field`}>{ui("Main Deck")}<PreservingTextarea
+                        className={`${textareaClass} lobby-sheet-main-deck`}
+                        value={createDeckText}
+                        onChange={(event) => setCreateDeckText(event.target.value)}
+                        placeholder={
+                          ui(createFormat === MATCH_FORMAT_COMMANDER
+                            ? `Paste a ${COMMANDER_DECK_SIZE}-card Commander main deck...\n\n1 Sol Ring\n1 Swords to Plowshares\n35 Plains`
+                            : `Paste a main deck with at least ${LOBBY_DECK_SIZE} cards...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`)
+                        }
+                      />
+                    </label>
+                    {createFormat === MATCH_FORMAT_COMMANDER
+                    || createFormat === MATCH_FORMAT_PLANECHASE ? (
+                      <label className={labelClass}>
+                        {createFormat === MATCH_FORMAT_PLANECHASE
+                          ? ui("Planar Deck")
+                          : ui("Commander(s)")}
+                        <PreservingTextarea
+                          className={commanderTextareaClass}
+                          value={createCommanderText}
+                          onChange={(event) => setCreateCommanderText(event.target.value)}
+                          placeholder={
+                            ui(createFormat === MATCH_FORMAT_PLANECHASE
+                              ? "1 The Aether Flues\n1 Spatial Merging\n1 The Great Forest\n..."
+                              : "1 Atraxa, Praetors' Voice\nor\nTymna the Weaver\nKraum, Ludevic's Opus")
+                          }
+                        />
+                      </label>
+                    ) : null}
+                  </div>
+
+                  <div className={panelClass}>
+                    <fieldset className="lobby-sheet-mode-panel grid gap-2">
                       <legend className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground">{ui("Multiplayer Mode")}</legend>
                       <div className="grid gap-2 md:grid-cols-2">
                         {securityModeOptions.map((option) => {
@@ -490,47 +531,6 @@ export default function LobbyOverlay({
                         })}
                       </div>
                     </fieldset>
-                    {createFormat === MATCH_FORMAT_NORMAL ? (
-                      <CompetitiveDeckPicker
-                        format="modern"
-                        onApply={({ deckText, commanderText }) => {
-                          setCreateDeckText(deckText);
-                          setCreateCommanderText(commanderText);
-                        }}
-                      />
-                    ) : null}
-                    <label className={labelClass}>{ui("Main Deck")}<PreservingTextarea
-                        className={textareaClass}
-                        value={createDeckText}
-                        onChange={(event) => setCreateDeckText(event.target.value)}
-                        placeholder={
-                          ui(createFormat === MATCH_FORMAT_COMMANDER
-                            ? `Paste a ${COMMANDER_DECK_SIZE}-card Commander main deck...\n\n1 Sol Ring\n1 Swords to Plowshares\n35 Plains`
-                            : `Paste a main deck with at least ${LOBBY_DECK_SIZE} cards...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`)
-                        }
-                      />
-                    </label>
-                    {createFormat === MATCH_FORMAT_COMMANDER
-                    || createFormat === MATCH_FORMAT_PLANECHASE ? (
-                      <label className={labelClass}>
-                        {createFormat === MATCH_FORMAT_PLANECHASE
-                          ? ui("Planar Deck")
-                          : ui("Commander(s)")}
-                        <PreservingTextarea
-                          className={commanderTextareaClass}
-                          value={createCommanderText}
-                          onChange={(event) => setCreateCommanderText(event.target.value)}
-                          placeholder={
-                            ui(createFormat === MATCH_FORMAT_PLANECHASE
-                              ? "1 The Aether Flues\n1 Spatial Merging\n1 The Great Forest\n..."
-                              : "1 Atraxa, Praetors' Voice\nor\nTymna the Weaver\nKraum, Ludevic's Opus")
-                          }
-                        />
-                      </label>
-                    ) : null}
-                  </div>
-
-                  <div className={panelClass}>
                     <div className={infoTextClass}>
                       <span>{ui("Format:") + " "}{ui(formatName(createFormat))}</span>
                       <span>{ui("Main deck:")}{" "}
