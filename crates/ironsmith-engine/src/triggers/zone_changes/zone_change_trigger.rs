@@ -1340,14 +1340,34 @@ fn is_public_to_hand_or_library_zone_change(zc: &ZoneChangeEvent) -> bool {
     zc.from.is_public() && matches!(zc.to, Zone::Hand | Zone::Library)
 }
 
+impl ZoneChangeTrigger {
+    fn accepts_game_departure(&self) -> bool {
+        self.from != ZonePattern::Any && self.from.matches(Zone::Battlefield)
+            && self.to == ZonePattern::Any
+    }
+    /// Reuse LKI/filter/cause matching for an LTB notification only. This
+    /// temporary view is never published, committed, or offered to replacements.
+    /// Destination-specific and unrestricted zone-change triggers reject it.
+    fn matching_zone_event<'a>(&self, event: &'a TriggerEvent)
+        -> Option<std::borrow::Cow<'a, ZoneChangeEvent>> {
+        if event.kind() == EventKind::ZoneChange {
+            return event.downcast::<ZoneChangeEvent>().map(std::borrow::Cow::Borrowed);
+        }
+        if event.kind() != EventKind::ObjectLeavesGame || !self.accepts_game_departure() {
+            return None;
+        }
+        let departure = event.downcast::<crate::events::zones::ObjectLeavesGameEvent>()?;
+        if departure.snapshot.zone != Zone::Battlefield { return None; }
+        Some(std::borrow::Cow::Owned(ZoneChangeEvent::with_cause(
+            departure.object, Zone::Battlefield, Zone::OutsideGame,
+            departure.cause.clone(), Some(departure.snapshot.clone()),
+        )))
+    }
+}
+
 impl TriggerMatcher for ZoneChangeTrigger {
     fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
-        // Must be a zone change event
-        if event.kind() != EventKind::ZoneChange {
-            return false;
-        }
-
-        let Some(zc) = event.downcast::<ZoneChangeEvent>() else {
+        let Some(zc) = self.matching_zone_event(event) else {
             return false;
         };
 
@@ -1399,7 +1419,7 @@ impl TriggerMatcher for ZoneChangeTrigger {
 
         let use_snapshot = self.uses_snapshot() && !zc.snapshots().is_empty();
         let matching_snapshots = if use_snapshot {
-            matching_snapshots(zc, &self.object_filter, ctx)
+            matching_snapshots(&zc, &self.object_filter, ctx)
         } else {
             Vec::new()
         };
@@ -1483,6 +1503,35 @@ impl TriggerMatcher for ZoneChangeTrigger {
                 })
                 .unwrap_or(ctx.controller);
 
+            // A cause source filter that names "this" object ("championed
+            // with this creature") binds the cause to the trigger's own
+            // source rather than to an object matched in a fresh context.
+            let source_bound = cause_filter
+                .source_filter
+                .as_ref()
+                .is_some_and(|filter| filter.source);
+            if source_bound {
+                let source_stable = ctx.game.object(ctx.source_id).map(|obj| obj.stable_id);
+                let caused_by_source = zc.cause.source.is_some_and(|cause_source| {
+                    cause_source == ctx.source_id
+                        || (source_stable.is_some()
+                            && ctx.game.object(cause_source).map(|obj| obj.stable_id)
+                                == source_stable)
+                });
+                if !caused_by_source {
+                    return false;
+                }
+            }
+            let unbound;
+            let cause_filter = if source_bound {
+                unbound = crate::events::cause::CauseFilter {
+                    source_filter: None,
+                    ..cause_filter.clone()
+                };
+                &unbound
+            } else {
+                cause_filter
+            };
             if !cause_filter.matches_with_context_controller(
                 &zc.cause,
                 ctx.game,
@@ -1549,14 +1598,16 @@ impl TriggerMatcher for ZoneChangeTrigger {
     }
 
     fn subscribed_kinds(&self) -> Option<Vec<EventKind>> {
-        Some(vec![EventKind::ZoneChange])
+        let mut kinds = vec![EventKind::ZoneChange];
+        if self.accepts_game_departure() { kinds.push(EventKind::ObjectLeavesGame); }
+        Some(kinds)
     }
 
     fn trigger_count(&self, event: &TriggerEvent) -> u32 {
         match self.count_mode {
             CountMode::OneOrMore => 1,
             CountMode::Each => {
-                if let Some(zc) = event.downcast::<ZoneChangeEvent>() {
+                if let Some(zc) = self.matching_zone_event(event) {
                     if self.this_object {
                         return 1;
                     }
@@ -1577,13 +1628,13 @@ impl TriggerMatcher for ZoneChangeTrigger {
         match self.count_mode {
             CountMode::OneOrMore => 1,
             CountMode::Each => {
-                if let Some(zc) = event.downcast::<ZoneChangeEvent>() {
+                if let Some(zc) = self.matching_zone_event(event) {
                     if self.this_object {
                         return 1;
                     }
                     let use_snapshot = self.uses_snapshot() && !zc.snapshots().is_empty();
                     if use_snapshot {
-                        matching_snapshots(zc, &self.object_filter, ctx).len() as u32
+                        matching_snapshots(&zc, &self.object_filter, ctx).len() as u32
                     } else {
                         zc.destination_objects()
                             .iter()
@@ -1605,13 +1656,13 @@ impl TriggerMatcher for ZoneChangeTrigger {
         if !self.matches(event, ctx) {
             return None;
         }
-        let zc = event.downcast::<ZoneChangeEvent>()?;
+        let zc = self.matching_zone_event(event)?;
         if self.this_object {
             return Some(1);
         }
         let use_snapshot = self.uses_snapshot() && !zc.snapshots().is_empty();
         let count = if use_snapshot {
-            matching_snapshots(zc, &self.object_filter, ctx).len()
+            matching_snapshots(&zc, &self.object_filter, ctx).len()
         } else {
             zc.destination_objects()
                 .iter()
@@ -1629,8 +1680,12 @@ impl TriggerMatcher for ZoneChangeTrigger {
         &self,
         event: &TriggerEvent,
     ) -> Option<crate::triggers::matcher_trait::SimultaneousTriggerKey> {
-        (self.count_mode == CountMode::OneOrMore && event.downcast::<ZoneChangeEvent>().is_some())
-            .then_some(crate::triggers::matcher_trait::SimultaneousTriggerKey::ZoneChangeBatch)
+        (self.count_mode == CountMode::OneOrMore && self.matching_zone_event(event).is_some())
+            .then_some(if event.kind() == EventKind::ObjectLeavesGame {
+                crate::triggers::matcher_trait::SimultaneousTriggerKey::ObjectLeavesGameBatch
+            } else {
+                crate::triggers::matcher_trait::SimultaneousTriggerKey::ZoneChangeBatch
+            })
     }
 
     fn uses_snapshot(&self) -> bool {
@@ -1640,7 +1695,7 @@ impl TriggerMatcher for ZoneChangeTrigger {
     }
 
     fn looks_back_for_source(&self, event: &TriggerEvent) -> bool {
-        let Some(zc) = event.downcast::<ZoneChangeEvent>() else {
+        let Some(zc) = self.matching_zone_event(event) else {
             return false;
         };
         if !self.from.matches(zc.from) || !self.to.matches(zc.to) {
@@ -1653,13 +1708,36 @@ impl TriggerMatcher for ZoneChangeTrigger {
         let leaves_graveyard = zc.from == Zone::Graveyard
             && zc.to != Zone::Graveyard
             && source_zone_is_explicitly_looked_back(&self.from, Zone::Graveyard);
-        let public_to_hand_or_library = is_public_to_hand_or_library_zone_change(zc)
+        let public_to_hand_or_library = is_public_to_hand_or_library_zone_change(&zc)
             && matches!(zc.to, Zone::Hand | Zone::Library);
 
         leaves_battlefield || leaves_graveyard || public_to_hand_or_library
     }
 
     fn display(&self) -> String {
+        // A battlefield-to-exile move caused by this very object is the
+        // champion exile: "When a Faerie is championed with this creature".
+        if self.from == ZonePattern::Specific(Zone::Battlefield)
+            && self.to == ZonePattern::Specific(Zone::Exile)
+            && !self.this_object
+            && self
+                .cause_filter
+                .as_ref()
+                .and_then(|cause| cause.source_filter.as_ref())
+                .is_some_and(|source| source.source)
+        {
+            let noun = self.object_filter.description();
+            let article = if noun
+                .chars()
+                .next()
+                .is_some_and(|ch| matches!(ch.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u'))
+            {
+                "an"
+            } else {
+                "a"
+            };
+            return format!("When {article} {noun} is championed with this creature");
+        }
         self.generate_display()
     }
 }

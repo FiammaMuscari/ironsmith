@@ -1238,11 +1238,17 @@ pub enum TaggedOpbjectRelation {
     /// game's ordinary attachment cleanup detaches the candidate.
     WasAttachedToTaggedObject,
     SoulbondPartnerOfTagged,
+    /// The candidate is in the same attacking band as the tagged object
+    /// (CR 702.22): "creatures banded with it".
+    BandedWithTagged,
     IsNotTaggedObject,
     /// The candidate is an object target of the tagged stack object (a spell
     /// or ability still on the stack): "gain control of those permanents"
     /// after "whenever you cast a spell that targets one or more permanents".
     TargetedByTaggedObject,
+    /// The candidate could produce at least one type of mana that the tagged
+    /// object could produce (Mana Web).
+    SharesProducibleManaTypeWithTagged,
 }
 
 /// A characteristic that can be compared between a candidate object and a
@@ -1367,6 +1373,9 @@ pub enum ParityRequirement {
     Odd,
     Even,
     Chosen,
+    /// The parity other than the source's chosen quality ("without mana
+    /// value of the chosen quality").
+    NotChosen,
 }
 
 impl ParityRequirement {
@@ -1374,7 +1383,7 @@ impl ParityRequirement {
         match self {
             Self::Odd => Some("odd"),
             Self::Even => Some("even"),
-            Self::Chosen => None,
+            Self::Chosen | Self::NotChosen => None,
         }
     }
 
@@ -1384,6 +1393,7 @@ impl ParityRequirement {
                 format!("with {} {axis}", self.explicit_label().unwrap_or(""))
             }
             Self::Chosen => format!("with {axis} of the chosen quality"),
+            Self::NotChosen => format!("without {axis} of the chosen quality"),
         }
     }
 }
@@ -1487,6 +1497,12 @@ pub enum PlayerFilter {
     OpponentWithMoreControlledObjectsThan {
         player: Box<PlayerFilter>,
         filter: Box<ObjectFilter>,
+        /// Compare in the other direction: the opponent has strictly fewer
+        /// matching objects than that player (Oath of Ghouls). When `filter`
+        /// names a zone other than the battlefield, each player's count is
+        /// the matching cards they own in that zone.
+        #[cfg_attr(feature = "serde", serde(default))]
+        fewer: bool,
     },
     /// The unique in-game player who controls more objects matching `filter`
     /// than every other in-game player. No player matches when the lead is
@@ -1631,7 +1647,7 @@ impl PlayerFilter {
                 base.mentions_iterated_player() || sources.mentions_iterated_player()
             }
             Self::HasMoreLifeThanYou { base } => base.mentions_iterated_player(),
-            Self::OpponentWithMoreControlledObjectsThan { player, filter } => {
+            Self::OpponentWithMoreControlledObjectsThan { player, filter, .. } => {
                 player.mentions_iterated_player() || filter.mentions_iterated_player()
             }
             Self::ControlsMost { filter } => filter.mentions_iterated_player(),
@@ -1729,7 +1745,28 @@ impl PlayerFilter {
                     base.description()
                 )
             }
-            Self::OpponentWithMoreControlledObjectsThan { player, filter } => format!(
+            Self::OpponentWithMoreControlledObjectsThan {
+                player,
+                filter,
+                fewer: true,
+            } => {
+                let mut counted = filter.as_ref().clone();
+                let zone = counted.zone.take();
+                let zone_tail = match zone {
+                    Some(Zone::Graveyard) => " in their graveyard",
+                    Some(Zone::Hand) => " in their hand",
+                    Some(Zone::Library) => " in their library",
+                    Some(Zone::Exile) => " in exile",
+                    _ => "",
+                };
+                format!(
+                    "an opponent of {} who has fewer {}{} than they do",
+                    player.description(),
+                    pluralize_count_terminal_word(&counted.description()),
+                    zone_tail
+                )
+            }
+            Self::OpponentWithMoreControlledObjectsThan { player, filter, .. } => format!(
                 "an opponent of {} who controls more {} than they do",
                 player.description(),
                 pluralize_count_terminal_word(&filter.description())
@@ -2051,6 +2088,10 @@ pub struct ObjectFilter {
     /// Candidate shares at least one color with the pregame draft choices
     /// recorded for the indicated named card group.
     pub colors_chosen_while_drafting_named: Option<String>,
+    /// Candidate's name is one its filter player ("you") noted while
+    /// drafting cards with the indicated name ("a name you noted for cards
+    /// named Noble Banneret").
+    pub name_noted_while_drafting_named: Option<String>,
     pub chosen_land_type: bool,
     /// Requires at least one of the five basic land subtypes.  This is not
     /// the same as requiring the Basic supertype: nonbasic dual lands can
@@ -2157,6 +2198,18 @@ pub struct ObjectFilter {
     /// Oracle-facing `target` determiner used by a choice specification.
     pub is_target_object: bool,
     pub in_combat_with_source: bool,
+    /// Requires an attacking creature whose attack target (player,
+    /// planeswalker, or battle) is the same one the current source is
+    /// attacking ("another target creature attacking the same player or
+    /// planeswalker", Kitesail Skirmisher).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub attacking_same_defender_as_source: bool,
+    /// Requires an object the current source Aura could legally enchant
+    /// (CR 303.4: its enchant ability and protection), wherever that Aura
+    /// currently is ("a creature at random this Aura can enchant",
+    /// Infectious Rage).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub could_be_enchanted_by_source: bool,
     /// Requires the candidate creature to be in the current combat with the
     /// referenced creature: either it blocks that creature or that creature
     /// blocks it. This is distinct from `in_combat_with_source` because some
@@ -2195,6 +2248,12 @@ pub struct ObjectFilter {
     /// This is stable-identity history, not merely a present-zone qualifier.
     pub entered_graveyard_from_library_this_turn: bool,
     pub surveilled_this_turn: bool,
+    /// The object fought this turn ("a creature that fought this turn",
+    /// Boxing Ring). Stable-identity history of fight keyword actions.
+    pub fought_this_turn: bool,
+    /// The object is an attacking creature whose attack target is a battle
+    /// ("if it's attacking a battle", Rampaging Geoderm).
+    pub attacking_battle: bool,
     /// Requires this exact object to have received matching counters this turn
     /// from a source controlled by the matching player.
     pub counters_put_on_this_turn: Option<CountersPutOnThisTurnConstraint>,
@@ -2895,6 +2954,7 @@ impl ObjectFilter {
             || self.required_colors.is_some()
             || self.chosen_color
             || self.colors_chosen_while_drafting_named.is_some()
+            || self.name_noted_while_drafting_named.is_some()
             || self.chosen_land_type
             || self.has_basic_land_type
             || self.has_nonbasic_land_type
@@ -2917,9 +2977,11 @@ impl ObjectFilter {
             || self.enlist_eligible
             || self.attached_to_object.is_some()
             || self.could_enchant_object.is_some()
+            || self.could_be_enchanted_by_source
             || self.blocked_or_was_blocked_by_this_turn.is_some()
             || self.attached_to_player.is_some()
             || self.surveilled_this_turn
+            || self.fought_this_turn
             || self.counters_put_on_this_turn.is_some()
             || self.discarded_or_cycled_this_turn_by.is_some()
             || self.drawn_this_turn
@@ -3720,6 +3782,23 @@ impl ObjectFilter {
     }
 
     pub fn description(&self) -> String {
+        // "each creature except for tokens you control" (Ajani Unrelenting):
+        // the survivors are the base objects that you don't control or that
+        // are nontoken.
+        if let [left, right] = self.any_of.as_slice() {
+            let not_you = ObjectFilter::default().controlled_by(PlayerFilter::NotYou);
+            let mut nontoken = ObjectFilter::default();
+            nontoken.nontoken = true;
+            if ((*left == not_you && *right == nontoken) || (*left == nontoken && *right == not_you))
+                && self.controller.is_none()
+                && !self.token
+                && !self.nontoken
+            {
+                let mut base = self.clone();
+                base.any_of.clear();
+                return format!("{} except for tokens you control", base.description());
+            }
+        }
         // A union of bare result tags ("those tokens" across several
         // creation results) is one referenced set; describe it as one.
         if self.any_of.len() > 1
@@ -3736,6 +3815,16 @@ impl ObjectFilter {
             set.tagged_constraints
                 .push(self.any_of[0].tagged_constraints[0].clone());
             return set.description();
+        }
+        // Exact owned-card and coordinated domains retain their plural scope
+        // before generic complement grouping chooses a singular description.
+        if let Some(description) =
+            describe_controlled_battlefield_and_owned_nonbattlefield_card_union(self)
+        {
+            return description;
+        }
+        if let Some(description) = describe_owned_nonbattlefield_card_union(self) {
+            return description;
         }
         if let Some(description) = describe_nonbattlefield_card_union(self) {
             return description;
@@ -3755,14 +3844,6 @@ impl ObjectFilter {
             return description;
         }
         if let Some(description) = describe_branch_scoped_card_type_union(self) {
-            return description;
-        }
-        if let Some(description) =
-            describe_controlled_battlefield_and_owned_nonbattlefield_card_union(self)
-        {
-            return description;
-        }
-        if let Some(description) = describe_owned_nonbattlefield_card_union(self) {
             return description;
         }
         if let Some(description) = describe_owner_scoped_zone_union(self) {
@@ -4315,6 +4396,11 @@ impl ObjectFilter {
                 "with a name originally printed in the {set_name} expansion"
             ));
         }
+        if let Some(card_name) = &self.name_noted_while_drafting_named {
+            post_noun_qualifiers.push(format!(
+                "with a name you noted for cards named {card_name}"
+            ));
+        }
         if self.excluded_chosen_creature_type || self.excluded_any_chosen_creature_type {
             let qualifier = if self.has_chosen_type_this_way_surface() {
                 "that aren't of a type chosen this way"
@@ -4559,6 +4645,14 @@ impl ObjectFilter {
                 TaggedOpbjectRelation::SoulbondPartnerOfTagged => {
                     post_noun_qualifiers.push("paired with it".to_string());
                 }
+                TaggedOpbjectRelation::BandedWithTagged => {
+                    post_noun_qualifiers.push("banded with it".to_string());
+                }
+                TaggedOpbjectRelation::SharesProducibleManaTypeWithTagged => {
+                    post_noun_qualifiers.push(
+                        "that could produce any type of mana that land could produce".to_string(),
+                    );
+                }
                 TaggedOpbjectRelation::TargetedByTaggedObject => {
                     post_noun_qualifiers.push(
                         if constraint.tag.as_str() == "triggering" {
@@ -4728,6 +4822,7 @@ impl ObjectFilter {
         } else {
             if self.attacking
                 && !self.attacking_alone
+                && !self.attacking_same_defender_as_source
                 && self
                     .attacking_player_or_planeswalker_controlled_by
                     .is_none()
@@ -4802,6 +4897,12 @@ impl ObjectFilter {
                 other => other.description(),
             };
             post_noun_qualifiers.push(format!("{player} protects"));
+        }
+        if self.attacking_same_defender_as_source {
+            post_noun_qualifiers.push("attacking the same player or planeswalker".to_string());
+        }
+        if self.could_be_enchanted_by_source {
+            post_noun_qualifiers.push("this Aura can enchant".to_string());
         }
         if self.in_combat_with_source {
             post_noun_qualifiers.push(if self.blocking {
@@ -5529,6 +5630,9 @@ impl ObjectFilter {
                 ParityRequirement::Chosen => {
                     parts.push("with a number of counters on it of the chosen quality".to_string())
                 }
+                ParityRequirement::NotChosen => parts.push(
+                    "without a number of counters on it of the chosen quality".to_string(),
+                ),
             }
         }
         if let Some(kind) = self.alternative_cast {
@@ -5662,6 +5766,12 @@ impl ObjectFilter {
         }
         if self.surveilled_this_turn {
             parts.push("you've surveilled this turn".to_string());
+        }
+        if self.fought_this_turn {
+            parts.push("that fought this turn".to_string());
+        }
+        if self.attacking_battle {
+            parts.push("attacking a battle".to_string());
         }
         if let Some(constraint) = &self.counters_put_on_this_turn {
             parts.push(describe_counters_put_on_this_turn_constraint(constraint));
@@ -5974,7 +6084,7 @@ fn source_reference_surface_text(surface: &SourceReferenceSurface) -> String {
 pub fn describe_controlled_battlefield_and_owned_nonbattlefield_card_union(
     filter: &ObjectFilter,
 ) -> Option<String> {
-    if !filter.has_conjunctive_set_surface() || filter.any_of.len() != 6 {
+    if !filter.has_conjunctive_set_surface() || filter.any_of.len() != 8 {
         return None;
     }
 
@@ -6002,18 +6112,24 @@ pub fn describe_controlled_battlefield_and_owned_nonbattlefield_card_union(
         .filter(|(index, _)| *index != battlefield_index)
         .map(|(_, branch)| branch.clone())
         .collect::<Vec<_>>();
-    for branch in &nonbattlefield_branches {
-        let mut basis = branch.clone();
-        basis.zone = None;
-        basis.owner = None;
-        if basis != battlefield_basis {
-            return None;
-        }
-    }
     let nonbattlefield = ObjectFilter {
         any_of: nonbattlefield_branches,
         ..ObjectFilter::default()
     };
+    let mut common = nonbattlefield_card_union_basis(&nonbattlefield)?;
+    if common.owner != Some(PlayerFilter::You) || common.controller.is_some() {
+        return None;
+    }
+    common.owner = None;
+    // Card/permanent noun and plurality describe their distinct domains;
+    // every executable object predicate must still agree.
+    common.set_explicit_card_noun(false);
+    common.set_plural_object_noun_surface(false);
+    battlefield_basis.set_explicit_card_noun(false);
+    battlefield_basis.set_plural_object_noun_surface(false);
+    if common != battlefield_basis {
+        return None;
+    }
     let owned_cards = describe_owned_nonbattlefield_card_union(&nonbattlefield)?;
 
     let mut battlefield_surface = battlefield.clone();
@@ -6028,12 +6144,12 @@ pub fn describe_controlled_battlefield_and_owned_nonbattlefield_card_union(
 // its arms. Group only identical card predicates, leaving all outer constraints
 // and unrelated alternatives intact.
 fn group_nonbattlefield_card_domains(filter: &ObjectFilter) -> Option<ObjectFilter> {
-    if filter.union_connective() != ObjectFilterUnionConnective::Or || filter.any_of.len() <= 8 {
+    if filter.union_connective() != ObjectFilterUnionConnective::Or || filter.any_of.len() <= 7 {
         return None;
     }
     fn basis(arm: &ObjectFilter) -> Option<ObjectFilter> {
         let zone = arm.zone?;
-        if zone == Zone::Battlefield || !arm.has_explicit_card_noun() {
+        if matches!(zone, Zone::Battlefield | Zone::OutsideGame) || !arm.has_explicit_card_noun() {
             return None;
         }
         let mut result = arm.clone();
@@ -6083,16 +6199,11 @@ fn group_nonbattlefield_card_domains(filter: &ObjectFilter) -> Option<ObjectFilt
     None
 }
 
-/// Compact the five owner-scoped nonbattlefield zones back into Oracle's
-/// canonical "cards you own that aren't on the battlefield" subject.
-///
-/// The branches remain separate typed runtime selectors. This renderer only
-/// applies when all five branches have the same object constraints and differ
-/// solely by zone.
-/// Compact a complete nonbattlefield card-domain union, retaining every
-/// shared predicate. Stack arms select spells rather than stack abilities.
-fn describe_nonbattlefield_card_union(filter: &ObjectFilter) -> Option<String> {
-    if filter.union_connective() != ObjectFilterUnionConnective::Or || filter.any_of.len() != 8 {
+/// Extract the common card predicate over every actual nonbattlefield
+/// game zone. OutsideGame is not a zone (CR 400.11); stack arms select
+/// spells rather than stack abilities.
+fn nonbattlefield_card_union_basis(filter: &ObjectFilter) -> Option<ObjectFilter> {
+    if filter.union_connective() != ObjectFilterUnionConnective::Or || filter.any_of.len() != 7 {
         return None;
     }
     let mut outer = filter.clone();
@@ -6105,7 +6216,7 @@ fn describe_nonbattlefield_card_union(filter: &ObjectFilter) -> Option<String> {
     let mut basis: Option<ObjectFilter> = None;
     for arm in &filter.any_of {
         let zone = arm.zone?;
-        if zone == Zone::Battlefield || !zones.insert(zone) {
+        if matches!(zone, Zone::Battlefield | Zone::OutsideGame) || !zones.insert(zone) {
             return None;
         }
         let mut candidate = arm.clone();
@@ -6125,53 +6236,21 @@ fn describe_nonbattlefield_card_union(filter: &ObjectFilter) -> Option<String> {
             _ => {}
         }
     }
-    Some(format!("{} not on the battlefield", basis?.description()))
+    basis
 }
 
+fn describe_nonbattlefield_card_union(filter: &ObjectFilter) -> Option<String> {
+    Some(format!("{} not on the battlefield", nonbattlefield_card_union_basis(filter)?.description()))
+}
+
+/// Render an owner-scoped complete card domain without certifying a partial
+/// set of zones or dropping its shared card predicates.
 pub fn describe_owned_nonbattlefield_card_union(filter: &ObjectFilter) -> Option<String> {
-    if filter.union_connective() != ObjectFilterUnionConnective::Or || filter.any_of.len() != 5 {
+    let mut shared_basis = nonbattlefield_card_union_basis(filter)?;
+    if shared_basis.owner != Some(PlayerFilter::You) || shared_basis.controller.is_some() {
         return None;
     }
-
-    let mut outer = filter.clone();
-    outer.any_of.clear();
-    outer.union_surface = ObjectFilterUnionSurface::default();
-    if outer != ObjectFilter::default() {
-        return None;
-    }
-
-    let mut seen = [false; 5];
-    let mut shared_basis: Option<ObjectFilter> = None;
-    for branch in &filter.any_of {
-        if branch.owner != Some(PlayerFilter::You) || branch.controller.is_some() {
-            return None;
-        }
-        let zone_index = match branch.zone? {
-            Zone::Hand => 0,
-            Zone::Library => 1,
-            Zone::Graveyard => 2,
-            Zone::Exile => 3,
-            Zone::Command => 4,
-            _ => return None,
-        };
-        if std::mem::replace(&mut seen[zone_index], true) {
-            return None;
-        }
-
-        let mut basis = branch.clone();
-        basis.zone = None;
-        basis.owner = None;
-        match &shared_basis {
-            Some(shared) if shared != &basis => return None,
-            Some(_) => {}
-            None => shared_basis = Some(basis),
-        }
-    }
-    if !seen.into_iter().all(|present| present) {
-        return None;
-    }
-
-    let mut shared_basis = shared_basis?;
+    shared_basis.owner = None;
     shared_basis.set_plural_object_noun_surface(false);
     let description = shared_basis.description();
     let noun = description
@@ -6184,9 +6263,7 @@ pub fn describe_owned_nonbattlefield_card_union(filter: &ObjectFilter) -> Option
     if noun.is_empty() {
         Some("cards you own that aren't on the battlefield".to_string())
     } else {
-        Some(format!(
-            "{noun} cards you own that aren't on the battlefield"
-        ))
+        Some(format!("{noun} cards you own that aren't on the battlefield"))
     }
 }
 
@@ -6806,7 +6883,10 @@ fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
                 describe_player_filter(base)
             )
         }
-        PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter } => format!(
+        PlayerFilter::OpponentWithMoreControlledObjectsThan { fewer: true, .. } => {
+            format!("{}'s", filter.description())
+        }
+        PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter, .. } => format!(
             "an opponent of {} who controls more {} than they do's",
             describe_player_filter(player),
             pluralize_count_terminal_word(&filter.description())
@@ -6918,7 +6998,11 @@ pub(crate) fn describe_player_filter(filter: &PlayerFilter) -> String {
                 describe_player_filter(base)
             )
         }
-        PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter } => format!(
+        PlayerFilter::OpponentWithMoreControlledObjectsThan { fewer: true, .. } => filter
+            .description()
+            .trim_start_matches("an ")
+            .to_string(),
+        PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter, .. } => format!(
             "opponent of {} who controls more {} than they do",
             describe_player_filter(player),
             pluralize_count_terminal_word(&filter.description())
@@ -8523,6 +8607,77 @@ mod tests {
 #[cfg(test)]
 mod nonbattlefield_union_rendering_tests {
     use super::*;
+    fn owned_creature_cards() -> ObjectFilter {
+        ObjectFilter {
+            any_of: [Zone::Hand, Zone::Library, Zone::Graveyard, Zone::Exile,
+                Zone::Command, Zone::Stack, Zone::Ante]
+                .into_iter().map(|zone| {
+                    let mut arm = ObjectFilter::creature().in_zone(zone);
+                    arm.owner = Some(PlayerFilter::You);
+                    arm.set_explicit_card_noun(true);
+                    if zone == Zone::Stack {arm.stack_kind = Some(StackObjectKind::Spell);}
+                    arm
+                }).collect(),
+            ..ObjectFilter::default()
+        }
+    }
+
+    #[test]
+    fn complete_owned_card_domain_preserves_owner_and_stack_spell_constraint() {
+        let filter = owned_creature_cards();
+        assert_eq!(describe_owned_nonbattlefield_card_union(&filter),
+            Some("creature cards you own that aren't on the battlefield".to_string()));
+        assert_eq!(filter.description(), "creature cards you own that aren't on the battlefield");
+        for changed in ["stack ability", "duplicate zone", "different owner", "different predicate", "outer predicate", "outside-game arm"] {
+            let mut altered = filter.clone();
+            match changed {
+                "stack ability" => altered.any_of[5].stack_kind = Some(StackObjectKind::Ability),
+                "duplicate zone" => altered.any_of[6].zone = Some(Zone::Hand),
+                "different owner" => altered.any_of[2].owner = Some(PlayerFilter::Opponent),
+                "different predicate" => altered.any_of[2].subtypes.push(Subtype::Elf),
+                "outside-game arm" => {
+                    let mut arm = altered.any_of[0].clone();
+                    arm.zone = Some(Zone::OutsideGame);
+                    altered.any_of.push(arm);
+                }
+                _ => altered.tapped = true,
+            }
+            assert_eq!(describe_owned_nonbattlefield_card_union(&altered), None, "{changed}");
+        }
+    }
+
+    #[test]
+    fn partial_owned_card_union_cannot_claim_complete_nonbattlefield_scope() {
+        let mut filter = owned_creature_cards();
+        filter.any_of.truncate(5);
+        assert_eq!(describe_owned_nonbattlefield_card_union(&filter), None,
+            "missing stack and ante cards is a partial scope");
+        let mut missing = owned_creature_cards();
+        missing.any_of.remove(5);
+        assert_eq!(describe_owned_nonbattlefield_card_union(&missing), None);
+    }
+
+    #[test]
+    fn controlled_battlefield_and_owned_cards_preserve_complete_distinct_domains() {
+        let mut filter = owned_creature_cards();
+        let battlefield = ObjectFilter::creature().in_zone(Zone::Battlefield).you_control();
+        filter.any_of.insert(0, battlefield);
+        filter.set_conjunctive_set_surface(true);
+        assert_eq!(describe_controlled_battlefield_and_owned_nonbattlefield_card_union(&filter),
+            Some("creatures you control and creature cards you own that aren't on the battlefield".to_string()));
+        assert_eq!(filter.description(), "creatures you control and creature cards you own that aren't on the battlefield");
+        for changed in ["partial", "stack ability", "different battlefield predicate", "different card owner"] {
+            let mut altered = filter.clone();
+            match changed {
+                "partial" => altered.any_of.truncate(6),
+                "stack ability" => altered.any_of[6].stack_kind = Some(StackObjectKind::Ability),
+                "different battlefield predicate" => altered.any_of[0].subtypes.push(Subtype::Elf),
+                _ => altered.any_of[2].owner = Some(PlayerFilter::Opponent),
+            }
+            assert_eq!(describe_controlled_battlefield_and_owned_nonbattlefield_card_union(&altered), None, "{changed}");
+        }
+    }
+
     #[test]
     fn complete_card_domain_complement_compacts_but_partial_union_does_not() {
         let mut filter = ObjectFilter::default();
@@ -8534,7 +8689,6 @@ mod nonbattlefield_union_rendering_tests {
             Zone::Command,
             Zone::Stack,
             Zone::Ante,
-            Zone::OutsideGame,
         ]
         .into_iter()
         .map(|zone| {

@@ -190,7 +190,7 @@ pub fn parse_search_library_sentence_with_grammar_entrypoint_lexed(
         && let Some(EffectAst::SubjectVerb(crate::cards::builders::SubjectVerbEffectAst {
             action:
                 SubjectVerbActionAst::Choices(crate::cards::builders::ChoiceActionAst::ChoosePlayer {
-                    filter: PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter },
+                    filter: PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter, .. },
                     tag,
                     ..
                 }),
@@ -237,6 +237,54 @@ pub fn parse_search_library_sentence_with_grammar_entrypoint_lexed(
         let consumed = raw_filter_tokens.len().saturating_sub(rest_len);
         raw_filter_tokens.drain(0..consumed);
     }
+    // "search your library for a number of basic land cards equal to the
+    // other result" (Wild Endeavor): a trailing "equal to <value>" sets the
+    // dynamic count of a "a number of" search.
+    if prefix_count_value.is_none()
+        && let Some(equal_idx) = raw_filter_tokens
+            .windows(2)
+            .position(|window| window[0].is_word("equal") && window[1].is_word("to"))
+        && equal_idx > 0
+        && let Some((value, used)) =
+            crate::grammar::shared_util::value_expr::parse_value_expr_tokens(
+                &raw_filter_tokens[equal_idx + 2..],
+            )
+        && trim_commas(&raw_filter_tokens[equal_idx + 2 + used..]).is_empty()
+    {
+        let mut head = trim_commas(&raw_filter_tokens[..equal_idx]).to_vec();
+        let words = crate::lexer::token_word_refs(&head);
+        let number_of_len = match words.as_slice() {
+            ["a", "number", "of", ..] => Some(3),
+            ["number", "of", ..] => Some(2),
+            _ => None,
+        };
+        // Only the consumed count prefix ("for a number of ...") may supply
+        // the "number of" proof; the value after "equal to" ("the number of
+        // lands you control") must not.
+        let count_words =
+            crate::lexer::token_word_refs(&count_tokens[..count_used.min(count_tokens.len())]);
+        let counted_by_prefix = count_words.windows(2).any(|window| window == ["number", "of"]);
+        // "with mana value less than or equal to <value>" and "power equal
+        // to <value>" are comparisons inside the selector, not a count.
+        let comparison_head = words.last().is_some_and(|word| {
+            matches!(
+                *word,
+                "or" | "than" | "value" | "power" | "toughness" | "mana" | "lesser" | "greater"
+            )
+        });
+        if !comparison_head && (number_of_len.is_some() || counted_by_prefix) {
+            if let Some(len) = number_of_len {
+                head.drain(..len);
+            }
+            prefix_count_value = Some(value);
+            count = if search_mode == SearchSelectionMode::Optional {
+                ChoiceCount::up_to_dynamic_x()
+            } else {
+                ChoiceCount::dynamic_x()
+            };
+            raw_filter_tokens = head;
+        }
+    }
     let (filter_tokens, count_value) = if let Some((base_filter_tokens, count_value)) =
         split_search_library_count_value_clause_lexed(&raw_filter_tokens)?
     {
@@ -279,7 +327,16 @@ pub fn parse_search_library_sentence_with_grammar_entrypoint_lexed(
             | Some(SearchLibrarySameNameReference::Choose { .. })
     );
 
-    let named_filters = if basic_land_type_slots.is_none() && count_used == 0 {
+    // A bare article count ("for a card named A and a card named B") leaves
+    // the named items to supply their own one-card counts.
+    let article_count_only = count_used == 1
+        && count.is_single()
+        && count_value.is_none()
+        && search_tokens
+            .get(for_idx + 1)
+            .is_some_and(|token| token.is_word("a") || token.is_word("an"));
+    let named_filters = if basic_land_type_slots.is_none() && (count_used == 0 || article_count_only)
+    {
         split_search_named_item_filters_lexed(&filter_tokens, &clause_display)?
     } else {
         None
@@ -489,11 +546,17 @@ pub fn parse_search_library_sentence_with_grammar_entrypoint_lexed(
             ));
         }
         sequence
-    } else if let Some(named_filters) = named_filters {
+    } else if let Some(named_items) = named_filters {
         let searched_tag: TagKey = crate::tag::declared_key("searched_named").into();
         let zones = search_zones_override.unwrap_or_else(|| vec![Zone::Library]);
+        // "a card named A and/or a card named B": up to one of each name.
+        let (named_count, named_search_mode) = if named_items.each_optional {
+            (ChoiceCount::up_to(1), SearchSelectionMode::Optional)
+        } else {
+            (ChoiceCount::exactly(1), SearchSelectionMode::Exact)
+        };
         let mut sequence = Vec::new();
-        for mut named_filter in named_filters {
+        for mut named_filter in named_items.filters {
             if named_filter.owner.is_none()
                 && let Some(owner) = forced_library_owner.clone()
             {
@@ -503,12 +566,12 @@ pub fn parse_search_library_sentence_with_grammar_entrypoint_lexed(
             sequence.push(EffectAst::ObjectChoices(
                 ObjectChoiceEffectAst::ChooseObjectsAcrossZones {
                     filter: named_filter,
-                    count: ChoiceCount::exactly(1),
+                    count: named_count,
                     count_value: None,
                     player: chooser,
                     tag: crate::tag::TagRef::of(searched_tag.clone()),
                     zones: zones.clone(),
-                    search_mode: Some(SearchSelectionMode::Exact),
+                    search_mode: Some(named_search_mode),
                 },
             ));
         }

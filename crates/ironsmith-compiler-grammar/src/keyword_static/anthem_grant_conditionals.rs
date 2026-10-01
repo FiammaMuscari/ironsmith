@@ -1329,14 +1329,69 @@ fn parse_triggered_granted_ability(
         return Ok(None);
     }
 
+    // "Whenever this creature attacks a player, if <condition>, A. B."
+    // (Agent of the Shadow Thieves): the `if` right after the trigger comma is
+    // an intervening-if over the whole ability (CR 603.4). Split it off before
+    // the body is parsed, so the condition can't be scoped to the first
+    // sentence only.
+    if let Some(trigger_comma) = trigger_tokens.iter().position(|token| token.is_comma())
+        && trigger_tokens
+            .get(trigger_comma + 1)
+            .is_some_and(|token| token.is_word("if"))
+        && let Some(after_if) = trigger_tokens.get(trigger_comma + 2..)
+        && let Some(predicate_comma) = after_if.iter().position(|token| token.is_comma())
+        && !after_if[..predicate_comma]
+            .iter()
+            .any(|token| token.kind == TokenKind::Period)
+        && predicate_comma + 1 < after_if.len()
+        && let Ok(predicate) =
+            crate::grammar::filters::parse_condition_predicate_lexed(&after_if[..predicate_comma])
+    {
+        let mut rebuilt = trigger_tokens[..=trigger_comma].to_vec();
+        rebuilt.extend(after_if[predicate_comma + 1..].iter().cloned());
+        if let Ok(LineAst::Triggered {
+            trigger,
+            effects,
+            max_triggers_per_turn,
+        }) = crate::clause_support::parse_triggered_line_lexed(&rebuilt)
+            && !effects.is_empty()
+        {
+            let max_condition = trigger_surface::parse_trigger_frequency_condition_tokens(
+                &trigger_tokens,
+                max_triggers_per_turn,
+            );
+            let intervening_if = Some(match max_condition {
+                Some(right) => PredicateAst::And(Box::new(predicate), Box::new(right)),
+                None => predicate,
+            });
+            let ability = parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![Zone::Battlefield],
+                intervening_if,
+                None,
+                ReferenceImports::default(),
+            );
+            if !parsed_triggered_ability_is_empty(&ability) {
+                return Ok(Some(ability));
+            }
+        }
+    }
+
     let ability = match crate::clause_support::parse_triggered_line_lexed(&trigger_tokens)? {
         LineAst::Triggered {
             trigger,
             effects,
             max_triggers_per_turn,
         } => {
+            let body_leads_with_if = trigger_tokens
+                .iter()
+                .position(|token| token.is_comma())
+                .and_then(|comma| trigger_tokens.get(comma + 1))
+                .and_then(|token| token.as_word())
+                .is_some_and(|word| word.eq_ignore_ascii_case("if"));
             let (effects, trigger_condition) =
-                triggered_grant_effects_and_condition(&trigger, &effects)?;
+                triggered_grant_effects_and_condition(&trigger, &effects, body_leads_with_if)?;
             let max_condition = trigger_surface::parse_trigger_frequency_condition_tokens(
                 &trigger_tokens,
                 max_triggers_per_turn,
@@ -3090,6 +3145,44 @@ fn shared_head_supertype_subtype_anthem_remains_one_typed_subject() {
     }));
 }
 
+/// "Creatures you control have base power and toughness each equal to the
+/// number of creatures you control." (Porcelain Gallery) is a layer 7b
+/// base-P/T setting effect on the subject objects, not a characteristic-
+/// defining ability of the source and not a granted ability.
+pub fn parse_has_base_power_toughness_each_equal_static_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let tokens = trim_edge_punctuation(tokens);
+    let Some((subject_tokens, value_tokens)) =
+        anthem_grant_grammar::parse_base_power_toughness_each_equal_shape(&tokens)
+    else {
+        return Ok(None);
+    };
+    let AnthemSubjectAst::Filter(mut filter) = parse_anthem_subject(subject_tokens)? else {
+        return Ok(None);
+    };
+    filter.set_set_quantifier_surface(leading_set_quantifier_surface(subject_tokens));
+    let Some(value) = parse_characteristic_defining_stat_value(value_tokens) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported base power/toughness value (value: '{}')",
+            crate::lexer::token_word_refs(value_tokens).join(" ")
+        )));
+    };
+    // Source-relative readings ("each equal to its power") would bind to the
+    // source instead of each affected object; keep those unsupported.
+    if matches!(value, Value::SourcePower | Value::SourceToughness) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported per-object base power/toughness value (value: '{}')",
+            crate::lexer::token_word_refs(value_tokens).join(" ")
+        )));
+    }
+    Ok(Some(StaticAbility::set_base_power_toughness_value(
+        filter,
+        value.clone(),
+        value,
+    )))
+}
+
 pub fn parse_has_base_power_toughness_static_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -3456,6 +3549,7 @@ pub fn parse_filter_has_granted_ability_line(
         crate::keyword_static::parse_source_can_block_shadow_as_though_no_shadow_line(tokens),
         Ok(Some(_))
     ) || anthem_grant_grammar::parse_base_power_toughness_grant_shape(tokens).is_some()
+        || anthem_grant_grammar::parse_base_power_toughness_each_equal_shape(tokens).is_some()
     {
         return Ok(None);
     }

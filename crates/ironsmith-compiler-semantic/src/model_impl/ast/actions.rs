@@ -930,12 +930,14 @@ impl std::fmt::Debug for SubjectVerbActionAst {
                     duration,
                     source_filter,
                     excluded_source_target,
+                    source_of_your_choice,
                 },
             ) => f
                 .debug_struct("PreventAllCombatDamageFromSourceFilter")
                 .field("duration", duration)
                 .field("source_filter", source_filter)
                 .field("excluded_source_target", excluded_source_target)
+                .field("source_of_your_choice", source_of_your_choice)
                 .finish(),
             Self::DamagePrevention(
                 DamagePreventionActionAst::PreventAllCombatDamageToPlayers { duration },
@@ -2269,6 +2271,18 @@ impl std::fmt::Debug for SubjectVerbActionAst {
                 .finish(),
             Self::Counters(CounterActionAst::MoveOneCounter { from, to }) => f
                 .debug_struct("MoveOneCounter")
+                .field("from", from)
+                .field("to", to)
+                .finish(),
+            Self::Counters(CounterActionAst::MoveCounters {
+                counter_type,
+                count,
+                from,
+                to,
+            }) => f
+                .debug_struct("MoveCounters")
+                .field("counter_type", counter_type)
+                .field("count", count)
                 .field("from", from)
                 .field("to", to)
                 .finish(),

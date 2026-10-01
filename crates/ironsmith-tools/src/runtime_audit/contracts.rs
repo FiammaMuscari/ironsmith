@@ -330,6 +330,9 @@ impl Auditor {
             | "TriggeringObjectsNoneWereCastOrNoManaSpent"
             | "TriggeringAttackerBlockers"
             | "TriggeringAbilityIsManaAbility"
+            | "YouWonTriggeringClash"
+            | "TriggeringAbilityManaSpentToActivateAtLeast"
+            | "TriggeringObjectEnteredTransformed"
             | "ManaFromSourceSpentOnTriggeringAction" => scope.event,
             _ => return,
         };
@@ -1016,7 +1019,8 @@ impl Auditor {
             | "Blocks"
             | "BlocksOneOrMore"
             | "BlocksOrBecomesBlockedByObject"
-            | "BlocksObjectWithLesserPower" => {
+            | "BlocksObjectWithLesserPower"
+            | "BlocksObject" => {
                 scope.player = Binding::Unknown;
                 scope.amount = Binding::Unknown;
             }

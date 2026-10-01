@@ -847,6 +847,11 @@ impl Trigger {
         Self::new(BlocksObjectWithLesserPowerTrigger::new(blocker, blocked))
     }
 
+    /// Create a per-pair "whenever [blocker] blocks [object]" trigger.
+    pub fn blocks_object(blocker: ObjectFilter, blocked: ObjectFilter) -> Self {
+        Self::new(BlocksObjectWithLesserPowerTrigger::any_power(blocker, blocked))
+    }
+
     /// Create a "when this creature becomes blocked" trigger.
     pub fn this_becomes_blocked() -> Self {
         Self::new(ThisBecomesBlockedTrigger)
@@ -1608,6 +1613,11 @@ impl Trigger {
     /// Create a "when this permanent transforms" trigger.
     pub fn transforms() -> Self {
         Self::transforms_with_destination(None)
+    }
+
+    /// "Whenever a permanent you control transforms": any matching permanent.
+    pub fn permanent_transforms(filter: crate::target::ObjectFilter) -> Self {
+        Self::new(TransformsTrigger::new().permanent_filter(filter))
     }
 
     /// Create a transform trigger that may require the destination face name.

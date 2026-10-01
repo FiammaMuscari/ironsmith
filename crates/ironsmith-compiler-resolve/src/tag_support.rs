@@ -471,7 +471,8 @@ fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetA
                 }
             }
             SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { from, to })
-            | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to }) => {
+            | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to })
+                | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { from, to, .. }) => {
                 visit(from);
                 visit(to);
             }
@@ -863,6 +864,9 @@ fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
             _ => None,
         },
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjects { filter, .. })
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseTaggedObjectsInZone {
+            filter, ..
+        })
         | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjectsWithAggregateConstraint {
             filter,
             ..
@@ -931,6 +935,22 @@ pub fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         action: SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { filter, .. }),
         ..
     }) = effect
+        && filter_references_tag(filter, tag)
+    {
+        return true;
+    }
+    // "tap all lands that player controls that could produce any type of mana
+    // that land could produce" (Mana Web) relates each land to the
+    // triggering land, which must be tagged at resolution.
+    if tag == "triggering"
+        && let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action:
+                SubjectVerbActionAst::PermanentState(
+                    PermanentStateActionAst::TapAll { filter }
+                    | PermanentStateActionAst::UntapAll { filter },
+                ),
+            ..
+        }) = effect
         && filter_references_tag(filter, tag)
     {
         return true;
@@ -1069,6 +1089,7 @@ pub fn value_references_tag(value: &Value, tag: &str) -> bool {
         | Value::DistinctCounterTypesAmong(filter)
         | Value::DistinctNames(filter)
         | Value::DistinctManaValues(filter)
+        | Value::UnlockedDoorsAmong(filter)
         | Value::DistinctPowers(filter) => filter_references_tag(filter, tag),
         Value::StaticAbilitiesAmong { filter, .. } => filter_references_tag(filter, tag),
         Value::PowerOf(spec) | Value::ToughnessOf(spec) => choose_spec_references_tag(spec, tag),
@@ -1582,6 +1603,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::Stack(StackActionAst::CounterUnlessPays { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { .. })
+        | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::ForEachCounterKindPutOrRemove {
             ..
         })

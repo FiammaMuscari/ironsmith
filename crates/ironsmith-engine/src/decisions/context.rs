@@ -844,6 +844,8 @@ impl HybridChoiceContext {
 /// Used for: order blockers, order attackers, scry ordering, surveil ordering, etc.
 #[derive(Debug, Clone)]
 pub struct OrderContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -869,6 +871,7 @@ impl OrderContext {
         items: Vec<(ObjectId, String)>,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             description: description.into(),
@@ -979,6 +982,8 @@ pub struct DistributeTarget {
 /// Used for: damage distribution, counter distribution, etc.
 #[derive(Debug, Clone)]
 pub struct DistributeContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -1004,6 +1009,7 @@ impl DistributeContext {
         min_per_target: u32,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             description: description.into(),
@@ -1023,6 +1029,8 @@ impl DistributeContext {
 /// Used for: mana color selection, protection color choice, etc.
 #[derive(Debug, Clone)]
 pub struct ColorsContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -1049,6 +1057,7 @@ impl ColorsContext {
         distinct_colors: bool,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             description: if same_color {
@@ -1075,6 +1084,7 @@ impl ColorsContext {
         available_colors: Vec<Color>,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             description: if same_color {
@@ -1101,6 +1111,8 @@ impl ColorsContext {
 /// Used for: Hex Parasite-style "remove up to X counters" effects.
 #[derive(Debug, Clone)]
 pub struct CountersContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -1129,6 +1141,7 @@ impl CountersContext {
         available_counters: Vec<(CounterType, u32)>,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             target,
@@ -1151,6 +1164,8 @@ impl CountersContext {
 /// - For surveil: cards to put in graveyard (rest stay on top)
 #[derive(Debug, Clone)]
 pub struct PartitionContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -1176,6 +1191,7 @@ impl PartitionContext {
         secondary_label: impl Into<String>,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             description: description.into(),
@@ -1228,6 +1244,8 @@ impl PartitionContext {
 /// Each chosen object/player gets one counter of each type it already has.
 #[derive(Debug, Clone)]
 pub struct ProliferateContext {
+    /// Text of the instruction currently being resolved.
+    pub context_text: Option<String>,
     /// The player making the decision.
     pub player: PlayerId,
     /// The source of the effect.
@@ -1247,6 +1265,7 @@ impl ProliferateContext {
         eligible_players: Vec<(PlayerId, String)>,
     ) -> Self {
         Self {
+            context_text: None,
             player,
             source,
             eligible_permanents,
@@ -1259,27 +1278,65 @@ impl ProliferateContext {
 // Priority Context
 // ============================================================================
 
-/// Context for priority decisions.
-///
-/// This includes the full legal actions so responses can be converted back.
-#[derive(Debug, Clone)]
-pub struct PriorityContext {
-    /// False while background legal-action analysis is incomplete.
-    pub analysis_complete: bool,
-    /// The player with priority.
-    pub player: PlayerId,
-    /// All legal actions available (including command-zone casts).
-    pub actions: Vec<crate::decision::LegalAction>,
+/// Priority actions and their validated labels, constructed before any prompt.
+/// The action list has no mutable access, so labels cannot drift from actions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedPriorityActions {
+    actions: Vec<crate::decision::LegalAction>,
+    labels: Vec<String>,
+    face_up_costs: Vec<Option<String>>,
+}
+impl PreparedPriorityActions {
+    pub fn new(game: &crate::game_state::GameState, actions: Vec<crate::decision::LegalAction>)
+        -> Result<Self, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        let checked = game.continuous_query_snapshot()?;
+        let game = &checked;
+        let face_up_costs = actions.iter().map(|action| match action {
+            crate::decision::LegalAction::TurnFaceUp { creature_id, method } =>
+                crate::special_actions::turn_face_up_cost_display(game, *creature_id, *method),
+            crate::decision::LegalAction::SpecialAction(
+                crate::special_actions::SpecialAction::TurnFaceUp { permanent_id, method }) =>
+                crate::special_actions::turn_face_up_cost_display(game, *permanent_id, *method),
+            _ => Ok(None),
+        }).collect::<Result<Vec<_>, _>>()?;
+        let labels = actions.iter().zip(&face_up_costs)
+            .map(|(action, cost)| crate::decision::format_action_short(game, action, cost.as_deref())).collect();
+        Ok(Self { actions, labels, face_up_costs })
+    }
+    pub fn iter_with_labels(&self) -> impl Iterator<Item = (&crate::decision::LegalAction, &str)> {
+        self.actions.iter().zip(self.labels.iter().map(String::as_str))
+    }
+    pub fn iter_with_face_up_costs(&self) -> impl Iterator<Item = (&crate::decision::LegalAction, Option<&str>)> {
+        self.actions.iter().zip(self.face_up_costs.iter().map(|cost| cost.as_deref()))
+    }
+    pub fn label(&self, index: usize) -> &str { &self.labels[index] }
+    pub fn into_vec(self) -> Vec<crate::decision::LegalAction> { self.actions }
+}
+impl std::ops::Deref for PreparedPriorityActions {
+    type Target = [crate::decision::LegalAction];
+    fn deref(&self) -> &Self::Target { &self.actions }
+}
+impl IntoIterator for PreparedPriorityActions {
+    type Item = crate::decision::LegalAction;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter { self.actions.into_iter() }
+}
+impl<'a> IntoIterator for &'a PreparedPriorityActions {
+    type Item = &'a crate::decision::LegalAction;
+    type IntoIter = std::slice::Iter<'a, crate::decision::LegalAction>;
+    fn into_iter(self) -> Self::IntoIter { self.actions.iter() }
 }
 
+#[derive(Debug, Clone)]
+pub struct PriorityContext {
+    pub analysis_complete: bool,
+    pub player: PlayerId,
+    pub actions: PreparedPriorityActions,
+}
 impl PriorityContext {
-    /// Create a new PriorityContext.
-    pub fn new(player: PlayerId, actions: Vec<crate::decision::LegalAction>) -> Self {
-        Self {
-            player,
-            actions,
-            analysis_complete: true,
-        }
+    pub fn new(game: &crate::game_state::GameState, player: PlayerId, actions: Vec<crate::decision::LegalAction>)
+        -> Result<Self, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        Ok(Self { player, actions: PreparedPriorityActions::new(game, actions)?, analysis_complete: true })
     }
 }
 
@@ -1452,6 +1509,11 @@ impl DecisionContext {
 
     pub fn source(&self) -> Option<ObjectId> {
         match self {
+            DecisionContext::Proliferate(ctx) => ctx.source,
+            DecisionContext::Partition(ctx) => ctx.source,
+            DecisionContext::Counters(ctx) => ctx.source,
+            DecisionContext::Colors(ctx) => ctx.source,
+            DecisionContext::Distribute(ctx) => ctx.source,
             DecisionContext::Boolean(ctx) => ctx.source,
             DecisionContext::Number(ctx) => ctx.source,
             DecisionContext::TextInput(ctx) => ctx.source,
@@ -1462,11 +1524,6 @@ impl DecisionContext {
             DecisionContext::Order(ctx) => ctx.source,
             DecisionContext::Attackers(_)
             | DecisionContext::Blockers(_)
-            | DecisionContext::Distribute(_)
-            | DecisionContext::Colors(_)
-            | DecisionContext::Counters(_)
-            | DecisionContext::Partition(_)
-            | DecisionContext::Proliferate(_)
             | DecisionContext::Priority(_) => None,
             DecisionContext::Targets(ctx) => Some(ctx.source),
             DecisionContext::ManaPayment(ctx) => Some(ctx.source),
@@ -1498,6 +1555,12 @@ impl DecisionContext {
 
     pub fn context_text(&self) -> Option<&str> {
         match self {
+            DecisionContext::Proliferate(ctx) => ctx.context_text.as_deref(),
+            DecisionContext::Partition(ctx) => ctx.context_text.as_deref(),
+            DecisionContext::Counters(ctx) => ctx.context_text.as_deref(),
+            DecisionContext::Colors(ctx) => ctx.context_text.as_deref(),
+            DecisionContext::Distribute(ctx) => ctx.context_text.as_deref(),
+            DecisionContext::Order(ctx) => ctx.context_text.as_deref(),
             DecisionContext::Boolean(ctx) => ctx.ui_hints.context_text.as_deref(),
             DecisionContext::Number(ctx) => ctx.ui_hints.context_text.as_deref(),
             DecisionContext::TextInput(ctx) => ctx.ui_hints.context_text.as_deref(),
@@ -1507,14 +1570,8 @@ impl DecisionContext {
             DecisionContext::ManaPayment(ctx) => ctx.ui_hints.context_text.as_deref(),
             DecisionContext::Modes(_)
             | DecisionContext::HybridChoice(_)
-            | DecisionContext::Order(_)
             | DecisionContext::Attackers(_)
             | DecisionContext::Blockers(_)
-            | DecisionContext::Distribute(_)
-            | DecisionContext::Colors(_)
-            | DecisionContext::Counters(_)
-            | DecisionContext::Partition(_)
-            | DecisionContext::Proliferate(_)
             | DecisionContext::Priority(_) => None,
         }
     }
@@ -1568,6 +1625,12 @@ impl DecisionContext {
     pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
         let text = text.into();
         match &mut self {
+            DecisionContext::Proliferate(ctx) => ctx.context_text = Some(text),
+            DecisionContext::Partition(ctx) => ctx.context_text = Some(text),
+            DecisionContext::Counters(ctx) => ctx.context_text = Some(text),
+            DecisionContext::Colors(ctx) => ctx.context_text = Some(text),
+            DecisionContext::Distribute(ctx) => ctx.context_text = Some(text),
+            DecisionContext::Order(ctx) => ctx.context_text = Some(text),
             DecisionContext::Boolean(ctx) => ctx.ui_hints.context_text = Some(text),
             DecisionContext::Number(ctx) => ctx.ui_hints.context_text = Some(text),
             DecisionContext::TextInput(ctx) => ctx.ui_hints.context_text = Some(text),
@@ -1577,14 +1640,8 @@ impl DecisionContext {
             DecisionContext::ManaPayment(ctx) => ctx.ui_hints.context_text = Some(text),
             DecisionContext::Modes(_)
             | DecisionContext::HybridChoice(_)
-            | DecisionContext::Order(_)
             | DecisionContext::Attackers(_)
             | DecisionContext::Blockers(_)
-            | DecisionContext::Distribute(_)
-            | DecisionContext::Colors(_)
-            | DecisionContext::Counters(_)
-            | DecisionContext::Partition(_)
-            | DecisionContext::Proliferate(_)
             | DecisionContext::Priority(_) => {}
         }
         self
@@ -1830,6 +1887,11 @@ fn scrub_compiled_structure(ctx: &mut DecisionContext) {
     }
 
     match ctx {
+        DecisionContext::Proliferate(ctx) => scrub_hint(&mut ctx.context_text),
+        DecisionContext::Partition(ctx) => scrub_hint(&mut ctx.context_text),
+        DecisionContext::Counters(ctx) => scrub_hint(&mut ctx.context_text),
+        DecisionContext::Colors(ctx) => scrub_hint(&mut ctx.context_text),
+        DecisionContext::Distribute(ctx) => scrub_hint(&mut ctx.context_text),
         DecisionContext::Boolean(ctx) => {
             scrub(&mut ctx.description, "Perform the effect");
             scrub_hint(&mut ctx.ui_hints.context_text);
@@ -1859,6 +1921,7 @@ fn scrub_compiled_structure(ctx: &mut DecisionContext) {
             scrub_hint(&mut ctx.ui_hints.consequence_text);
         }
         DecisionContext::Order(ctx) => {
+            scrub_hint(&mut ctx.context_text);
             scrub(&mut ctx.description, "Choose an order");
             for (index, (_, label)) in ctx.items.iter_mut().enumerate() {
                 scrub(label, &format!("Ability {}", index + 1));
@@ -1878,11 +1941,6 @@ fn scrub_compiled_structure(ctx: &mut DecisionContext) {
         | DecisionContext::HybridChoice(_)
         | DecisionContext::Attackers(_)
         | DecisionContext::Blockers(_)
-        | DecisionContext::Distribute(_)
-        | DecisionContext::Colors(_)
-        | DecisionContext::Counters(_)
-        | DecisionContext::Partition(_)
-        | DecisionContext::Proliferate(_)
         | DecisionContext::Priority(_) => {}
     }
 }
@@ -1901,6 +1959,11 @@ pub fn enrich_display_hints(
 fn add_display_hints(game: &crate::game_state::GameState, ctx: DecisionContext) -> DecisionContext {
     let mut ctx = ctx;
     scrub_compiled_structure(&mut ctx);
+    if let Some(text) = ctx.source().and_then(|source| game.resolving_mode_context(source))
+        .filter(|text| !text.trim().is_empty())
+    {
+        ctx = ctx.with_context_text(text.to_string());
+    }
     let source_text = ctx.context_text().map(str::to_string).or_else(|| {
         ctx.source()
             .and_then(|source| decision_source_text(game, source))
@@ -2180,6 +2243,18 @@ mod tests {
                 .is_none_or(|text| !looks_like_compiled_structure(text)),
             "{quoted:?}"
         );
+    }
+
+    #[test]
+    fn modal_context_is_retained_for_proliferate_choices() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let source = game.new_object_id();
+        game.replace_resolving_mode_context(Some((source, "Proliferate.".into())));
+        let ctx = DecisionContext::Proliferate(ProliferateContext::new(
+            PlayerId::from_index(0), Some(source), Vec::new(), Vec::new(),
+        ));
+        let enriched = enrich_display_hints(&game, ctx);
+        assert_eq!(enriched.context_text(), Some("Proliferate."));
     }
 
     #[test]

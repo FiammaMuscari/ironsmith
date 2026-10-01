@@ -12,7 +12,7 @@ use crate::effects::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::filter::ObjectFilterExt as _;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
-use crate::target::{ChooseSpec, SourceReferenceSurface};
+use crate::target::{ChooseSpec, PlayerFilter, SourceReferenceSurface};
 use crate::types::Supertype;
 use crate::zone::Zone;
 
@@ -412,7 +412,7 @@ fn resolve_runtime_modification(
             })
         }
         RuntimeModification::SetAuraAttachmentFilter(filter) => {
-            Ok(Modification::SetAuraAttachmentFilter(filter.clone()))
+            Ok(Modification::SetAuraAttachmentFilter(filter.clone().into()))
         }
     }
 }
@@ -965,6 +965,42 @@ impl EffectExecutor for ApplyContinuousEffect {
             until => until.clone(),
         };
 
+        // "The player with the lowest (highest) life total gains control":
+        // when two or more players are tied there is no such single player,
+        // so the control change doesn't happen (the card's own tie clause,
+        // e.g. Loxodon Peacekeeper, decides instead).
+        if self.runtime_modifications.iter().any(|modification| {
+            matches!(
+                modification,
+                RuntimeModification::ChangeControllerToPlayer(
+                    PlayerFilter::LowestLifeTied | PlayerFilter::MostLifeTied
+                )
+            )
+        }) {
+            let lives = game
+                .players
+                .iter()
+                .filter(|player| player.is_in_game())
+                .map(|player| player.life)
+                .collect::<Vec<_>>();
+            let tied = |extreme: Option<i32>| {
+                extreme.is_some_and(|life| lives.iter().filter(|l| **l == life).count() > 1)
+            };
+            let lowest_tied = tied(lives.iter().copied().min());
+            let most_tied = tied(lives.iter().copied().max());
+            if self.runtime_modifications.iter().any(|modification| match modification {
+                RuntimeModification::ChangeControllerToPlayer(PlayerFilter::LowestLifeTied) => {
+                    lowest_tied
+                }
+                RuntimeModification::ChangeControllerToPlayer(PlayerFilter::MostLifeTied) => {
+                    most_tied
+                }
+                _ => false,
+            }) {
+                return Ok(EffectOutcome::resolved());
+            }
+        }
+
         let mut mods = Vec::with_capacity(
             self.additional_modifications.len() + self.runtime_modifications.len() + 1,
         );
@@ -1068,10 +1104,11 @@ impl EffectExecutor for ApplyContinuousEffect {
                 crate::continuous::continuous_effect_duration_and_condition_are_active(
                     &effect, game,
                 );
-            game.effect_store.continuous_effects.add_effect(effect);
+            let id = game.effect_store.continuous_effects.add_effect(effect);
+            ctx.created_continuous_effects.push(id);
         }
 
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
 
         Ok(if registered_active_modification {
             EffectOutcome::resolved().with_affected_objects_from_game(game, affected_objects)

@@ -443,6 +443,92 @@ impl EffectExecutor for ReflexiveTriggerEffect {
     }
 }
 
+/// Queue a reflexive triggered ability that a replacement effect's choice
+/// created rather than a resolving instruction ("You may have this enter as a
+/// copy of ... . When you do, exile that card.", CR 603.12). It triggers now
+/// and is put on the stack the next time a player would receive priority.
+pub(crate) fn queue_reflexive_trigger(
+    game: &mut GameState,
+    source: crate::ids::ObjectId,
+    controller: crate::ids::PlayerId,
+    effects: Vec<Effect>,
+    tagged_objects: HashMap<TagKey, Vec<ObjectSnapshot>>,
+) {
+    let id = game.effect_store.next_reflexive_trigger_id;
+    game.effect_store.next_reflexive_trigger_id += 1;
+    let trigger_identity = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        "reflexive_trigger".hash(&mut hasher);
+        id.hash(&mut hasher);
+        crate::triggers::TriggerIdentity(hasher.finish())
+    };
+    let (source_stable_id, source_name, source_snapshot) = match game.object(source) {
+        Some(object) => (
+            object.stable_id,
+            object.name.to_string(),
+            Some(ObjectSnapshot::from_object_with_calculated_characteristics(
+                object, game,
+            )),
+        ),
+        None => (
+            crate::ids::StableId::from(source),
+            "Reflexive trigger".to_string(),
+            None,
+        ),
+    };
+    game.effect_store
+        .pending_reflexive_triggers
+        .push(PendingReflexiveTrigger {
+            trigger_identity,
+            source,
+            controller,
+            effects: effects.clone(),
+            choices: Vec::new(),
+            tagged_objects: tagged_objects.clone(),
+            tagged_players: HashMap::new(),
+            effect_outcomes: HashMap::new(),
+            targets: Vec::new(),
+            x_value: None,
+            iteration: Default::default(),
+            combat: Default::default(),
+            triggering_event: None,
+            event_value_amount: None,
+            optional_costs_paid: Default::default(),
+            source_snapshot: source_snapshot.clone(),
+        });
+    let provenance = game
+        .provenance_graph_mut()
+        .alloc_root_event(crate::events::EventKind::StateTrigger);
+    let triggering_event = crate::triggers::TriggerEvent::new_with_provenance(
+        crate::events::StateTriggerEvent::new(source),
+        provenance,
+    );
+    game.defer_trigger_entries([crate::triggers::TriggeredAbilityEntry {
+        source,
+        controller,
+        x_value: None,
+        event_value_amount: None,
+        ability: crate::ability::TriggeredAbility {
+            trigger: crate::triggers::Trigger::custom(
+                REFLEXIVE_TRIGGER_ID,
+                "When you do".to_string(),
+            ),
+            effects: crate::resolution::ResolutionProgram::from_effects(effects),
+            choices: Vec::new(),
+            intervening_if: None,
+            presentation_label: None,
+        },
+        triggering_event,
+        source_stable_id,
+        source_name,
+        source_snapshot,
+        tagged_objects,
+        source_kind: crate::triggers::TriggeredAbilitySourceKind::Object,
+        trigger_identity,
+    }]);
+}
+
 /// Custom trigger id for queued reflexive triggered abilities.
 pub(crate) const REFLEXIVE_TRIGGER_ID: &str = "reflexive_trigger";
 
@@ -734,6 +820,10 @@ mod tests {
             .execute(&mut game, &mut ctx)
             .expect("reflexive trigger should push a stack ability");
 
+        drop(ctx);
+        assert!(game.stack.is_empty(), "the scheduled reflexive ability awaits priority placement");
+        let mut queue = crate::triggers::TriggerQueue::new();
+        crate::game_loop::put_triggers_on_stack_with_dm(&mut game, &mut queue, &mut dm).unwrap();
         let entry = game.stack.last().expect("reflexive ability on stack");
         assert!(entry.is_ability);
         assert_eq!(entry.object_id, source);
@@ -765,5 +855,38 @@ mod tests {
             Some(game.object(source).expect("source object").name.as_str())
         );
         assert!(entry.source_snapshot.is_some());
+    }
+}
+
+#[cfg(test)]
+mod pending_reflexive_context_contract_tests {
+    use super::*;
+    use crate::{PlayerId, Zone};
+    #[test]
+    fn antecedent_context_is_retained_until_priority_placement_and_resolution() {
+        let mut game=GameState::new(vec!["Alice".into(),"Bob".into()],20);
+        let alice=PlayerId::from_index(0);
+        let card=crate::cards::CardDefinitionBuilder::new(crate::ids::CardId::new(),"Pending trigger source")
+            .card_types(vec![crate::types::CardType::Creature]).build();
+        let source=game.create_object_from_definition(&card,alice,Zone::Battlefield);
+        let snapshot=ObjectSnapshot::from_object(game.object(source).unwrap(),&game);
+        let condition=EffectId(77);let mut dm=crate::decision::SelectFirstDecisionMaker;
+        let mut ctx=ExecutionContext::new(source,alice,&mut dm);
+        ctx.x_value=Some(7);
+        ctx.set_tagged_objects("paid",vec![snapshot.clone()]);
+        ctx.store_outcome(condition,EffectOutcome::count(1).with_affected_object_memory(vec![crate::effect::OutcomeObjectMemory::from_snapshot(&snapshot)]));
+        let effect=ReflexiveTriggerEffect::new(condition,crate::effect::EffectPredicate::Happened,vec![Effect::gain_life(2)],Vec::new());
+        assert_eq!(effect.execute(&mut game,&mut ctx).unwrap().count_or_zero(),1);
+        drop(ctx);
+        assert!(game.stack.is_empty());assert_eq!(game.player(alice).unwrap().life,20);
+        let mut queue=crate::triggers::TriggerQueue::new();
+        crate::game_loop::put_triggers_on_stack_with_dm(&mut game,&mut queue,&mut dm).unwrap();
+        assert_eq!(game.stack.len(),1);let entry=&game.stack[0];
+        assert_eq!(entry.x_value,Some(7));assert_eq!(entry.controller,alice);
+        assert_eq!(entry.effect_outcomes.get(&condition).unwrap().count_or_zero(),1);
+        assert_eq!(entry.tagged_objects.get(&crate::tag::TagKey::from("paid")).unwrap()[0].object_id,source);
+        assert_eq!(game.player(alice).unwrap().life,20);
+        crate::game_loop::resolve_stack_entry(&mut game).unwrap();
+        assert_eq!(game.player(alice).unwrap().life,22);assert!(game.stack.is_empty());
     }
 }

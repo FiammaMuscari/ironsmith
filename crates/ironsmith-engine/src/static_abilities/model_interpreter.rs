@@ -226,6 +226,12 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::AttackingGroupAttackCondition::CreatureWithGreaterPowerAlsoAttacks => {
                 super::AttackingGroupAttackCondition::CreatureWithGreaterPowerAlsoAttacks
             }
+            ironsmith_core::AttackingGroupAttackCondition::AtLeastNOtherCreaturesBlock(count) => {
+                super::AttackingGroupAttackCondition::AtLeastNOtherCreaturesBlock(*count)
+            }
+            ironsmith_core::AttackingGroupAttackCondition::CreatureWithGreaterPowerAlsoBlocks => {
+                super::AttackingGroupAttackCondition::CreatureWithGreaterPowerAlsoBlocks
+            }
         }
     }
 
@@ -467,6 +473,7 @@ impl StaticAbilityModelInterpreter {
                     conditional_additional_counters: spec.conditional_additional_counters.clone(),
                     added_abilities_source_filter: spec.added_abilities_source_filter.clone(),
                     set_base_power_toughness_from_self: spec.set_base_power_toughness_from_self,
+                    copy_followups: spec.copy_followups.clone(),
                 })
             }
             ironsmith_core::StaticAbilityPayload::Conditional { ability, .. } => {
@@ -1579,7 +1586,17 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::ChooseNamedOptionAsEnters {
                 options,
                 display,
-            } => StaticAbility::choose_named_option_as_enters(options.clone(), display.clone()),
+                at_random,
+            } => {
+                if *at_random {
+                    StaticAbility::choose_named_option_at_random_as_enters(
+                        options.clone(),
+                        display.clone(),
+                    )
+                } else {
+                    StaticAbility::choose_named_option_as_enters(options.clone(), display.clone())
+                }
+            }
             ironsmith_core::StaticAbilityPayload::ChoosePowerToughnessAsEntersOrTurnsFaceUp {
                 options,
                 display,
@@ -1635,6 +1652,7 @@ impl StaticAbilityModelInterpreter {
                         added_abilities_source_filter: spec.added_abilities_source_filter.clone(),
                         set_base_power_toughness_from_self: spec
                             .set_base_power_toughness_from_self,
+                        copy_followups: spec.copy_followups.clone(),
                     },
                     display.clone(),
                 )
@@ -3023,11 +3041,14 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
 
     fn named_option_choice_as_enters(&self) -> Option<super::ChooseNamedOptionAsEntersSpec> {
         match self.payload() {
-            ironsmith_core::StaticAbilityPayload::ChooseNamedOptionAsEnters { options, .. } => {
-                Some(super::ChooseNamedOptionAsEntersSpec {
-                    options: options.clone(),
-                })
-            }
+            ironsmith_core::StaticAbilityPayload::ChooseNamedOptionAsEnters {
+                options,
+                at_random,
+                ..
+            } => Some(super::ChooseNamedOptionAsEntersSpec {
+                options: options.clone(),
+                at_random: *at_random,
+            }),
             _ => None,
         }
     }

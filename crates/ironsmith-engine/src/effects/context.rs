@@ -51,6 +51,8 @@ pub enum ExecutionError {
     EffectNotFound(EffectId),
     /// Referenced tag not found in context (object not tagged by prior effect).
     TagNotFound(String),
+    /// Continuous-effect discovery could not establish a complete snapshot.
+    ContinuousDiscovery(crate::static_ability_processor::StaticEffectDiscoveryError),
     /// Internal error (should not happen).
     InternalError(String),
 }
@@ -73,6 +75,7 @@ impl std::fmt::Display for ExecutionError {
             ExecutionError::ObjectNotFound(id) => write!(f, "Object {:?} not found", id),
             ExecutionError::EffectNotFound(id) => write!(f, "Effect {:?} not found", id),
             ExecutionError::TagNotFound(tag) => write!(f, "Tag '{}' not found", tag),
+            ExecutionError::ContinuousDiscovery(error) => write!(f, "{error}"),
             ExecutionError::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }
@@ -238,6 +241,9 @@ pub struct ReplacementExecutionContext {
     pub entry_counter_source: Option<ObjectId>,
     /// Prospective characteristics, including earlier copy replacements.
     pub entry_event: Option<Box<crate::events::EnterBattlefieldEvent>>,
+    /// CR614.13: source objects reserved by simultaneous battlefield entry.
+    /// Inherited by nested replacement payloads; never removed from zone indexes.
+    pub entry_reserved_objects: HashSet<ObjectId>,
     pub additional_replacement_effects: Vec<ReplacementEffect>,
     pub suppressed_replacement_effects: HashSet<ReplacementEffectId>,
     pub suppressed_replacement_effect_keys: HashSet<ReplacementEffectKey>,
@@ -383,6 +389,9 @@ pub struct ExecutionContext<'a> {
     /// Aura enters attached to X (CR 303.4f) and stays in its zone when it
     /// can't legally enchant X (CR 303.4i) instead of choosing on its own.
     pub(crate) pending_entry_attachment: Option<crate::target::ChooseSpec>,
+    /// Continuous effects this resolution has registered so far, in order.
+    /// "You may pay [cost] to end this effect" (Licids) ends exactly these.
+    pub(crate) created_continuous_effects: Vec<crate::continuous::ContinuousEffectId>,
 }
 
 // Keep the checkpoint's owned fields in one list. The exhaustive context
@@ -452,6 +461,7 @@ execution_context_checkpoint! {
     resolution_object_id_floor: Option<ObjectId>,
     public_search_reveal_tag: Option<TagKey>,
     pending_entry_attachment: Option<crate::target::ChooseSpec>,
+    created_continuous_effects: Vec<crate::continuous::ContinuousEffectId>,
 }
 
 
@@ -555,6 +565,7 @@ impl<'a> ExecutionContext<'a> {
             resolution_object_id_floor: None,
             public_search_reveal_tag: None,
             pending_entry_attachment: None,
+            created_continuous_effects: Vec::new(),
         }
     }
 
@@ -615,6 +626,7 @@ impl<'a> ExecutionContext<'a> {
             resolution_object_id_floor: None,
             public_search_reveal_tag: None,
             pending_entry_attachment: None,
+            created_continuous_effects: Vec::new(),
         }
     }
 
@@ -665,6 +677,7 @@ impl<'a> ExecutionContext<'a> {
             resolution_object_id_floor: self.resolution_object_id_floor,
             public_search_reveal_tag: self.public_search_reveal_tag,
             pending_entry_attachment: self.pending_entry_attachment,
+            created_continuous_effects: self.created_continuous_effects,
         }
     }
 
@@ -1347,7 +1360,7 @@ impl<'a> ExecutionContext<'a> {
 
     /// Build a filter context for evaluating filters.
     pub fn filter_context(&self, game: &GameState) -> FilterContext {
-        let target_players = if self.targets_are_cost_choices {
+        let mut target_players = if self.targets_are_cost_choices {
             Vec::new()
         } else {
             self.targets
@@ -1404,6 +1417,16 @@ impl<'a> ExecutionContext<'a> {
                 .or_default()
                 .push(snapshot);
             if let Some(entry) = game.stack.iter().find(|entry| entry.object_id == object_id) {
+                // "that spell targets only a single opponent ... for each
+                // other opponent": an ability with no player targets of its
+                // own reads the triggering spell's targeted player, just as it
+                // reads the spell's targeted objects below.
+                if target_players.is_empty() {
+                    target_players.extend(entry.targets.iter().filter_map(|target| match target {
+                        crate::game_state::Target::Player(player) => Some(*player),
+                        crate::game_state::Target::Object(_) => None,
+                    }));
+                }
                 target_objects.extend(entry.targets.iter().filter_map(|target| match target {
                     crate::game_state::Target::Object(target_id) => {
                         game.object(*target_id).map(|object| {

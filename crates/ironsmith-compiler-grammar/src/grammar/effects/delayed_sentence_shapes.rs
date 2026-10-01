@@ -22,12 +22,18 @@ pub enum DelayedLeavesObjectKind {
     Creature,
     Permanent,
     Token,
+    /// "When it leaves the battlefield, ..." naming the object the
+    /// preceding instruction created or chose.
+    Pronoun,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DelayedTaggedLeavesShape<'a> {
     pub kind: DelayedLeavesObjectKind,
     pub effect_tokens: &'a [OwnedLexToken],
+    /// "When it leaves the battlefield, it deals ...": the watched object is
+    /// the source of the delayed ability's damage (Splintering Wind).
+    pub watched_object_deals: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +42,10 @@ pub struct DelayedNextCombatShape<'a> {
     /// "each combat this turn" rather than "the next combat this turn": the
     /// delayed trigger fires every combat until end of turn.
     pub each_combat: bool,
+    /// Whether the header is scoped to "this turn". "At the beginning of the
+    /// next combat, ..." (Legion's Initiative) waits for the next combat
+    /// whenever it happens.
+    pub this_turn: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,18 +179,31 @@ pub fn parse_delayed_tagged_leaves_shape(
         trimmed(header_tokens),
         (
             trigger_intro,
-            primitives::kw("that"),
-            leaves_object_kind,
+            alt((
+                (primitives::kw("that"), leaves_object_kind).map(|(_, kind)| kind),
+                primitives::kw("it").value(DelayedLeavesObjectKind::Pronoun),
+            )),
             primitives::phrase(&["leaves", "the", "battlefield"]),
             eof,
         )
-            .map(|(_, _, kind, _, _)| kind),
+            .map(|(_, kind, _, _)| kind),
         "delayed tagged-object leaves trigger",
     )?;
     let effect_tokens = trimmed(effect_tokens);
+    let watched_object_deals = primitives::parse_prefix(
+        effect_tokens,
+        alt((
+            primitives::phrase(&["it", "deals"]),
+            primitives::phrase(&["that", "token", "deals"]),
+            primitives::phrase(&["that", "creature", "deals"]),
+            primitives::phrase(&["that", "permanent", "deals"]),
+        )),
+    )
+    .is_some();
     (!effect_tokens.is_empty()).then_some(DelayedTaggedLeavesShape {
         kind,
         effect_tokens,
+        watched_object_deals,
     })
 }
 
@@ -219,7 +242,7 @@ pub fn parse_delayed_next_combat_shape(
     tokens: &[OwnedLexToken],
 ) -> Option<DelayedNextCombatShape<'_>> {
     let tokens = trimmed(tokens);
-    let ((each_combat, _, _, _), after_header) = primitives::parse_prefix(
+    let ((each_combat, _, this_turn, _), after_header) = primitives::parse_prefix(
         tokens,
         (
             alt((
@@ -229,14 +252,21 @@ pub fn parse_delayed_next_combat_shape(
                     .value(true),
             )),
             opt(primitives::kw("phase")),
-            primitives::phrase(&["this", "turn"]),
+            opt(primitives::phrase(&["this", "turn"])),
             primitives::comma(),
         ),
     )?;
+    let this_turn = this_turn.is_some();
+    // "each combat" without a turn scope is a recurring trigger, not a
+    // delayed one.
+    if each_combat && !this_turn {
+        return None;
+    }
     let effect_tokens = trimmed(after_header);
     (!effect_tokens.is_empty()).then_some(DelayedNextCombatShape {
         effect_tokens,
         each_combat,
+        this_turn,
     })
 }
 

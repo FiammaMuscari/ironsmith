@@ -108,6 +108,14 @@ fn source_was_cast_from_zone(
     triggering_event: Option<&TriggerEvent>,
     zone: Zone,
 ) -> bool {
+    // "When you cast this spell from ..." reads the cast event itself: the
+    // event names the origin zone even before turn history records it.
+    if let Some(cast) =
+        triggering_event.and_then(|event| event.downcast::<crate::events::spells::SpellCastEvent>())
+        && cast.spell == source
+    {
+        return cast.from_zone == zone;
+    }
     if !source_was_cast(game, source, triggering_event) {
         return false;
     }
@@ -273,6 +281,54 @@ fn triggering_spell_mana_spent_at_least(
     }
     game.object(spell_cast.spell)
         .is_some_and(|obj| mana_pool_amount(&obj.mana_spent_to_cast, symbol) >= amount)
+}
+
+/// "Whenever you clash, ... If you won, ...": the triggering clash event
+/// names its winner (CR 701.30c); the condition holds only when that winner
+/// is this ability's controller.
+fn you_won_triggering_clash(triggering_event: Option<&TriggerEvent>, controller: PlayerId) -> bool {
+    let Some(event) =
+        triggering_event.and_then(|event| event.downcast::<crate::events::other::KeywordActionEvent>())
+    else {
+        return false;
+    };
+    event.action == crate::events::other::KeywordActionKind::Clash
+        && event
+            .player_tags
+            .get(&crate::tag::TagKey::from("winner"))
+            .is_some_and(|winners| winners.contains(&controller))
+}
+
+/// The entering permanent shows the back face of a transforming double-faced
+/// card and has not transformed since it entered: it entered transformed
+/// (CR 712.14). Transform-like families keep the front face at the lower card
+/// id.
+fn triggering_object_entered_transformed(
+    game: &GameState,
+    triggering_event: Option<&TriggerEvent>,
+) -> bool {
+    let Some(object_id) = triggering_event.and_then(|event| event.object_id()) else {
+        return false;
+    };
+    let Some(object) = game.object(object_id) else {
+        return false;
+    };
+    if object.linked_face_layout != crate::card::LinkedFaceLayout::TransformLike
+        || game.transform_count(object_id) != 0
+    {
+        return false;
+    }
+    let Some(current) = game.linked_face_definition_by_name_or_id(Some(&object.name), object.card)
+    else {
+        return false;
+    };
+    let Some(other) = game.linked_face_definition_by_name_or_id(
+        object.other_face_name.as_deref(),
+        object.other_face,
+    ) else {
+        return false;
+    };
+    current.card.id.0 > other.card.id.0
 }
 
 fn triggering_spell_was_kicked(game: &GameState, triggering_event: Option<&TriggerEvent>) -> bool {
@@ -1873,13 +1929,28 @@ fn evaluate_value_comparison(
     if !source_exiled.is_empty() {
         ctx.set_tagged_objects(crate::tag::SOURCE_EXILED_TAG, source_exiled);
     }
-    let Ok(left_value) = resolve_value(game, left, &ctx) else {
-        return false;
+    let compare = |exec: &ExecutionContext| -> Result<bool, ExecutionError> {
+        Ok(operator.evaluate(
+            resolve_value(game, left, exec)?,
+            resolve_value(game, right, exec)?,
+        ))
     };
-    let Ok(right_value) = resolve_value(game, right, &ctx) else {
-        return false;
-    };
-    operator.evaluate(left_value, right_value)
+    match compare(&ctx) {
+        Ok(result) => result,
+        // "as long as an opponent has 10 or less life": a quantified opponent
+        // in a static/trigger condition is satisfied by any opponent.
+        Err(ExecutionError::UnresolvableValue(message))
+            if message == crate::effects::helpers::AN_OPPONENT_CHOICE_REQUIRED =>
+        {
+            crate::effects::helpers::an_opponent_choice_candidates(game, &ctx)
+                .into_iter()
+                .any(|opponent| {
+                    let probe = an_opponent_probe_context(&ctx, opponent);
+                    matches!(compare(&probe), Ok(true))
+                })
+        }
+        Err(_) => false,
+    }
 }
 
 fn evaluate_value_is_prime(
@@ -4762,6 +4833,18 @@ fn evaluate_condition_in_context(
         Condition::TriggeringObjectHadToAttackThisCombat => Ok(
             triggering_object_had_to_attack_this_combat(game, shared.triggering_event),
         ),
+        Condition::YouWonTriggeringClash => Ok(you_won_triggering_clash(
+            shared.triggering_event,
+            shared.controller,
+        )),
+        Condition::TriggeringObjectEnteredTransformed => Ok(triggering_object_entered_transformed(
+            game,
+            shared.triggering_event,
+        )),
+        Condition::TriggeringAbilityManaSpentToActivateAtLeast(amount) => Ok(shared
+            .triggering_event
+            .and_then(|event| event.downcast::<crate::events::AbilityActivatedEvent>())
+            .is_some_and(|activation| activation.mana_spent_total >= *amount)),
         Condition::SourceClassLevelAtLeast(level) => {
             Ok(game.class_level(shared.source) >= *level)
         }

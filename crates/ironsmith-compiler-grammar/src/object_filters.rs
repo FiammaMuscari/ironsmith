@@ -30,6 +30,32 @@ use super::util::{
 const ORIGINAL_PRINTING_SET_PREFIX: &[&str] =
     &["with", "a", "name", "originally", "printed", "in", "the"];
 const SACRIFICED_AS_IT_ENTERED_SUFFIX: &[&str] = &["sacrificed", "as", "it", "entered"];
+const DRAFTED_NOTED_NAME_QUALIFIER: &[&str] = &[
+    "with", "a", "name", "you", "noted", "for", "cards", "named",
+];
+
+/// "creatures with a name you noted for cards named Noble Banneret": the
+/// base selector plus the named draft-note card group.
+pub(crate) fn split_drafted_noted_name_qualifier_tokens(
+    tokens: &[OwnedLexToken],
+) -> Option<(Vec<OwnedLexToken>, String)> {
+    let view = TokenWordView::new(tokens);
+    let words = view.to_word_refs();
+    let qualifier_start =
+        crate::word_primitives::parse_sequence_start(&words, DRAFTED_NOTED_NAME_QUALIFIER)?;
+    let name_start = qualifier_start + DRAFTED_NOTED_NAME_QUALIFIER.len();
+    if qualifier_start == 0 || name_start >= words.len() {
+        return None;
+    }
+    let base_token_end = view.map_word_or_end_to_token_boundary(qualifier_start)?;
+    let name_token_start = view.map_word_or_end_to_token_boundary(name_start)?;
+    let name = render_token_slice(tokens.get(name_token_start..)?)
+        .trim()
+        .trim_end_matches('.')
+        .to_string();
+    (!name.is_empty()).then(|| (super::util::trim_commas(&tokens[..base_token_end]), name))
+}
+
 const DRAFTED_COLOR_QUALIFIER: &[&str] = &[
     "one", "or", "more", "of", "the", "colors", "chosen", "as", "you", "drafted", "cards", "named",
 ];
@@ -868,6 +894,51 @@ fn preserve_terminal_characteristic_union_domain(
     }
 }
 
+/// "enchantment, instant, or sorcery card ... from an opponent's graveyard"
+/// (Saruman of Many Colors): one terminal `card` noun and one zone phrase
+/// qualify every listed card type. A permanent-type arm left on the default
+/// battlefield domain would make the union reach an unrelated permanent, so
+/// the arms adopt the one non-battlefield zone (and its owner) the list names.
+fn share_terminal_card_type_union_zone(filter: &mut ObjectFilter, tokens: &[OwnedLexToken]) {
+    let words = parser_token_word_refs(tokens);
+    let has_one_shared_card_noun = words
+        .iter()
+        .filter(|word| matches!(**word, "card" | "cards"))
+        .count()
+        == 1;
+    if !has_one_shared_card_noun
+        || filter.any_of.len() < 2
+        || !filter.any_of.iter().all(|branch| {
+            !branch.card_types.is_empty() && branch.controller.is_none() && branch.any_of.is_empty()
+        })
+    {
+        return;
+    }
+    let mut shared = None;
+    for branch in &filter.any_of {
+        let Some(zone) = branch.zone.filter(|zone| *zone != Zone::Battlefield) else {
+            continue;
+        };
+        match &shared {
+            None => shared = Some((zone, branch.owner.clone())),
+            Some((seen_zone, seen_owner)) => {
+                if *seen_zone != zone || *seen_owner != branch.owner {
+                    return;
+                }
+            }
+        }
+    }
+    let Some((zone, owner)) = shared else {
+        return;
+    };
+    for branch in &mut filter.any_of {
+        if branch.zone == Some(Zone::Battlefield) && branch.owner.is_none() {
+            branch.zone = Some(zone);
+            branch.owner = owner.clone();
+        }
+    }
+}
+
 /// A singular chosen-object noun identifies the earlier choice (CR 700.7).
 /// Keep its authored noun for rendering without imposing a current card type.
 /// Qualified or plural filters retain their ordinary type predicates.
@@ -912,8 +983,13 @@ fn finalize_public_object_filter(
     split_enchanted_or_equipped_disjunction(&mut filter, tokens);
     super::grammar::filters::apply_supertype_or_mana_capability_union(&mut filter, tokens);
     preserve_combat_role_disjunction(&mut filter, tokens);
+    crate::util::split_cross_dimension_adjective_disjunction(
+        &mut filter,
+        &parser_token_word_refs(tokens),
+    );
     preserve_public_spell_filter_facts(&mut filter, tokens);
     preserve_terminal_characteristic_union_domain(&mut filter, tokens);
+    share_terminal_card_type_union_zone(&mut filter, tokens);
     preserve_chosen_object_reference_noun(&mut filter, tokens);
     deduplicate_tagged_constraints(filter)
 }
@@ -924,42 +1000,54 @@ fn finalize_public_object_filter(
 /// creature`, but its flat boolean representation would otherwise require a
 /// candidate to be both attacking and blocking at once.
 fn preserve_combat_role_disjunction(filter: &mut ObjectFilter, tokens: &[OwnedLexToken]) {
-    if !filter.any_of.is_empty() || !filter.attacking || !filter.blocking {
+    if !filter.any_of.is_empty() {
         return;
     }
+    // "attacking or blocking creature", "attacking or tapped creature"
+    // (Dire Downdraft): two state adjectives sharing one terminal noun are
+    // alternatives, not an intersection.
     let words = parser_token_word_refs(tokens);
-    let attacking_first =
-        crate::word_primitives::sequence_occurs(&words, &["attacking", "or", "blocking"]);
-    let blocking_first =
-        crate::word_primitives::sequence_occurs(&words, &["blocking", "or", "attacking"]);
-    if !attacking_first && !blocking_first {
+    let state_word = |word: &str| matches!(word, "attacking" | "blocking" | "tapped");
+    let Some(pair) = words.windows(3).find_map(|window| {
+        (state_word(window[0]) && window[1] == "or" && state_word(window[2])
+            && window[0] != window[2])
+            .then(|| (window[0], window[2]))
+    }) else {
+        return;
+    };
+    // The noun after the pair must be shared: "tapped or attacking creature".
+    let flag = |filter: &ObjectFilter, word: &str| match word {
+        "attacking" => filter.attacking,
+        "blocking" => filter.blocking,
+        _ => filter.tapped,
+    };
+    if !flag(filter, pair.0) && !flag(filter, pair.1) {
+        return;
+    }
+    if pair.0 != "tapped" && pair.1 != "tapped" && !(filter.attacking && filter.blocking) {
         return;
     }
 
     filter.attacking = false;
     filter.blocking = false;
+    filter.tapped = false;
     let card_types = std::mem::take(&mut filter.card_types);
     let all_card_types = std::mem::take(&mut filter.all_card_types);
     let explicit_card_type_noun = filter.explicit_card_type_noun();
     filter.set_explicit_card_type_noun(None);
-    let mut attacking = ObjectFilter {
-        attacking: true,
-        ..ObjectFilter::default()
-    };
-    let mut blocking = ObjectFilter {
-        blocking: true,
-        ..ObjectFilter::default()
-    };
-    for branch in [&mut attacking, &mut blocking] {
+    let branch = |word: &str| {
+        let mut branch = ObjectFilter::default();
+        match word {
+            "attacking" => branch.attacking = true,
+            "blocking" => branch.blocking = true,
+            _ => branch.tapped = true,
+        }
         branch.card_types = card_types.clone();
         branch.all_card_types = all_card_types.clone();
         branch.set_explicit_card_type_noun(explicit_card_type_noun);
-    }
-    filter.any_of = if attacking_first {
-        vec![attacking, blocking]
-    } else {
-        vec![blocking, attacking]
+        branch
     };
+    filter.any_of = vec![branch(pair.0), branch(pair.1)];
     filter.set_union_connective(ObjectFilterUnionConnective::Or);
 }
 
@@ -1160,10 +1248,134 @@ pub(crate) fn clear_zone_for_referenced_cards(filter: &mut ObjectFilter) {
     }
 }
 
+/// "the number of cards named Aether Burst in all graveyards as you cast
+/// this spell": the trailing clause is the time the count is read, not a
+/// "cast by you" relation on the counted objects.
+fn strip_as_you_cast_this_spell_suffix(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
+    const SUFFIX: [&str; 5] = ["as", "you", "cast", "this", "spell"];
+    let mut end = tokens.len();
+    while end > 0 && tokens[end - 1].kind == super::lexer::TokenKind::Period {
+        end -= 1;
+    }
+    if end <= SUFFIX.len() {
+        return None;
+    }
+    let start = end - SUFFIX.len();
+    tokens[start..end]
+        .iter()
+        .zip(SUFFIX)
+        .all(|(token, word)| token.is_word(word))
+        .then(|| crate::util::trim_edge_punctuation_tokens(&tokens[..start]))
+        .filter(|base| !base.is_empty())
+}
+
+/// "lands that player controls that could produce any type of mana that
+/// land could produce" (Mana Web): the trailing capability clause relates each
+/// candidate to the triggering land.
+fn split_shares_producible_mana_type_suffix(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
+    const SUFFIX: &[&str] = &[
+        "that", "could", "produce", "any", "type", "of", "mana", "that", "land", "could",
+        "produce",
+    ];
+    let word_positions = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.as_word().is_some())
+        .collect::<Vec<_>>();
+    if word_positions.len() <= SUFFIX.len() {
+        return None;
+    }
+    let tail = &word_positions[word_positions.len() - SUFFIX.len()..];
+    if !tail
+        .iter()
+        .zip(SUFFIX)
+        .all(|((_, token), expected)| token.is_word(expected))
+    {
+        return None;
+    }
+    let start = tail[0].0;
+    Some(crate::lexer::trim_lexed_commas(&tokens[..start]))
+}
+
+fn shares_producible_mana_type_with_triggering() -> crate::filter::TaggedObjectConstraint {
+    crate::filter::TaggedObjectConstraint {
+        tag: crate::tag::CompilerReferenceTag::Triggering.key(),
+        relation: crate::filter::TaggedOpbjectRelation::SharesProducibleManaTypeWithTagged,
+    }
+}
+
+/// Source-relative relation phrases that must be lifted out of an object
+/// filter before its noun list is parsed.
+pub(crate) struct SourceRelationPhraseSplit {
+    pub(crate) tokens: Vec<OwnedLexToken>,
+    pub(crate) attacking_same_defender_as_source: bool,
+    pub(crate) could_be_enchanted_by_source: bool,
+}
+
+/// "another target creature attacking the same player or planeswalker"
+/// (Kitesail Skirmisher) relates the candidate to the source's attack
+/// target; its "or planeswalker" must never join the noun list. "a creature
+/// at random this Aura can enchant" (Infectious Rage) requires a legal
+/// attachment host for the source Aura.
+pub(crate) fn split_source_relation_phrases(
+    tokens: &[OwnedLexToken],
+) -> Option<SourceRelationPhraseSplit> {
+    let mut kept = tokens.to_vec();
+    let mut attacking_same_defender_as_source = false;
+    if let Some(start) = kept.windows(6).position(|window| {
+        window[0].is_word("attacking")
+            && window[1].is_word("the")
+            && window[2].is_word("same")
+            && window[3].is_word("player")
+            && window[4].is_word("or")
+            && window[5].is_word("planeswalker")
+    }) {
+        attacking_same_defender_as_source = true;
+        kept.drain(start + 1..start + 6).for_each(drop);
+    }
+    let could_be_enchanted_by_source = kept.len() >= 4 && {
+        let tail = &kept[kept.len() - 4..];
+        tail[0].is_word("this")
+            && tail[1].is_word("aura")
+            && tail[2].is_any_word(&["can", "could"])
+            && tail[3].is_word("enchant")
+    };
+    if could_be_enchanted_by_source {
+        kept.truncate(kept.len() - 4);
+    }
+    (attacking_same_defender_as_source || could_be_enchanted_by_source).then_some(
+        SourceRelationPhraseSplit {
+            tokens: kept,
+            attacking_same_defender_as_source,
+            could_be_enchanted_by_source,
+        },
+    )
+}
+
+fn apply_source_relation_phrases(filter: &mut ObjectFilter, split: &SourceRelationPhraseSplit) {
+    filter.attacking_same_defender_as_source |= split.attacking_same_defender_as_source;
+    filter.could_be_enchanted_by_source |= split.could_be_enchanted_by_source;
+}
+
 pub fn parse_object_filter(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    if let Some(split) = split_source_relation_phrases(tokens) {
+        let mut filter = parse_object_filter(&split.tokens, other)?;
+        apply_source_relation_phrases(&mut filter, &split);
+        return Ok(filter);
+    }
+    if let Some(base) = strip_as_you_cast_this_spell_suffix(tokens) {
+        return parse_object_filter(base, other);
+    }
+    if let Some(base) = split_shares_producible_mana_type_suffix(tokens) {
+        let mut filter = parse_object_filter(base, other)?;
+        filter
+            .tagged_constraints
+            .push(shares_producible_mana_type_with_triggering());
+        return Ok(filter);
+    }
     if let Some(base) = split_from_among_those_cards_suffix(tokens) {
         let mut filter = parse_object_filter(&base, other)?;
         clear_zone_for_referenced_cards(&mut filter);
@@ -1197,6 +1409,11 @@ pub fn parse_object_filter(
     if let Some((base_tokens, card_name)) = split_drafted_color_qualifier_tokens(tokens) {
         let mut filter = parse_object_filter_inner(&base_tokens, other)?;
         filter.colors_chosen_while_drafting_named = Some(card_name);
+        return Ok(finalize_public_object_filter(filter, &base_tokens));
+    }
+    if let Some((base_tokens, card_name)) = split_drafted_noted_name_qualifier_tokens(tokens) {
+        let mut filter = parse_object_filter_inner(&base_tokens, other)?;
+        filter.name_noted_while_drafting_named = Some(card_name);
         return Ok(finalize_public_object_filter(filter, &base_tokens));
     }
     let mut filter = parse_object_filter_inner(tokens, other)?;
@@ -1467,6 +1684,21 @@ pub fn parse_object_filter_lexed(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    if let Some(split) = split_source_relation_phrases(tokens) {
+        let mut filter = parse_object_filter_lexed(&split.tokens, other)?;
+        apply_source_relation_phrases(&mut filter, &split);
+        return Ok(filter);
+    }
+    if let Some(base) = strip_as_you_cast_this_spell_suffix(tokens) {
+        return parse_object_filter_lexed(base, other);
+    }
+    if let Some(base) = split_shares_producible_mana_type_suffix(tokens) {
+        let mut filter = parse_object_filter_lexed(base, other)?;
+        filter
+            .tagged_constraints
+            .push(shares_producible_mana_type_with_triggering());
+        return Ok(filter);
+    }
     if let Some((base, host)) = split_could_enchant_suffix(tokens)? {
         let mut filter = parse_object_filter_lexed(&base, other)?;
         filter.could_enchant_object = Some(Box::new(host));
@@ -1488,6 +1720,11 @@ pub fn parse_object_filter_lexed(
     if let Some((base_tokens, card_name)) = split_drafted_color_qualifier_tokens(tokens) {
         let mut filter = parse_object_filter_lexed_inner(&base_tokens, other)?;
         filter.colors_chosen_while_drafting_named = Some(card_name);
+        return Ok(finalize_public_object_filter(filter, &base_tokens));
+    }
+    if let Some((base_tokens, card_name)) = split_drafted_noted_name_qualifier_tokens(tokens) {
+        let mut filter = parse_object_filter_lexed_inner(&base_tokens, other)?;
+        filter.name_noted_while_drafting_named = Some(card_name);
         return Ok(finalize_public_object_filter(filter, &base_tokens));
     }
     let filter = parse_object_filter_lexed_inner(tokens, other)?;
@@ -1605,6 +1842,7 @@ pub fn spell_filter_has_identity(filter: &ObjectFilter) -> bool {
         || filter.has_x_in_cost
         || filter.chosen_color
         || filter.colors_chosen_while_drafting_named.is_some()
+        || filter.name_noted_while_drafting_named.is_some()
         || filter.chosen_creature_type
         || filter.chosen_card_type
         || filter.excluded_chosen_creature_type
@@ -1692,6 +1930,9 @@ pub fn merge_spell_filters(base: &mut ObjectFilter, extra: ObjectFilter) {
     base.chosen_color |= extra.chosen_color;
     if base.colors_chosen_while_drafting_named.is_none() {
         base.colors_chosen_while_drafting_named = extra.colors_chosen_while_drafting_named;
+    }
+    if base.name_noted_while_drafting_named.is_none() {
+        base.name_noted_while_drafting_named = extra.name_noted_while_drafting_named;
     }
     base.chosen_creature_type |= extra.chosen_creature_type;
     base.chosen_card_type |= extra.chosen_card_type;
@@ -1784,6 +2025,16 @@ pub fn is_comparison_or_delimiter(tokens: &[OwnedLexToken], idx: usize) -> bool 
     }
     if previous_word.is_some_and(|word| word == "than")
         && next_word.is_some_and(|word| word == "equal")
+    {
+        return true;
+    }
+    // "mana value 2 or 3": a numeric alternative list is one comparison.
+    let previous_immediate = idx
+        .checked_sub(1)
+        .and_then(|i| tokens.get(i))
+        .and_then(OwnedLexToken::as_word);
+    if previous_immediate.is_some_and(|word| word.parse::<i32>().is_ok())
+        && next_word.is_some_and(|word| word.parse::<i32>().is_ok())
     {
         return true;
     }

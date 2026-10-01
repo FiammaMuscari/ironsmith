@@ -361,6 +361,15 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Number of adjacent static components lowered from this authored line.
+    /// This provenance does not merge their independent runtime identities.
+    fn source_line_static_group_member_count(&self) -> Option<usize> {
+        match &self.compiled_model()?.payload {
+            ironsmith_core::StaticAbilityPayload::SourceLineStaticGroup { member_count } => Some(*member_count),
+            _ => None,
+        }
+    }
+
     /// Clone this ability while attaching a static condition, when the concrete
     /// ability kind supports native conditional evaluation.
     fn with_static_condition(&self, _condition: crate::ConditionExpr) -> Option<StaticAbility> {
@@ -543,6 +552,18 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         _source: ObjectId,
         _controller: PlayerId,
         _attacking_creatures: &[ObjectId],
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Blocking-group legality hook for "can't block unless ... also blocks"
+    /// style clauses, judged against the defending player's whole blocker
+    /// declaration. `None` when the ability does not depend on it.
+    fn can_block_with_blocking_group(
+        &self,
+        _game: &GameState,
+        _source: ObjectId,
+        _blocking_creatures: &[ObjectId],
     ) -> Option<bool> {
         None
     }
@@ -1328,6 +1349,8 @@ pub struct ChooseCreatureTypeAsEntersSpec;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChooseNamedOptionAsEntersSpec {
     pub options: Vec<String>,
+    /// The option is picked uniformly at random, not by the controller.
+    pub at_random: bool,
 }
 
 /// One option for "as this enters or is turned face up, choose characteristics" abilities.
@@ -1390,6 +1413,8 @@ pub struct EnterAsCopyAsEntersSpec {
     pub set_base_power_toughness_from_self: bool,
     /// Counters placed only when the chosen copy source matches the entry's filter.
     pub conditional_additional_counters: Vec<ironsmith_core::ConditionalAdditionalCounters>,
+    /// What else happens once a copy was chosen.
+    pub copy_followups: Vec<ironsmith_core::EnterAsCopyFollowup>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1716,6 +1741,10 @@ impl StaticAbility {
         self.0.authored_line_surface()
     }
 
+    pub(crate) fn source_line_static_group_member_count(&self) -> Option<usize> {
+        self.0.source_line_static_group_member_count()
+    }
+
     pub fn with_condition(&self, condition: crate::ConditionExpr) -> Option<Self> {
         self.0.with_static_condition(condition)
     }
@@ -1865,6 +1894,16 @@ impl StaticAbility {
     ) -> Option<bool> {
         self.0
             .can_attack_with_attacking_group(game, source, controller, attacking_creatures)
+    }
+
+    pub fn can_block_with_blocking_group(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        blocking_creatures: &[ObjectId],
+    ) -> Option<bool> {
+        self.0
+            .can_block_with_blocking_group(game, source, blocking_creatures)
     }
 
     pub fn generic_attack_tax_per_attacker_against_you(
@@ -3733,6 +3772,10 @@ impl StaticAbility {
         Self::new(ChooseNamedOptionAsEnters::new(options, display))
     }
 
+    pub fn choose_named_option_at_random_as_enters(options: Vec<String>, display: String) -> Self {
+        Self::new(ChooseNamedOptionAsEnters::new(options, display).at_random())
+    }
+
     pub fn choose_power_toughness_as_enters_or_turns_face_up(
         options: Vec<(i32, i32)>,
         display: String,
@@ -4697,6 +4740,12 @@ impl StaticAbility {
 
     pub fn draft_rule_text(text: impl Into<String>) -> Self {
         Self::new(DraftRuleText::new(text))
+    }
+
+    pub fn static_effects_continue_until_end_of_turn_after_leaving(
+        text: impl Into<String>,
+    ) -> Self {
+        Self::new(StaticEffectsContinueUntilEndOfTurnAfterLeaving::new(text))
     }
 
     pub fn hidden_agenda() -> Self {

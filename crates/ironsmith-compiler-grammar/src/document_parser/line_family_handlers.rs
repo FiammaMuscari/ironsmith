@@ -268,16 +268,12 @@ pub(super) fn run_championed_with_this_trigger_line_family(
     let Some(shape) = line_grammar::parse_championed_with_this_trigger(&ctx.line.tokens) else {
         return ParseOutcome::NoMatch;
     };
-    let mut triggered_tokens = synthetic_word_tokens(&["When", "this", "creature", "enters"]);
-    triggered_tokens.push(OwnedLexToken::comma(TextSpan::synthetic()));
-    triggered_tokens
-        .extend_from_slice(line_grammar::parse_visible_line_tokens(shape.effect_tokens));
-    let triggered_line = rewrite_line_tokens(ctx.line, &triggered_tokens);
-    let triggered = line_family_try!(ctx, rule, recognize_triggered_line(&triggered_line));
-    line_family_match(
-        ctx,
-        LineDispatchResult::single(RecognizedLine::Triggered(triggered), ctx.idx + 1),
-    )
+    // The trigger clause grammar reads "<subject> is championed with this
+    // <permanent>" as the champion exile event itself (CR 702.72c), so the
+    // ordinary triggered-line family owns the line; this family no longer
+    // rewrites it into an enters-the-battlefield trigger.
+    let _ = (rule, shape);
+    ParseOutcome::NoMatch
 }
 
 pub(super) fn run_max_speed_labeled_line_family(
@@ -1272,7 +1268,17 @@ fn alternative_cost_parse_tokens(
 ) -> Vec<OwnedLexToken> {
     let mut tokens = synthetic_word_tokens(condition_words);
     tokens.push(OwnedLexToken::comma(TextSpan::synthetic()));
-    push_synthetic_words(&mut tokens, &["you", "may", "pay"]);
+    // A non-mana cost reads as its own instruction ("you may return a blue
+    // creature you control to its owner's hand rather than pay ..."), the
+    // Daze-style surface, while a mana cost is paid ("you may pay {2}{R}").
+    if cost_tokens
+        .first()
+        .is_some_and(|token| token.kind == TokenKind::ManaGroup)
+    {
+        push_synthetic_words(&mut tokens, &["you", "may", "pay"]);
+    } else {
+        push_synthetic_words(&mut tokens, &["you", "may"]);
+    }
     tokens.extend(cost_tokens.iter().map(|token| {
         if token.kind == TokenKind::ManaGroup {
             OwnedLexToken::new(token.kind, token.slice.to_ascii_uppercase(), token.span)

@@ -130,6 +130,7 @@ struct OnceEachTurnGraveyardCastRest<'a> {
     subject_tokens: &'a [OwnedLexToken],
     cost_tokens: Option<&'a [OwnedLexToken]>,
     exiles_after_resolution: bool,
+    exile_rider_subject_tokens: Option<&'a [OwnedLexToken]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +403,8 @@ fn parse_spell_from_among_source_exiled_tokens(
         TaggedPermissionTarget {
             tag: (crate::tag::CompilerReferenceTag::SourceExiled.bind()).into(),
             as_copy: false,
-            max_plays: None,
+            // "a [creature] spell": one spell in all, not one per card.
+            max_plays: Some(1),
             surface: Some(
                 ironsmith_core::GrantPlayTaggedObjectSurface::SpellFromAmongCardsExiledWithSource {
                     creature_spell: matches!(
@@ -426,6 +428,7 @@ fn parse_once_each_turn_graveyard_cast_rest_tokens<'a>(
         subject_tokens: fact.subject_tokens,
         cost_tokens: fact.cost_tokens,
         exiles_after_resolution: fact.exiles_after_resolution,
+        exile_rider_subject_tokens: fact.exile_rider_subject_tokens,
     })
 }
 
@@ -744,6 +747,7 @@ fn build_temporary_tagged_permission_effect(
     mana_spend_mode: ironsmith_core::value_model::ManaSpendMode,
     surface: Option<ironsmith_core::GrantPlayTaggedSurface>,
     filter: Option<ObjectFilter>,
+    max_plays: Option<u32>,
 ) -> EffectAst {
     let grant = |tag| {
         EffectAst::subject_verb_grant_play_tagged_until_end_of_turn_with_optional_surface(
@@ -754,6 +758,7 @@ fn build_temporary_tagged_permission_effect(
             mana_spend_mode,
             surface,
         )
+        .with_tagged_play_max_plays(max_plays)
     };
     let Some(mut filter) = filter else {
         return grant(crate::tag::TagRef::of(tag));
@@ -952,9 +957,24 @@ fn parse_once_each_turn_graveyard_cast_permission(
             parsed.exiles_after_resolution,
         );
 
+    let mut spec = crate::model::CompilerGrantSpecCore::new(grantable, filter, Zone::Graveyard);
+    if let Some(subject) = parsed.exile_rider_subject_tokens {
+        let Some(rider_filter) = permission_subject_facts::parse_permission_subject_filter_tokens(subject)? else {
+            return Ok(None);
+        };
+        // This permission casts from the caster's own graveyard. Bind the
+        // destination to the spell's owner, so changing its controller later
+        // cannot rebind the authored "your graveyard" condition.
+        spec = spec.with_cast_this_way_filter(rider_filter).with_cast_this_way_grant(
+            crate::model::CompilerStaticAbilityCore::exile_to_exile_instead_of_graveyard(
+                crate::filter::ObjectFilter::source(),
+                crate::filter::PlayerFilter::OwnerOf(crate::filter::ObjectRef::FilterCandidate),
+            ),
+        );
+    }
     Ok(Some(PermissionClauseSpec::GrantBySpec {
         player: PlayerAst::You,
-        spec: crate::model::CompilerGrantSpecCore::new(grantable, filter, Zone::Graveyard),
+        spec,
         lifetime: PermissionLifetime::Static,
     }))
 }
@@ -1604,6 +1624,7 @@ pub fn parse_until_end_of_turn_may_play_tagged_clause(
             lifetime: PermissionLifetime::UntilEndOfTurn,
             filter,
             surface,
+            max_plays,
             ..
         }) if player == PlayerAst::You => Ok(Some(build_temporary_tagged_permission_effect(
             &trimmed,
@@ -1614,6 +1635,7 @@ pub fn parse_until_end_of_turn_may_play_tagged_clause(
             mana_spend_mode,
             with_mana_reference_surface(surface, mana_reference),
             filter,
+            max_plays,
         ))),
         _ => Ok(None),
     }
@@ -2032,6 +2054,16 @@ fn parse_cast_with_tagged_mana_value_limit_clause_impl(
 
     if let Some(parsed) = parse_free_cast_from_your_zone_rest_tokens(rest_tokens) {
         let filter_tokens = parsed.filter_tokens;
+        // "you may cast target instant, sorcery, or artifact card from your
+        // graveyard" (Scholar of the Lost Trove) casts one chosen target; it
+        // is not a permission over every matching spell. Leave it to the
+        // targeted graveyard-cast reading.
+        if filter_tokens
+            .first()
+            .is_some_and(|token| token.is_word("target"))
+        {
+            return Ok(None);
+        }
         let Some(mut filter) =
             permission_subject_facts::parse_cast_permission_filter_tokens(filter_tokens)?
         else {
@@ -2346,6 +2378,7 @@ pub fn parse_cast_or_play_tagged_clause(
             lifetime: PermissionLifetime::ThisTurn | PermissionLifetime::UntilEndOfTurn,
             filter,
             surface,
+            max_plays,
             ..
         }) if player == PlayerAst::Implicit || player == PlayerAst::You => {
             let surface = with_mana_reference_surface(surface, mana_reference);
@@ -2358,6 +2391,7 @@ pub fn parse_cast_or_play_tagged_clause(
                 mana_spend_mode,
                 surface,
                 filter,
+                max_plays,
             )))
         }
         Some(PermissionClauseSpec::Tagged {

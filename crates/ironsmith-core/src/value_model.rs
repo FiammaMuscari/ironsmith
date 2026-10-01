@@ -598,6 +598,9 @@ pub enum Value {
     DistinctCounterTypesAmong(ObjectFilter),
     DistinctNames(ObjectFilter),
     DistinctManaValues(ObjectFilter),
+    /// The number of unlocked doors among matching Rooms (CR 709.5): two
+    /// for a fully unlocked Room, one for a Room with one unlocked door.
+    UnlockedDoorsAmong(ObjectFilter),
     DistinctPowers(ObjectFilter),
     TurnHistoryCount(TurnHistoryCount),
     CreaturesDiedThisTurn,
@@ -789,6 +792,11 @@ pub enum Value {
     KickCount,
     MagicGamesLostToOpponentsSinceLastWin,
     DraftNotedHighestNumber {
+        card_name: String,
+    },
+    /// "the number of cards you removed from the draft with cards named X"
+    /// (Cogwork Grinder), read from the game's recorded draft history.
+    DraftRemovedCardCount {
         card_name: String,
     },
     LastNotedLifeTotal,
@@ -1951,6 +1959,15 @@ pub enum Condition {
     /// per triggered ability.
     TriggeringObjectHadCountersPutFirstTimeThisTurn,
     TriggeringObjectHadToAttackThisCombat,
+    /// The clash in the triggering clash event ("Whenever you clash, ... If
+    /// you won, ...") was won by the ability's controller (CR 701.30c).
+    YouWonTriggeringClash,
+    /// The ability activation in the triggering event was paid with at least
+    /// this much mana ("by spending four or more mana to activate it").
+    TriggeringAbilityManaSpentToActivateAtLeast(u32),
+    /// The permanent in the triggering battlefield-entry event entered with
+    /// its transformed (back) face up ("enters transformed").
+    TriggeringObjectEnteredTransformed,
     /// Evolve's intervening-if (CR 702.100a): the creature that entered has
     /// greater power and/or greater toughness than this creature. The entered
     /// creature's last-known information is used if it has left.

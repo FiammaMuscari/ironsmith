@@ -489,7 +489,7 @@ impl IncrementalBattlefieldGroups {
                 lane: view.lane,
                 name: view.name.clone(),
                 tapped: view.tapped,
-                summoning_sick: view.summoning_sick,
+                summoning_sick: game.is_summoning_sick(id),
                 has_active_aura: view.has_active_aura,
                 characteristic_signature: view.characteristic_signature.clone(),
                 counter_signature: view.counter_signature.clone(),
@@ -1047,7 +1047,15 @@ impl SnapshotJsEncodingCache {
         )?;
         self.set_serde(&object, "viewed_cards", &snapshot.viewed_cards)?;
         self.set_serde(&object, "decision", &snapshot.decision)?;
-        self.set_serde(&object, "mana_payment", &snapshot.mana_payment)?;
+        // Flattened payment-editor fields serialize through Serde's map path.
+        // Keep the public snapshot field a plain object like all other UI views.
+        let payment = snapshot
+            .mana_payment
+            .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+            .map_err(|error| {
+                JsValue::from_str(&format!("snapshot field mana_payment encode failed: {error}"))
+            })?;
+        self.set_value(&object, "mana_payment", &payment)?;
         self.set_serde(&object, "game_over", &snapshot.game_over)?;
         self.set_serde(&object, "cancelable", &snapshot.cancelable)?;
         self.set_serde(
@@ -1724,6 +1732,9 @@ pub(super) fn protected_object_ids_for_decision(
         return ids;
     };
 
+    // Keep the source distinct throughout targeting, choices, and payment.
+    ids.extend(decision.source());
+
     match decision {
         DecisionContext::ManaPayment(payment) => {
             ids.insert(payment.source);
@@ -1864,7 +1875,7 @@ fn grouped_battlefield_for_ids(
             lane: view.lane,
             name: view.name.clone(),
             tapped: view.tapped,
-            summoning_sick: view.summoning_sick,
+            summoning_sick: game.is_summoning_sick(obj.id),
             has_active_aura: view.has_active_aura,
             characteristic_signature: view.characteristic_signature.clone(),
             counter_signature: view.counter_signature.clone(),
@@ -2727,13 +2738,10 @@ impl GameSnapshot {
         let stack_viewed_cards = super::stack_revealed_view(game);
         let viewed_cards = viewed_cards.or(stack_viewed_cards.as_ref());
         let mut protected_ids = protected_object_ids_for_decision(decision);
-        if let Some(payment) = mana_payment.as_ref() {
-            protected_ids.extend(
-                payment
-                    .mana_abilities
-                    .iter()
-                    .filter_map(|ability| ability.source_id.parse::<u64>().ok().map(ObjectId)),
-            );
+        if cancelable && let Some(stable_id) = undo_land_stable_id {
+            protected_ids.extend(game.object_store.battlefield.iter().copied().filter(|id| {
+                game.object(*id).is_some_and(|object| object.stable_id.0.0 == stable_id)
+            }));
         }
         let mut characteristic_ids = Vec::new();
         characteristic_ids.extend(game.stack.iter().map(|entry| entry.object_id));
@@ -3971,7 +3979,7 @@ mod tests {
                 source: yawgmoth_id,
                 ability_index: copied_index,
             },
-        );
+        ).expect("fixture has complete replacement state");
         assert_eq!(
             label,
             format!(
@@ -4962,6 +4970,63 @@ mod tests {
     }
 
     #[test]
+    fn battlefield_grouping_separates_sickness_and_restores_cancelled_source() {
+        let _id_counter_guard = crate::test_id_counter_guard();
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        for creature in [true, false] {
+            let mut card = test_bears_card();
+            if !creature {
+                card.name = "Test artifact".into();
+                card.card_types = vec![CardType::Artifact];
+            }
+            let ids: Vec<_> = (0..4)
+                .map(|_| game.create_object_from_card(&card, alice, Zone::Battlefield))
+                .collect();
+            for id in &ids {
+                game.remove_summoning_sickness(*id);
+            }
+            let views = SnapshotObjectViewCache::default();
+            let mut incremental = IncrementalBattlefieldGroups::default();
+            incremental.update(&game, &HashSet::new(), &views);
+            game.set_summoning_sick(ids[0]);
+            let counts = |game: &GameState, protected: &HashSet<ObjectId>| {
+                let (groups, _) = grouped_battlefield_for_player(game, alice, protected);
+                let mut counts: Vec<_> = groups
+                    .iter()
+                    .filter(|group| group.name == card.name)
+                    .map(|group| group.count)
+                    .collect();
+                counts.sort_unstable();
+                counts
+            };
+            assert_eq!(counts(&game, &HashSet::new()), vec![1, 3]);
+            let check_incremental =
+                |game: &GameState,
+                 groups: &mut IncrementalBattlefieldGroups,
+                 protected: &HashSet<ObjectId>| {
+                    groups.update(game, protected, &views);
+                    let (full, _) = grouped_battlefield_for_player(game, alice, protected);
+                    assert_eq!(
+                        serde_json::to_value(groups.for_player(alice).0).unwrap(),
+                        serde_json::to_value(full).unwrap()
+                    );
+                };
+            check_incremental(&game, &mut incremental, &HashSet::new());
+            game.remove_summoning_sickness(ids[0]);
+            let decision =
+                DecisionContext::Boolean(ironsmith::decisions::context::BooleanContext::new(
+                    alice,
+                    Some(ids[0]),
+                    "Activate ability?",
+                ));
+            let protected = protected_object_ids_for_decision(Some(&decision));
+            assert_eq!(counts(&game, &protected), vec![1, 3]);
+            check_incremental(&game, &mut incremental, &protected);
+            assert_eq!(counts(&game, &HashSet::new()), vec![4]);
+            check_incremental(&game, &mut incremental, &HashSet::new());
+        }
+    }
     fn battlefield_snapshot_marks_summoning_sickness_and_active_aura() {
         let _id_counter_guard = crate::test_id_counter_guard();
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);

@@ -121,7 +121,7 @@ pub use effect::{
     GrantAbilitiesTargetEffect, GrantBySpecEffect, GrantEffect, GrantNextSpellAbilityEffect,
     GrantNextSpellCostReductionEffect, GrantPlayTaggedDuration, GrantPlayTaggedEffect,
     GrantPlayTaggedManaReferenceSurface, GrantPlayTaggedObjectSurface, GrantPlayTaggedSurface,
-    GrantRepeatableManaPaymentActionUntilEndOfTurnEffect,
+    GrantEndThisEffectPaymentEffect, GrantRepeatableManaPaymentActionUntilEndOfTurnEffect,
     GrantTaggedSpellFreeCastUntilEndOfTurnEffect, GrantTaggedSpellLifeCostByManaValueEffect,
     HauntExileEffect, HealDamageEffect, IfEffect, IncreaseSpeedEffect, IncubateEffect,
     InvestigateEffect, LearnEffect, LibraryBottomOrder, LibraryConsultMode, LibraryPlacementOrder,
@@ -224,7 +224,7 @@ pub use static_ability_model::{
     CopyStaticAbilityVariants, CopyTriggeredAbilities, CostIncrease, CostIncreaseManaCost,
     CostReduction, CostReductionCharacteristicIntersection, CostReductionManaCost,
     CounterRemovalFollowUp, CounterRemovalPreventionSurface, DefendingPlayerAttackCondition,
-    EnterAsCopyAsEntersSpec, EnterAsCopyLinkedExilePairSpec, EscalateSpec,
+    EnterAsCopyAsEntersSpec, EnterAsCopyFollowup, EnterAsCopyLinkedExilePairSpec, EscalateSpec,
     GrantObjectAbilityForFilter, GraveyardCountMetric, LandwalkKind, OptionalLifeAdditionalCost,
     PowerToughnessChoiceOption, PregameActionKind, PregameBeginOnBattlefieldSpec,
     PregameRevealFromOpeningHandSpec, PreventAllDamageToSelfFromSourcesMatchingSpec,
@@ -233,7 +233,7 @@ pub use static_ability_model::{
     ThisSpellCastRestrictionKind, ThisSpellCostReduction, ThisSpellCostReductionManaCost,
 };
 pub use tag::{
-    ATTACKING_GROUP_TAG, CAST_CONTROLLED_OBJECTS_TAG, CAST_MODIFIED_CREATURES_TAG,
+    ATTACKING_GROUP_TAG, CAST_CONTROLLED_OBJECTS_TAG, CLASH_OPPONENT_TAG, CAST_MODIFIED_CREATURES_TAG,
     CHOSEN_OBJECTS_TAG, COMBAT_DAMAGE_GROUP_TAG, EXPLOITED_TAG, EXPLOITER_TAG,
     INITIATIVE_HOLDER_TAG, LINKED_TRIGGER_PLAYER_TAG, TRIGGERING_EVENT_CONTROLLER_TAG, MANA_PAID_OBJECT_TAG, MANA_SOURCES_SPENT_TO_CAST_TAG, TAXED_ATTACKER_TAG, BLOCK_PAIR_SUBJECT_TAG,
     MANIFEST_DREAD_GRAVEYARD_TAG, PREVIOUS_ITERATED_OBJECTS_TAG, PRIOR_EXILED_CARD_TAG,

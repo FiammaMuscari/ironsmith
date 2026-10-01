@@ -93,6 +93,12 @@ struct EffectReferenceResolutionState<'a> {
     last_exile_cost_tag_index: Option<u32>,
     allow_life_event_value: bool,
     bind_unbound_x_to_last_effect: bool,
+    /// Inside a delayed trigger's body: the result id of the registering
+    /// instruction's last producer. The delayed ability resolves later with
+    /// its own outcome table, so a "this way" metric of that producer must
+    /// read the producer's tagged objects (captured with the delayed
+    /// trigger) rather than an effect id the delayed program cannot see.
+    delayed_registration_effect_id: Option<EffectId>,
 }
 
 fn trigger_supports_event_amount(trigger: &TriggerSpec) -> bool {
@@ -1975,7 +1981,8 @@ fn advance_reference_frame_for_effect(
                     }
                 }
                 SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { from, to })
-                | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to }) => {
+                | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to })
+                | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { from, to, .. }) => {
                     if frame.auto_tag_object_targets {
                         let _ = next_reference_tag(id_gen, "from");
                         frame.last_object_tag = Some(next_reference_tag(id_gen, "to"));
@@ -2203,6 +2210,15 @@ fn advance_reference_frame_for_effect(
                     frame
                         .recent_player_choice_tags
                         .push(tag.clone().into());
+                }
+                // "Clash with an opponent. ... Otherwise, that player ...":
+                // the clash publishes the opponent it chose (CR 701.30a).
+                SubjectVerbActionAst::KeywordActions(KeywordActionAst::Clash {
+                    opponent: crate::cards::builders::ClashOpponentAst::Opponent,
+                }) => {
+                    frame.last_player_filter = Some(PlayerFilter::TaggedPlayer(
+                        crate::tag::CompilerReferenceTag::ClashOpponent.bind().into(),
+                    ));
                 }
                 SubjectVerbActionAst::Control(ControlActionAst::ControlPlayer { player, .. }) => {
                     frame.last_player_filter = Some(player.clone());
@@ -3274,6 +3290,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::SolveCase
         | EffectAst::ResolvesDespiteIllegalTargets
         | EffectAst::NoteActivationManaType
+        | EffectAst::PayToEndThisEffect { .. }
         | EffectAst::LookAtTopCardsAsViewer { .. }
         | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessMay)
         | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)
@@ -3336,6 +3353,7 @@ fn effect_reference_resolution_state(env: &ReferenceEnv) -> EffectReferenceResol
         last_exile_cost_tag_index: cost_tag_index_from_env(env, "exile_cost_"),
         allow_life_event_value: env.allow_life_event_value,
         bind_unbound_x_to_last_effect: env.bind_unbound_x_to_last_effect,
+        delayed_registration_effect_id: None,
     }
 }
 
@@ -3504,19 +3522,32 @@ fn annotate_effect_sequence_with_env_internal(
         // alternative to the gated branch, which never ran when the fallback
         // does. Its references see what the gate itself saw, not objects the
         // gated branch introduced.
+        // "If you win the flip, exile this permanent ... If you lose the
+        // flip, sacrifice it" (Frenetic Sliver): a negative branch is the
+        // alternative to the positive one in the same way.
         let is_otherwise_fallback = matches!(
             &effect,
             EffectAst::Conditionals(
                 ConditionalEffectAst::IfResult {
-                    predicate: IfResultPredicate::Otherwise,
+                    predicate: IfResultPredicate::Otherwise
+                        | IfResultPredicate::DidNot
+                        | IfResultPredicate::ExplicitDidNot,
                     ..
                 } | ConditionalEffectAst::ResolvedIfResult {
-                    predicate: IfResultPredicate::Otherwise,
+                    predicate: IfResultPredicate::Otherwise
+                        | IfResultPredicate::DidNot
+                        | IfResultPredicate::ExplicitDidNot,
                     ..
                 }
             )
         ) || result_gate_surface(&effect).is_some_and(|(predicate, reflexive)| {
-            !reflexive && *predicate == IfResultPredicate::Otherwise
+            !reflexive
+                && matches!(
+                    predicate,
+                    IfResultPredicate::Otherwise
+                        | IfResultPredicate::DidNot
+                        | IfResultPredicate::ExplicitDidNot
+                )
         });
         if is_otherwise_fallback
             && let Some(gate) = annotated.last()
@@ -3782,8 +3813,32 @@ fn annotate_effect_sequence_with_env_internal(
         }
         let exports_result_for_fallback =
             result_gate_exports_outcome_to_fallback(&effect, remaining.first());
+        // "put that many +1/+1 counters on this creature, then up to that
+        // many other target permanents phase out" (Spectral Adversary): a
+        // counter placement whose amount is itself "that many" shares its
+        // antecedent with the later "that many", so it must not become their
+        // producer (a counter-doubling replacement would change the count).
+        let shares_prior_that_many = in_env.known_last_effect_id().is_some()
+            && matches!(
+                &effect,
+                EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                    action: SubjectVerbActionAst::Counters(CounterActionAst::PutCounters {
+                        count,
+                        ..
+                    }),
+                    ..
+                }) if matches!(
+                    count.unhinted(),
+                    Value::PendingEffectMetric { .. }
+                ) || matches!(
+                    count.unhinted(),
+                    Value::EffectMetric { effect_id, .. } | Value::EffectValue(effect_id)
+                        if Some(*effect_id) == in_env.known_last_effect_id()
+                )
+            );
         if let Some(id) = assigned_effect_id
             && (result_gate_surface(&effect).is_none() || exports_result_for_fallback)
+            && !shares_prior_that_many
         {
             out_env.last_effect_id = RefState::Known(id);
         }
@@ -5202,6 +5257,7 @@ fn resolve_effect_references_in_effect(
                 last_exile_cost_tag_index: state.last_exile_cost_tag_index,
                 allow_life_event_value: state.allow_life_event_value,
                 bind_unbound_x_to_last_effect: predicate != IfResultPredicate::AcceptedChoice,
+                delayed_registration_effect_id: state.delayed_registration_effect_id,
             },
         )?;
         *effect = EffectAst::Conditionals(ConditionalEffectAst::ResolvedIfResult {
@@ -5233,6 +5289,7 @@ fn resolve_effect_references_in_effect(
                 last_exile_cost_tag_index: state.last_exile_cost_tag_index,
                 allow_life_event_value: state.allow_life_event_value,
                 bind_unbound_x_to_last_effect: true,
+                delayed_registration_effect_id: state.delayed_registration_effect_id,
             },
         )?;
         *effect = EffectAst::Conditionals(ConditionalEffectAst::ResolvedWhenResult {
@@ -5290,6 +5347,7 @@ fn resolve_effect_references_in_effect(
             last_exile_cost_tag_index: state.last_exile_cost_tag_index,
             allow_life_event_value: true,
             bind_unbound_x_to_last_effect: state.bind_unbound_x_to_last_effect,
+            delayed_registration_effect_id: state.delayed_registration_effect_id,
         };
         resolve_effect_sequence_references_with_state_in_place(effects, id_gen, nested_state)?;
         return Ok(());
@@ -5313,6 +5371,7 @@ fn resolve_effect_references_in_effect(
             last_exile_cost_tag_index: state.last_exile_cost_tag_index,
             allow_life_event_value: trigger_supports_event_amount(trigger),
             bind_unbound_x_to_last_effect: state.bind_unbound_x_to_last_effect,
+            delayed_registration_effect_id: state.pinned_effect_metric_id.or(state.last_effect_id),
         };
         resolve_effect_sequence_references_with_state_in_place(effects, id_gen, nested_state)?;
         return Ok(());
@@ -6143,6 +6202,7 @@ fn resolve_effect_result_values_in_fields(
             | SubjectVerbActionAst::Counters(CounterActionAst::DoubleCountersOnTarget { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { .. })
+            | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::ForEachCounterKindPutOrRemove {
                 ..
             })
@@ -6761,7 +6821,12 @@ fn resolve_effect_result_value(
             };
         }
         Value::PendingPriorEffectMetric(query) => {
-            if let Some(id) = state.pinned_effect_metric_id.or(state.last_effect_id) {
+            if let Some(id) = state.pinned_effect_metric_id.or(state.last_effect_id)
+                && state.delayed_registration_effect_id == Some(id)
+                && let Some(tagged_metric) = resolve_delayed_registration_tagged_metric(query)
+            {
+                *value = tagged_metric;
+            } else if let Some(id) = state.pinned_effect_metric_id.or(state.last_effect_id) {
                 *value = Value::PriorEffectMetric {
                     effect_id: id,
                     query: query.clone(),
@@ -6897,6 +6962,50 @@ fn resolve_exile_cost_tagged_metric(
     }
     let filter = query.filter.clone().unwrap_or_default().match_tagged(
         ironsmith_compiler_semantic::tag::declared_key(format!("exile_cost_{tag_index}")),
+        TaggedOpbjectRelation::IsTaggedObject,
+    );
+    match query.metric {
+        EffectMetric::Count | EffectMetric::ChosenCount | EffectMetric::AffectedCount => {
+            Some(Value::Count(filter))
+        }
+        EffectMetric::TotalPower => Some(Value::TotalPower(filter)),
+        EffectMetric::TotalToughness => Some(Value::TotalToughness(filter)),
+        EffectMetric::TotalManaValue => Some(Value::TotalManaValue(filter)),
+        EffectMetric::GreatestPower => Some(Value::GreatestPower(filter)),
+        EffectMetric::GreatestToughness => Some(Value::GreatestToughness(filter)),
+        EffectMetric::GreatestManaValue => Some(Value::GreatestManaValue(filter)),
+        EffectMetric::ColorsAmong => Some(Value::ColorsAmong(filter)),
+        EffectMetric::CardTypesAmong => Some(Value::CardTypesAmong(filter)),
+        _ => None,
+    }
+}
+
+/// "Mill four cards. Whenever a creature attacks this turn, it gets +1/+0
+/// ... for each creature card put into your graveyard this way": the delayed
+/// ability resolves with its own outcome table, but it captures the
+/// registering resolution's tagged objects. Count the producer's tagged
+/// result set (bound by lowering through
+/// [`crate::reference_helpers::DELAYED_REGISTRATION_RESULT_ALIAS`]) instead.
+/// The set's snapshots are compared zone-agnostically: "put into your
+/// graveyard this way" is a fact of the earlier action, not of current zones.
+fn resolve_delayed_registration_tagged_metric(
+    query: &ironsmith_core::PriorEffectMetricQuery,
+) -> Option<Value> {
+    if query.player.is_some()
+        || query.action.is_none()
+        || !matches!(
+            query.source,
+            EffectMetricSource::AffectedObjects | EffectMetricSource::ChosenObjects
+        )
+    {
+        return None;
+    }
+    let mut filter = query.filter.clone().unwrap_or_default();
+    filter.zone = None;
+    let filter = filter.match_tagged(
+        ironsmith_compiler_semantic::tag::declared_key(
+            crate::reference_helpers::DELAYED_REGISTRATION_RESULT_ALIAS,
+        ),
         TaggedOpbjectRelation::IsTaggedObject,
     );
     match query.metric {
@@ -7302,7 +7411,8 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
                     + bind_unresolved_it_in_target(target, seed_tag)
             }
             SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { from, to })
-            | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to }) => {
+            | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { from, to })
+                | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { from, to, .. }) => {
                 bind_unresolved_it_in_target(from, seed_tag)
                     + bind_unresolved_it_in_target(to, seed_tag)
             }
@@ -9063,6 +9173,7 @@ mod tests {
                 last_exile_cost_tag_index: None,
                 allow_life_event_value: true,
                 bind_unbound_x_to_last_effect: false,
+                delayed_registration_effect_id: None,
             },
         )
         .expect("ambient trigger amount remains valid");
@@ -9087,6 +9198,7 @@ mod tests {
                 last_exile_cost_tag_index: None,
                 allow_life_event_value: true,
                 bind_unbound_x_to_last_effect: false,
+                delayed_registration_effect_id: None,
             },
         )
         .expect("compatible trigger should provide the pending outcome count");
@@ -9112,6 +9224,7 @@ mod tests {
                 last_exile_cost_tag_index: None,
                 allow_life_event_value: true,
                 bind_unbound_x_to_last_effect: false,
+                delayed_registration_effect_id: None,
             },
         )
         .expect("explicit prior effect should remain the metric producer");

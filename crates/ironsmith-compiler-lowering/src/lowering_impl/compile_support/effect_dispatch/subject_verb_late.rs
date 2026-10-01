@@ -91,6 +91,7 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Game(GameActionAst::LoseGame)
             | SubjectVerbActionAst::Counters(CounterActionAst::MoveAllCounters { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::MoveOneCounter { .. })
+            | SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters { .. })
             | SubjectVerbActionAst::Library(LibraryActionAst::MoveToLibraryNthFromTop { .. })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayAnyEnergy { .. })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayAnyLife { .. })
@@ -1578,7 +1579,22 @@ pub(super) fn compile_subject_verb_late(
                 }
                 _ => resolved_amount,
             };
-            let effect = if let Some(counter_type) = counter_type {
+            // "remove three quest counters from among permanents you control"
+            // (Overseer of Vault 76): N counters in total, distributed among
+            // the matching permanents, not N from each (or from the first).
+            let among_total = match (*distributed_across_all, resolved_amount.unhinted(), spec.unhinted()) {
+                (true, Value::Fixed(total), ChooseSpec::All(filter)) if *total >= 0 => {
+                    Some((*total as u32, filter.clone()))
+                }
+                _ => None,
+            };
+            let effect = if let Some((total, filter)) = among_total {
+                if *up_to {
+                    Effect::remove_dynamic_counters_among(0, total, filter, *counter_type, false)
+                } else {
+                    Effect::remove_any_counters_among(total, filter, *counter_type)
+                }
+            } else if let Some(counter_type) = counter_type {
                 if *up_to {
                     Effect::remove_up_to_counters(*counter_type, resolved_amount, spec.clone())
                 } else {
@@ -1604,6 +1620,38 @@ pub(super) fn compile_subject_verb_late(
             let effect = tag_object_target_effect(
                 tag_object_target_effect(
                     Effect::move_all_counters(from_spec.clone(), to_spec.clone()),
+                    &from_spec,
+                    ctx,
+                    "from",
+                ),
+                &to_spec,
+                ctx,
+                "to",
+            );
+            Ok((vec![effect], choices))
+        }
+        SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters {
+            counter_type,
+            count,
+            from,
+            to,
+        }) => {
+            let resolved_count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
+            let (from_spec, mut choices) =
+                resolve_target_spec_with_choices(from, &current_reference_env(ctx))?;
+            let (to_spec, to_choices) =
+                resolve_target_spec_with_choices(to, &current_reference_env(ctx))?;
+            for choice in to_choices {
+                push_choice(&mut choices, choice);
+            }
+            let effect = tag_object_target_effect(
+                tag_object_target_effect(
+                    Effect::new(crate::effects::MoveCountersEffect::new(
+                        *counter_type,
+                        resolved_count,
+                        from_spec.clone(),
+                        to_spec.clone(),
+                    )),
                     &from_spec,
                     ctx,
                     "from",
@@ -2710,6 +2758,28 @@ pub(super) fn compile_subject_verb_late(
                 {
                     filter.controller = Some(chooser.clone());
                 }
+                // "Enchanted permanent's controller sacrifices it": the
+                // possessive and the pronoun name the same permanent, so the
+                // sacrificing player is that permanent's controller rather
+                // than the controller of an older antecedent (the trigger's
+                // leaving Aura).
+                let referenced_tag = if matches!(player, PlayerAst::ItsController) {
+                    match resolve_target_spec_with_choices(&target, &current_reference_env(ctx)) {
+                        Ok((ChooseSpec::Tagged(tag), _)) => Some(tag),
+                        Ok((ChooseSpec::Object(filter), _)) => {
+                            object_filter_as_tagged_reference(&filter)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let chooser = match referenced_tag {
+                    Some(tag) => {
+                        PlayerFilter::ControllerOf(crate::target::ObjectRef::tagged(tag))
+                    }
+                    None => chooser,
+                };
                 let (effects, mut choices) =
                     compile_tagged_effect_for_target(&target, ctx, "sacrificed", |spec| {
                         Effect::new(
@@ -2782,6 +2852,16 @@ pub(super) fn compile_subject_verb_late(
                 && let Some(tag) = object_filter_as_tagged_reference(&resolved_filter)
             {
                 let mut effects = target_prelude;
+                // "Enchanted permanent's controller sacrifices it": the
+                // possessive and the pronoun name the same permanent, so the
+                // sacrificing player is that permanent's controller rather
+                // than the controller of an older antecedent (the trigger's
+                // leaving Aura).
+                let chooser = if matches!(player, PlayerAst::ItsController) {
+                    PlayerFilter::ControllerOf(crate::target::ObjectRef::tagged(tag.clone()))
+                } else {
+                    chooser
+                };
                 // CR 701.21a: the named player sacrifices the referenced
                 // permanent only while controlling it.
                 effects.push(Effect::new(

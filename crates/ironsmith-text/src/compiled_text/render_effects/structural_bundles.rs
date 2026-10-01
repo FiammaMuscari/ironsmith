@@ -4310,7 +4310,7 @@ fn describe_search_two_split_battlefield_hand_sequence(
     let shuffle = shuffle_effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
 
     let count_matches = if let Some(comparison) = comparison {
-        let PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter } =
+        let PlayerFilter::OpponentWithMoreControlledObjectsThan { player, filter, fewer: false } =
             &comparison.filter
         else {
             return None;
@@ -4395,7 +4395,7 @@ fn describe_search_two_split_battlefield_hand_sequence(
         if trailing_scry.is_some() {
             return None;
         }
-        let PlayerFilter::OpponentWithMoreControlledObjectsThan { filter, .. } = &comparison.filter
+        let PlayerFilter::OpponentWithMoreControlledObjectsThan { filter, fewer: false, .. } = &comparison.filter
         else {
             return None;
         };
@@ -6020,6 +6020,7 @@ pub(super) fn value_references_target_player(value: &Value) -> bool {
         | Value::ColorsAmong(filter)
         | Value::DistinctNames(filter)
         | Value::DistinctManaValues(filter)
+        | Value::UnlockedDoorsAmong(filter)
         | Value::DistinctPowers(filter) => object_filter_references_target_player(filter),
         Value::StaticAbilitiesAmong { filter, .. } => {
             object_filter_references_target_player(filter)
@@ -13535,8 +13536,9 @@ pub(in crate::compiled_text) fn describe_tapped_collection_until_source_untaps(
     if lock.target != crate::continuous::EffectTarget::Filter(filter.clone())
         || lock.target_spec.is_some()
         || !matches!(
-            lock.modification,
-            Some(crate::continuous::Modification::DoesntUntap)
+            lock.modification.as_ref(),
+            Some(crate::continuous::Modification::Restriction(restriction))
+                if restriction.kind() == crate::continuous::RestrictionKind::DoesntUntap
         )
         || !lock.additional_modifications.is_empty()
         || !lock.runtime_modifications.is_empty()

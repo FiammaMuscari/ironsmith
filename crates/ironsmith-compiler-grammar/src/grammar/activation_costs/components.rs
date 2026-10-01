@@ -214,6 +214,60 @@ fn parse_source_and_chosen_sacrifice_segment_tokens(
     None
 }
 
+/// "Sacrifice a creature and a Swamp", "Sacrifice a blue creature, a black
+/// creature, and a red creature": each indefinite member is its own
+/// sacrifice cost (CR 118.3: every listed object must be sacrificed), not one
+/// sacrifice of an object matching any member.
+fn parse_sacrifice_member_list_segment_tokens(
+    tokens: &[OwnedLexToken],
+    named_source: &impl Fn(&[&str]) -> Option<crate::target::SourceReferenceSurface>,
+) -> Option<Vec<ActivationCostSegmentCst>> {
+    if !token_slice_first_is(tokens, "sacrifice") {
+        return None;
+    }
+    let mut members: Vec<&[OwnedLexToken]> = Vec::new();
+    let mut start = 1usize;
+    let mut idx = 1usize;
+    while idx < tokens.len() {
+        let token = &tokens[idx];
+        if token.is_comma() || token.is_word("and") {
+            if idx > start {
+                members.push(&tokens[start..idx]);
+            }
+            start = idx + 1;
+        }
+        idx += 1;
+    }
+    if start < tokens.len() {
+        members.push(&tokens[start..]);
+    }
+    if members.len() < 2
+        || !members.iter().all(|member| {
+            member
+                .first()
+                .is_some_and(|token| token.is_word("a") || token.is_word("an"))
+                && member.len() > 1
+        })
+    {
+        return None;
+    }
+    let mut segments = Vec::with_capacity(members.len());
+    for member in members {
+        let mut inherited = Vec::with_capacity(member.len() + 1);
+        inherited.push(tokens[0].clone());
+        inherited.extend_from_slice(member);
+        let segment = parse_typed_sacrifice_segment_tokens(&inherited, named_source).ok()?;
+        match &segment {
+            ActivationCostSegmentCst::SacrificeCreature => {}
+            ActivationCostSegmentCst::SacrificeChosen { count, .. }
+                if *count == crate::effect::ChoiceCount::exactly(1) => {}
+            _ => return None,
+        }
+        segments.push(segment);
+    }
+    Some(segments)
+}
+
 fn named_source_reference_surface_for_words(
     words: &[&str],
 ) -> Option<crate::target::SourceReferenceSurface> {
@@ -330,6 +384,52 @@ fn split_activation_cost_segments_tokens(tokens: &[OwnedLexToken]) -> Vec<Vec<Ow
     segments
 }
 
+/// Rebuild the two sides of an "X or Y" activation cost so each branch is a
+/// complete payment.
+///
+/// - "{1}{R}, Remove a +1/+1 counter or a charge counter from a permanent you
+///   control" (Ion Storm) elides the shared verb and source of the counter
+///   removal; each branch names one counter type removed from that source.
+/// - A comma list binds tighter than the final "or": in "{1}, Sacrifice a
+///   creature or discard a card" the "{1}" is paid with either alternative,
+///   so the leading segments are shared by the right branch. A right branch
+///   that opens with its own mana or tap symbol ("{3}, {T} or {U}, {T}") is a
+///   complete alternative and shares nothing.
+fn distribute_activation_cost_alternative(
+    left: &[OwnedLexToken],
+    right: &[OwnedLexToken],
+) -> (Vec<OwnedLexToken>, Vec<OwnedLexToken>) {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    let last_comma = left.iter().rposition(OwnedLexToken::is_comma);
+    let segment_start = last_comma.map_or(0, |index| index + 1);
+    let left_segment = &left[segment_start..];
+    let counter_noun = |token: &OwnedLexToken| token.is_any_word(&["counter", "counters"]);
+    if left_segment.first().is_some_and(|token| token.is_word("remove"))
+        && left_segment.last().is_some_and(counter_noun)
+        && !left_segment.iter().any(|token| token.is_word("from"))
+        && right.first().is_some_and(|token| token.is_any_word(&["a", "an"]))
+        && let Some(from_index) = right.iter().position(|token| token.is_word("from"))
+        && from_index >= 2
+        && counter_noun(&right[from_index - 1])
+    {
+        let remove = left_segment[0].clone();
+        let source_tail = right[from_index..].to_vec();
+        left.extend(source_tail);
+        right.insert(0, remove);
+    }
+    if let Some(comma) = last_comma
+        && right
+            .first()
+            .is_some_and(|token| token.kind != TokenKind::ManaGroup)
+    {
+        let mut shared = left[..=comma].to_vec();
+        shared.extend(right);
+        right = shared;
+    }
+    (left, right)
+}
+
 fn parse_activation_cost_cst_tokens(
     tokens: &[OwnedLexToken],
     raw: &str,
@@ -347,8 +447,12 @@ fn parse_activation_cost_cst_tokens(
     }
 
     if let Some(split) = parse_payment_alternative_split_tokens(tokens) {
-        let left_tokens = trim_activation_cost_segment_tokens(&tokens[..split.delimiter]);
-        let right_tokens = trim_activation_cost_segment_tokens(&tokens[split.delimiter + 1..]);
+        let (left_owned, right_owned) = distribute_activation_cost_alternative(
+            trim_activation_cost_segment_tokens(&tokens[..split.delimiter]),
+            trim_activation_cost_segment_tokens(&tokens[split.delimiter + 1..]),
+        );
+        let left_tokens = left_owned.as_slice();
+        let right_tokens = right_owned.as_slice();
         if !left_tokens.is_empty() && !right_tokens.is_empty() {
             let left_raw = render_trimmed_lexed_tokens(left_tokens);
             let right_raw = render_trimmed_lexed_tokens(right_tokens);
@@ -376,6 +480,7 @@ fn parse_activation_cost_cst_tokens(
 
         if let Some(compound) =
             parse_source_and_chosen_sacrifice_segment_tokens(segment_tokens, named_source)
+                .or_else(|| parse_sacrifice_member_list_segment_tokens(segment_tokens, named_source))
         {
             segments.extend(compound);
             continue;

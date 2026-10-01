@@ -242,6 +242,12 @@ pub enum TriggerKind {
         blocker: ObjectFilter,
         blocked: ObjectFilter,
     },
+    /// A blocking relationship between a matching blocker and a matching
+    /// blocked object, one trigger per pair.
+    BlocksObject {
+        blocker: ObjectFilter,
+        blocked: ObjectFilter,
+    },
     ThisBecomesBlocked,
     BecomesBlocked {
         filter: ObjectFilter,
@@ -598,6 +604,11 @@ pub enum TriggerKind {
     ThisTransformsWithSurface {
         surface: SourceReferenceSurface,
         destination_name: Option<String>,
+    },
+    /// "Whenever a permanent you control transforms": any permanent matching
+    /// `filter` transforms (CR 701.27).
+    PermanentTransforms {
+        filter: ObjectFilter,
     },
     YouCastThisSpell,
     KeywordActionMatchingObject {
@@ -1024,6 +1035,12 @@ impl Trigger {
         Self::typed(
             "blocks_object_with_lesser_power",
             TriggerKind::BlocksObjectWithLesserPower { blocker, blocked },
+        )
+    }
+    pub fn blocks_object(blocker: ObjectFilter, blocked: ObjectFilter) -> Self {
+        Self::typed(
+            "blocks_object",
+            TriggerKind::BlocksObject { blocker, blocked },
         )
     }
     pub fn this_becomes_blocked() -> Self {
@@ -2094,6 +2111,9 @@ impl Trigger {
                 destination_name,
             },
         )
+    }
+    pub fn permanent_transforms(filter: ObjectFilter) -> Self {
+        Self::typed("permanent_transforms", TriggerKind::PermanentTransforms { filter })
     }
     pub fn you_cast_this_spell() -> Self {
         Self::typed("you_cast_this_spell", TriggerKind::YouCastThisSpell)

@@ -71,6 +71,11 @@ pub const SPELLS_CAST_THIS_TURN_TAG: &str = "__spells_cast_this_turn__";
 /// references without inventing a separate player-filter primitive.
 pub const SOURCE_OBJECT_TAG: &str = "__source_object__";
 
+/// Runtime player tag for the opponent a resolving clash was performed with
+/// (CR 701.30a). "Clash with an opponent. ... Otherwise, that player ..."
+/// refers back to this player.
+pub const CLASH_OPPONENT_TAG: &str = "__clash_opponent__";
+
 /// Runtime tag for the object whose effect granted the resolving ability to
 /// its source (CR 113.3, 613.1f): the Equipment or Aura in `Equipped creature
 /// has "... Return Trusty Boomerang to its owner's hand."`. Captured when an
@@ -85,6 +90,9 @@ pub const GRANTING_SOURCE_TAG: &str = "__granting_source__";
 /// resolution, so the delayed registration preserves those players under
 /// this system tag.
 pub const DELAYED_TARGET_PLAYERS_TAG: &str = "__delayed_target_players__";
+/// The player chosen for "up to N target cards from a player's graveyard"
+/// when no card was targeted; "that player" names them (Lodestone Bauble).
+pub const TARGET_GRAVEYARD_PLAYER_TAG: &str = "__target_graveyard_player__";
 /// The single player a permanent's own entering trigger targeted, exposed to
 /// that permanent's linked leaves-the-battlefield trigger as "that player"
 /// (CR 607.2a).
