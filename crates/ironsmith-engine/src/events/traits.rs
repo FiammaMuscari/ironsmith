@@ -364,8 +364,33 @@ pub trait ReplacementMatcher: Debug + Send + Sync + ReplacementMatcherClone {
     ///
     /// # Returns
     ///
-    /// `true` if this replacement effect should apply to the event.
-    fn matches_event(&self, event: &dyn GameEventType, ctx: &EventContext) -> bool;
+    /// `Ok(true)` if the replacement applies, `Ok(false)` for a complete
+    /// non-match, or a discovery error when applicability cannot be calculated.
+    fn matches_event(
+        &self, event: &dyn GameEventType, ctx: &EventContext,
+    ) -> Result<bool, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        ctx.with_complete_query(event, |complete| self.matches_prepared_event(event, complete))
+    }
+
+    /// Pure predicate over a validated context. Callers cannot construct this
+    /// context from arbitrary unchecked game snapshots.
+    fn matches_prepared_event(
+        &self, event: &dyn GameEventType,
+        ctx: &crate::events::context::PreparedEventContext,
+    ) -> bool;
+
+    /// Fallible entry matching against a complete prospective query context.
+    /// Discovery failure is distinct from a successfully evaluated non-match.
+    /// This entry convenience uses the same checked matching contract as
+    /// every other event kind. The owning processor propagates errors before
+    /// committing the proposal or consuming its replacements.
+    fn matches_entry_event(
+        &self,
+        event: &crate::events::EnterBattlefieldEvent,
+        ctx: &EventContext,
+    ) -> Result<bool, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        self.matches_event(event, ctx)
+    }
 
     /// For token-creation replacements: the filter a token group must match
     /// for this replacement to modify it (`None` = every group).
@@ -378,8 +403,18 @@ pub trait ReplacementMatcher: Debug + Send + Sync + ReplacementMatcherClone {
     /// replacement between card and token components.
     fn matches_merged_card_component_only(
         &self,
+        event: &crate::events::zones::ZoneChangeEvent,
+        ctx: &EventContext,
+    ) -> Result<bool, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        ctx.with_complete_query(event, |complete|
+            self.matches_prepared_merged_card_component_only(event, complete))
+    }
+
+    /// Component partitioning uses the same checked context as ordinary matching.
+    fn matches_prepared_merged_card_component_only(
+        &self,
         _event: &crate::events::zones::ZoneChangeEvent,
-        _ctx: &EventContext,
+        _ctx: &crate::events::context::PreparedEventContext,
     ) -> bool {
         false
     }
