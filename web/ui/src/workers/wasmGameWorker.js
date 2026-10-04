@@ -5,7 +5,6 @@ import { createSnapshotEncoder } from "../lib/snapshot-channel.js";
 import { previewCryptoRequirementsWithMaterial } from "../lib/preview-crypto-material.js";
 import { replayTrustedMatch, replayTrustedActions } from "../lib/relay/replay-trusted-match.js";
 import { compileWasmWithProgress } from "../lib/wasm-loading.js";
-import { createAdaptiveWorkBudget } from "../lib/adaptive-work-budget.js";
 import { createPriorityAnalysisScheduler } from "../lib/priority-analysis-scheduler.js";
 import initWasm, { WasmGame } from "../../../wasm_demo/pkg/ironsmith.js";
 import engineWasmUrl from "../../../wasm_demo/pkg/engine_bg.wasm?url";
@@ -35,9 +34,6 @@ const snapshotEncoder = createSnapshotEncoder();
 let game = null;
 let callQueue = Promise.resolve();
 let pendingCallCount = 0;
-let backgroundCompileDone = false;
-let backgroundCompileTimer = null;
-const preloadBudget = createAdaptiveWorkBudget({ initial: 1, max: 16 });
 let lastRegistryLoaded = -1;
 let lastRegistryTotal = -1;
 let cardAssetsBaseUrl = null;
@@ -700,54 +696,12 @@ function postRegistryStatus(raw, force = false) {
   });
 }
 
-function clearBackgroundTimer() {
-  if (backgroundCompileTimer !== null) {
-    self.clearTimeout(backgroundCompileTimer);
-    backgroundCompileTimer = null;
-  }
-}
-
-function scheduleBackgroundCompile(delay = 0) {
-  if (backgroundCompileDone || !game || typeof game.preloadRegistryChunk !== "function") {
-    return;
-  }
-  if (backgroundCompileTimer !== null) return;
-  backgroundCompileTimer = self.setTimeout(async () => {
-    backgroundCompileTimer = null;
-    await runBackgroundCompileStep();
-  }, delay);
-}
-
-async function runBackgroundCompileStep() {
-  if (backgroundCompileDone || !game || typeof game.preloadRegistryChunk !== "function") {
-    return;
-  }
-  if (pendingCallCount > 0) {
-    scheduleBackgroundCompile(32);
-    return;
-  }
-  try {
-    const status = preloadBudget.run(units => game.preloadRegistryChunk(units));
-    postRegistryStatus(status);
-    if (status?.done) {
-      backgroundCompileDone = true;
-      return;
-    }
-  } catch (err) {
-    self.postMessage({ type: "error", error: serializeError(err) });
-    return;
-  }
-  scheduleBackgroundCompile(16);
-}
-
 async function handleInit(msg = {}) {
   try {
-    clearBackgroundTimer();
     snapshotEncoder.reset();
     previewWorker?.terminate(); previewWorker = null; targetPreviews.clear();
     game = null;
     pendingCallCount = 0;
-    backgroundCompileDone = false;
     lastRegistryLoaded = -1;
     lastRegistryTotal = -1;
     cardIndexPromise = null;
@@ -783,10 +737,6 @@ async function handleInit(msg = {}) {
     const status = readRegistryStatus();
     if (status) {
       postRegistryStatus(status, true);
-      backgroundCompileDone = Boolean(status?.done);
-      if (!backgroundCompileDone) {
-        scheduleBackgroundCompile(0);
-      }
     }
 
     self.postMessage({ type: "ready", runtimeSavepoints: typeof game.createRuntimeSavepoint === "function",
@@ -1005,7 +955,6 @@ function handleCall(msg) {
     .then(({ result, registryStatus }) => {
       if (registryStatus) {
         postRegistryStatus(registryStatus);
-        if (!registryStatus.done) scheduleBackgroundCompile(0);
       }
       if (result && typeof result === "object" && "decision" in result) {
         const identity = msg.runtimeBranch == null ? game.priorityAnalysisIdentity() : priorityIdentity;
@@ -1034,9 +983,6 @@ function handleCall(msg) {
       const visibleRevision = game && game.priorityAnalysisIdentity() === priorityIdentity
         ? priorityViewRevision : priorityAnalysis.revision();
       priorityAnalysis.start(visibleRevision);
-      if (!backgroundCompileDone) {
-        scheduleBackgroundCompile(0);
-      }
     });
 }
 
