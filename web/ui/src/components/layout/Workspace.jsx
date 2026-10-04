@@ -714,6 +714,7 @@ function buildViewedCardsTransitionPreviews(state, existingPreviews = []) {
 }
 
 export default function Workspace({
+  onChangePerspective = null,
   zoneViews,
   setZoneViews,
   deckLoadingMode,
@@ -2001,6 +2002,7 @@ export default function Workspace({
           <RematchDeckView />
         ) : (
           <TableCore
+            onChangePerspective={onChangePerspective}
             selectedObjectId={selectedObjectId}
             onInspect={handleInspectObject}
             focusedStackObjectId={focusedStackObjectId}
