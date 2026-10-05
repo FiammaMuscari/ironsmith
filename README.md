@@ -1,11 +1,39 @@
+<div align="center">
+
 # Ironsmith
 
-Ironsmith is a Magic: The Gathering rules engine that runs entirely in your
-browser. It reads a card's Oracle text, compiles it into executable rules, and
-plays full games with those rules, including multiplayer games of up to four
-players. No game server is involved at any point.
+**Magic: The Gathering, powered by a browser-native rules engine.**
 
-**Play this fork: [FiammaMuscari's Ironsmith](https://fiammamuscari.github.io/ironsmith/).**
+Compile cards from Oracle text. Explore interactions. Play with up to four players.
+
+**[Play the fork](https://fiammamuscari.github.io/ironsmith/)** ·
+[Getting started](#getting-started) ·
+[Run locally](#running-ironsmith-locally) ·
+[Deployment status](https://github.com/FiammaMuscari/ironsmith/actions/workflows/deploy-ui-pages.yml)
+
+[![Desktop gameplay preview with four players, zone piles and a fanned hand](.github/readme/desktop-gameplay.png)](https://fiammamuscari.github.io/ironsmith/)
+
+<sub>Desktop interface preview from the fork's playtests. Open the game to see the latest deployed UI.</sub>
+
+</div>
+
+## At a glance
+
+- **Play and experiment:** random boards, imported decks, and shareable puzzle positions.
+- **Read the table:** battlefield grids, zone icons, counters, and compact gameplay controls.
+- **Create cards:** compile plain rules English into playable definitions.
+- **Stay in the browser:** a Rust/WebAssembly engine drives the game without a game server.
+
+<details>
+<summary><strong>Mobile interface preview</strong></summary>
+
+![Landscape mobile interface with battlefield lanes, compact controls and a fanned hand](.github/readme/mobile-gameplay.png)
+
+Development preview of the landscape layout. Controls may differ in the latest build.
+
+</details>
+
+### About this fork
 
 This repository is FiammaMuscari's fork of
 [Chiplis/ironsmith](https://github.com/Chiplis/ironsmith). It follows the
@@ -20,6 +48,9 @@ project belongs to Chiplis and its contributors.
 The hosted fork reflects the latest **successful deployment**, not necessarily
 every local experiment or commit. The guide below describes the shared game
 features; control placement can differ between the fork and upstream.
+
+<details>
+<summary><strong>Under the hood: rules engine and verified multiplayer</strong></summary>
 
 ### How it works
 
@@ -59,6 +90,8 @@ replayed by anyone. It hasn't had an independent security review yet, so treat
 it as strong protection for casual and community play rather than a proven
 guarantee (see [Honest limits](#honest-limits)). The full explanation is in
 [Verified mode and tournaments](#verified-mode-and-tournaments-an-introduction-to-zero-knowledge-play).
+
+</details>
 
 ---
 
