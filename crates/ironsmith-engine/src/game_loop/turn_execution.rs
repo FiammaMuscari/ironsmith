@@ -63,7 +63,9 @@ pub fn execute_turn_with(
                         runner.respond_options(decision_maker.decide_options(game, options_ctx));
                     }
                     crate::decisions::context::DecisionContext::ManaPayment(ref payment_ctx) => {
-                        runner.respond_mana_payment(decision_maker.decide_mana_payment(game, payment_ctx));
+                        runner.respond_mana_payment(
+                            decision_maker.decide_mana_payment(game, payment_ctx),
+                        );
                     }
                     crate::decisions::context::DecisionContext::Order(ref order_ctx) => {
                         runner.respond_order(decision_maker.decide_order(game, order_ctx));
@@ -99,7 +101,9 @@ pub fn execute_turn_with(
                         runner.respond_priority(decision_maker.decide_priority(game, ctx));
                     }
                     _ => {
-                        return Err(GameLoopError::InvalidState("unsupported runner decision".into()));
+                        return Err(GameLoopError::InvalidState(
+                            "unsupported runner decision".into(),
+                        ));
                     }
                 }
             }
@@ -188,11 +192,41 @@ pub(super) fn generate_damage_triggers(
     events: &[CombatDamageEvent],
     trigger_queue: &mut TriggerQueue,
 ) {
+    // Checked combat execution can already capture subscribers while the
+    // simultaneous observer frame still exists. Transfer those exact entries
+    // to the caller's queue; captured receipts must not be matched again.
+    let receipts = events
+        .iter()
+        .flat_map(|event| {
+            event.damage_receipt.iter().chain(
+                event
+                    .consequence_outcome
+                    .iter()
+                    .flat_map(|outcome| outcome.events.iter()),
+            )
+        })
+        .map(|event| event.occurrence_key())
+        .collect::<std::collections::HashSet<_>>();
+    let mut unrelated = Vec::new();
+    for entry in std::mem::take(&mut game.effect_store.pending_trigger_entries) {
+        if receipts.contains(&entry.triggering_event.occurrence_key()) {
+            trigger_queue.add(entry);
+        } else {
+            unrelated.push(entry);
+        }
+    }
+    game.effect_store.pending_trigger_entries = unrelated;
     game.clear_combat_damage_player_batch_hits();
     game.clear_combat_damage_object_batch_hits();
     if events.is_empty() {
         return;
     }
+
+    // Even the incremental matcher must see the complete damage occurrence
+    // before testing an amount threshold on its first assignment.
+    let mut completed = events.to_vec();
+    prepare_combat_damage_receipts(game, &mut completed);
+    let events = completed.as_slice();
 
     // The common large-board case has no damage/life-loss subscribers or
     // designation state whose matching depends on earlier events in this
@@ -207,6 +241,7 @@ pub(super) fn generate_damage_triggers(
             trigger_events.extend(life_loss_event);
             trigger_events.extend(combat_lifelink_trigger_events(event));
         }
+        crate::events::damage::bind_received_damage_amounts(&mut trigger_events);
         // Delayed triggers ("whenever that creature deals combat damage to a
         // player this turn") watch these events too; the simultaneous path
         // only consults abilities on objects.
@@ -289,7 +324,8 @@ fn queue_incremental_combat_damage_event(
         let Some(
             group @ (SimultaneousTriggerKey::DamageBatch
             | SimultaneousTriggerKey::DamageSource(_)
-            | SimultaneousTriggerKey::DamageTarget(_)),
+            | SimultaneousTriggerKey::DamageTarget(_)
+            | SimultaneousTriggerKey::DamageSourceTarget(_, _)),
         ) = candidate
             .ability
             .trigger
@@ -298,7 +334,11 @@ fn queue_incremental_combat_damage_event(
             trigger_queue.add(candidate);
             continue;
         };
-        let key = (candidate.source_stable_id, candidate.trigger_identity, group);
+        let key = (
+            candidate.source_stable_id,
+            candidate.trigger_identity,
+            group,
+        );
 
         if let Some(existing_indices) = damage_batch_groups.get(&key) {
             for index in existing_indices {
@@ -342,6 +382,38 @@ fn can_batch_combat_damage_trigger_events(game: &GameState) -> bool {
         && !matches!(game.player_speed(game.turn.active_player), Some(1..=3))
 }
 
+/// Freeze the whole completed combat occurrence. Shared by publication and
+/// the before-additions capture owner, so thresholds and object identities
+/// remain identical through either route.
+pub(super) fn prepare_combat_damage_receipts(
+    game: &mut GameState,
+    events: &mut [CombatDamageEvent],
+) {
+    if events
+        .iter()
+        .all(|event| event.amount == 0 || event.damage_receipt.is_some())
+    {
+        return;
+    }
+    let batch = game
+        .provenance_graph_mut()
+        .alloc_root_event(crate::events::EventKind::Damage);
+    let mut receipts = events
+        .iter()
+        .map(|event| combat_damage_trigger_events(game, event).0)
+        .collect::<Vec<_>>();
+    let mut positive = receipts.iter().flatten().cloned().collect::<Vec<_>>();
+    crate::events::damage::bind_received_damage_amounts(&mut positive);
+    let mut positive = positive.into_iter();
+    for (event, receipt) in events.iter_mut().zip(receipts.iter_mut()) {
+        if receipt.is_some() {
+            event.damage_receipt = positive
+                .next()
+                .map(|receipt| receipt.with_simultaneous_batch(batch));
+        }
+    }
+}
+
 /// Build the Damage (and LifeLoss) trigger events for one combat damage event.
 ///
 /// CR 615.1 / 603.2: damage that was entirely prevented (or otherwise not
@@ -351,6 +423,16 @@ fn combat_damage_trigger_events(
     game: &mut GameState,
     event: &CombatDamageEvent,
 ) -> (Option<TriggerEvent>, Vec<TriggerEvent>) {
+    if let Some(receipt) = &event.damage_receipt {
+        return (
+            Some(receipt.clone()),
+            event
+                .consequence_outcome
+                .as_ref()
+                .map(|outcome| outcome.events.clone())
+                .unwrap_or_default(),
+        );
+    }
     if event.amount == 0 {
         return (
             None,
@@ -457,6 +539,7 @@ mod tests {
         assert!(can_batch_combat_damage_trigger_events(&game));
         let events = vec![
             CombatDamageEvent {
+                damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
                 source: ObjectId::from_raw(101),
@@ -476,6 +559,7 @@ mod tests {
                 lifelink_outcome: None,
             },
             CombatDamageEvent {
+                damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
                 source: ObjectId::from_raw(102),
@@ -562,6 +646,7 @@ mod tests {
 
         let events = vec![
             CombatDamageEvent {
+                damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
                 source: attacker_one,
@@ -581,6 +666,7 @@ mod tests {
                 lifelink_outcome: None,
             },
             CombatDamageEvent {
+                damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
                 source: attacker_two,

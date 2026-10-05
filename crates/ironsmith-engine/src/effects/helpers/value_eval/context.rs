@@ -21,6 +21,8 @@ pub(crate) enum NumericProperty {
     ManaValue,
     ManaSpent,
     ColorCount,
+    KickerCount,
+    BasePower,
 }
 #[derive(Clone, Copy)]
 pub(super) enum Reduction {
@@ -72,16 +74,16 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
             Mode::Continuous(layer) => layer.filter_context(),
         }
     }
-    pub(super) fn x(&self) -> Result<i32, ExecutionError> {
+    pub(super) fn x(&self) -> Result<i64, ExecutionError> {
         match self.mode {
             Mode::Execution(ctx) => ctx
                 .x_value
-                .map(|x| x as i32)
+                .map(i64::from)
                 .ok_or_else(|| ExecutionError::UnresolvableValue("X value not set".into())),
             Mode::Continuous(_) => Ok(0),
         }
     }
-    pub(super) fn division_by_zero(&self, inner: &Value) -> Result<i32, ExecutionError> {
+    pub(super) fn division_by_zero<T>(&self, inner: &Value) -> Result<T, ExecutionError> {
         match self.mode {
             Mode::Execution(_) => Err(ExecutionError::UnresolvableValue(
                 "division by zero in dynamic value".into(),
@@ -127,6 +129,44 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                 ctx,
             ),
             Mode::Continuous(layer) => Ok(layer.players(value, filter)),
+        }
+    }
+    pub(super) fn aggregate_player_ids(
+        &self,
+        value: &Value,
+        filter: &PlayerFilter,
+    ) -> Result<Vec<PlayerId>, ExecutionError> {
+        match self.mode {
+            Mode::Execution(ctx) => match filter {
+                // Aggregates use actual multiplayer relations, not the older
+                // list adapter's "everyone other than you" opponent shortcut.
+                PlayerFilter::Opponent | PlayerFilter::Teammate => {
+                    let filter_ctx = ctx.filter_context(self.game);
+                    Ok(self
+                        .game
+                        .players
+                        .iter()
+                        .filter(|player| {
+                            player.is_in_game()
+                                && crate::filter::player_filter_matches_game(
+                                    filter,
+                                    player.id,
+                                    self.game,
+                                    &filter_ctx,
+                                )
+                        })
+                        .map(|player| player.id)
+                        .collect())
+                }
+                PlayerFilter::Excluding { base, excluded } => {
+                    let mut players = self.aggregate_player_ids(value, base)?;
+                    let excluded = self.aggregate_player_ids(value, excluded)?;
+                    players.retain(|player| !excluded.contains(player));
+                    Ok(players)
+                }
+                _ => self.player_ids(value, filter),
+            },
+            Mode::Continuous(layer) => Ok(layer.aggregate_players(filter)),
         }
     }
     pub(super) fn counter_player_ids(
@@ -265,8 +305,8 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
         filter: &ObjectFilter,
         property: NumericProperty,
         reduction: Reduction,
-    ) -> i32 {
-        let mut result: Option<i32> = None;
+    ) -> i64 {
+        let mut result: Option<i64> = None;
         let mut visit = |number: Option<i32>| {
             let number = match reduction {
                 Reduction::Sum => number.unwrap_or(0),
@@ -278,6 +318,7 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                     None => return,
                 },
             };
+            let number = i64::from(number);
             result = Some(match (result, reduction) {
                 (Some(total), Reduction::Sum) => total + number,
                 (Some(min), Reduction::Min) => min.min(number),
@@ -294,12 +335,16 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                     }) {
                         visit(match property {
                             NumericProperty::Power => snapshot.power,
+                            NumericProperty::BasePower => snapshot.base_power,
                             NumericProperty::Toughness => snapshot.toughness,
                             NumericProperty::ManaValue => {
                                 NumericProperty::ManaValue.snapshot(snapshot)
                             }
                             NumericProperty::ManaSpent => {
                                 Some(snapshot.mana_spent_to_cast.total() as i32)
+                            }
+                            NumericProperty::KickerCount => {
+                                checked_kicker_count(&snapshot.optional_costs_paid)
                             }
                             NumericProperty::ColorCount => Some(snapshot.colors.count() as i32),
                         });
@@ -313,6 +358,9 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                             continue;
                         }
                         visit(match property {
+                            NumericProperty::BasePower => {
+                                NumericProperty::BasePower.live(self.game, object)
+                            }
                             NumericProperty::Power => {
                                 self.game.calculated_power(id).or_else(|| object.power())
                             }
@@ -324,6 +372,9 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                             NumericProperty::ManaSpent => {
                                 Some(object.mana_spent_to_cast.total() as i32)
                             }
+                            NumericProperty::KickerCount => {
+                                checked_kicker_count(&object.optional_costs_paid)
+                            }
                             NumericProperty::ColorCount => Some(object.colors().count() as i32),
                         });
                     }
@@ -332,6 +383,7 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
             Mode::Continuous(layer) => layer.visit_layered(filter, |object, chars| {
                 visit(match property {
                     NumericProperty::Power => chars.power,
+                    NumericProperty::BasePower => chars.base_power,
                     NumericProperty::Toughness => chars.toughness,
                     // Absent mana costs count as zero; melded permanents and
                     // transformed back faces use their front faces' mana value
@@ -340,6 +392,9 @@ impl<'a, 'game> EvaluationContext<'a, 'game> {
                         Some(crate::filter::object_mana_value_for_filter(object))
                     }
                     NumericProperty::ManaSpent => Some(object.mana_spent_to_cast.total() as i32),
+                    NumericProperty::KickerCount => {
+                        checked_kicker_count(&object.optional_costs_paid)
+                    }
                     NumericProperty::ColorCount => Some(chars.colors.count() as i32),
                 })
             }),
@@ -468,41 +523,96 @@ impl PropertyObject<'_> {
     }
 }
 
+fn checked_kicker_count(paid: &crate::cost::OptionalCostsPaid) -> Option<i32> {
+    paid.costs
+        .iter()
+        .filter(|(cost, _)| {
+            matches!(
+                cost.kind,
+                crate::cost::OptionalCostKind::Kicker | crate::cost::OptionalCostKind::Multikicker
+            )
+        })
+        .try_fold(0i32, |total, (_, count)| {
+            total.checked_add(i32::try_from(*count).ok()?)
+        })
+}
+
 impl NumericProperty {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Power => "power",
+            Self::BasePower => "base power",
             Self::Toughness => "toughness",
             Self::ManaValue => "mana value",
             Self::ManaSpent => "mana spent to cast",
+            Self::KickerCount => "kicker payments",
             Self::ColorCount => "colors",
         }
     }
     pub(crate) fn snapshot(self, snapshot: &ObjectSnapshot) -> Option<i32> {
         match self {
             Self::Power => snapshot.power,
+            Self::BasePower => snapshot.base_power,
             Self::Toughness => snapshot.toughness,
             Self::ManaValue => Some(crate::filter::snapshot_mana_value_for_filter(snapshot)),
             Self::ManaSpent => Some(snapshot.mana_spent_to_cast.total() as i32),
+            Self::KickerCount => checked_kicker_count(&snapshot.optional_costs_paid),
             Self::ColorCount => Some(snapshot.colors.count() as i32),
+        }
+    }
+    fn is_power_or_toughness(self) -> bool {
+        matches!(self, Self::Power | Self::BasePower | Self::Toughness)
+    }
+    fn source_snapshot(self, snapshot: &ObjectSnapshot) -> Option<i32> {
+        // CR 208.3 / 107.2: a known noncreature permanent has no P/T;
+        // a required numeric read uses zero, not its printed creature stats.
+        // Keep absent LKI or a missing characteristic on a known creature
+        // distinguishable from this known-unavailable characteristic.
+        if self.is_power_or_toughness()
+            && snapshot.zone == Zone::Battlefield
+            && !snapshot.card_types.contains(&CardType::Creature)
+        {
+            Some(0)
+        } else {
+            self.snapshot(snapshot)
+        }
+    }
+    fn source_live(self, game: &GameState, object: &Object) -> Option<i32> {
+        if self.is_power_or_toughness()
+            && object.zone == Zone::Battlefield
+            && game
+                .current_card_types(object.id)
+                .is_some_and(|types| !types.contains(&CardType::Creature))
+        {
+            Some(0)
+        } else {
+            self.live(game, object)
         }
     }
     pub(crate) fn raw(self, object: &Object) -> Option<i32> {
         match self {
             Self::Power => object.power(),
+            Self::BasePower => object.base_power.as_ref().map(|value| value.base_value()),
             Self::Toughness => object.toughness(),
             Self::ManaValue => Some(crate::filter::object_mana_value_for_filter(object)),
             Self::ManaSpent => Some(object.mana_spent_to_cast.total() as i32),
+            Self::KickerCount => checked_kicker_count(&object.optional_costs_paid),
             Self::ColorCount => Some(object.colors().count() as i32),
         }
     }
     pub(crate) fn live(self, game: &GameState, object: &Object) -> Option<i32> {
         match self {
             Self::Power => game.calculated_power(object.id).or_else(|| object.power()),
+            Self::BasePower => game
+                .calculated_characteristics(object.id)
+                .and_then(|chars| chars.base_power)
+                .or_else(|| self.raw(object)),
             Self::Toughness => game
                 .calculated_toughness(object.id)
                 .or_else(|| object.toughness()),
-            Self::ManaValue | Self::ManaSpent | Self::ColorCount => self.raw(object),
+            Self::ManaValue | Self::ManaSpent | Self::ColorCount | Self::KickerCount => {
+                self.raw(object)
+            }
         }
     }
     pub(crate) fn characteristics(
@@ -511,8 +621,9 @@ impl NumericProperty {
     ) -> Option<i32> {
         match self {
             Self::Power => chars.power,
+            Self::BasePower => chars.base_power,
             Self::Toughness => chars.toughness,
-            Self::ManaValue | Self::ManaSpent | Self::ColorCount => None,
+            Self::ManaValue | Self::ManaSpent | Self::ColorCount | Self::KickerCount => None,
         }
     }
 }
@@ -525,14 +636,39 @@ impl EvaluationContext<'_, '_> {
         let missing = |tense| {
             ExecutionError::UnresolvableValue(format!("Source {tense} no {}", property.label()))
         };
+        if self.game.is_phased_out(self.source) {
+            let snapshot = self
+                .game
+                .turn_store
+                .turn_history
+                .source_last_known_snapshot(self.source)
+                .or_else(|| {
+                    ctx.source_snapshot
+                        .as_ref()
+                        .filter(|snapshot| snapshot.object_id == self.source)
+                })
+                .ok_or_else(|| {
+                    ExecutionError::UnresolvableValue(
+                        "phased damage/ability source has no exact last-known characteristics"
+                            .into(),
+                    )
+                })?;
+            return property
+                .source_snapshot(snapshot)
+                .ok_or_else(|| missing("had"));
+        }
         if let Some(snapshot) = source_lki_for_moved_current_object(self.game, ctx) {
-            property.snapshot(snapshot).ok_or_else(|| missing("had"))
+            property
+                .source_snapshot(snapshot)
+                .ok_or_else(|| missing("had"))
         } else if let Some(object) = self.game.object(self.source) {
             property
-                .live(self.game, object)
+                .source_live(self.game, object)
                 .ok_or_else(|| missing("has"))
         } else if let Some(snapshot) = &ctx.source_snapshot {
-            property.snapshot(snapshot).ok_or_else(|| missing("had"))
+            property
+                .source_snapshot(snapshot)
+                .ok_or_else(|| missing("had"))
         } else {
             Err(ExecutionError::ObjectNotFound(self.source))
         }
@@ -545,6 +681,9 @@ impl EvaluationContext<'_, '_> {
         let Some(ctx) = self.execution() else {
             return Ok(self.layer().object_number(spec, property));
         };
+        if matches!(spec.base(), ChooseSpec::Source) && property.is_power_or_toughness() {
+            return self.source_number(property);
+        }
         let missing = |tense| {
             ExecutionError::UnresolvableValue(format!("Target {tense} no {}", property.label()))
         };
@@ -578,12 +717,12 @@ impl EvaluationContext<'_, '_> {
 }
 
 impl EvaluationContext<'_, '_> {
-    pub(super) fn unavailable(
+    pub(super) fn unavailable<T>(
         &self,
         value: &Value,
         execution_reason: &str,
         layer_reason: &str,
-    ) -> Result<i32, ExecutionError> {
+    ) -> Result<T, ExecutionError> {
         match self.mode {
             Mode::Execution(_) => Err(ExecutionError::UnresolvableValue(execution_reason.into())),
             Mode::Continuous(layer) => layer.unsupported(value, layer_reason),
@@ -621,11 +760,9 @@ impl EvaluationContext<'_, '_> {
             Mode::Continuous(layer) => layer.controlled_object_count(filter, player),
         }
     }
-    pub(super) fn add_spell_metric(&self, total: i32, value: i32) -> i32 {
-        match self.mode {
-            Mode::Execution(_) => total.saturating_add(value),
-            Mode::Continuous(_) => total + value,
-        }
+    pub(super) fn add_spell_metric(&self, total: i64, value: i64) -> Result<i64, ExecutionError> {
+        total.checked_add(value).ok_or_else(|| ExecutionError::UnresolvableValue(
+            "spell metric total exceeds the wide value range".into()))
     }
     pub(super) fn tagged_spell_id(
         &self,
@@ -636,5 +773,218 @@ impl EvaluationContext<'_, '_> {
             Mode::Execution(ctx) => ctx.get_tagged(tag.as_str()).map(|snapshot| snapshot.object_id).ok_or_else(|| ExecutionError::UnresolvableValue(format!("DamageDealtThisTurnByTaggedSpellCast requires tagged spell snapshot '{tag}'"))),
             Mode::Continuous(layer) => Ok(self.game.object(self.source).and_then(|object| object.cast_tagged_objects.get(tag)).and_then(|snapshots| snapshots.first()).unwrap_or_else(|| layer.unsupported(value, "tagged spell cast is not retained on the continuous-effect source")).object_id),
         }
+    }
+}
+
+#[cfg(test)]
+mod referenced_kicker_count_tests {
+    use super::*;
+    #[test]
+    fn counts_both_kicker_kinds_but_never_wraps_out_of_value_range() {
+        let mut paid = crate::cost::OptionalCostsPaid::default();
+        paid.costs = vec![
+            ("Kicker".into(), 1),
+            ("Multikicker".into(), 3),
+            ("Buyback".into(), 7),
+        ];
+        assert_eq!(checked_kicker_count(&paid), Some(4));
+        paid.costs[1].1 = i32::MAX as u32;
+        assert_eq!(checked_kicker_count(&paid), None);
+        paid.costs[1].1 = u32::MAX;
+        assert_eq!(checked_kicker_count(&paid), None);
+    }
+}
+
+#[cfg(test)]
+mod aggregate_life_scope_tests {
+    use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::ids::CardId;
+    use crate::types::CardType;
+    #[test]
+    fn team_scoped_life_aggregates_agree_in_resolution_and_continuous_contexts() {
+        let mut game = GameState::new(
+            vec![
+                "Alice".into(),
+                "Teammate".into(),
+                "Bob".into(),
+                "Charlie".into(),
+            ],
+            41,
+        );
+        let [alice, teammate, bob, charlie] = std::array::from_fn(|i| game.players[i].id);
+        game.restore_alternating_teams(
+            vec![vec![alice, teammate], vec![bob, charlie]],
+            vec![alice, bob, teammate, charlie],
+            alice,
+            crate::game_state::FreeForAllAttackOption::MultiplePlayers,
+            None,
+            false,
+        )
+        .unwrap();
+        let card = CardBuilder::new(CardId::new(), "Team life source")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source = game.create_object_from_card(&card, alice, Zone::Battlefield);
+        for (player, life) in [(alice, 20), (teammate, 50), (bob, 10), (charlie, 12)] {
+            game.write_life_total(player, life);
+        }
+        let check = |game: &GameState, controller: PlayerId, value: Value, expected: i32| {
+            let ctx = ExecutionContext::new_default(source, controller);
+            assert_eq!(
+                super::super::resolve(&value, &EvaluationContext::execution_context(game, &ctx))
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(
+                crate::continuous::resolve_value_direct(
+                    &value,
+                    game.objects_map(),
+                    &[],
+                    &game.battlefield,
+                    &std::collections::HashSet::new(),
+                    source,
+                    controller,
+                    game
+                ),
+                expected
+            );
+        };
+        check(
+            &game,
+            alice,
+            Value::MaximumLifeTotal(PlayerFilter::Opponent),
+            12,
+        );
+        check(&game, alice, Value::MaximumLifeTotal(PlayerFilter::Any), 50);
+        check(
+            &game,
+            alice,
+            Value::MaximumLifeTotal(PlayerFilter::Teammate),
+            50,
+        );
+        check(
+            &game,
+            alice,
+            Value::MaximumLifeTotal(PlayerFilter::Excluding {
+                base: Box::new(PlayerFilter::Any),
+                excluded: Box::new(PlayerFilter::Opponent),
+            }),
+            50,
+        );
+        check(
+            &game,
+            alice,
+            Value::CountPlayersBelowHalfStartingLifeTotal(PlayerFilter::Opponent),
+            2,
+        );
+        game.write_life_total(teammate, 5);
+        check(
+            &game,
+            alice,
+            Value::CountPlayersBelowHalfStartingLifeTotal(PlayerFilter::Opponent),
+            2,
+        );
+        check(
+            &game,
+            alice,
+            Value::CountPlayersBelowHalfStartingLifeTotal(PlayerFilter::Any),
+            4,
+        );
+        check(
+            &game,
+            bob,
+            Value::MaximumLifeTotal(PlayerFilter::Opponent),
+            20,
+        );
+        check(
+            &game,
+            bob,
+            Value::CountPlayersBelowHalfStartingLifeTotal(PlayerFilter::Opponent),
+            2,
+        );
+    }
+}
+
+#[cfg(test)]
+mod known_noncreature_source_tests {
+    use super::*;
+
+    #[test]
+    fn source_statistics_use_known_zero_after_type_loss_live_departed_or_phased() {
+        for mode in 0..3 {
+            let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+            let player = PlayerId::from_index(0);
+            let source = game.create_object_from_definition(
+                &crate::cards::CardDefinitionBuilder::new(crate::CardId::new(), "Printed creature")
+                    .card_types(vec![CardType::Creature])
+                    .power_toughness(crate::card::PowerToughness::fixed(7, 9))
+                    .build(),
+                player,
+                Zone::Battlefield,
+            );
+            crate::effects::execute_effect(
+                &mut game,
+                &crate::effect::Effect::new(crate::effects::ApplyContinuousEffect::new(
+                    crate::continuous::EffectTarget::Specific(source),
+                    crate::continuous::Modification::SetCardTypes(vec![CardType::Artifact]),
+                    crate::effect::Until::EndOfTurn,
+                )),
+                &mut ExecutionContext::new_default(source, player),
+            )
+            .unwrap();
+            assert!(!game.current_is_creature(source));
+            if mode == 1 {
+                crate::effects::execute_effect(
+                    &mut game,
+                    &crate::effect::Effect::exile(ChooseSpec::SpecificObject(source)),
+                    &mut ExecutionContext::new_default(source, player),
+                )
+                .unwrap();
+            } else if mode == 2 {
+                game.phase_out(source);
+            }
+            let mut ctx = ExecutionContext::new_default(source, player);
+            if mode != 0 {
+                ctx.source_snapshot = game
+                    .turn_store
+                    .turn_history
+                    .source_last_known_snapshot(source)
+                    .cloned();
+                assert!(ctx.source_snapshot.is_some());
+            }
+            for value in [
+                Value::SourcePower,
+                Value::SourceToughness,
+                Value::PowerOf(Box::new(ChooseSpec::Source)),
+                Value::BasePowerOf(Box::new(ChooseSpec::Source)),
+                Value::ToughnessOf(Box::new(ChooseSpec::Source)),
+            ] {
+                assert_eq!(
+                    crate::effects::helpers::resolve_value(&game, &value, &ctx).unwrap(),
+                    0,
+                    "mode {mode}: {value:?} must not resurrect printed statistics"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn absent_source_evidence_and_missing_creature_statistics_remain_errors() {
+        let game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let player = PlayerId::from_index(0);
+        let source = ObjectId(997);
+        let mut ctx = ExecutionContext::new_default(source, player);
+        assert!(crate::effects::helpers::resolve_value(&game, &Value::SourcePower, &ctx).is_err());
+        let mut snapshot =
+            ObjectSnapshot::for_testing(source, player, "Missing creature statistic");
+        snapshot.card_types = vec![CardType::Creature];
+        snapshot.power = None;
+        ctx.source_snapshot = Some(snapshot);
+        assert!(matches!(
+            crate::effects::helpers::resolve_value(&game, &Value::SourcePower, &ctx),
+            Err(ExecutionError::UnresolvableValue(_))
+        ));
     }
 }

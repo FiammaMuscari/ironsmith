@@ -33,6 +33,7 @@
 
 mod cost_effect;
 mod dynamic_mana;
+mod life_representation;
 mod mana;
 mod payer_trait;
 mod processing_mode;
@@ -48,7 +49,7 @@ pub use processing_mode::CostProcessingMode;
 pub use cost_effect::CostEffect;
 pub use dynamic_mana::DynamicManaPaymentCost;
 pub use mana::ManaPaymentCost;
-pub(crate) use mana::pay_mana_cost_with_choices;
+pub(crate) use mana::{pay_mana_cost_with_choices, pay_mana_cost_with_choices_in_context};
 
 use crate::color::ColorSet;
 use crate::filter::ObjectFilter;
@@ -132,8 +133,12 @@ impl Cost {
 
     /// Create a life payment cost.
     pub fn life(amount: u32) -> Self {
-        Self::effect(crate::effects::LoseLifeEffect::you(amount))
-            .with_model(ironsmith_core::Cost::Life(crate::effect::Value::from(amount)))
+        let Ok(scalar) = i32::try_from(amount) else {
+            return Self::new(life_representation::UnrepresentableLifePayment { amount });
+        };
+        Self::effect(crate::effects::PayLifeEffect::you(scalar)).with_model(
+            ironsmith_core::Cost::Life(crate::effect::Value::Fixed(scalar)),
+        )
     }
 
     /// Create a mana cost.
@@ -247,7 +252,9 @@ impl Cost {
         Ok(cost)
     }
 
-    fn from_model_inner(model: ironsmith_core::Cost<crate::effect::Effect>) -> Result<Self, String> {
+    fn from_model_inner(
+        model: ironsmith_core::Cost<crate::effect::Effect>,
+    ) -> Result<Self, String> {
         fn fixed_u32(value: crate::effect::Value, context: &str) -> Result<u32, String> {
             match value {
                 crate::effect::Value::Fixed(amount) if amount >= 0 => Ok(amount as u32),
@@ -332,7 +339,10 @@ impl Cost {
 
     /// Create a discard cards cost with one-or-more allowed card types.
     pub fn discard_types(count: u32, card_types: Vec<CardType>) -> Self {
-        let model = ironsmith_core::Cost::Discard { count, card_types: card_types.clone() };
+        let model = ironsmith_core::Cost::Discard {
+            count,
+            card_types: card_types.clone(),
+        };
         let card_filter = if card_types.is_empty() {
             None
         } else {
@@ -350,7 +360,8 @@ impl Cost {
                 card_filter,
             )
             .with_tag("discarded_cost"),
-        )).with_model(model)
+        ))
+        .with_model(model)
     }
 
     /// Create a discard hand cost.
@@ -376,14 +387,18 @@ impl Cost {
 
     /// Create an exile-from-graveyard cost with one-or-more allowed card types.
     pub fn exile_from_graveyard_types(count: u32, card_types: Vec<CardType>) -> Self {
-        let model = ironsmith_core::Cost::ExileFromGraveyard { count, card_types: card_types.clone() };
+        let model = ironsmith_core::Cost::ExileFromGraveyard {
+            count,
+            card_types: card_types.clone(),
+        };
         let mut filter = crate::filter::ObjectFilter::default()
             .in_zone(crate::zone::Zone::Graveyard)
             .owned_by(crate::target::PlayerFilter::You);
         filter.card_types = card_types;
         Self::validated_effect(crate::effect::Effect::exile_from_graveyard_as_cost(
             count, filter,
-        )).with_model(model)
+        ))
+        .with_model(model)
     }
 
     /// Create an exile from hand cost.
@@ -391,24 +406,36 @@ impl Cost {
         Self::validated_effect(crate::effect::Effect::exile_from_hand_as_cost(
             count,
             color_filter,
-        )).with_model(ironsmith_core::Cost::ExileFromHand { count, color_filter })
+        ))
+        .with_model(ironsmith_core::Cost::ExileFromHand {
+            count,
+            color_filter,
+        })
     }
 
     /// Create a remove counters cost.
     pub fn remove_counters(counter_type: CounterType, count: u32) -> Self {
         Self::validated_effect(crate::effect::Effect::remove_counters(
             counter_type,
-            count as i32,
+            count,
             crate::target::ChooseSpec::Source,
         ))
+        .with_model(ironsmith_core::Cost::RemoveCounters {
+            counter_type,
+            count,
+        })
     }
 
     /// Create an add counters cost.
     pub fn add_counters(counter_type: CounterType, count: u32) -> Self {
         Self::validated_effect(crate::effect::Effect::put_counters_on_source(
             counter_type,
-            count as i32,
+            count,
         ))
+        .with_model(ironsmith_core::Cost::AddCounters {
+            counter_type,
+            count,
+        })
     }
 
     /// Create an energy payment cost.
@@ -447,8 +474,11 @@ impl Cost {
         Self::validated_effect(crate::effect::Effect::remove_any_counters_from_source(
             counter_type,
             display_x,
-        )).with_model(ironsmith_core::Cost::RemoveAnyCountersFromSource {
-            counter_type, display_x, remove_all: false,
+        ))
+        .with_model(ironsmith_core::Cost::RemoveAnyCountersFromSource {
+            counter_type,
+            display_x,
+            remove_all: false,
         })
     }
 
@@ -456,8 +486,11 @@ impl Cost {
     pub fn remove_all_counters_from_source(counter_type: Option<CounterType>) -> Self {
         Self::validated_effect(crate::effect::Effect::remove_all_counters_from_source(
             counter_type,
-        )).with_model(ironsmith_core::Cost::RemoveAnyCountersFromSource {
-            counter_type, display_x: false, remove_all: true,
+        ))
+        .with_model(ironsmith_core::Cost::RemoveAnyCountersFromSource {
+            counter_type,
+            display_x: false,
+            remove_all: true,
         })
     }
 
@@ -509,7 +542,16 @@ impl Cost {
         // CR 603.2c: the objects one cost moves (exile five cards from your
         // graveyard, sacrifice two creatures) move as one simultaneous event.
         // Mana abilities activated while paying mana are separate actions.
-        let opened_batch = !self.is_mana_cost() && game.open_simultaneous_action();
+        // A sequence contains separate instructions, each of which owns its
+        // simultaneous recipients. An outer cost wrapper must not turn the
+        // whole sequence into a single simultaneous action.
+        let sequential_program = self.effect_ref().is_some_and(|effect| {
+            effect
+                .downcast_ref::<crate::effects::SequenceEffect>()
+                .is_some()
+        });
+        let opened_batch =
+            !self.is_mana_cost() && !sequential_program && game.open_simultaneous_action();
         let result = self.0.pay(game, ctx);
         game.close_simultaneous_action(opened_batch);
         result
@@ -652,10 +694,12 @@ pub(crate) fn total_cost_to_payment_effects(
 /// Recognize a plain, single-choice cost program. The selected mana component
 /// belongs to the spell's total cost, not an independently funded effect payment.
 /// More elaborate modal programs retain their normal effect execution path.
-pub(crate) fn simple_modal_mana_cost_branches(cost: &crate::costs::Cost)
-    -> Option<Vec<(String, Vec<crate::costs::Cost>)>>
-{
-    let modal = cost.effect_ref()?.downcast_ref::<crate::effects::ChooseModeEffect>()?;
+pub(crate) fn simple_modal_mana_cost_branches(
+    cost: &crate::costs::Cost,
+) -> Option<Vec<(String, Vec<crate::costs::Cost>)>> {
+    let modal = cost
+        .effect_ref()?
+        .downcast_ref::<crate::effects::ChooseModeEffect>()?;
     // Effect's PartialEq intentionally returns false, even for a clone. Check
     // the choice policy independently of the effects retained in its branches.
     let mut policy = modal.clone();
@@ -671,13 +715,22 @@ pub(crate) fn simple_modal_mana_cost_branches(cost: &crate::costs::Cost)
     for mode in &modal.modes {
         // Multi-effect programs can carry ordered outcome dependencies. Leave
         // them intact until their payment contributions can preserve those facts.
-        if mode.effects.len() != 1 { return None; }
+        if mode.effects.len() != 1 {
+            return None;
+        }
         let mut components = Vec::new();
         for effect in &mode.effects {
             if let Some(payment) = effect.downcast_ref::<crate::effects::PayManaEffect>() {
-                if payment.player != crate::target::ChooseSpec::Player(crate::target::PlayerFilter::You)
-                    || payment.x_value.is_some() || payment.x_maximum.is_some()
-                    || payment.cost.pips().iter().flatten().any(|symbol| matches!(symbol, crate::mana::ManaSymbol::X))
+                if payment.player
+                    != crate::target::ChooseSpec::Player(crate::target::PlayerFilter::You)
+                    || payment.x_value.is_some()
+                    || payment.x_maximum.is_some()
+                    || payment
+                        .cost
+                        .pips()
+                        .iter()
+                        .flatten()
+                        .any(|symbol| matches!(symbol, crate::mana::ManaSymbol::X))
                 {
                     return None;
                 }
@@ -970,7 +1023,6 @@ pub(crate) fn legal_discard_cost_cards(
         .collect()
 }
 
-
 /// Selected discard payment and affordability use the same eligible set.
 /// Entry replacements cannot choose any member of their simultaneous entry
 /// batch to change zones (CR 614.13a), even while it remains in hand.
@@ -984,7 +1036,6 @@ pub(crate) fn legal_discard_cost_cards_in_context(
         .filter(|id| !ctx.replacement.entry_reserved_objects.contains(id))
         .collect()
 }
-
 
 #[cfg(test)]
 mod retained_cost_model_tests {
@@ -1017,7 +1068,12 @@ mod retained_cost_model_tests {
             cost.compiled_model(),
             Some(ironsmith_core::Cost::Tap)
         ));
-        assert!(matches!(Cost::life(2).compiled_model(), Some(ironsmith_core::Cost::Life(crate::effect::Value::Fixed(2)))),
-            "standard native life payer retains exact semantic model");
+        assert!(
+            matches!(
+                Cost::life(2).compiled_model(),
+                Some(ironsmith_core::Cost::Life(crate::effect::Value::Fixed(2)))
+            ),
+            "standard native life payer retains exact semantic model"
+        );
     }
 }

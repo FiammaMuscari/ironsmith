@@ -28,48 +28,19 @@ pub use ironsmith_core::CounterType;
 /// Stable occurrence of a keyword counter. The serial is a little-endian
 /// integer with arbitrary precision, so removed registrations are never reused.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct CounterAbilityOrigin {
     pub counter_type: CounterType,
     pub serial: Vec<u32>,
-}
-
-/// Serializable registration facts; payloads are materialized once on import.
-/// Application keys use these typed origins rather than newly allocated IDs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CounterAbilityState {
-    pub next_serial: Vec<u32>,
-    pub origins: Vec<CounterAbilityOrigin>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CounterAbilityOccurrence {
     pub origin: CounterAbilityOrigin,
     pub abilities: Vec<Ability>,
-}
-
-/// Complete counter registrations with shared static-ability occurrences.
-/// Nonstatic payloads are immutable programs determined by the counter type.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-pub enum RetainedCounterAbilitySlot<S> {
-    Static(S),
-    CanonicalProgram,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-pub struct RetainedCounterAbilityOccurrence<S> {
-    pub origin: CounterAbilityOrigin,
-    pub slots: Vec<RetainedCounterAbilitySlot<S>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-pub struct RetainedObjectCounters<S> {
-    pub counts: Vec<(CounterType, u32)>,
-    pub next_serial: Vec<u32>,
-    pub occurrences: Vec<RetainedCounterAbilityOccurrence<S>>,
 }
 
 /// Counter counts and their registered ability payloads mutate together.
@@ -81,142 +52,8 @@ pub struct ObjectCounters {
     next_serial: Vec<u32>,
 }
 impl ObjectCounters {
-    pub fn counts(&self) -> &std::collections::BTreeMap<CounterType, u32> { &self.counts }
-
-    pub fn ability_state(&self) -> CounterAbilityState {
-        CounterAbilityState {
-            next_serial: self.next_serial.clone(),
-            origins: self.occurrences.values().flat_map(|entries|
-                entries.iter().map(|entry| entry.origin.clone())).collect(),
-        }
-    }
-
-    /// Import validates the complete count/origin relationship before publishing
-    /// a store. Legacy counts alone cannot recover surviving keyword identities.
-    pub fn from_checkpoint(
-        counts: std::collections::BTreeMap<CounterType, u32>,
-        state: Option<CounterAbilityState>,
-    ) -> Result<Self, String> {
-        let state = match state {
-            Some(state) => state,
-            None if counts.iter().all(|(kind, count)| *count == 0 || !kind.is_ability_counter()) =>
-                CounterAbilityState { next_serial: Vec::new(), origins: Vec::new() },
-            None => return Err("keyword counters require their registration state".into()),
-        };
-        fn canonical(serial: &[u32]) -> bool { serial.last().is_none_or(|last| *last != 0) }
-        fn compare(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
-            a.len().cmp(&b.len()).then_with(|| a.iter().rev().cmp(b.iter().rev()))
-        }
-        if !canonical(&state.next_serial) {
-            return Err("counter registration allocator is not canonical".into());
-        }
-        let mut seen = std::collections::HashSet::new();
-        let mut occurrences: std::collections::BTreeMap<CounterType, Vec<CounterAbilityOccurrence>> =
-            std::collections::BTreeMap::new();
-        for origin in state.origins {
-            if !origin.counter_type.is_ability_counter()
-                || !canonical(&origin.serial)
-                || compare(&origin.serial, &state.next_serial) != std::cmp::Ordering::Less
-                || !seen.insert(origin.serial.clone())
-            {
-                return Err("invalid or reused counter ability origin".into());
-            }
-            let entries = occurrences.entry(origin.counter_type).or_default();
-            if entries.last().is_some_and(|previous|
-                compare(&previous.origin.serial, &origin.serial) != std::cmp::Ordering::Less)
-            {
-                return Err("counter ability registrations changed survivor order".into());
-            }
-            let abilities = counter_ability_payloads(origin.counter_type);
-            if abilities.is_empty() {
-                return Err("counter ability payload is unsupported".into());
-            }
-            entries.push(CounterAbilityOccurrence { origin, abilities });
-        }
-        for (kind, entries) in &occurrences {
-            if counts.get(kind).copied().map(|count| count as usize) != Some(entries.len()) {
-                return Err("counter origins do not match their count".into());
-            }
-        }
-        for (kind, count) in &counts {
-            if *count > 0 && kind.is_ability_counter() && !occurrences.contains_key(kind) {
-                return Err("keyword counter is missing its ability origins".into());
-            }
-        }
-        Ok(Self { counts, occurrences, next_serial: state.next_serial })
-    }
-
-
-    /// The binder retains static payloads in the owning shared occurrence table.
-    pub fn retain_with_static_occurrences<S>(
-        &self,
-        mut retain: impl FnMut(&StaticAbility) -> Result<S, String>,
-    ) -> Result<RetainedObjectCounters<S>, String> {
-        let mut occurrences = Vec::new();
-        for entry in self.occurrences.values().flatten() {
-            let mut slots = Vec::new();
-            for ability in &entry.abilities {
-                slots.push(match &ability.kind {
-                    crate::ability::AbilityKind::Static(ability) =>
-                        RetainedCounterAbilitySlot::Static(retain(ability)?),
-                    _ => RetainedCounterAbilitySlot::CanonicalProgram,
-                });
-            }
-            occurrences.push(RetainedCounterAbilityOccurrence {
-                origin: entry.origin.clone(), slots,
-            });
-        }
-        Ok(RetainedObjectCounters {
-            counts: self.counts.iter().map(|(kind, count)| (*kind, *count)).collect(),
-            next_serial: self.next_serial.clone(), occurrences,
-        })
-    }
-
-    /// Restore all registration facts and bind every static payload before
-    /// publishing a store. Counts alone do not preserve shared occurrence IDs.
-    pub fn restore_with_static_occurrences<S>(
-        state: RetainedObjectCounters<S>,
-        mut restore: impl FnMut(S) -> Result<StaticAbility, String>,
-    ) -> Result<Self, String> {
-        let mut counts = std::collections::BTreeMap::new();
-        for (kind, count) in state.counts {
-            if counts.insert(kind, count).is_some() {
-                return Err("duplicate counter count entry".into());
-            }
-        }
-        let registration = CounterAbilityState {
-            next_serial: state.next_serial,
-            origins: state.occurrences.iter().map(|entry| entry.origin.clone()).collect(),
-        };
-        let mut restored = Self::from_checkpoint(counts, Some(registration))?;
-        let mut payload_instances = std::collections::HashSet::new();
-        for retained in state.occurrences {
-            let entry = restored.occurrences.get_mut(&retained.origin.counter_type)
-                .and_then(|entries| entries.iter_mut().find(|entry| entry.origin == retained.origin))
-                .ok_or("counter registration is missing its payload")?;
-            if retained.slots.len() != entry.abilities.len() {
-                return Err("counter ability slot count is invalid".into());
-            }
-            for (slot, ability) in retained.slots.into_iter().zip(&mut entry.abilities) {
-                match (slot, &mut ability.kind) {
-                    (RetainedCounterAbilitySlot::Static(reference), crate::ability::AbilityKind::Static(expected)) => {
-                        let supplied = restore(reference)?;
-                        let canonical = expected.compiled_model()
-                            .ok_or("counter static ability lacks its canonical model")?;
-                        if supplied.compiled_model() != Some(canonical) {
-                            return Err("counter static payload differs from its counter type".into());
-                        }
-                        if !payload_instances.insert(supplied.instance_id()) {
-                            return Err("independent counters reuse a static payload occurrence".into());
-                        }
-                        *expected = supplied;
-                    }
-                    (RetainedCounterAbilitySlot::CanonicalProgram, crate::ability::AbilityKind::Triggered(_)) => {}
-                    _ => return Err("counter ability slot kind is invalid".into()),
-                }
-            }
-        }
-        Ok(restored)
+    pub fn counts(&self) -> &std::collections::BTreeMap<CounterType, u32> {
+        &self.counts
     }
 
     pub fn insert(&mut self, kind: CounterType, count: u32) -> Option<u32> {
@@ -231,15 +68,24 @@ impl ObjectCounters {
                     let (next, overflow) = digit.overflowing_add(1);
                     *digit = next;
                     carry = overflow;
-                    if !carry { break; }
+                    if !carry {
+                        break;
+                    }
                 }
-                if carry { self.next_serial.push(1); }
+                if carry {
+                    self.next_serial.push(1);
+                }
                 occurrences.push(CounterAbilityOccurrence {
-                    origin: CounterAbilityOrigin { counter_type: kind, serial },
+                    origin: CounterAbilityOrigin {
+                        counter_type: kind,
+                        serial,
+                    },
                     abilities: counter_ability_payloads(kind),
                 });
             }
-            if !occurrences.is_empty() { self.occurrences.insert(kind, occurrences); }
+            if !occurrences.is_empty() {
+                self.occurrences.insert(kind, occurrences);
+            }
         }
         old
     }
@@ -257,31 +103,43 @@ impl ObjectCounters {
     }
 
     pub fn clear(&mut self) {
-        self.counts.clear(); self.occurrences.clear();
+        self.counts.clear();
+        self.occurrences.clear();
     }
 
     pub(crate) fn ability_occurrences(&self, kind: CounterType) -> &[CounterAbilityOccurrence] {
-        self.occurrences.get(&kind).map(Vec::as_slice).unwrap_or(&[])
+        self.occurrences
+            .get(&kind)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 }
 impl std::ops::Deref for ObjectCounters {
     type Target = std::collections::BTreeMap<CounterType, u32>;
-    fn deref(&self) -> &Self::Target { &self.counts }
+    fn deref(&self) -> &Self::Target {
+        &self.counts
+    }
 }
 impl<'a> IntoIterator for &'a ObjectCounters {
     type Item = (&'a CounterType, &'a u32);
     type IntoIter = std::collections::btree_map::Iter<'a, CounterType, u32>;
-    fn into_iter(self) -> Self::IntoIter { self.counts.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.counts.iter()
+    }
 }
 impl IntoIterator for ObjectCounters {
     type Item = (CounterType, u32);
     type IntoIter = std::collections::btree_map::IntoIter<CounterType, u32>;
-    fn into_iter(self) -> Self::IntoIter { self.counts.into_iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.counts.into_iter()
+    }
 }
 impl FromIterator<(CounterType, u32)> for ObjectCounters {
     fn from_iter<T: IntoIterator<Item = (CounterType, u32)>>(iter: T) -> Self {
         let mut counters = Self::default();
-        for (kind, count) in iter { counters.insert(kind, count); }
+        for (kind, count) in iter {
+            counters.insert(kind, count);
+        }
         counters
     }
 }
@@ -301,39 +159,50 @@ fn counter_ability_payloads(kind: CounterType) -> Vec<Ability> {
         CounterType::Trample => Some(StaticAbility::trample()),
         CounterType::Vigilance => Some(StaticAbility::vigilance()),
         CounterType::Haste => Some(StaticAbility::haste()),
-        CounterType::Named(name) if name.eq_ignore_ascii_case("shadow") => Some(StaticAbility::shadow()),
+        CounterType::Named(name) if name.eq_ignore_ascii_case("shadow") => {
+            Some(StaticAbility::shadow())
+        }
         _ => None,
     };
-    if let Some(keyword) = keyword { return vec![Ability::static_ability(keyword)]; }
+    if let Some(keyword) = keyword {
+        return vec![Ability::static_ability(keyword)];
+    }
     if kind == CounterType::Decayed {
         return vec![
             Ability::static_ability(StaticAbility::cant_block()),
             Ability::triggered(
                 crate::triggers::Trigger::this_attacks(),
-                crate::resolution::ResolutionProgram::from_effects(vec![crate::effect::Effect::new(
-                    crate::effects::ScheduleDelayedTriggerEffect::new(
+                crate::resolution::ResolutionProgram::from_effects(vec![
+                    crate::effect::Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
                         crate::triggers::Trigger::end_of_combat(),
-                        vec![crate::effect::Effect::sacrifice_source()], true, Vec::new(),
+                        vec![crate::effect::Effect::sacrifice_source()],
+                        true,
+                        Vec::new(),
                         crate::target::PlayerFilter::You,
-                    ),
-                )]),
+                    )),
+                ]),
             ),
         ];
     }
     if matches!(kind, CounterType::Named(name) if name.eq_ignore_ascii_case("exalted")) {
         let attacker_tag = "exalted_attacker";
         return vec![Ability::triggered(
-            crate::triggers::Trigger::attacks_alone(crate::target::ObjectFilter::creature().you_control()),
+            crate::triggers::Trigger::attacks_alone(
+                crate::target::ObjectFilter::creature().you_control(),
+            ),
             crate::resolution::ResolutionProgram::from_effects(vec![
                 crate::effect::Effect::tag_triggering_object(attacker_tag),
-                crate::effect::Effect::pump(1, 1, crate::target::ChooseSpec::Tagged(attacker_tag.into()),
-                    crate::effect::Until::EndOfTurn),
+                crate::effect::Effect::pump(
+                    1,
+                    1,
+                    crate::target::ChooseSpec::Tagged(attacker_tag.into()),
+                    crate::effect::Until::EndOfTurn,
+                ),
             ]),
         )];
     }
     Vec::new()
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SharedStr(Arc<str>);
@@ -756,12 +625,18 @@ impl From<AuraAttachmentFilter> for AuraAttachmentMetadata {
 
 impl std::ops::Deref for AuraAttachmentMetadata {
     type Target = AuraAttachmentFilter;
-    fn deref(&self) -> &Self::Target { &self.filter }
+    fn deref(&self) -> &Self::Target {
+        &self.filter
+    }
 }
 
 impl AuraAttachmentMetadata {
-    pub fn to_owned_value(&self) -> AuraAttachmentFilter { self.filter.to_owned_value() }
-    pub(crate) fn enchant_ability(&self) -> StaticAbility { self.enchant_ability.clone() }
+    pub fn to_owned_value(&self) -> AuraAttachmentFilter {
+        self.filter.to_owned_value()
+    }
+    pub(crate) fn enchant_ability(&self) -> StaticAbility {
+        self.enchant_ability.clone()
+    }
 }
 
 /// Complete attachment payload including its retained enchant occurrence.
@@ -929,346 +804,6 @@ pub struct EntersAsCopyRestoreState {
     pub has_fuse: bool,
 }
 
-/// Complete saved face-down/copy presentation, separate from calculated values.
-/// Executable payloads are mandatory fallible mapping inputs; absent optional
-/// payloads remain explicitly absent and are never rebuilt from display text.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(
-    feature = "serialization",
-    serde(bound(
-        deserialize = "A: serde::Deserialize<'de>, P: serde::Deserialize<'de>, H: serde::Deserialize<'de>"
-    ))
-)]
-pub struct RetainedFaceDownCastState<A, P, H> {
-    pub name: String,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub first_printed_set_name: Option<String>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub mana_cost: Option<ManaCost>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub color_override: Option<ColorSet>,
-    pub supertypes: Vec<Supertype>,
-    pub card_types: Vec<CardType>,
-    pub subtypes: Vec<Subtype>,
-    pub compiled_card_text: String,
-    pub ability_labels: Vec<String>,
-    pub rules_text_color_identity: ColorSet,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_power: Option<PtValue>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_toughness: Option<PtValue>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_loyalty: Option<u32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_defense: Option<u32>,
-    pub abilities: Vec<A>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub spell_effect: Option<P>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub aura_attach_filter: Option<H>,
-    pub disguise_ward: bool,
-}
-
-impl<A, P, H> RetainedFaceDownCastState<A, P, H> {
-    pub fn try_map_payloads<B, Q, J, Error>(
-        self,
-        mut ability: impl FnMut(A) -> Result<B, Error>,
-        mut program: impl FnMut(P) -> Result<Q, Error>,
-        mut attachment: impl FnMut(H) -> Result<J, Error>,
-    ) -> Result<RetainedFaceDownCastState<B, Q, J>, Error> {
-        let Self {
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            abilities,
-            spell_effect,
-            aura_attach_filter,
-            disguise_ward,
-        } = self;
-        Ok(RetainedFaceDownCastState {
-            name: name,
-            first_printed_set_name: first_printed_set_name,
-            mana_cost: mana_cost,
-            color_override: color_override,
-            supertypes: supertypes,
-            card_types: card_types,
-            subtypes: subtypes,
-            compiled_card_text: compiled_card_text,
-            ability_labels: ability_labels,
-            rules_text_color_identity: rules_text_color_identity,
-            base_power: base_power,
-            base_toughness: base_toughness,
-            base_loyalty: base_loyalty,
-            base_defense: base_defense,
-            abilities: abilities
-                .into_iter()
-                .map(&mut ability)
-                .collect::<Result<Vec<_>, Error>>()?,
-            spell_effect: spell_effect.map(&mut program).transpose()?,
-            aura_attach_filter: aura_attach_filter.map(&mut attachment).transpose()?,
-            disguise_ward: disguise_ward,
-        })
-    }
-}
-
-impl From<FaceDownCastState>
-    for RetainedFaceDownCastState<
-        Ability,
-        crate::resolution::ResolutionProgram,
-        AuraAttachmentMetadata,
-    >
-{
-    fn from(value: FaceDownCastState) -> Self {
-        let FaceDownCastState {
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            abilities,
-            spell_effect,
-            aura_attach_filter,
-            disguise_ward,
-        } = value;
-        Self {
-            name: name.to_string(),
-            first_printed_set_name: first_printed_set_name.map(|value| value.to_string()),
-            mana_cost: owned_optional_value(&mana_cost),
-            color_override: color_override,
-            supertypes: supertypes.to_vec(),
-            card_types: card_types.to_vec(),
-            subtypes: subtypes.to_vec(),
-            compiled_card_text: compiled_card_text.to_string(),
-            ability_labels: ability_labels.to_vec(),
-            rules_text_color_identity: rules_text_color_identity,
-            base_power: base_power,
-            base_toughness: base_toughness,
-            base_loyalty: base_loyalty,
-            base_defense: base_defense,
-            abilities: abilities.as_ref().clone(),
-            spell_effect: owned_optional_value(&spell_effect),
-            aura_attach_filter: aura_attach_filter,
-            disguise_ward: disguise_ward,
-        }
-    }
-}
-impl
-    From<
-        RetainedFaceDownCastState<
-            Ability,
-            crate::resolution::ResolutionProgram,
-            AuraAttachmentMetadata,
-        >,
-    > for FaceDownCastState
-{
-    fn from(
-        value: RetainedFaceDownCastState<
-            Ability,
-            crate::resolution::ResolutionProgram,
-            AuraAttachmentMetadata,
-        >,
-    ) -> Self {
-        let RetainedFaceDownCastState {
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            abilities,
-            spell_effect,
-            aura_attach_filter,
-            disguise_ward,
-        } = value;
-        Self {
-            name: name.into(),
-            first_printed_set_name: first_printed_set_name.map(Into::into),
-            mana_cost: mana_cost.map(Into::into),
-            color_override: color_override,
-            supertypes: supertypes.into(),
-            card_types: card_types.into(),
-            subtypes: subtypes.into(),
-            compiled_card_text: compiled_card_text.into(),
-            ability_labels: ability_labels.into(),
-            rules_text_color_identity: rules_text_color_identity,
-            base_power: base_power,
-            base_toughness: base_toughness,
-            base_loyalty: base_loyalty,
-            base_defense: base_defense,
-            abilities: abilities.into(),
-            spell_effect: spell_effect.map(Into::into),
-            aura_attach_filter: aura_attach_filter,
-            disguise_ward: disguise_ward,
-        }
-    }
-}
-
-/// Saved printed presentation plus face links for an enters-as-copy overlay.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(
-    feature = "serialization",
-    serde(bound(
-        deserialize = "A: serde::Deserialize<'de>, P: serde::Deserialize<'de>, H: serde::Deserialize<'de>, I: serde::Deserialize<'de>"
-    ))
-)]
-pub struct RetainedEntersAsCopyRestoreState<A, P, H, I = CardId> {
-    pub printed: RetainedFaceDownCastState<A, P, H>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub other_face: Option<I>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub other_face_name: Option<String>,
-    pub linked_face_layout: LinkedFaceLayout,
-    pub has_fuse: bool,
-}
-impl<A, P, H, I> RetainedEntersAsCopyRestoreState<A, P, H, I> {
-    pub fn try_map_payloads<B, Q, J, K, Error>(
-        self,
-        ability: impl FnMut(A) -> Result<B, Error>,
-        program: impl FnMut(P) -> Result<Q, Error>,
-        attachment: impl FnMut(H) -> Result<J, Error>,
-        mut face: impl FnMut(I) -> Result<K, Error>,
-    ) -> Result<RetainedEntersAsCopyRestoreState<B, Q, J, K>, Error> {
-        let Self {
-            printed,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            has_fuse,
-        } = self;
-        Ok(RetainedEntersAsCopyRestoreState {
-            printed: printed.try_map_payloads(ability, program, attachment)?,
-            other_face: other_face.map(&mut face).transpose()?,
-            other_face_name,
-            linked_face_layout,
-            has_fuse,
-        })
-    }
-}
-impl From<EntersAsCopyRestoreState>
-    for RetainedEntersAsCopyRestoreState<
-        Ability,
-        crate::resolution::ResolutionProgram,
-        AuraAttachmentMetadata,
-    >
-{
-    fn from(value: EntersAsCopyRestoreState) -> Self {
-        let EntersAsCopyRestoreState {
-            printed,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            has_fuse,
-        } = value;
-        Self {
-            printed: printed.into(),
-            other_face,
-            other_face_name: other_face_name.map(|name| name.to_string()),
-            linked_face_layout,
-            has_fuse,
-        }
-    }
-}
-impl
-    From<
-        RetainedEntersAsCopyRestoreState<
-            Ability,
-            crate::resolution::ResolutionProgram,
-            AuraAttachmentMetadata,
-        >,
-    > for EntersAsCopyRestoreState
-{
-    fn from(
-        value: RetainedEntersAsCopyRestoreState<
-            Ability,
-            crate::resolution::ResolutionProgram,
-            AuraAttachmentMetadata,
-        >,
-    ) -> Self {
-        let RetainedEntersAsCopyRestoreState {
-            printed,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            has_fuse,
-        } = value;
-        Self {
-            printed: printed.into(),
-            other_face,
-            other_face_name: other_face_name.map(Into::into),
-            linked_face_layout,
-            has_fuse,
-        }
-    }
-}
 /// Stored copiable fields needed to restore a prototype card outside the stack
 /// or battlefield.
 #[derive(Debug, Clone)]
@@ -1278,194 +813,6 @@ pub struct PrototypeCastState {
     pub base_power: Option<PtValue>,
     pub base_toughness: Option<PtValue>,
 }
-
-/// Complete saved cast overlay; optional fields must be explicitly present on the wire.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(feature = "serialization", serde(bound(deserialize = "P: serde::Deserialize<'de>, H: serde::Deserialize<'de>")))]
-pub struct RetainedBestowCastState<P, H> {
-    pub card_types: Vec<CardType>,
-    pub subtypes: Vec<Subtype>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub aura_attach_filter: Option<H>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub spell_effect: Option<P>,
-}
-
-impl From<BestowCastState>
-    for RetainedBestowCastState<crate::resolution::ResolutionProgram, AuraAttachmentMetadata>
-{
-    fn from(value: BestowCastState) -> Self {
-        let BestowCastState {
-            card_types,
-            subtypes,
-            aura_attach_filter,
-            spell_effect,
-        } = value;
-        Self {
-            card_types: card_types.to_vec(),
-            subtypes: subtypes.to_vec(),
-            aura_attach_filter: aura_attach_filter,
-            spell_effect: owned_optional_value(&spell_effect),
-        }
-    }
-}
-
-impl From<RetainedBestowCastState<crate::resolution::ResolutionProgram, AuraAttachmentMetadata>>
-    for BestowCastState
-{
-    fn from(
-        value: RetainedBestowCastState<
-            crate::resolution::ResolutionProgram,
-            AuraAttachmentMetadata,
-        >,
-    ) -> Self {
-        let RetainedBestowCastState {
-            card_types,
-            subtypes,
-            aura_attach_filter,
-            spell_effect,
-        } = value;
-        Self {
-            card_types: card_types.into(),
-            subtypes: subtypes.into(),
-            aura_attach_filter: aura_attach_filter,
-            spell_effect: spell_effect.map(Into::into),
-        }
-    }
-}
-
-impl<P, H> RetainedBestowCastState<P, H> {
-    pub fn try_map_payloads<Q, J, Error>(
-        self,
-        mut program: impl FnMut(P) -> Result<Q, Error>,
-        mut attachment: impl FnMut(H) -> Result<J, Error>,
-    ) -> Result<RetainedBestowCastState<Q, J>, Error> {
-        Ok(RetainedBestowCastState {
-            card_types: self.card_types,
-            subtypes: self.subtypes,
-            aura_attach_filter: self.aura_attach_filter.map(&mut attachment).transpose()?,
-            spell_effect: self.spell_effect.map(&mut program).transpose()?,
-        })
-    }
-}
-
-/// Complete saved cast overlay; optional fields must be explicitly present on the wire.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(feature = "serialization", serde(bound(deserialize = "P: serde::Deserialize<'de>")))]
-pub struct RetainedSpliceCastState<P> {
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub spell_effect: Option<P>,
-}
-
-impl From<SpliceCastState> for RetainedSpliceCastState<crate::resolution::ResolutionProgram> {
-    fn from(value: SpliceCastState) -> Self {
-        let SpliceCastState { spell_effect } = value;
-        Self {
-            spell_effect: owned_optional_value(&spell_effect),
-        }
-    }
-}
-
-impl From<RetainedSpliceCastState<crate::resolution::ResolutionProgram>> for SpliceCastState {
-    fn from(value: RetainedSpliceCastState<crate::resolution::ResolutionProgram>) -> Self {
-        let RetainedSpliceCastState { spell_effect } = value;
-        Self {
-            spell_effect: spell_effect.map(Into::into),
-        }
-    }
-}
-
-impl<P> RetainedSpliceCastState<P> {
-    pub fn try_map_payloads<Q, Error>(
-        self,
-        mut program: impl FnMut(P) -> Result<Q, Error>,
-    ) -> Result<RetainedSpliceCastState<Q>, Error> {
-        Ok(RetainedSpliceCastState {
-            spell_effect: self.spell_effect.map(&mut program).transpose()?,
-        })
-    }
-}
-
-/// Complete saved cast overlay; optional fields must be explicitly present on the wire.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RetainedPrototypeCastState {
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub mana_cost: Option<ManaCost>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub color_override: Option<ColorSet>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_power: Option<PtValue>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_toughness: Option<PtValue>,
-}
-
-impl From<PrototypeCastState> for RetainedPrototypeCastState {
-    fn from(value: PrototypeCastState) -> Self {
-        let PrototypeCastState {
-            mana_cost,
-            color_override,
-            base_power,
-            base_toughness,
-        } = value;
-        Self {
-            mana_cost: owned_optional_value(&mana_cost),
-            color_override: color_override,
-            base_power: base_power,
-            base_toughness: base_toughness,
-        }
-    }
-}
-
-impl From<RetainedPrototypeCastState> for PrototypeCastState {
-    fn from(value: RetainedPrototypeCastState) -> Self {
-        let RetainedPrototypeCastState {
-            mana_cost,
-            color_override,
-            base_power,
-            base_toughness,
-        } = value;
-        Self {
-            mana_cost: mana_cost.map(Into::into),
-            color_override: color_override,
-            base_power: base_power,
-            base_toughness: base_toughness,
-        }
-    }
-}
-
 
 /// The combined characteristics of a split card's two halves (CR 709.4a-d),
 /// precomputed so accessors can hand out slices.
@@ -1499,146 +846,6 @@ impl SplitCombinedCharacteristics {
             subtypes: union(&own.subtypes, &other.subtypes).into(),
             supertypes: union(&own.supertypes, &other.supertypes).into(),
         }
-    }
-}
-
-/// Complete captured casting/payment facts, separate from displayed spell state.
-/// All executable and historical payloads require explicit fallible conversion.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serialization", serde(bound(deserialize = "M: serde::Deserialize<'de>, K: serde::Deserialize<'de>, C: serde::Deserialize<'de>, G: serde::Deserialize<'de>, S: serde::Deserialize<'de>")))]
-pub struct RetainedCastPaymentState<M, K, C, G, S> {
-    pub alternative_casts: Vec<M>,
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_temporary_payload"))]
-    pub cast_alternative_method: Option<M>,
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_temporary_payload"))]
-    pub cast_play_from_constraints: Option<(ObjectId, Zone, crate::grant_registry::PlayFromConstraints)>,
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_temporary_payload"))]
-    pub cast_grant_usage_identity: Option<G>,
-    pub optional_costs: Vec<K>,
-    pub paid_costs: Vec<(crate::cost::OptionalCostRef, u32)>,
-    pub paid_branch_choices: Vec<(usize, usize)>,
-    pub cast_at_sorcery_timing: bool,
-    pub mana_spent_to_cast: ManaPool,
-    pub snow_mana_spent_to_cast: ManaPool,
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_temporary_payload"))]
-    pub x_value: Option<u32>,
-    pub keyword_payment_contributions_to_cast: Vec<crate::decision::KeywordPaymentContribution>,
-    pub cast_tagged_objects: Vec<(TagKey, Vec<S>)>,
-    pub additional_cost: C,
-}
-
-pub type NativeCastPaymentState = RetainedCastPaymentState<AlternativeCastingMethod, OptionalCost, TotalCost, crate::grant_registry::GrantPermissionIdentity, ObjectSnapshot>;
-impl From<&Object> for NativeCastPaymentState {
-    fn from(value: &Object) -> Self {
-        let mut tags = value.cast_tagged_objects.iter().map(|(tag, snapshots)| (tag.clone(), snapshots.clone())).collect::<Vec<_>>();
-        tags.sort_by(|left, right| left.0.cmp(&right.0));
-        Self {
-            alternative_casts: value.alternative_casts.to_vec(),
-            cast_alternative_method: value.cast_alternative_method.as_deref().cloned(),
-            cast_play_from_constraints: value.cast_play_from_constraints.as_deref().cloned(),
-            cast_grant_usage_identity: value.cast_grant_usage_identity.as_deref().cloned(),
-            optional_costs: value.optional_costs.to_vec(),
-            paid_costs: value.optional_costs_paid.costs.clone(),
-            paid_branch_choices: value.optional_costs_paid.branch_choices.clone(),
-            cast_at_sorcery_timing: value.optional_costs_paid.cast_at_sorcery_timing,
-            mana_spent_to_cast: value.mana_spent_to_cast.clone(),
-            snow_mana_spent_to_cast: value.snow_mana_spent_to_cast.clone(),
-            x_value: value.x_value,
-            keyword_payment_contributions_to_cast: value.keyword_payment_contributions_to_cast.clone(),
-            cast_tagged_objects: tags,
-            additional_cost: (*value.additional_cost).clone(),
-        }
-    }
-}
-impl<M, K, C, G, S> RetainedCastPaymentState<M, K, C, G, S> {
-    pub fn try_map_payloads<M2, K2, C2, G2, S2, E>(
-        self,
-        mut alternative: impl FnMut(M) -> Result<M2, E>,
-        mut optional: impl FnMut(K) -> Result<K2, E>,
-        mut cost: impl FnMut(C) -> Result<C2, E>,
-        mut permission: impl FnMut(G) -> Result<G2, E>,
-        mut snapshot: impl FnMut(S) -> Result<S2, E>,
-    ) -> Result<RetainedCastPaymentState<M2, K2, C2, G2, S2>, E> {
-        let Self {
-            alternative_casts,
-            cast_alternative_method,
-            cast_play_from_constraints,
-            cast_grant_usage_identity,
-            optional_costs,
-            paid_costs,
-            paid_branch_choices,
-            cast_at_sorcery_timing,
-            mana_spent_to_cast,
-            snow_mana_spent_to_cast,
-            x_value,
-            keyword_payment_contributions_to_cast,
-            cast_tagged_objects,
-            additional_cost,
-        } = self;
-        // Historical payloads may own the occurrence referenced by a captured
-        // permission after its provider has left the current object world.
-        let cast_tagged_objects = cast_tagged_objects.into_iter().map(|(tag, snapshots)| {
-                Ok((tag, snapshots.into_iter().map(&mut snapshot).collect::<Result<_, E>>()?))
-            }).collect::<Result<_, E>>()?;
-        Ok(RetainedCastPaymentState {
-            alternative_casts: alternative_casts.into_iter().map(&mut alternative).collect::<Result<_, _>>()?,
-            cast_alternative_method: cast_alternative_method.map(&mut alternative).transpose()?,
-            cast_play_from_constraints,
-            cast_grant_usage_identity: cast_grant_usage_identity.map(&mut permission).transpose()?,
-            optional_costs: optional_costs.into_iter().map(&mut optional).collect::<Result<_, _>>()?,
-            paid_costs,
-            paid_branch_choices,
-            cast_at_sorcery_timing,
-            mana_spent_to_cast,
-            snow_mana_spent_to_cast,
-            x_value,
-            keyword_payment_contributions_to_cast,
-            cast_tagged_objects,
-            additional_cost: cost(additional_cost)?,
-        })
-    }
-}
-impl NativeCastPaymentState {
-    /// Validate before publishing any captured facts to the owning object.
-    pub fn apply_to(self, object: &mut Object) -> Result<(), String> {
-        let Self {
-            alternative_casts,
-            cast_alternative_method,
-            cast_play_from_constraints,
-            cast_grant_usage_identity,
-            optional_costs,
-            paid_costs,
-            paid_branch_choices,
-            cast_at_sorcery_timing,
-            mana_spent_to_cast,
-            snow_mana_spent_to_cast,
-            x_value,
-            keyword_payment_contributions_to_cast,
-            cast_tagged_objects,
-            additional_cost,
-        } = self;
-        let mut tags = HashMap::new();
-        for (tag, snapshots) in cast_tagged_objects {
-            if tags.insert(tag, snapshots).is_some() {
-                return Err("duplicate captured cast tag".into());
-            }
-        }
-        object.alternative_casts = alternative_casts.into();
-        object.cast_alternative_method = cast_alternative_method.map(Box::new);
-        object.cast_play_from_constraints = cast_play_from_constraints.map(Box::new);
-        object.cast_grant_usage_identity = cast_grant_usage_identity.map(Box::new);
-        object.optional_costs = optional_costs.into();
-        object.optional_costs_paid = OptionalCostsPaid {
-            costs: paid_costs, branch_choices: paid_branch_choices, cast_at_sorcery_timing,
-        };
-        object.mana_spent_to_cast = mana_spent_to_cast;
-        object.snow_mana_spent_to_cast = snow_mana_spent_to_cast;
-        object.x_value = x_value;
-        object.keyword_payment_contributions_to_cast = keyword_payment_contributions_to_cast;
-        object.cast_tagged_objects = tags;
-        object.additional_cost = additional_cost.into();
-        Ok(())
     }
 }
 
@@ -1748,6 +955,8 @@ pub struct Object {
         Option<Box<(ObjectId, Zone, crate::grant_registry::PlayFromConstraints)>>,
     /// Once-turn permission captured before movement and retained through payment.
     pub cast_grant_usage_identity: Option<Box<crate::grant_registry::GrantPermissionIdentity>>,
+    pub cast_price:
+        Option<Box<CastPriceReceipt<TotalCost, crate::grant_registry::GrantPermissionIdentity>>>,
     /// True if this split card can be cast fused from hand.
     pub has_fuse: bool,
     /// Optional costs (kicker, buyback, etc.)
@@ -1757,6 +966,10 @@ pub struct Object {
     /// Mana actually spent to cast this object while it was a spell.
     /// Used by conditional text like "if at least three blue mana was spent to cast this spell".
     pub mana_spent_to_cast: ManaPool,
+    /// Actual mana spent by the caster, excluding Assist payments by others.
+    pub caster_mana_spent_to_cast: Option<u32>,
+    /// None is unknown historical evidence, never an implicit zero payment.
+    pub mana_spent_on_x: Option<crate::mana::XManaAllocation>,
     /// Mana spent from sources that were snow when they produced it, by actual color.
     pub snow_mana_spent_to_cast: ManaPool,
     /// Non-copiable static abilities granted until end of turn while this object is a spell or
@@ -1790,584 +1003,38 @@ pub struct Object {
     // - is_commander -> GameState::commanders
 }
 
-/// Raw split-card characteristics retained without recomputing either face.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RetainedSplitCombinedCharacteristics {
-    pub other_half_name: String,
-    pub other_half_colors: ColorSet,
-    pub card_types: Vec<CardType>,
-    pub subtypes: Vec<Subtype>,
-    pub supertypes: Vec<Supertype>,
-}
-impl From<SplitCombinedCharacteristics> for RetainedSplitCombinedCharacteristics {
-    fn from(value: SplitCombinedCharacteristics) -> Self {
-        let SplitCombinedCharacteristics {
-            other_half_name,
-            other_half_colors,
-            card_types,
-            subtypes,
-            supertypes,
-        } = value;
-        Self {
-            other_half_name: other_half_name.to_string(),
-            other_half_colors,
-            card_types: card_types.to_vec(),
-            subtypes: subtypes.to_vec(),
-            supertypes: supertypes.to_vec(),
-        }
-    }
-}
-impl From<RetainedSplitCombinedCharacteristics> for SplitCombinedCharacteristics {
-    fn from(value: RetainedSplitCombinedCharacteristics) -> Self {
-        let RetainedSplitCombinedCharacteristics {
-            other_half_name,
-            other_half_colors,
-            card_types,
-            subtypes,
-            supertypes,
-        } = value;
-        Self {
-            other_half_name: other_half_name.into(),
-            other_half_colors,
-            card_types: card_types.into(),
-            subtypes: subtypes.into(),
-            supertypes: supertypes.into(),
-        }
-    }
-}
-
-/// Full live object facts. The owning game separately retains extension maps,
-/// definition graph, registered effects, history, and pending continuations.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(
-    feature = "serialization",
-    serde(bound(
-        deserialize = "A: serde::Deserialize<'de>, P: serde::Deserialize<'de>, H: serde::Deserialize<'de>, I: serde::Deserialize<'de>, N: serde::Deserialize<'de>, T: serde::Deserialize<'de>, V: serde::Deserialize<'de>"
-    ))
-)]
-pub struct RetainedLiveObject<A, P, H, I, N, T, V> {
-    pub id: ObjectId,
-    pub stable_id: StableId,
-    pub last_modified: u64,
-    pub kind: ObjectKind,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub card: Option<I>,
-    pub zone: Zone,
-    pub owner: PlayerId,
-    pub initial_controller: PlayerId,
-    pub name: String,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub first_printed_set_name: Option<String>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub mana_cost: Option<ManaCost>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub color_override: Option<ColorSet>,
-    pub supertypes: Vec<Supertype>,
-    pub card_types: Vec<CardType>,
-    pub subtypes: Vec<Subtype>,
-    pub compiled_card_text: String,
-    pub ability_labels: Vec<String>,
-    pub rules_text_color_identity: ColorSet,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub other_face: Option<I>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub other_face_name: Option<String>,
-    pub linked_face_layout: LinkedFaceLayout,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub linked_face_mana_cost: Option<ManaCost>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub split_combined: Option<RetainedSplitCombinedCharacteristics>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_power: Option<PtValue>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_toughness: Option<PtValue>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_loyalty: Option<u32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub base_defense: Option<u32>,
-    pub hand_modifier: i32,
-    pub life_modifier: i32,
-    pub abilities: Vec<A>,
-    pub counters: N,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub attached_to: Option<AttachmentTarget>,
-    pub attachments: Vec<ObjectId>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub spell_effect: Option<P>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub splice_cast_state: Option<RetainedSpliceCastState<P>>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub aura_attach_filter: Option<H>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub bestow_cast_state: Option<RetainedBestowCastState<P, H>>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub face_down_cast_state: Option<RetainedFaceDownCastState<A, P, H>>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub prototype_cast_state: Option<RetainedPrototypeCastState>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub enters_as_copy_restore_state: Option<RetainedEntersAsCopyRestoreState<A, P, H, I>>,
-    pub has_fuse: bool,
-    pub temporary_static_ability_grants: T,
-    pub cast_payment_state: V,
-}
-
-pub type NativeRetainedLiveObject = RetainedLiveObject<
-    Ability,
-    crate::resolution::ResolutionProgram,
-    AuraAttachmentMetadata,
-    CardId,
-    ObjectCounters,
-    TemporaryStaticAbilityGrants,
-    NativeCastPaymentState,
->;
-impl From<Object> for NativeRetainedLiveObject {
-    fn from(value: Object) -> Self {
-        let cast_payment_state = NativeCastPaymentState::from(&value);
-        let Object {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card,
-            zone,
-            owner,
-            initial_controller,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_cost,
-            split_combined,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities,
-            counters,
-            attached_to,
-            attachments,
-            spell_effect,
-            splice_cast_state,
-            aura_attach_filter,
-            bestow_cast_state,
-            face_down_cast_state,
-            prototype_cast_state,
-            enters_as_copy_restore_state,
-            alternative_casts: _,
-            cast_alternative_method: _,
-            cast_play_from_constraints: _,
-            cast_grant_usage_identity: _,
-            has_fuse,
-            optional_costs: _,
-            optional_costs_paid: _,
-            mana_spent_to_cast: _,
-            snow_mana_spent_to_cast: _,
-            temporary_static_ability_grants,
-            x_value: _,
-            keyword_payment_contributions_to_cast: _,
-            cast_tagged_objects: _,
-            additional_cost: _,
-        } = value;
-        Self {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card,
-            zone,
-            owner,
-            initial_controller,
-            name: name.to_string(),
-            first_printed_set_name: first_printed_set_name.map(|value| value.to_string()),
-            mana_cost: mana_cost.map(|value| (*value).clone()),
-            color_override,
-            supertypes: supertypes.to_vec(),
-            card_types: card_types.to_vec(),
-            subtypes: subtypes.to_vec(),
-            compiled_card_text: compiled_card_text.to_string(),
-            ability_labels: ability_labels.to_vec(),
-            rules_text_color_identity,
-            other_face,
-            other_face_name: other_face_name.map(|value| value.to_string()),
-            linked_face_layout,
-            linked_face_mana_cost: linked_face_mana_cost.map(|value| (*value).clone()),
-            split_combined: split_combined.map(|value| (*value).clone().into()),
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities: abilities.as_ref().clone(),
-            counters,
-            attached_to,
-            attachments,
-            spell_effect: spell_effect.map(|value| (*value).clone()),
-            splice_cast_state: splice_cast_state.map(|value| (*value).into()),
-            aura_attach_filter,
-            bestow_cast_state: bestow_cast_state.map(|value| (*value).into()),
-            face_down_cast_state: face_down_cast_state.map(|value| (*value).into()),
-            prototype_cast_state: prototype_cast_state.map(Into::into),
-            enters_as_copy_restore_state: enters_as_copy_restore_state.map(|value| (*value).into()),
-            has_fuse,
-            temporary_static_ability_grants,
-            cast_payment_state,
-        }
-    }
-}
-impl<A, P, H, I, N, T, V> RetainedLiveObject<A, P, H, I, N, T, V> {
-    pub fn try_map_payloads<B, Q, J, K, N2, T2, V2, E>(
-        self,
-        mut ability: impl FnMut(A) -> Result<B, E>,
-        mut program: impl FnMut(P) -> Result<Q, E>,
-        mut attachment: impl FnMut(H) -> Result<J, E>,
-        mut card_definition: impl FnMut(I) -> Result<K, E>,
-        mut counter_store: impl FnMut(N) -> Result<N2, E>,
-        mut temporary_grants: impl FnMut(T) -> Result<T2, E>,
-        mut cast_payment: impl FnMut(V) -> Result<V2, E>,
-    ) -> Result<RetainedLiveObject<B, Q, J, K, N2, T2, V2>, E> {
-        let Self {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card,
-            zone,
-            owner,
-            initial_controller,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_cost,
-            split_combined,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities,
-            counters,
-            attached_to,
-            attachments,
-            spell_effect,
-            splice_cast_state,
-            aura_attach_filter,
-            bestow_cast_state,
-            face_down_cast_state,
-            prototype_cast_state,
-            enters_as_copy_restore_state,
-            has_fuse,
-            temporary_static_ability_grants,
-            cast_payment_state,
-        } = self;
-        Ok(RetainedLiveObject {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card: card.map(&mut card_definition).transpose()?,
-            zone,
-            owner,
-            initial_controller,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            other_face: other_face.map(&mut card_definition).transpose()?,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_cost,
-            split_combined,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities: abilities
-                .into_iter()
-                .map(&mut ability)
-                .collect::<Result<_, E>>()?,
-            counters: counter_store(counters)?,
-            attached_to,
-            attachments,
-            spell_effect: spell_effect.map(&mut program).transpose()?,
-            splice_cast_state: splice_cast_state
-                .map(|value| value.try_map_payloads(&mut program))
-                .transpose()?,
-            aura_attach_filter: aura_attach_filter.map(&mut attachment).transpose()?,
-            bestow_cast_state: bestow_cast_state
-                .map(|value| value.try_map_payloads(&mut program, &mut attachment))
-                .transpose()?,
-            face_down_cast_state: face_down_cast_state
-                .map(|value| value.try_map_payloads(&mut ability, &mut program, &mut attachment))
-                .transpose()?,
-            prototype_cast_state,
-            enters_as_copy_restore_state: enters_as_copy_restore_state
-                .map(|value| {
-                    value.try_map_payloads(
-                        &mut ability,
-                        &mut program,
-                        &mut attachment,
-                        &mut card_definition,
-                    )
-                })
-                .transpose()?,
-            has_fuse,
-            temporary_static_ability_grants: temporary_grants(temporary_static_ability_grants)?,
-            cast_payment_state: cast_payment(cast_payment_state)?,
-        })
-    }
-}
-impl TryFrom<NativeRetainedLiveObject> for Object {
-    type Error = String;
-    fn try_from(value: NativeRetainedLiveObject) -> Result<Self, Self::Error> {
-        let NativeRetainedLiveObject {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card,
-            zone,
-            owner,
-            initial_controller,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            color_override,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            rules_text_color_identity,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_cost,
-            split_combined,
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities,
-            counters,
-            attached_to,
-            attachments,
-            spell_effect,
-            splice_cast_state,
-            aura_attach_filter,
-            bestow_cast_state,
-            face_down_cast_state,
-            prototype_cast_state,
-            enters_as_copy_restore_state,
-            has_fuse,
-            temporary_static_ability_grants,
-            cast_payment_state,
-        } = value;
-        let NativeCastPaymentState {
-            alternative_casts,
-            cast_alternative_method,
-            cast_play_from_constraints,
-            cast_grant_usage_identity,
-            optional_costs,
-            paid_costs,
-            paid_branch_choices,
-            cast_at_sorcery_timing,
-            mana_spent_to_cast,
-            snow_mana_spent_to_cast,
-            x_value,
-            keyword_payment_contributions_to_cast,
-            cast_tagged_objects,
-            additional_cost,
-        } = cast_payment_state;
-        let mut tags = HashMap::new();
-        for (tag, snapshots) in cast_tagged_objects {
-            if tags.insert(tag, snapshots).is_some() {
-                return Err("duplicate captured cast tag".into());
-            }
-        }
-        Ok(Object {
-            id,
-            stable_id,
-            last_modified,
-            kind,
-            card,
-            zone,
-            owner,
-            initial_controller,
-            name: name.into(),
-            first_printed_set_name: first_printed_set_name.map(Into::into),
-            mana_cost: mana_cost.map(Into::into),
-            color_override,
-            supertypes: supertypes.into(),
-            card_types: card_types.into(),
-            subtypes: subtypes.into(),
-            compiled_card_text: compiled_card_text.into(),
-            ability_labels: ability_labels.into(),
-            rules_text_color_identity,
-            other_face,
-            other_face_name: other_face_name.map(Into::into),
-            linked_face_layout,
-            linked_face_mana_cost: linked_face_mana_cost.map(Into::into),
-            split_combined: split_combined
-                .map(|value| SplitCombinedCharacteristics::from(value).into()),
-            base_power,
-            base_toughness,
-            base_loyalty,
-            base_defense,
-            hand_modifier,
-            life_modifier,
-            abilities: Arc::new(abilities),
-            counters,
-            attached_to,
-            attachments,
-            spell_effect: spell_effect.map(Into::into),
-            splice_cast_state: splice_cast_state.map(|value| Box::new(value.into())),
-            aura_attach_filter,
-            bestow_cast_state: bestow_cast_state.map(|value| Box::new(value.into())),
-            face_down_cast_state: face_down_cast_state.map(|value| Box::new(value.into())),
-            prototype_cast_state: prototype_cast_state.map(Into::into),
-            enters_as_copy_restore_state: enters_as_copy_restore_state
-                .map(|value| Box::new(value.into())),
-            alternative_casts: alternative_casts.into(),
-            cast_alternative_method: cast_alternative_method.map(Box::new),
-            cast_play_from_constraints: cast_play_from_constraints.map(Box::new),
-            cast_grant_usage_identity: cast_grant_usage_identity.map(Box::new),
-            has_fuse,
-            optional_costs: optional_costs.into(),
-            optional_costs_paid: OptionalCostsPaid {
-                costs: paid_costs,
-                branch_choices: paid_branch_choices,
-                cast_at_sorcery_timing,
-            },
-            mana_spent_to_cast,
-            snow_mana_spent_to_cast,
-            temporary_static_ability_grants,
-            x_value,
-            keyword_payment_contributions_to_cast,
-            cast_tagged_objects: tags,
-            additional_cost: additional_cost.into(),
-        })
-    }
-}
-
 /// Deterministic registration identity, independent of refresh order.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-pub struct TemporaryAbilityOrigin { source: ObjectId, serial: u64 }
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct TemporaryAbilityOrigin {
+    source: ObjectId,
+    serial: u64,
+}
 
 /// Temporary grants paired with stable origins. Read access cannot detach
 /// a grant from its identity; push always registers a new occurrence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemporaryStaticAbilityGrants {
-    source: ObjectId, next_serial: u64,
+    source: ObjectId,
+    next_serial: u64,
     grants: Vec<TemporaryStaticAbilityGrant>,
     origins: Vec<TemporaryAbilityOrigin>,
 }
 impl TemporaryStaticAbilityGrants {
     pub fn new(source: ObjectId) -> Self {
-        Self { source, next_serial: 0, grants: Vec::new(), origins: Vec::new() }
+        Self {
+            source,
+            next_serial: 0,
+            grants: Vec::new(),
+            origins: Vec::new(),
+        }
     }
-    pub fn origin(&self, index: usize) -> Option<&TemporaryAbilityOrigin> { self.origins.get(index) }
+    pub fn origin(&self, index: usize) -> Option<&TemporaryAbilityOrigin> {
+        self.origins.get(index)
+    }
     pub fn push(&mut self, mut grant: TemporaryStaticAbilityGrant) {
         // A registered keyword is one runtime ability occurrence. Materialize
         // its payload at registration so layer/query reads clone that ability
@@ -2376,225 +1043,81 @@ impl TemporaryStaticAbilityGrants {
             grant.ability_payload = static_ability_from_id(grant.ability);
         }
         let serial = self.next_serial;
-        self.next_serial = serial.checked_add(1).expect("temporary ability identity exhausted");
+        self.next_serial = serial
+            .checked_add(1)
+            .expect("temporary ability identity exhausted");
         self.grants.push(grant);
-        self.origins.push(TemporaryAbilityOrigin { source: self.source, serial });
+        self.origins.push(TemporaryAbilityOrigin {
+            source: self.source,
+            serial,
+        });
     }
-    pub fn clear(&mut self) { self.grants.clear(); self.origins.clear(); }
+    pub fn clear(&mut self) {
+        self.grants.clear();
+        self.origins.clear();
+    }
     pub fn retain(&mut self, mut keep: impl FnMut(&TemporaryStaticAbilityGrant) -> bool) {
-        let mut retained = Vec::new(); let mut index = 0;
+        let mut retained = Vec::new();
+        let mut index = 0;
         self.grants.retain(|grant| {
             let retain = keep(grant);
-            if retain { retained.push(self.origins[index].clone()); }
-            index += 1; retain
+            if retain {
+                retained.push(self.origins[index].clone());
+            }
+            index += 1;
+            retain
         });
         self.origins = retained;
     }
     pub(crate) fn empty_with_allocator(&self) -> Self {
-        Self { grants: Vec::new(), origins: Vec::new(), ..self.clone() }
+        Self {
+            grants: Vec::new(),
+            origins: Vec::new(),
+            ..self.clone()
+        }
     }
     /// Merge reconstruction retains component registrations, not new grants.
     pub(crate) fn extend_existing(&mut self, other: &Self) {
         for (grant, origin) in other.grants.iter().zip(&other.origins) {
             if origin.source == self.source {
-                self.next_serial = self.next_serial.max(origin.serial.checked_add(1)
-                    .expect("temporary ability identity exhausted"));
+                self.next_serial = self.next_serial.max(
+                    origin
+                        .serial
+                        .checked_add(1)
+                        .expect("temporary ability identity exhausted"),
+                );
             }
-            self.grants.push(grant.clone()); self.origins.push(origin.clone());
+            self.grants.push(grant.clone());
+            self.origins.push(origin.clone());
         }
     }
 }
 impl std::ops::Deref for TemporaryStaticAbilityGrants {
     type Target = [TemporaryStaticAbilityGrant];
-    fn deref(&self) -> &Self::Target { &self.grants }
+    fn deref(&self) -> &Self::Target {
+        &self.grants
+    }
 }
 impl<'a> IntoIterator for &'a TemporaryStaticAbilityGrants {
     type Item = &'a TemporaryStaticAbilityGrant;
     type IntoIter = std::slice::Iter<'a, TemporaryStaticAbilityGrant>;
-    fn into_iter(self) -> Self::IntoIter { self.grants.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.grants.iter()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemporaryStaticAbilityGrant {
     pub ability: StaticAbilityId,
     pub ability_payload: Option<StaticAbility>,
-    pub expires_end_of_turn: u32,
+    /// None lasts for this incarnation, including Stack -> Battlefield.
+    pub expires_end_of_turn: Option<u32>,
 }
 
-/// Complete captured temporary registration, including a present optional payload.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(
-    feature = "serialization",
-    serde(bound(deserialize = "S: serde::Deserialize<'de>"))
-)]
-pub struct RetainedTemporaryStaticAbilityGrant<S> {
-    pub ability: StaticAbilityId,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_temporary_payload")
-    )]
-    pub ability_payload: Option<S>,
-    pub expires_end_of_turn: u32,
-}
-
-#[cfg(feature = "serialization")]
-fn deserialize_present_temporary_payload<
-    'de,
-    S: serde::Deserialize<'de>,
-    D: serde::Deserializer<'de>,
->(
-    deserializer: D,
-) -> Result<Option<S>, D::Error> {
-    <Option<S> as serde::Deserialize>::deserialize(deserializer)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct RetainedTemporaryStaticAbilityGrants<S> {
-    pub source: ObjectId,
-    pub next_serial: u64,
-    pub grants: Vec<RetainedTemporaryStaticAbilityGrant<S>>,
-    pub origins: Vec<TemporaryAbilityOrigin>,
-}
-
-impl<S> RetainedTemporaryStaticAbilityGrants<S> {
-    pub fn try_map_abilities<T, Error>(
-        self,
-        mut map: impl FnMut(S) -> Result<T, Error>,
-    ) -> Result<RetainedTemporaryStaticAbilityGrants<T>, Error> {
-        let Self {
-            source,
-            next_serial,
-            grants,
-            origins,
-        } = self;
-        let grants = grants
-            .into_iter()
-            .map(|grant| {
-                let RetainedTemporaryStaticAbilityGrant {
-                    ability,
-                    ability_payload,
-                    expires_end_of_turn,
-                } = grant;
-                Ok(RetainedTemporaryStaticAbilityGrant {
-                    ability,
-                    ability_payload: ability_payload.map(&mut map).transpose()?,
-                    expires_end_of_turn,
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        Ok(RetainedTemporaryStaticAbilityGrants {
-            source,
-            next_serial,
-            grants,
-            origins,
-        })
-    }
-}
-
-impl From<TemporaryStaticAbilityGrants> for RetainedTemporaryStaticAbilityGrants<StaticAbility> {
-    fn from(value: TemporaryStaticAbilityGrants) -> Self {
-        let TemporaryStaticAbilityGrants {
-            source,
-            next_serial,
-            grants,
-            origins,
-        } = value;
-        Self {
-            source,
-            next_serial,
-            origins,
-            grants: grants
-                .into_iter()
-                .map(|grant| {
-                    let TemporaryStaticAbilityGrant {
-                        ability,
-                        ability_payload,
-                        expires_end_of_turn,
-                    } = grant;
-                    RetainedTemporaryStaticAbilityGrant {
-                        ability,
-                        ability_payload,
-                        expires_end_of_turn,
-                    }
-                })
-                .collect(),
-        }
-    }
-}
-
-impl TryFrom<RetainedTemporaryStaticAbilityGrants<StaticAbility>> for TemporaryStaticAbilityGrants {
-    type Error = String;
-    fn try_from(
-        value: RetainedTemporaryStaticAbilityGrants<StaticAbility>,
-    ) -> Result<Self, Self::Error> {
-        let RetainedTemporaryStaticAbilityGrants {
-            source,
-            next_serial,
-            grants,
-            origins,
-        } = value;
-        if next_serial == u64::MAX {
-            return Err("temporary ability allocator cannot advance".into());
-        }
-        if grants.len() != origins.len() {
-            return Err("temporary grant/origin lengths disagree".into());
-        }
-        let mut seen = std::collections::HashSet::new();
-        for (grant, origin) in grants.iter().zip(&origins) {
-            if !seen.insert(origin.clone()) {
-                return Err("duplicate temporary ability origin".into());
-            }
-            // No registration can allocate u64::MAX, even for a merged component.
-            if origin.serial == u64::MAX {
-                return Err("temporary origin serial cannot be allocated".into());
-            }
-            // Merged component origins can have another source and allocator.
-            if origin.source == source && origin.serial >= next_serial {
-                return Err("temporary origin is outside its allocated range".into());
-            }
-            if let Some(payload) = &grant.ability_payload {
-                if payload.id() != grant.ability {
-                    return Err("temporary payload ID disagrees with grant".into());
-                }
-            } else if scalar_temporary_ability_constructor(grant.ability).is_some() {
-                return Err(
-                    "registered scalar temporary grant lacks its retained ability payload".into(),
-                );
-            }
-        }
-        Ok(Self {
-            source,
-            next_serial,
-            origins,
-            grants: grants
-                .into_iter()
-                .map(|grant| {
-                    let RetainedTemporaryStaticAbilityGrant {
-                        ability,
-                        ability_payload,
-                        expires_end_of_turn,
-                    } = grant;
-                    TemporaryStaticAbilityGrant {
-                        ability,
-                        ability_payload,
-                        expires_end_of_turn,
-                    }
-                })
-                .collect(),
-        })
-    }
-}
 impl TemporaryStaticAbilityGrant {
     pub fn is_expired(&self, current_turn: u32) -> bool {
-        current_turn > self.expires_end_of_turn
+        self.expires_end_of_turn
+            .is_some_and(|end| current_turn > end)
     }
 
     pub fn materialize(&self) -> Option<StaticAbility> {
@@ -2720,15 +1243,24 @@ impl Object {
     }
 
     pub fn aura_attach_filter_owned(&self) -> Option<AuraAttachmentFilter> {
-        self.aura_attach_filter.as_ref().map(AuraAttachmentMetadata::to_owned_value)
+        self.aura_attach_filter
+            .as_ref()
+            .map(AuraAttachmentMetadata::to_owned_value)
     }
 
-    fn abilities_with_enchant_metadata(&self, metadata: Option<&AuraAttachmentMetadata>) -> Arc<Vec<Ability>> {
-        let Some(metadata) = metadata else { return self.abilities.clone(); };
-        if self.abilities.iter().any(|ability| matches!(
-            &ability.kind, crate::ability::AbilityKind::Static(ability)
-                if ability.enchant_filter() == Some(&*metadata.filter)
-        )) {
+    fn abilities_with_enchant_metadata(
+        &self,
+        metadata: Option<&AuraAttachmentMetadata>,
+    ) -> Arc<Vec<Ability>> {
+        let Some(metadata) = metadata else {
+            return self.abilities.clone();
+        };
+        if self.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind, crate::ability::AbilityKind::Static(ability)
+                    if ability.enchant_filter() == Some(&*metadata.filter)
+            )
+        }) {
             return self.abilities.clone();
         }
         let mut abilities = self.abilities.as_ref().clone();
@@ -2741,8 +1273,12 @@ impl Object {
     }
 
     pub(crate) fn materialized_copiable_abilities(&self) -> Arc<Vec<Ability>> {
-        let metadata = self.bestow_cast_state.as_ref()
-            .map_or(self.aura_attach_filter.as_ref(), |restore| restore.aura_attach_filter.as_ref());
+        let metadata = self
+            .bestow_cast_state
+            .as_ref()
+            .map_or(self.aura_attach_filter.as_ref(), |restore| {
+                restore.aura_attach_filter.as_ref()
+            });
         self.abilities_with_enchant_metadata(metadata)
     }
 
@@ -2775,13 +1311,7 @@ impl Object {
             initial_controller: owner,
             name: card.name.clone().into(),
             first_printed_set_name: card.first_printed_set_name.clone().map(Into::into),
-            // Tokens are not cards and have no mana cost, even if a reusable
-            // token template accidentally carries a card-like cost.
-            mana_cost: if is_token {
-                None
-            } else {
-                shared_optional_value(card.mana_cost.clone())
-            },
+            mana_cost: shared_optional_value(card.mana_cost.clone()),
             color_override: card.color_indicator,
             supertypes: card.supertypes.clone().into(),
             card_types: card.card_types.clone().into(),
@@ -2815,10 +1345,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: Vec::new().into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -2902,10 +1435,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: Vec::new().into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -2944,9 +1480,6 @@ impl Object {
         };
         self.card = (!is_token).then_some(def.card.id);
         self.apply_definition_face_with_shared(def, handles);
-        if is_token {
-            self.mana_cost = None;
-        }
         self.spell_effect = handles.spell_effect.clone();
         self.aura_attach_filter = handles.aura_attach_filter.clone();
         self.alternative_casts = handles.alternative_casts.clone();
@@ -3033,7 +1566,8 @@ impl Object {
         // CR 709.4: keep the combined characteristics in step with the half
         // now shown (the half being hidden becomes the "other" half).
         if let Some(hidden) = hidden_split_half {
-            self.split_combined = Some(SplitCombinedCharacteristics::from_halves(self, &hidden).into());
+            self.split_combined =
+                Some(SplitCombinedCharacteristics::from_halves(self, &hidden).into());
         } else if self.linked_face_layout != LinkedFaceLayout::Split {
             self.split_combined = None;
         }
@@ -3193,10 +1727,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: Vec::new().into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -3272,6 +1809,7 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: source.has_fuse,
             // Optional costs are copiable
             optional_costs: source.optional_costs.clone(),
@@ -3279,6 +1817,8 @@ impl Object {
             optional_costs_paid: OptionalCostsPaid::default(),
             // Tokens are never cast.
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -3346,14 +1886,23 @@ impl Object {
             cast_alternative_method: source.cast_alternative_method.clone(),
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: source.has_fuse,
             optional_costs: source.optional_costs.clone(),
             optional_costs_paid: source.optional_costs_paid.clone(),
             // CR 707.10: mana isn't an object, so a copy of a spell has no mana
             // spent to cast it (converge, adamant, "if {G} was spent" read 0).
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
-            temporary_static_ability_grants: source.temporary_static_ability_grants.clone(),
+            temporary_static_ability_grants: {
+                let mut grants = source.temporary_static_ability_grants.clone();
+                // A permission's indefinite recipient rider is an applied
+                // continuous effect, not part of the spell's copiable values.
+                grants.retain(|grant| grant.expires_end_of_turn.is_some());
+                grants
+            },
             x_value: source.x_value,
             keyword_payment_contributions_to_cast: source
                 .keyword_payment_contributions_to_cast
@@ -3422,10 +1971,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: Vec::new().into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -3495,10 +2047,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: Vec::new().into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -3927,7 +2482,9 @@ impl Object {
     #[inline]
     pub fn zone_subtypes(&self) -> &[Subtype] {
         self.split_combined_active()
-            .map_or(self.subtypes.as_slice(), |combined| combined.subtypes.as_slice())
+            .map_or(self.subtypes.as_slice(), |combined| {
+                combined.subtypes.as_slice()
+            })
     }
 
     /// Supertypes in the object's current zone (see `zone_card_types`).
@@ -3945,6 +2502,12 @@ impl Object {
     pub fn split_other_half_name(&self) -> Option<&str> {
         self.split_combined_active()
             .map(|combined| combined.other_half_name.as_ref())
+            .or_else(|| {
+                (self.linked_face_layout == crate::card::LinkedFaceLayout::Split
+                    && !matches!(self.zone, Zone::Stack | Zone::Battlefield))
+                .then(|| self.other_face_name.as_deref())
+                .flatten()
+            })
     }
 
     /// Whether the object has `name`: either half's name for a split card
@@ -4288,8 +2851,11 @@ impl Object {
         let current = self.counters.get(&counter_type).copied().unwrap_or(0);
         let removed = current.min(amount);
         let remaining = current - removed;
-        if remaining == 0 { self.counters.remove(&counter_type); }
-        else { self.counters.insert(counter_type, remaining); }
+        if remaining == 0 {
+            self.counters.remove(&counter_type);
+        } else {
+            self.counters.insert(counter_type, remaining);
+        }
         removed
     }
 
@@ -4449,7 +3015,7 @@ impl Object {
             initial_controller: controller,
             name: handles.name.clone(),
             first_printed_set_name: handles.first_printed_set_name.clone(),
-            mana_cost: None,                          // Tokens don't have mana costs
+            mana_cost: handles.mana_cost.clone(), // Predefined card-name tokens retain their printed cost.
             color_override: def.card.color_indicator, // Use color indicator if set
             supertypes: handles.supertypes.clone(),
             card_types: handles.card_types.clone(),
@@ -4483,10 +3049,13 @@ impl Object {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: def.has_fuse,
             optional_costs: handles.optional_costs.clone(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: Some(crate::mana::XManaAllocation::default()),
             snow_mana_spent_to_cast: ManaPool::default(),
             temporary_static_ability_grants: TemporaryStaticAbilityGrants::new(id),
             x_value: None,
@@ -5023,9 +3592,16 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let mut source = Object::from_card(ObjectId::from_raw(1), &card, alice, Zone::Stack);
         source.snow_mana_spent_to_cast.green = 2;
+        source.caster_mana_spent_to_cast = Some(2);
+        source.mana_spent_on_x = Some(crate::mana::XManaAllocation([0, 0, 1, 0, 0]));
         source.x_value = Some(3);
         let copy = Object::spell_copy_of(&source, ObjectId::from_raw(2), alice);
         assert_eq!(copy.snow_mana_spent_to_cast.total(), 0);
+        assert_eq!(copy.caster_mana_spent_to_cast, None);
+        assert_eq!(
+            copy.mana_spent_on_x,
+            Some(crate::mana::XManaAllocation::default())
+        );
         assert_eq!(copy.x_value, Some(3));
         assert_eq!(source.snow_mana_spent_to_cast.green, 2);
     }
@@ -5080,102 +3656,122 @@ mod temporary_ability_registration_tests {
     #[test]
     fn scalar_temporary_ability_materialization_preserves_registered_identity() {
         let mut observations = Vec::new();
-        for ability in [StaticAbilityId::Haste, StaticAbilityId::Flying,
-            StaticAbilityId::Hexproof, StaticAbilityId::Vigilance] {
+        for ability in [
+            StaticAbilityId::Haste,
+            StaticAbilityId::Flying,
+            StaticAbilityId::Hexproof,
+            StaticAbilityId::Vigilance,
+        ] {
             let source = ObjectId::from_raw(90003);
             let mut grants = TemporaryStaticAbilityGrants::new(source);
             for _ in 0..2 {
                 grants.push(TemporaryStaticAbilityGrant {
-                    ability, ability_payload: None, expires_end_of_turn: 2,
+                    ability,
+                    ability_payload: None,
+                    expires_end_of_turn: Some(2),
                 });
             }
-            assert_ne!(grants.origin(0), grants.origin(1),
-                "independently registered equal keywords retain separate occurrences");
-            let checkpoint = grants.clone();
+            assert_ne!(
+                grants.origin(0),
+                grants.origin(1),
+                "independently registered equal keywords retain separate occurrences"
+            );
+            let native_copy = grants.clone();
             let mut rebuilt = grants.empty_with_allocator();
             rebuilt.extend_existing(&grants);
             for slot in 0..2 {
-                let first = grants[slot].materialize().expect("keyword is supported").instance_id();
-                let repeated = grants[slot].materialize().expect("keyword is supported").instance_id();
-                let cloned = checkpoint[slot].materialize().expect("keyword is supported").instance_id();
-                let reconstructed = rebuilt[slot].materialize().expect("keyword is supported").instance_id();
+                let first = grants[slot]
+                    .materialize()
+                    .expect("keyword is supported")
+                    .instance_id();
+                let repeated = grants[slot]
+                    .materialize()
+                    .expect("keyword is supported")
+                    .instance_id();
+                let cloned = native_copy[slot]
+                    .materialize()
+                    .expect("keyword is supported")
+                    .instance_id();
+                let reconstructed = rebuilt[slot]
+                    .materialize()
+                    .expect("keyword is supported")
+                    .instance_id();
                 observations.push((ability, slot, first, repeated, cloned, reconstructed));
             }
-            grants.retain(|grant| grant.expires_end_of_turn > 2);
+            grants.retain(|grant| grant.expires_end_of_turn.is_none_or(|end| end > 2));
             assert!(grants.is_empty(), "expiry still removes the registrations");
         }
-        assert!(observations.iter().all(|(_, _, first, repeated, cloned, rebuilt)|
-            first == repeated && first == cloned && first == rebuilt),
-            "reads, checkpoints and reconstruction must retain each registered ability identity: {observations:?}");
+        assert!(
+            observations
+                .iter()
+                .all(|(_, _, first, repeated, cloned, rebuilt)| first == repeated
+                    && first == cloned
+                    && first == rebuilt),
+            "reads, native copies and reconstruction must retain each registered ability identity: {observations:?}"
+        );
     }
 
     #[test]
-    fn temporary_ability_origins_survive_expiry_checkpoint_and_reconstruction() {
+    fn temporary_ability_origins_survive_expiry_native_copy_and_reconstruction() {
         let source = ObjectId::from_raw(90001);
         let ability = crate::static_abilities::StaticAbility::haste();
-        let grant = |expiry| TemporaryStaticAbilityGrant { ability: ability.id(),
-            ability_payload: Some(ability.clone()), expires_end_of_turn: expiry };
+        let grant = |expiry| TemporaryStaticAbilityGrant {
+            ability: ability.id(),
+            ability_payload: Some(ability.clone()),
+            expires_end_of_turn: Some(expiry),
+        };
         let mut grants = TemporaryStaticAbilityGrants::new(source);
-        grants.push(grant(1)); grants.push(grant(2));
-        let first = grants.origin(0).unwrap().clone(); let second = grants.origin(1).unwrap().clone();
+        grants.push(grant(1));
+        grants.push(grant(2));
+        let first = grants.origin(0).unwrap().clone();
+        let second = grants.origin(1).unwrap().clone();
         assert_ne!(first, second, "cloned payloads register independently");
-        grants.retain(|grant| grant.expires_end_of_turn > 1);
-        assert_eq!(grants.origin(0), Some(&second), "expiry must not renumber survivor");
+        grants.retain(|grant| grant.expires_end_of_turn.is_none_or(|end| end > 1));
+        assert_eq!(
+            grants.origin(0),
+            Some(&second),
+            "expiry must not renumber survivor"
+        );
         assert_eq!(grants.clone(), grants);
-        let mut rebuilt = grants.empty_with_allocator(); rebuilt.extend_existing(&grants);
+        let mut rebuilt = grants.empty_with_allocator();
+        rebuilt.extend_existing(&grants);
         assert_eq!(rebuilt.origin(0), Some(&second));
-        rebuilt.clear(); rebuilt.push(grant(3));
-        assert_ne!(rebuilt.origin(0), Some(&first)); assert_ne!(rebuilt.origin(0), Some(&second));
-        let mut other = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(90002)); other.push(grant(2));
-        let other_origin = other.origin(0).unwrap().clone(); rebuilt.extend_existing(&other);
-        assert_eq!(rebuilt.origin(1), Some(&other_origin), "component origin survives reconstruction");
+        rebuilt.clear();
+        rebuilt.push(grant(3));
+        assert_ne!(rebuilt.origin(0), Some(&first));
+        assert_ne!(rebuilt.origin(0), Some(&second));
+        let mut other = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(90002));
+        other.push(grant(2));
+        let other_origin = other.origin(0).unwrap().clone();
+        rebuilt.extend_existing(&other);
+        assert_eq!(
+            rebuilt.origin(1),
+            Some(&other_origin),
+            "component origin survives reconstruction"
+        );
         assert_ne!(rebuilt.origin(0), rebuilt.origin(1));
     }
-    #[test]
-    fn counter_checkpoint_rejects_inconsistent_registration_state() {
-        let mut counters = ObjectCounters::default();
-        counters.add(CounterType::Flying, 2);
-        let counts = counters.counts().clone();
-        let state = counters.ability_state();
-        let restored = ObjectCounters::from_checkpoint(counts.clone(), Some(state.clone()))
-            .expect("valid counter registrations import");
-        assert_eq!(restored.ability_state(), state);
-        assert!(ObjectCounters::from_checkpoint(counts.clone(), None).is_err(),
-            "counts cannot recreate surviving keyword identities");
-        let mut invalid = Vec::new();
-        let mut missing = state.clone(); missing.origins.pop(); invalid.push(missing);
-        let mut duplicate = state.clone(); duplicate.origins[1] = duplicate.origins[0].clone(); invalid.push(duplicate);
-        let mut future = state.clone(); future.origins[0].serial = future.next_serial.clone(); invalid.push(future);
-        let mut wrong_kind = state.clone(); wrong_kind.origins[0].counter_type = CounterType::Charge; invalid.push(wrong_kind);
-        let mut noncanonical = state.clone(); noncanonical.origins[0].serial = vec![0]; invalid.push(noncanonical);
-        let mut reset_allocator = state.clone(); reset_allocator.next_serial.clear(); invalid.push(reset_allocator);
-        let mut noncanonical_allocator = state.clone(); noncanonical_allocator.next_serial.push(0); invalid.push(noncanonical_allocator);
-        for state in invalid {
-            assert!(ObjectCounters::from_checkpoint(counts.clone(), Some(state)).is_err(),
-                "malformed registration metadata must fail before store publication");
-        }
-        let ordinary = [(CounterType::Charge, 3)].into_iter().collect();
-        let ordinary = ObjectCounters::from_checkpoint(ordinary, None)
-            .expect("legacy ordinary counter counts require no ability identity");
-        assert_eq!(ordinary.get(&CounterType::Charge), Some(&3));
-    }
 
     #[test]
-    fn empty_counter_checkpoint_preserves_removed_registration_allocator() {
+    fn native_clone_empty_counter_store_preserves_removed_registration_allocator() {
         let mut counters = ObjectCounters::default();
         counters.add(CounterType::Flying, 2);
-        let removed = counters.ability_state().origins;
+        let removed: Vec<_> = counters
+            .occurrences
+            .values()
+            .flatten()
+            .map(|entry| entry.origin.clone())
+            .collect();
         counters.clear();
-        let mut restored = ObjectCounters::from_checkpoint(
-            counters.counts().clone(), Some(counters.ability_state()),
-        ).expect("empty counter state retains its registration history");
+        let mut restored = counters.clone();
         counters.add(CounterType::Flying, 1);
         restored.add(CounterType::Flying, 1);
-        assert_eq!(restored.ability_state(), counters.ability_state());
-        assert!(!removed.contains(&restored.ability_state().origins[0]),
-            "an empty checkpoint cannot recycle an old counter origin");
+        assert_eq!(restored.next_serial, counters.next_serial);
+        assert!(
+            !removed.contains(&restored.occurrences[&CounterType::Flying][0].origin),
+            "an empty native copy cannot recycle an old counter origin"
+        );
     }
-
 }
 
 #[cfg(test)]
@@ -5200,7 +3796,7 @@ mod initial_control_representation_tests {
 }
 
 #[cfg(test)]
-mod retained_temporary_registration_schema_tests {
+mod native_temporary_registration_tests {
     use super::*;
     fn fixture() -> TemporaryStaticAbilityGrants {
         let mut grants = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(9981));
@@ -5209,34 +3805,32 @@ mod retained_temporary_registration_schema_tests {
             grants.push(TemporaryStaticAbilityGrant {
                 ability: shared.id(),
                 ability_payload: Some(shared.clone()),
-                expires_end_of_turn: expiry,
+                expires_end_of_turn: Some(expiry),
             });
         }
-        grants.retain(|grant| grant.expires_end_of_turn > 1);
+        grants.retain(|grant| grant.expires_end_of_turn.is_none_or(|end| end > 1));
         let mut component = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(9982));
         component.push(TemporaryStaticAbilityGrant {
             ability: shared.id(),
             ability_payload: Some(shared),
-            expires_end_of_turn: 4,
+            expires_end_of_turn: Some(4),
         });
         grants.extend_existing(&component);
         grants
     }
     #[test]
-    fn retained_temporary_registration_native_preserves_aliases_origins_expiry_and_allocator() {
+    fn native_clone_temporary_registration_preserves_aliases_origins_expiry_and_allocator() {
         let original = fixture();
-        let retained = RetainedTemporaryStaticAbilityGrants::from(original.clone());
         let removed = TemporaryAbilityOrigin {
-            source: retained.source,
+            source: original.source,
             serial: 0,
         };
-        assert!(!retained.origins.contains(&removed));
+        assert!(!original.origins.contains(&removed));
         assert_ne!(
-            retained.origins[0].source, retained.origins[2].source,
+            original.origins[0].source, original.origins[2].source,
             "merged component origin retained"
         );
-        let mut restored = TemporaryStaticAbilityGrants::try_from(retained).unwrap();
-        assert_eq!(restored, original);
+        let mut restored = original.clone();
         for slot in 0..original.len() {
             assert_eq!(restored.origin(slot), original.origin(slot));
             assert_eq!(
@@ -5251,114 +3845,24 @@ mod retained_temporary_registration_schema_tests {
             }
         }
         restored.clear();
-        let empty = RetainedTemporaryStaticAbilityGrants::from(restored);
-        assert_eq!(empty.next_serial, 3);
-        let mut restored = TemporaryStaticAbilityGrants::try_from(empty).unwrap();
+        assert_eq!(restored.next_serial, 3);
+        let mut restored = restored.clone();
         restored.push(TemporaryStaticAbilityGrant {
             ability: StaticAbilityId::Flying,
             ability_payload: None,
-            expires_end_of_turn: 9,
+            expires_end_of_turn: Some(9),
         });
         assert_eq!(
             restored.origin(0).unwrap().serial,
             3,
-            "clear/import cannot recycle removed origins"
+            "clear/copy cannot recycle removed origins"
         );
         assert_ne!(restored.origin(0), Some(&removed));
     }
-    #[test]
-    fn retained_temporary_registration_rejects_inconsistent_state_and_propagates_mapping_failure() {
-        let state = RetainedTemporaryStaticAbilityGrants::from(fixture());
-        let mut bad = Vec::new();
-        let mut value = state.clone();
-        value.origins.pop();
-        bad.push(value);
-        let mut value = state.clone();
-        value.origins[1] = value.origins[0].clone();
-        bad.push(value);
-        let mut value = state.clone();
-        value.next_serial = 0;
-        bad.push(value);
-        let mut value = state.clone();
-        value.next_serial = u64::MAX;
-        bad.push(value);
-        let mut value = state.clone();
-        value.origins[2].serial = u64::MAX;
-        bad.push(value);
-        let mut value = state.clone();
-        value.grants[0].ability_payload = Some(StaticAbility::cant_block());
-        bad.push(value);
-        let mut value = state.clone();
-        value.grants[0].ability_payload = None;
-        bad.push(value);
-        for value in bad {
-            assert!(TemporaryStaticAbilityGrants::try_from(value).is_err());
-        }
-        let mut seen = 0;
-        let error = state.try_map_abilities(|ability| {
-            seen += 1;
-            if seen == 2 {
-                Err("nested failure")
-            } else {
-                Ok(ability)
-            }
-        });
-        assert_eq!(error.unwrap_err(), "nested failure");
-        assert_eq!(seen, 2);
-        let mut unresolved = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(9983));
-        unresolved.push(TemporaryStaticAbilityGrant {
-            ability: StaticAbilityId::Enchant,
-            ability_payload: None,
-            expires_end_of_turn: 1,
-        });
-        let restored = TemporaryStaticAbilityGrants::try_from(
-            RetainedTemporaryStaticAbilityGrants::from(unresolved.clone()),
-        )
-        .unwrap();
-        assert_eq!(
-            restored, unresolved,
-            "explicit absent unmaterialized payload is preserved rather than invented"
-        );
-        assert!(restored[0].materialize().is_none());
-    }
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_temporary_registration_json_requires_all_fields_and_keeps_explicit_null() {
-        let mut unresolved = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(9984));
-        unresolved.push(TemporaryStaticAbilityGrant {
-            ability: StaticAbilityId::Enchant,
-            ability_payload: None,
-            expires_end_of_turn: 4,
-        });
-        let state = RetainedTemporaryStaticAbilityGrants::from(unresolved)
-            .try_map_abilities(|_| Ok::<String, String>("unused".into()))
-            .unwrap();
-        let json = serde_json::to_value(state).unwrap();
-        let restored: RetainedTemporaryStaticAbilityGrants<String> =
-            serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(serde_json::to_value(restored).unwrap(), json);
-        for field in ["source", "next_serial", "grants", "origins"] {
-            let mut bad = json.clone();
-            bad.as_object_mut().unwrap().remove(field);
-            assert!(
-                serde_json::from_value::<RetainedTemporaryStaticAbilityGrants<String>>(bad)
-                    .is_err()
-            );
-        }
-        for field in ["ability", "ability_payload", "expires_end_of_turn"] {
-            let mut bad = json.clone();
-            bad["grants"][0].as_object_mut().unwrap().remove(field);
-            assert!(
-                serde_json::from_value::<RetainedTemporaryStaticAbilityGrants<String>>(bad)
-                    .is_err()
-            );
-        }
-    }
 }
 
-
 #[cfg(test)]
-mod retained_restore_state_schema_tests {
+mod native_copy_restore_state_tests {
     use super::*;
     fn fixture() -> (
         crate::game_state::GameState,
@@ -5409,18 +3913,9 @@ mod retained_restore_state_schema_tests {
     }
 
     #[test]
-    fn retained_restore_state_native_preserves_printed_payloads_aliases_and_actual_overlay_end() {
+    fn native_clone_copy_restore_state_preserves_printed_payloads_aliases_and_actual_overlay_end() {
         let (mut game, id, original) = fixture();
-        let retained = RetainedEntersAsCopyRestoreState::from(original.clone());
-        let restored: EntersAsCopyRestoreState = retained
-            .try_map_payloads(
-                Ok::<_, &'static str>,
-                Ok::<_, &'static str>,
-                Ok::<_, &'static str>,
-                Ok::<_, &'static str>,
-            )
-            .unwrap()
-            .into();
+        let restored = original.clone();
         for slot in 0..2 {
             let crate::ability::AbilityKind::Static(original_ability) =
                 &original.printed.abilities[slot].kind
@@ -5458,92 +3953,10 @@ mod retained_restore_state_schema_tests {
         assert!(object.has_fuse);
         assert!(object.enters_as_copy_restore_state.is_none());
     }
-
-    #[test]
-    fn retained_restore_state_mapping_propagates_each_payload_and_link_failure() {
-        let (_, _, original) = fixture();
-        for failure in ["ability", "program", "attachment", "face"] {
-            let observed = std::cell::RefCell::new(Vec::new());
-            let call = |kind| {
-                observed.borrow_mut().push(kind);
-                if kind == failure { Err(kind) } else { Ok(1u8) }
-            };
-            let result = RetainedEntersAsCopyRestoreState::from(original.clone()).try_map_payloads(
-                |_| call("ability"),
-                |_| call("program"),
-                |_| call("attachment"),
-                |_| call("face"),
-            );
-            assert_eq!(result.unwrap_err(), failure);
-            assert_eq!(observed.borrow().last().copied(), Some(failure));
-            assert!(!observed.borrow()[..observed.borrow().len() - 1].contains(&failure));
-        }
-    }
-
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_restore_state_json_requires_all_fields_and_preserves_explicit_absence() {
-        type Wire = RetainedEntersAsCopyRestoreState<u8, u8, u8, u8>;
-        let (_, _, original) = fixture();
-        let wire: Wire = RetainedEntersAsCopyRestoreState::from(original)
-            .try_map_payloads(
-                |_| Ok::<_, ()>(1),
-                |_| Ok::<_, ()>(2),
-                |_| Ok::<_, ()>(3),
-                |_| Ok::<_, ()>(4),
-            )
-            .unwrap();
-        let json = serde_json::to_value(&wire).unwrap();
-        let fields = json
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for field in fields {
-            let mut missing = json.clone();
-            missing.as_object_mut().unwrap().remove(&field);
-            assert!(
-                serde_json::from_value::<Wire>(missing).is_err(),
-                "missing enclosing {field}"
-            );
-        }
-        let fields = json["printed"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(fields.len(), 18);
-        for field in fields {
-            let mut missing = json.clone();
-            missing["printed"].as_object_mut().unwrap().remove(&field);
-            assert!(
-                serde_json::from_value::<Wire>(missing).is_err(),
-                "missing printed {field}"
-            );
-        }
-        let mut absent = wire;
-        absent.other_face = None;
-        absent.other_face_name = None;
-        absent.printed.first_printed_set_name = None;
-        absent.printed.mana_cost = None;
-        absent.printed.color_override = None;
-        absent.printed.base_power = None;
-        absent.printed.base_toughness = None;
-        absent.printed.base_loyalty = None;
-        absent.printed.base_defense = None;
-        absent.printed.spell_effect = None;
-        absent.printed.aura_attach_filter = None;
-        assert_eq!(
-            serde_json::from_value::<Wire>(serde_json::to_value(&absent).unwrap()).unwrap(),
-            absent
-        );
-    }
 }
 
 #[cfg(test)]
-mod retained_cast_overlay_schema_tests {
+mod native_cast_overlay_tests {
     use super::*;
     fn object() -> Object {
         let mut game = crate::game_state::GameState::new(vec!["Alice".into(), "Bob".into()], 20);
@@ -5567,18 +3980,13 @@ mod retained_cast_overlay_schema_tests {
         object
     }
     #[test]
-    fn retained_cast_overlays_restore_native_characteristics_and_programs() {
+    fn native_clone_cast_overlays_restore_native_characteristics_and_programs() {
         let original = object();
         let mut bestow = original.clone();
         bestow.apply_bestow_cast_overlay();
         assert!(bestow.subtypes.contains(&Subtype::Aura));
         let saved = *bestow.bestow_cast_state.take().unwrap();
-        bestow.bestow_cast_state = Some(Box::new(
-            RetainedBestowCastState::from(saved)
-                .try_map_payloads(Ok::<_, &'static str>, Ok::<_, &'static str>)
-                .unwrap()
-                .into(),
-        ));
+        bestow.bestow_cast_state = Some(Box::new(saved.clone()));
         assert!(bestow.end_bestow_cast_overlay());
         assert_eq!(bestow.card_types, original.card_types);
         assert_eq!(bestow.subtypes, original.subtypes);
@@ -5594,12 +4002,7 @@ mod retained_cast_overlay_schema_tests {
         assert!(splice.begin_splice_cast_overlay());
         splice.spell_effect = None;
         let saved = *splice.splice_cast_state.take().unwrap();
-        splice.splice_cast_state = Some(Box::new(
-            RetainedSpliceCastState::from(saved)
-                .try_map_payloads(Ok::<_, &'static str>)
-                .unwrap()
-                .into(),
-        ));
+        splice.splice_cast_state = Some(Box::new(saved.clone()));
         assert!(splice.end_splice_cast_overlay());
         assert_eq!(
             splice.spell_effect.as_ref().unwrap().segments[0]
@@ -5616,7 +4019,7 @@ mod retained_cast_overlay_schema_tests {
         ));
         assert_eq!(prototype.base_power, Some(PtValue::Fixed(1)));
         let saved = prototype.prototype_cast_state.take().unwrap();
-        prototype.prototype_cast_state = Some(RetainedPrototypeCastState::from(saved).into());
+        prototype.prototype_cast_state = Some(saved.clone());
         assert!(prototype.end_prototype_cast_overlay());
         assert_eq!(prototype.mana_cost, original.mana_cost);
         assert_eq!(prototype.color_override, original.color_override);
@@ -5624,455 +4027,93 @@ mod retained_cast_overlay_schema_tests {
         assert_eq!(prototype.base_toughness, original.base_toughness);
         assert!(!prototype.end_prototype_cast_overlay());
     }
-    #[test]
-    fn retained_cast_overlay_payload_mapping_propagates_failure() {
-        let mut object = object();
-        object.aura_attach_filter = Some(
-            AuraAttachmentFilter::from(crate::target::ObjectFilter::creature()).into(),
-        );
-        object.apply_bestow_cast_overlay();
-        let saved = RetainedBestowCastState::from(*object.bestow_cast_state.take().unwrap());
-        assert!(
-            saved
-                .clone()
-                .try_map_payloads(|_| Err::<(), _>("program"), Ok::<_, &'static str>)
-                .is_err()
-        );
-        assert!(
-            saved
-                .try_map_payloads(Ok::<_, &'static str>, |_| Err::<(), _>("attachment"))
-                .is_err()
-        );
-        object.begin_splice_cast_overlay();
-        let saved = RetainedSpliceCastState::from(*object.splice_cast_state.take().unwrap());
-        assert!(saved.try_map_payloads(|_| Err::<(), _>("program")).is_err());
-    }
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_cast_overlay_json_rejects_missing_fields_and_preserves_null() {
-        fn check<T: serde::Serialize + serde::de::DeserializeOwned>(value: T) {
-            let json = serde_json::to_value(value).unwrap();
-            let _: T = serde_json::from_value(json.clone()).unwrap();
-            for field in json.as_object().unwrap().keys() {
-                let mut missing = json.clone();
-                missing.as_object_mut().unwrap().remove(field);
-                assert!(
-                    serde_json::from_value::<T>(missing).is_err(),
-                    "missing {field}"
-                );
-            }
-        }
-        check(RetainedBestowCastState::<u8, u8> {
-            card_types: vec![],
-            subtypes: vec![],
-            spell_effect: None,
-            aura_attach_filter: None,
-        });
-        check(RetainedSpliceCastState::<u8> { spell_effect: None });
-        check(RetainedPrototypeCastState {
-            mana_cost: None,
-            color_override: None,
-            base_power: None,
-            base_toughness: None,
-        });
-    }
 }
 
 #[cfg(test)]
-mod retained_counter_store_tests {
+mod native_counter_store_tests {
     use super::*;
     use crate::ability::AbilityKind;
 
     fn static_ids(store: &ObjectCounters) -> Vec<crate::static_abilities::StaticAbilityInstanceId> {
-        store.occurrences.values().flatten().flat_map(|entry| &entry.abilities)
+        store
+            .occurrences
+            .values()
+            .flatten()
+            .flat_map(|entry| &entry.abilities)
             .filter_map(|ability| match &ability.kind {
-                AbilityKind::Static(ability) => Some(ability.instance_id()), _ => None,
-            }).collect()
+                AbilityKind::Static(ability) => Some(ability.instance_id()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
-    fn retained_counter_store_preserves_shared_payloads_survivors_and_allocator() {
+    fn native_clone_counter_store_preserves_shared_payloads_survivors_and_allocator() {
         let mut counters = ObjectCounters::default();
         counters.add(CounterType::Flying, 2);
         counters.add(CounterType::Decayed, 1);
         let original = static_ids(&counters);
-        let legacy = ObjectCounters::from_checkpoint(counters.counts().clone(), Some(counters.ability_state())).unwrap();
-        assert_ne!(static_ids(&legacy), original, "counts and origin serials do not retain static occurrence identity");
-        let retained = counters.retain_with_static_occurrences(|ability| Ok(ability.clone())).unwrap();
-        let mut restored = ObjectCounters::restore_with_static_occurrences(retained, Ok).unwrap();
+        let mut restored = counters.clone();
         assert_eq!(static_ids(&restored), original);
-        assert_eq!(restored.ability_state(), counters.ability_state());
-        assert!(matches!(restored.ability_occurrences(CounterType::Decayed)[0].abilities[1].kind, AbilityKind::Triggered(_)));
-        counters.insert(CounterType::Flying, 1); restored.insert(CounterType::Flying, 1);
-        assert_eq!(static_ids(&restored), static_ids(&counters));
-        counters.add(CounterType::Flying, 1); restored.add(CounterType::Flying, 1);
-        assert_eq!(restored.ability_state(), counters.ability_state());
-        let flying_ids = |store: &ObjectCounters| store.ability_occurrences(CounterType::Flying)
-            .iter().map(|entry| match &entry.abilities[0].kind {
-                AbilityKind::Static(ability) => ability.instance_id(), _ => panic!("flying counter must be static"),
-            }).collect::<Vec<_>>();
-        assert_eq!(flying_ids(&restored)[0], flying_ids(&counters)[0]);
-        assert_ne!(flying_ids(&restored)[1], flying_ids(&counters)[1],
-            "independent newly registered counters have distinct payload occurrences");
-    }
-
-    #[test]
-    fn retained_counter_store_rejects_malformed_payloads_and_binding_failure() {
-        let mut counters = ObjectCounters::default(); counters.add(CounterType::Flying, 1);
-        let state = counters.retain_with_static_occurrences(|ability| Ok(ability.clone())).unwrap();
-        let mut invalid = Vec::new();
-        let mut duplicate = state.clone(); duplicate.counts.push(duplicate.counts[0]); invalid.push(duplicate);
-        let mut missing = state.clone(); missing.occurrences[0].slots.clear(); invalid.push(missing);
-        let mut extra = state.clone(); extra.occurrences[0].slots.push(RetainedCounterAbilitySlot::CanonicalProgram); invalid.push(extra);
-        let mut wrong_kind = state.clone(); wrong_kind.occurrences[0].slots[0] = RetainedCounterAbilitySlot::CanonicalProgram; invalid.push(wrong_kind);
-        let mut wrong_payload = state.clone(); wrong_payload.occurrences[0].slots[0] = RetainedCounterAbilitySlot::Static(StaticAbility::haste()); invalid.push(wrong_payload);
-        for state in invalid { assert!(ObjectCounters::restore_with_static_occurrences(state, Ok).is_err()); }
-        assert!(ObjectCounters::restore_with_static_occurrences(state, |_| Err("unknown occurrence".into())).is_err());
-        assert!(counters.retain_with_static_occurrences::<u32>(|_| Err("unbound occurrence".into())).is_err());
-        assert_eq!(counters.get(&CounterType::Flying), Some(&1));
-    }
-
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_counter_store_requires_every_serialized_field() {
-        let mut counters = ObjectCounters::default(); counters.add(CounterType::Decayed, 1);
-        let state = counters.retain_with_static_occurrences(|_| Ok(7u32)).unwrap();
-        let value = serde_json::to_value(&state).unwrap();
-        for field in ["counts", "next_serial", "occurrences"] {
-            let mut malformed = value.clone(); malformed.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<RetainedObjectCounters<u32>>(malformed).is_err());
-        }
-        for field in ["origin", "slots"] {
-            let mut malformed = value.clone(); malformed["occurrences"][0].as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<RetainedObjectCounters<u32>>(malformed).is_err());
-        }
-        let decoded: RetainedObjectCounters<u32> = serde_json::from_value(value).unwrap();
-        assert_eq!(decoded, state);
-    }
-}
-
-#[cfg(test)]
-mod retained_cast_payment_state_tests {
-    use super::*;
-    fn fixture() -> Object {
-        let mut object = Object::new_hidden_card(ObjectId::from_raw(44441), PlayerId::from_index(0), Zone::Stack);
-        object.x_value = Some(7);
-        object.mana_spent_to_cast.blue = 3;
-        object.snow_mana_spent_to_cast.blue = 2;
-        object.optional_costs_paid.costs.push((crate::cost::OptionalCostRef::from("Kicker"), 2));
-        object.optional_costs_paid.branch_choices.push((0, 1));
-        object.optional_costs_paid.cast_at_sorcery_timing = true;
-        object.cast_play_from_constraints = Some(Box::new((ObjectId::from_raw(44442), Zone::Exile,
-            crate::grant_registry::PlayFromConstraints { lands_enter_tapped: true, ..Default::default() })));
-        object.cast_grant_usage_identity = Some(Box::new(crate::grant_registry::GrantPermissionIdentity::Stored(18)));
-        object.keyword_payment_contributions_to_cast = vec![
-            crate::decision::KeywordPaymentContribution { permanent_id: ObjectId::from_raw(44443), effect: crate::decision::AlternativePaymentEffect::Convoke },
-            crate::decision::KeywordPaymentContribution { permanent_id: ObjectId::from_raw(44444), effect: crate::decision::AlternativePaymentEffect::Improvise },
-        ];
-        let game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
-        let snapshot = ObjectSnapshot::from_object(&object, &game);
-        object.cast_tagged_objects.insert("paid_card".into(), vec![snapshot]);
-        object
-    }
-    use crate::game_state::GameState;
-
-    #[test]
-    fn retained_cast_payment_state_applies_complete_capture_and_rejects_duplicate_tags_atomically() {
-        let original = fixture();
-        let mut destination = Object::new_hidden_card(ObjectId::from_raw(44445), PlayerId::from_index(1), Zone::Hand);
-        NativeCastPaymentState::from(&original).apply_to(&mut destination).unwrap();
-        let scalar = |value: NativeCastPaymentState| value.try_map_payloads(
-            |_| Ok::<_, String>(0u32), |_| Ok(0u32), |_| Ok(0u32), |_| Ok(0u32), |_| Ok(0u32)).unwrap();
-        assert_eq!(scalar(NativeCastPaymentState::from(&destination)), scalar(NativeCastPaymentState::from(&original)));
-        assert_eq!(destination.cast_tagged_objects[&TagKey::from("paid_card")][0], original.cast_tagged_objects[&TagKey::from("paid_card")][0]);
-        assert_eq!(destination.id, ObjectId::from_raw(44445));
-        let before = scalar(NativeCastPaymentState::from(&destination));
-        let mut malformed = NativeCastPaymentState::from(&original);
-        malformed.x_value = Some(99);
-        malformed.cast_tagged_objects.push(malformed.cast_tagged_objects[0].clone());
-        assert!(malformed.apply_to(&mut destination).is_err());
-        assert_eq!(scalar(NativeCastPaymentState::from(&destination)), before);
-        assert!(NativeCastPaymentState::from(&original).try_map_payloads(
-            Ok::<_, String>, Ok, Ok, Ok, |_| Err::<ObjectSnapshot, _>("snapshot binding failed".into())).is_err());
-    }
-
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_cast_payment_state_requires_all_fields_and_preserves_explicit_null() {
-        let mut state = NativeCastPaymentState::from(&fixture()).try_map_payloads(
-            |_| Ok::<_, String>(0u32), |_| Ok(0u32), |_| Ok(0u32), |_| Ok(0u32), |_| Ok(0u32)).unwrap();
-        state.cast_alternative_method = Some(9);
-        state.alternative_casts = vec![3, 4];
-        state.optional_costs = vec![5];
-        let value = serde_json::to_value(&state).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 14);
-        for field in value.as_object().unwrap().keys() {
-            let mut missing = value.clone(); missing.as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<RetainedCastPaymentState<u32, u32, u32, u32, u32>>(missing).is_err(), "missing {field} must reject");
-        }
-        for field in ["cast_alternative_method", "cast_play_from_constraints", "cast_grant_usage_identity", "x_value"] {
-            let mut absent = value.clone(); absent[field] = serde_json::Value::Null;
-            let decoded: RetainedCastPaymentState<u32, u32, u32, u32, u32> = serde_json::from_value(absent.clone()).unwrap();
-            assert_eq!(serde_json::to_value(decoded).unwrap(), absent);
-        }
-        for field in ["permanent_id", "effect"] {
-            let mut missing = value.clone(); missing["keyword_payment_contributions_to_cast"][0].as_object_mut().unwrap().remove(field);
-            assert!(serde_json::from_value::<RetainedCastPaymentState<u32, u32, u32, u32, u32>>(missing).is_err());
-        }
-    }
-}
-
-#[cfg(test)]
-mod retained_live_object_schema_tests {
-    use super::*;
-    use crate::target::ObjectFilter;
-    type ScalarObject = RetainedLiveObject<u32, u32, u32, u32, u32, u32, u32>;
-    fn fixture() -> Object {
-        let mut object = Object::new_hidden_card(
-            ObjectId::from_raw(55331),
-            PlayerId::from_index(0),
-            Zone::Stack,
-        );
-        object.kind = ObjectKind::SpellCopy;
-        object.card = Some(CardId::new());
-        object.last_modified = 37;
-        object.initial_controller = PlayerId::from_index(1);
-        object.name = "Retained raw object".into();
-        object.first_printed_set_name = Some("Original set".into());
-        object.mana_cost =
-            Some(ManaCost::from_pips(vec![vec![crate::mana::ManaSymbol::Blue]]).into());
-        object.color_override = Some(ColorSet::RED);
-        object.supertypes = vec![Supertype::Legendary].into();
-        object.card_types = vec![CardType::Creature, CardType::Artifact].into();
-        object.subtypes = vec![Subtype::Angel].into();
-        object.compiled_card_text = "Flying".into();
-        object.ability_labels = vec!["Flying".into()].into();
-        object.rules_text_color_identity = ColorSet::BLUE;
-        object.other_face = Some(CardId::new());
-        object.other_face_name = Some("Other face".into());
-        object.linked_face_layout = LinkedFaceLayout::Split;
-        object.linked_face_mana_cost = object.mana_cost.clone();
-        object.split_combined = Some(
-            SplitCombinedCharacteristics {
-                other_half_name: "Combined half".into(),
-                other_half_colors: ColorSet::GREEN,
-                card_types: vec![CardType::Artifact].into(),
-                subtypes: vec![Subtype::Angel].into(),
-                supertypes: vec![Supertype::Legendary].into(),
-            }
-            .into(),
-        );
-        object.base_power = Some(PtValue::StarPlus(2));
-        object.base_toughness = Some(PtValue::Fixed(7));
-        object.base_loyalty = Some(4);
-        object.base_defense = Some(5);
-        object.hand_modifier = -2;
-        object.life_modifier = 3;
-        let flying = StaticAbility::flying();
-        object.abilities = Arc::new(vec![Ability::static_ability(flying.clone())]);
-        object.counters.add(CounterType::Flying, 2);
-        object.counters.insert(CounterType::Flying, 1);
-        object.attached_to = Some(AttachmentTarget::Player(PlayerId::from_index(1)));
-        object.attachments = vec![ObjectId::from_raw(55332)];
-        object.spell_effect =
-            Some(crate::resolution::ResolutionProgram::from_effects(Vec::new()).into());
-        object.aura_attach_filter =
-            Some(AuraAttachmentFilter::Object(ObjectFilter::creature()).into());
-        object.splice_cast_state = Some(Box::new(SpliceCastState {
-            spell_effect: object.spell_effect.clone(),
-        }));
-        object.bestow_cast_state = Some(Box::new(BestowCastState {
-            card_types: object.card_types.clone(),
-            subtypes: object.subtypes.clone(),
-            aura_attach_filter: object.aura_attach_filter.clone(),
-            spell_effect: object.spell_effect.clone(),
-        }));
-        let printed = object.live_copiable_restore_fields();
-        object.face_down_cast_state = Some(Box::new(printed.clone()));
-        object.enters_as_copy_restore_state = Some(Box::new(EntersAsCopyRestoreState {
-            printed,
-            other_face: object.other_face,
-            other_face_name: object.other_face_name.clone(),
-            linked_face_layout: object.linked_face_layout,
-            has_fuse: true,
-        }));
-        object.prototype_cast_state = Some(PrototypeCastState {
-            mana_cost: object.mana_cost.clone(),
-            color_override: object.color_override,
-            base_power: object.base_power,
-            base_toughness: object.base_toughness,
-        });
-        object.has_fuse = true;
-        object
-            .temporary_static_ability_grants
-            .push(TemporaryStaticAbilityGrant {
-                ability: flying.id(),
-                ability_payload: Some(flying),
-                expires_end_of_turn: 8,
-            });
-        object.x_value = Some(11);
-        object.mana_spent_to_cast.blue = 3;
-        object.cast_grant_usage_identity = Some(Box::new(
-            crate::grant_registry::GrantPermissionIdentity::Stored(27),
+        assert_eq!(restored.next_serial, counters.next_serial);
+        assert!(matches!(
+            restored.ability_occurrences(CounterType::Decayed)[0].abilities[1].kind,
+            AbilityKind::Triggered(_)
         ));
-        object
-    }
-    fn scalar(value: Object) -> ScalarObject {
-        NativeRetainedLiveObject::from(value)
-            .try_map_payloads(
-                |_| Ok::<_, String>(0),
-                |_| Ok(1),
-                |_| Ok(2),
-                |_| Ok(3),
-                |_| Ok(4),
-                |_| Ok(5),
-                |_| Ok(6),
-            )
-            .unwrap()
-    }
-
-    #[test]
-    fn retained_live_object_preserves_all_raw_fields_stores_overlays_and_binding_failures() {
-        let original = fixture();
-        let restored = Object::try_from(NativeRetainedLiveObject::from(original.clone())).unwrap();
-        assert_eq!(scalar(restored.clone()), scalar(original.clone()));
-        assert_eq!(restored.card, original.card);
-        assert_eq!(restored.other_face, original.other_face);
-        assert_eq!(
-            restored
-                .enters_as_copy_restore_state
-                .as_ref()
-                .unwrap()
-                .other_face,
-            original
-                .enters_as_copy_restore_state
-                .as_ref()
-                .unwrap()
-                .other_face
-        );
-        assert_eq!(restored.counters, original.counters);
-        assert_eq!(
-            restored.temporary_static_ability_grants,
-            original.temporary_static_ability_grants
-        );
-        let ids = |object: &Object| {
-            object
-                .abilities
+        counters.insert(CounterType::Flying, 1);
+        restored.insert(CounterType::Flying, 1);
+        assert_eq!(static_ids(&restored), static_ids(&counters));
+        counters.add(CounterType::Flying, 1);
+        restored.add(CounterType::Flying, 1);
+        assert_eq!(restored.next_serial, counters.next_serial);
+        let flying_ids = |store: &ObjectCounters| {
+            store
+                .ability_occurrences(CounterType::Flying)
                 .iter()
-                .filter_map(|ability| match &ability.kind {
-                    crate::ability::AbilityKind::Static(ability) => Some(ability.instance_id()),
-                    _ => None,
+                .map(|entry| match &entry.abilities[0].kind {
+                    AbilityKind::Static(ability) => ability.instance_id(),
+                    _ => panic!("flying counter must be static"),
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(&restored), ids(&original));
-        assert_eq!(
-            restored
-                .aura_attach_filter
-                .as_ref()
-                .unwrap()
-                .enchant_ability()
-                .instance_id(),
-            original
-                .aura_attach_filter
-                .as_ref()
-                .unwrap()
-                .enchant_ability()
-                .instance_id()
+        assert_eq!(flying_ids(&restored)[0], flying_ids(&counters)[0]);
+        assert_ne!(
+            flying_ids(&restored)[1],
+            flying_ids(&counters)[1],
+            "independent newly registered counters have distinct payload occurrences"
         );
-        assert_eq!(restored.x_value, Some(11));
-        assert_eq!(
-            restored.cast_grant_usage_identity,
-            original.cast_grant_usage_identity
-        );
-        for fail in 0..7 {
-            let bind = |kind| {
-                if kind == fail {
-                    Err("binding failed")
-                } else {
-                    Ok(0u32)
-                }
-            };
-            assert!(
-                NativeRetainedLiveObject::from(original.clone())
-                    .try_map_payloads(
-                        |_| bind(0),
-                        |_| bind(1),
-                        |_| bind(2),
-                        |_| bind(3),
-                        |_| bind(4),
-                        |_| bind(5),
-                        |_| bind(6)
-                    )
-                    .is_err(),
-                "binder {fail} failure cannot become a complete object"
-            );
-        }
-        let mut malformed = NativeRetainedLiveObject::from(original);
-        malformed.cast_payment_state.cast_tagged_objects =
-            vec![("same".into(), Vec::new()), ("same".into(), Vec::new())];
-        assert!(Object::try_from(malformed).is_err());
     }
+}
 
-    #[cfg(feature = "serialization")]
+#[cfg(all(test, feature = "serialization"))]
+mod permanent_permission_registration_tests {
+    use super::*;
     #[test]
-    fn retained_live_object_requires_complete43field_schema_and_explicit_optional_values() {
-        let value = serde_json::to_value(scalar(fixture())).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 43);
-        for field in value.as_object().unwrap().keys() {
-            let mut missing = value.clone();
-            missing.as_object_mut().unwrap().remove(field);
-            assert!(
-                serde_json::from_value::<ScalarObject>(missing).is_err(),
-                "missing live object {field} must reject"
-            );
-        }
-        for field in [
-            "card",
-            "first_printed_set_name",
-            "mana_cost",
-            "color_override",
-            "other_face",
-            "other_face_name",
-            "linked_face_mana_cost",
-            "split_combined",
-            "base_power",
-            "base_toughness",
-            "base_loyalty",
-            "base_defense",
-            "attached_to",
-            "spell_effect",
-            "splice_cast_state",
-            "aura_attach_filter",
-            "bestow_cast_state",
-            "face_down_cast_state",
-            "prototype_cast_state",
-            "enters_as_copy_restore_state",
-        ] {
-            let mut absent = value.clone();
-            absent[field] = serde_json::Value::Null;
-            let decoded: ScalarObject = serde_json::from_value(absent.clone()).unwrap();
-            assert_eq!(
-                serde_json::to_value(decoded).unwrap(),
-                absent,
-                "explicit absence must remain absent: {field}"
-            );
-        }
-        for field in [
-            "other_half_name",
-            "other_half_colors",
-            "card_types",
-            "subtypes",
-            "supertypes",
-        ] {
-            let mut missing = value.clone();
-            missing["split_combined"]
-                .as_object_mut()
-                .unwrap()
-                .remove(field);
-            assert!(serde_json::from_value::<ScalarObject>(missing).is_err());
-        }
-        let decoded: ScalarObject = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+    fn indefinite_registration_is_explicit_and_retained_without_an_expiry() {
+        let mut grants = TemporaryStaticAbilityGrants::new(ObjectId::from_raw(99999));
+        grants.push(TemporaryStaticAbilityGrant {
+            ability: StaticAbilityId::Flying,
+            ability_payload: Some(StaticAbility::flying()),
+            expires_end_of_turn: None,
+        });
+        assert!(!grants[0].is_expired(u32::MAX));
+        let restored = grants.clone();
+        assert_eq!(restored[0].expires_end_of_turn, None);
+        assert!(!restored[0].is_expired(u32::MAX));
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct CastPriceReceipt<C, G> {
+    pub identity: G,
+    pub source: ObjectId,
+    pub total_cost: C,
+    /// Mana that the independent origin requires in addition to any price.
+    pub origin_mana_surcharge: ManaCost,
+    pub prototype: Option<usize>,
+    pub constraints: crate::grant_registry::PlayFromConstraints,
 }

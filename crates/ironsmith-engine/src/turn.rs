@@ -293,7 +293,8 @@ fn legacy_enter_phase(game: &mut GameState, phase: Phase) -> Result<(), TurnErro
             .turn_store
             .skip_current_turn_combat_phases
             .contains(&active)
-            || game.turn_store.skip_next_combat_phases.remove(&active));
+            || game.turn_store.skip_next_combat_phases.remove(&active)
+            || game.turn_store.pending_combat_phase_skips.remove(&active));
     game.clear_forecast_revealed_hand_cards();
     game.turn.phase = phase;
     game.turn.step = first_step_of_phase(phase);
@@ -360,6 +361,9 @@ fn legacy_finish_step(
     step: Step,
     normal_next: TurnScheduleDestination,
 ) -> Result<(), TurnError> {
+    if step == Step::Draw {
+        game.finish_draw_step_tracking();
+    }
     let additions = game.take_added_steps(AddedStepPlacement::AfterStep(step));
     let active = game.turn_store.active_added_step.take();
     if let Some(scheduled) = active {
@@ -382,6 +386,9 @@ fn legacy_finish_step_and_phase(
     phase: Phase,
     normal_next: TurnScheduleDestination,
 ) -> Result<(), TurnError> {
+    if step == Step::Draw {
+        game.finish_draw_step_tracking();
+    }
     let additions = game.take_added_steps(AddedStepPlacement::AfterStep(step));
     let active = game.turn_store.active_added_step.take();
     if active.is_none() || active.is_some_and(|scheduled| scheduled.isolated_phase) {
@@ -409,6 +416,10 @@ fn legacy_finish_phase(
     phase: Phase,
     normal_next: TurnScheduleDestination,
 ) -> Result<(), TurnError> {
+    if phase == Phase::Beginning && game.turn.step == Some(Step::Draw) {
+        game.finish_draw_step_tracking();
+    }
+
     if matches!(phase, Phase::Combat) {
         game.cleanup_effects_end_of_combat();
     }
@@ -604,8 +615,10 @@ fn execute_untap_step_inner(
     // dirty state that snapshot can predate freshly generated static effects
     // (e.g. an aura attached since the last refresh), which would skip the
     // characteristics check entirely.
-    game.refresh_continuous_state().map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    game.refresh_continuous_state()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     game.update_cant_effects();
+    game.establish_turn_start_continuous_control();
 
     // CR 702.26a performs one simultaneous phasing exchange before untapping:
     // visible permanents with phasing phase out, while permanents that phased
@@ -628,10 +641,7 @@ fn execute_untap_step_inner(
         .flat_map(|player| game.directly_phased_out_under(*player))
         .filter(|id| game.can_phase_in(*id))
         .collect::<Vec<_>>();
-    game.phase_out_simultaneously(&phase_out);
-    for id in phase_in {
-        game.phase_in(id);
-    }
+    game.phase_simultaneously(&phase_out, &phase_in);
 
     // Delayed instructions with "as you untap your permanents" timing are
     // turn-based actions, not triggered abilities. They resolve here without
@@ -643,7 +653,8 @@ fn execute_untap_step_inner(
 
     // The delayed action can move a static-ability source away before the
     // simultaneous untap, so rebuild the calculated state it may have changed.
-    game.refresh_continuous_state().map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    game.refresh_continuous_state()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     game.update_cant_effects();
     let may_have_untap_static_abilities = game_may_have_untap_static_abilities(game);
     let has_cant_untap_restrictions = !game.effect_store.cant_effects.cant_untap.is_empty();
@@ -754,10 +765,9 @@ fn execute_untap_step_inner(
         return Ok(());
     }
 
-    // Second pass: untap eligible permanents. Only the active player's
-    // permanents have been under their controller continuously since that
-    // player's most recent turn began; off-turn Seedborn-style untaps do not
-    // cure summoning sickness (CR 302.6).
+    // Untapping itself never changes continuous-control eligibility.
+    let before = crate::events::other::before_tap_state_snapshots(game);
+    let mut untap_events = Vec::new();
     for id in permanents {
         // Only untap if the permanent doesn't have DoesntUntap
         if should_untap.contains(&id) {
@@ -766,21 +776,25 @@ fn execute_untap_step_inner(
             // CR 502.3 / 603.2: the permanent "becomes untapped" (Inspired).
             // No player gets priority in the untap step, so the event waits
             // for the upkeep trigger drain (CR 502.4).
-            let outcome =
-                crate::events::processing::process_untap(game, id, &mut *decision_maker)?;
+            let actor = before
+                .get(&id)
+                .map(|snapshot| snapshot.controller)
+                .unwrap_or(game.turn.active_player);
+            let mut ctx = crate::effects::ExecutionContext::new(id, actor, &mut *decision_maker);
+            let outcome = crate::events::processing::process_untap_with_execution_context(
+                game, id, &mut ctx,
+            )?;
             if decision_maker.awaiting_choice() {
                 return Ok(());
             }
-            for event in outcome.events {
-                game.queue_trigger_event(event.provenance(), event);
-            }
+            untap_events.extend(outcome.events);
         }
-        if game
-            .current_controller(id)
-            .is_some_and(|controller| active_players.contains(&controller))
-        {
-            game.remove_summoning_sickness(id);
-        }
+    }
+
+    crate::events::other::bind_before_tap_state_snapshots(&mut untap_events, &before);
+    crate::events::other::group_tap_state_events(game, &mut untap_events, Default::default());
+    for event in untap_events {
+        game.queue_trigger_event(event.provenance(), event);
     }
 
     for effect in &mut game.effect_store.restriction_effects {
@@ -942,7 +956,9 @@ fn modification_may_affect_untap(modification: &crate::continuous::Modification)
         | Modification::SetTextBox(_) => true,
         // Materializes StaticAbility::doesnt_untap() in calculated
         // characteristics (see apply path in continuous.rs).
-        Modification::Restriction(restriction) => static_ability_may_affect_untap(restriction.ability()),
+        Modification::Restriction(restriction) => {
+            static_ability_may_affect_untap(restriction.ability())
+        }
         Modification::AddAbility(static_ability) => static_ability_may_affect_untap(static_ability),
         Modification::AddAbilityGeneric(ability) => ability_may_affect_untap(ability),
         Modification::SetAbilities(abilities) => abilities.iter().any(ability_may_affect_untap),
@@ -1005,8 +1021,6 @@ pub fn execute_draw_step_with(
             decision_maker,
         ));
     }
-    game.turn_store.tracked_draw_step_player = None;
-    game.turn_store.cards_drawn_this_draw_step = 0;
     game.reset_priority_for_new_window();
     events
 }
@@ -1149,8 +1163,12 @@ pub fn apply_cleanup_discard(
     let opened_batch = game.open_simultaneous_action();
     let result = apply_cleanup_discard_inner(game, cards_to_discard, decision_maker);
     game.close_simultaneous_action(opened_batch);
-    if result.is_err() || decision_maker.awaiting_choice() { *game = checkpoint; }
-    if decision_maker.awaiting_choice() { return Ok(Vec::new()); }
+    if result.is_err() || decision_maker.awaiting_choice() {
+        *game = checkpoint;
+    }
+    if decision_maker.awaiting_choice() {
+        return Ok(Vec::new());
+    }
     result
 }
 
@@ -1159,61 +1177,97 @@ fn apply_cleanup_discard_inner(
     cards_to_discard: &[crate::ids::ObjectId],
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<Vec<crate::ids::ObjectId>, crate::effects::ExecutionError> {
+    use crate::effects::{ExecutionContext, ExecutionError};
     use crate::events::cause::EventCause;
-    use crate::effects::{ExecutionContext,ExecutionError};
-    if cards_to_discard.is_empty() { return Ok(Vec::new()); }
+    if cards_to_discard.is_empty() {
+        return Ok(Vec::new());
+    }
     let source = cards_to_discard[0];
-    let source_snapshot = game.object(source).map(|object|
-        crate::snapshot::ObjectSnapshot::from_object(object, game));
-    let player = source_snapshot.as_ref().map(|snapshot| snapshot.owner)
+    let source_snapshot = game
+        .object(source)
+        .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, game));
+    let player = source_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.owner)
         .unwrap_or(game.turn.active_player);
     let cause = EventCause::from_game_rule();
-    let provenance = game.provenance_graph_mut().alloc_root_event(crate::events::EventKind::Discard);
+    let provenance = game
+        .provenance_graph_mut()
+        .alloc_root_event(crate::events::EventKind::Discard);
     let mut receipts = Vec::new();
     let mut successful = Vec::new();
     let mut madness_cards = Vec::new();
     for &card_id in cards_to_discard {
         let receipt = crate::events::processing::execute_discard_with_scope(
-            game, card_id, player, cause.clone(), false, provenance, decision_maker,
-            &crate::effects::ReplacementExecutionContext::default(), None)?;
-        if decision_maker.awaiting_choice() { return Ok(Vec::new()); }
-        if !receipt.result.prevented && receipt.result.new_id.is_some() {
-            let event = receipt.resolved_event.as_ref().ok_or_else(|| ExecutionError::InternalError(
-                "cleanup discard has no resolved event".into()))?;
-            if event.player != player || event.card != card_id || event.cause != cause {
-                return Err(ExecutionError::InternalError("cleanup discard changed an unsupported batch identity".into()));
-            }
-            successful.push((event.card, receipt.discarded_snapshot.clone(), receipt.result.final_zone));
+            game,
+            card_id,
+            player,
+            cause.clone(),
+            false,
+            provenance,
+            decision_maker,
+            &crate::effects::ReplacementExecutionContext::default(),
+            None,
+        )?;
+        if decision_maker.awaiting_choice() {
+            return Ok(Vec::new());
         }
-        if let Some(id) = receipt.result.new_id && game.is_madness_exiled(id) { madness_cards.push(id); }
+        if !receipt.result.prevented && receipt.result.new_id.is_some() {
+            let event = receipt.resolved_event.as_ref().ok_or_else(|| {
+                ExecutionError::InternalError("cleanup discard has no resolved event".into())
+            })?;
+            if event.player != player || event.card != card_id || event.cause != cause {
+                return Err(ExecutionError::InternalError(
+                    "cleanup discard changed an unsupported batch identity".into(),
+                ));
+            }
+            successful.push((
+                event.card,
+                receipt.discarded_snapshot.clone(),
+                receipt.result.final_zone,
+                receipt.result.new_id,
+            ));
+        }
+        if let Some(id) = receipt.result.new_id
+            && game.is_madness_exiled(id)
+        {
+            madness_cards.push(id);
+        }
         receipts.push(receipt);
     }
-    let count = i32::try_from(successful.len()).map_err(|_| ExecutionError::InternalError("cleanup discard count overflow".into()))?;
-    let events = crate::effects::cards::completed_discard_events(game, player, cause.clone(), provenance, successful);
-    let mut ctx = ExecutionContext::new(source, player, decision_maker).with_cause(cause).with_provenance(provenance);
+    let count = i32::try_from(successful.len())
+        .map_err(|_| ExecutionError::InternalError("cleanup discard count overflow".into()))?;
+    let events = crate::effects::cards::completed_discard_events(
+        game,
+        player,
+        cause.clone(),
+        provenance,
+        successful,
+    );
+    let mut ctx = ExecutionContext::new(source, player, decision_maker)
+        .with_cause(cause)
+        .with_provenance(provenance);
     ctx.source_snapshot = source_snapshot;
-    let mut outcome = crate::effects::cards::finish_discard_receipts(game, &mut ctx,
-        crate::effect::EffectOutcome::count(count).with_events(events), receipts)?;
-    if ctx.decision_maker.awaiting_choice() { return Ok(Vec::new()); }
+    let mut outcome = crate::effects::cards::finish_discard_receipts(
+        game,
+        &mut ctx,
+        crate::effect::EffectOutcome::count(count).with_events(events),
+        receipts,
+    )?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(Vec::new());
+    }
     crate::effects::retain_unmatched_outcome_events(game, &mut outcome.events);
-    for event in outcome.events { game.queue_trigger_event(event.provenance(), event); }
+    for event in outcome.events {
+        game.queue_trigger_event(event.provenance(), event);
+    }
     Ok(madness_cards)
 }
 
-/// Executes the cleanup step (damage removal, mana emptying).
-/// This should be called after any required discard decision has been resolved.
+/// Executes CR 514.2 cleanup (damage removal and expiring turn effects).
+/// Mana empties only after the cleanup step ends, through TurnRunner's
+/// resumable boundary owner; it must remain available during 514.3 priority.
 pub fn execute_cleanup_step(game: &mut GameState) {
-    // CR 500.4 / 106.4: unspent mana empties as the turn's last step ends,
-    // except where an effect retains it (Upwelling, Electro, Fangorn...).
-    // The retention-aware emptying also expires "until end of turn" mana.
-    if game
-        .players
-        .iter()
-        .any(|player| player.mana_pool.total() > 0 || !player.mana_source_provenance.is_empty())
-    {
-        game.empty_mana_pools();
-    }
-
     game.cleanup_damage_and_regeneration_end_of_turn();
 
     // Clear one-shot replacement effects (like regeneration shields)
@@ -2088,7 +2142,8 @@ mod tests {
         assert!(execute_draw_step_with(&mut game, &mut dm).is_empty());
         assert!(game.player(alice).expect("Alice exists").hand.is_empty());
 
-        game.set_current_controller(source, bob).expect("finite controller fixture must refresh successfully");
+        game.set_current_controller(source, bob)
+            .expect("finite controller fixture must refresh successfully");
         assert!(!game.player_skips_draw_step(alice));
         assert!(game.player_skips_draw_step(bob));
         assert_eq!(execute_draw_step_with(&mut game, &mut dm).len(), 1);
@@ -2191,5 +2246,95 @@ mod tests {
             1
         );
         assert_eq!(game.turn_store.turn_history.cards_drawn_by_player(alice), 1);
+    }
+}
+
+#[cfg(test)]
+mod draw_step_ordinal_tests {
+    use super::*;
+    use crate::events::other::CardsDrawnEvent;
+    use crate::ids::{CardId, PlayerId};
+    use crate::zone::Zone;
+    fn setup() -> GameState {
+        let mut game = GameState::new(vec!["A".into(), "B".into(), "C".into(), "D".into()], 20);
+        game.turn.turn_number = 3;
+        game.turn.active_player = PlayerId(0);
+        game.turn.phase = Phase::Beginning;
+        game.turn.step = Some(Step::Draw);
+        let card = crate::cards::CardDefinitionBuilder::new(CardId::new(), "Draw resource").build();
+        for player in [PlayerId(0), PlayerId(1)] {
+            for _ in 0..5 {
+                game.create_object_from_definition(&card, player, Zone::Library);
+            }
+        }
+        game
+    }
+    #[test]
+    fn turn_draw_retains_ordinal_through_priority_and_resets_for_adjacent_extra_step() {
+        let mut game = setup();
+        let events = execute_draw_step(&mut game);
+        let draw = events
+            .iter()
+            .find_map(|event| event.downcast::<CardsDrawnEvent>())
+            .unwrap();
+        assert_eq!(draw.cards_previously_drawn_this_draw_step, 0);
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 1));
+        game.record_cards_drawn_in_current_draw_step(PlayerId(0), 2);
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 3));
+        game.add_step_after(Step::Draw, Step::Draw);
+        advance_step(&mut game).unwrap();
+        assert_eq!(game.turn.step, Some(Step::Draw));
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 0));
+        execute_draw_step(&mut game);
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 1));
+        advance_step(&mut game).unwrap();
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (false, 0));
+    }
+    #[test]
+    fn shared_turn_partners_keep_independent_draw_step_ordinals() {
+        let mut game = setup();
+        game.restore_two_headed_giant(
+            vec![
+                vec![PlayerId(0), PlayerId(1)],
+                vec![PlayerId(2), PlayerId(3)],
+            ],
+            0,
+            PlayerId(1),
+        )
+        .unwrap();
+        execute_draw_step(&mut game);
+        for player in [PlayerId(0), PlayerId(1)] {
+            assert_eq!(game.draw_step_context_for_player(player), (true, 1));
+        }
+        game.record_cards_drawn_in_current_draw_step(PlayerId(0), 2);
+        game.record_cards_drawn_in_current_draw_step(PlayerId(1), 1);
+        assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 3));
+        assert_eq!(game.draw_step_context_for_player(PlayerId(1)), (true, 2));
+        game.record_cards_drawn_in_current_draw_step(PlayerId(2), 7);
+        assert_eq!(game.draw_step_context_for_player(PlayerId(2)), (false, 0));
+    }
+
+    #[test]
+    fn ending_the_turn_clears_draw_ordinals_at_the_cleanup_jump() {
+        use crate::effects::EffectExecutor;
+        let mut game = setup();
+        execute_draw_step(&mut game);
+        let source = game.new_object_id();
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = crate::effects::EffectContext::new(source, PlayerId(0), &mut dm);
+        crate::effects::EndTurnEffect::new(crate::target::PlayerFilter::You)
+            .execute(&mut game, &mut ctx)
+            .unwrap();
+        let mut runner =
+            crate::TurnRunner::from_state_for_sync(crate::TurnRunnerState::DrawPriority);
+        let mut queue = crate::triggers::TriggerQueue::new();
+        for _ in 0..10 {
+            if game.turn.step == Some(Step::Cleanup) {
+                break;
+            }
+            runner.advance(&mut game, &mut queue).unwrap();
+        }
+        assert_eq!(game.turn.step, Some(Step::Cleanup));
+        assert!(game.turn_store.cards_drawn_this_draw_step.is_empty());
     }
 }

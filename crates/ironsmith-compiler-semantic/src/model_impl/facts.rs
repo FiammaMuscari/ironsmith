@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::effect::EffectId;
-use crate::filter::PlayerFilter;
+use crate::filter::{ObjectFilter, PlayerFilter};
 use crate::tag::TagKey;
 use crate::zone::Zone;
 
@@ -171,6 +171,8 @@ pub struct IdGenContext {
 
 #[derive(Debug, Clone, Default)]
 pub struct LoweringFrame {
+    /// Exact authored declarations referenced again by a later instruction.
+    pub declared_target_references: Vec<crate::TargetAst>,
     pub last_effect_id: Option<EffectId>,
     pub last_library_search_effect_id: Option<EffectId>,
     pub last_object_tag: Option<TagKey>,
@@ -207,7 +209,14 @@ pub struct LoweringFrame {
     pub auto_tag_object_targets: bool,
     pub force_auto_tag_object_targets: bool,
     pub allow_life_event_value: bool,
+    pub allow_excess_damage_event_value: bool,
+    pub milling_event_filter: Option<std::sync::Arc<ObjectFilter>>,
+    pub dice_event_grouped: Option<bool>,
+    pub life_event_binding: Option<std::sync::Arc<crate::trigger_references::LifeEventBinding>>,
+    pub life_amount_producers: std::sync::Arc<Vec<crate::trigger_references::LifeAmountProducer>>,
+    pub die_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
     pub bind_unbound_x_to_last_effect: bool,
+    pub has_announced_x: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +356,7 @@ impl EffectLoweringContext {
     }
 
     pub fn apply_reference_frame(&mut self, frame: LoweringFrame) {
+        self.last_value_comparison = frame.last_value_comparison;
         self.last_effect_id = frame.last_effect_id;
         self.last_library_search_effect_id = frame.last_library_search_effect_id;
         self.last_object_tag = frame.last_object_tag;
@@ -360,7 +370,14 @@ impl EffectLoweringContext {
         self.iterated_player = frame.iterated_player;
         self.iterated_object = frame.iterated_object;
         self.allow_life_event_value = frame.allow_life_event_value;
+        self.allow_excess_damage_event_value = frame.allow_excess_damage_event_value;
+        self.milling_event_filter = frame.milling_event_filter.clone();
+        self.dice_event_grouped = frame.dice_event_grouped;
+        self.life_event_binding = frame.life_event_binding.clone();
+        self.life_amount_producers = frame.life_amount_producers.clone();
+        self.die_result_producers = frame.die_result_producers.clone();
         self.bind_unbound_x_to_last_effect = frame.bind_unbound_x_to_last_effect;
+        self.has_announced_x = frame.has_announced_x;
     }
 
     pub fn apply_lowering_frame(&mut self, frame: LoweringFrame) {

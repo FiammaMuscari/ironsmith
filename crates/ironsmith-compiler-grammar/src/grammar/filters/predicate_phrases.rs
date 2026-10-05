@@ -806,8 +806,45 @@ pub fn parse_source_keyword_condition_filter(tokens: &[OwnedLexToken]) -> Option
 }
 
 fn parse_source_keyword_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
-    parse_source_keyword_condition_filter(tokens)
-        .map(|value| PredicateAst::Source(SourcePredicateAst::SourceMatches(value)))
+    if let Some(value) = parse_source_keyword_condition_filter(tokens) {
+        return Some(
+            if crate::lexer::parser_token_word_refs(tokens).first() == Some(&"it") {
+                PredicateAst::ItMatches(value)
+            } else {
+                PredicateAst::Source(SourcePredicateAst::SourceMatches(value))
+            },
+        );
+    }
+    let clause = LexedClause::new(tokens);
+    let atoms = [
+        WinnowSequence::subject(
+            "source",
+            WinnowCaptureKind::UntilAnyPhrase(NEGATED_HAVE_PHRASES),
+        ),
+        WinnowSequence::action(
+            "action",
+            WinnowCaptureKind::OneOfPhrase(NEGATED_HAVE_PHRASES),
+        ),
+        WinnowSequence::object("keyword", WinnowCaptureKind::Rest),
+    ];
+    let matched = WinnowSequence::new(&atoms).parse_full(clause)?;
+    let source = matched.capture_clause_by_role(WinnowCaptureRole::Subject, clause)?;
+    if !is_source_reference_clause(source) {
+        return None;
+    }
+    let keyword = matched.capture_clause_by_role(WinnowCaptureRole::Object, clause)?;
+    let (constraint, consumed) = parse_filter_keyword_constraint_tokens(keyword.tokens())?;
+    if consumed != keyword.tokens().len() {
+        return None;
+    }
+    let mut filter = ObjectFilter::default();
+    apply_filter_keyword_constraint(&mut filter, constraint, false);
+    let predicate = if crate::lexer::parser_token_word_refs(source.tokens()) == ["it"] {
+        PredicateAst::ItMatches(filter)
+    } else {
+        PredicateAst::Source(SourcePredicateAst::SourceMatches(filter))
+    };
+    Some(PredicateAst::Not(Box::new(predicate)))
 }
 
 fn parse_triggering_object_keyword_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
@@ -915,6 +952,24 @@ fn parse_half_starting_life_total_threshold_predicate(
 }
 
 fn parse_life_total_subject_clause(clause: LexedClause<'_>) -> Option<PlayerAst> {
+    if surface::exact_any(
+        clause,
+        &[
+            &["a", "players", "life", "total"],
+            &["a", "player", "s", "life", "total"],
+        ],
+    ) {
+        return Some(PlayerAst::Any);
+    }
+    if surface::exact_any(
+        clause,
+        &[
+            &["an", "opponents", "life", "total"],
+            &["an", "opponent", "s", "life", "total"],
+        ],
+    ) {
+        return Some(PlayerAst::Opponent);
+    }
     if surface::exact(clause, &["your", "life", "total"]) {
         return Some(PlayerAst::You);
     }
@@ -1314,7 +1369,26 @@ fn parse_source_has_counter_predicate(tokens: &[OwnedLexToken]) -> Option<Predic
         .token(0)
         .is_some_and(|token| token_word_is(token, NO_WORD))
     {
+        if surface::exact_any(counter_clause, &[&["no", "counter"], &["no", "counters"]]) {
+            let filter = ObjectFilter {
+                without_counter: Some(crate::filter::CounterConstraint::Any),
+                ..Default::default()
+            };
+            return Some(
+                if is_explicit_source_state_subject_clause(relation.subject_clause) {
+                    PredicateAst::Source(SourcePredicateAst::SourceMatches(filter))
+                } else {
+                    PredicateAst::ItMatches(filter)
+                },
+            );
+        }
         let counter_type = parse_terminal_counter_phrase(counter_clause.tokens().get(1..)?)??;
+        if !is_explicit_source_state_subject_clause(relation.subject_clause) {
+            return Some(PredicateAst::ItMatches(ObjectFilter {
+                without_counter: Some(crate::filter::CounterConstraint::Typed(counter_type)),
+                ..Default::default()
+            }));
+        }
         return Some(PredicateAst::Source(
             SourcePredicateAst::SourceHasNoCounter(counter_type),
         ));
@@ -1541,12 +1615,40 @@ fn parse_triggering_object_source_stat_predicate(tokens: &[OwnedLexToken]) -> Op
         &words,
         &[
             &[
-                "its", "power", "is", "greater", "than", "this", "creatures", "power", "or",
-                "its", "toughness", "is", "greater", "than", "this", "creatures", "toughness",
+                "its",
+                "power",
+                "is",
+                "greater",
+                "than",
+                "this",
+                "creatures",
+                "power",
+                "or",
+                "its",
+                "toughness",
+                "is",
+                "greater",
+                "than",
+                "this",
+                "creatures",
+                "toughness",
             ],
             &[
-                "its", "power", "is", "greater", "than", "this", "creatures", "or", "its",
-                "toughness", "is", "greater", "than", "this", "creatures",
+                "its",
+                "power",
+                "is",
+                "greater",
+                "than",
+                "this",
+                "creatures",
+                "or",
+                "its",
+                "toughness",
+                "is",
+                "greater",
+                "than",
+                "this",
+                "creatures",
             ],
         ],
     ) {
@@ -1746,6 +1848,12 @@ fn parse_triggering_object_had_counter_predicate(tokens: &[OwnedLexToken]) -> Op
         .token(0)
         .is_some_and(|token| token_word_is(token, NO_WORD))
     {
+        if surface::exact_any(counter_clause, &[&["no", "counter"], &["no", "counters"]]) {
+            return Some(PredicateAst::ItMatchedLastKnown(ObjectFilter {
+                without_counter: Some(crate::filter::CounterConstraint::Any),
+                ..Default::default()
+            }));
+        }
         let counter_type = parse_terminal_counter_phrase(counter_clause.tokens().get(1..)?)??;
         return Some(PredicateAst::Triggering(
             TriggeringPredicateAst::TriggeringObjectHadNoCounter(counter_type),
@@ -2090,6 +2198,17 @@ fn parse_ring_has_tempted_you_this_game_predicate(
 }
 
 fn parse_ring_bearer_temptation_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
+    let clause = LexedClause::new(tokens);
+    let words = clause.word_refs();
+    if let Some(source_words) = words
+        .strip_prefix(&["you", "chose", "a", "creature", "other", "than"])
+        .and_then(|tail| tail.strip_suffix(&["as", "your", "ring", "bearer"]))
+        && is_source_reference_words(source_words)
+    {
+        return Some(PredicateAst::Triggering(
+            TriggeringPredicateAst::YouChoseAnotherRingBearer,
+        ));
+    }
     if let Some(predicate) = parse_source_is_your_ring_bearer_predicate(tokens) {
         return Some(predicate);
     }
@@ -2586,7 +2705,10 @@ fn parse_you_control_conjoined_predicate(
     let tail_clause = relation.tail_clause;
     // "seven or more lands and/or Treefolk" (Tend the Sprigs) is one counted
     // union, not two control conditions.
-    if tail_clause.tokens().iter().any(|token| token.is_word("and/or"))
+    if tail_clause
+        .tokens()
+        .iter()
+        .any(|token| token.is_word("and/or"))
         || tail_clause
             .tokens()
             .windows(2)
@@ -2886,18 +3008,22 @@ fn predicate_from_control_condition(
         crate::effect::Comparison::LessThan(count) => {
             Some((crate::effect::ValueComparisonOperator::LessThan, count))
         }
-        crate::effect::Comparison::LessThanOrEqual(count) => {
-            Some((crate::effect::ValueComparisonOperator::LessThanOrEqual, count))
-        }
+        crate::effect::Comparison::LessThanOrEqual(count) => Some((
+            crate::effect::ValueComparisonOperator::LessThanOrEqual,
+            count,
+        )),
         _ => None,
     };
     if let Some((operator, count)) = upper_bound {
         let mut filter = control_condition.filter.clone();
-        let controller = filter.controller.clone().or(match control_condition.player {
-            PlayerAst::You => Some(PlayerFilter::You),
-            PlayerAst::Opponent => Some(PlayerFilter::Opponent),
-            _ => control_condition.player_filter.clone(),
-        });
+        let controller = filter
+            .controller
+            .clone()
+            .or(match control_condition.player {
+                PlayerAst::You => Some(PlayerFilter::You),
+                PlayerAst::Opponent => Some(PlayerFilter::Opponent),
+                _ => control_condition.player_filter.clone(),
+            });
         if let Some(controller) = controller {
             filter.controller = Some(controller);
             if filter.zone.is_none() {
@@ -3451,13 +3577,20 @@ fn parse_active_this_way_discard_predicate(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let clause = LexedClause::new(tokens);
-    let action_phrases: &[&[&str]] = &[&["discard"], &["discards"], &["discarded"]];
+    let action_phrases: &[&[&str]] = &[
+        &["discard"],
+        &["discards"],
+        &["discarded"],
+        &["doesnt", "discard"],
+        &["doesn't", "discard"],
+        &["does", "not", "discard"],
+        &["didnt", "discard"],
+        &["didn't", "discard"],
+        &["did", "not", "discard"],
+    ];
     let atoms = [
         WinnowSequence::subject("subject", WinnowCaptureKind::UntilAnyPhrase(action_phrases)),
-        WinnowSequence::action(
-            "action",
-            WinnowCaptureKind::OneOf(&["discard", "discards", "discarded"]),
-        ),
+        WinnowSequence::action("action", WinnowCaptureKind::OneOfPhrase(action_phrases)),
         WinnowSequence::object("object", WinnowCaptureKind::UntilPhrase(&["this", "way"])),
         WinnowSequence::phrase(&["this", "way"]),
     ];
@@ -3484,14 +3617,24 @@ fn parse_active_this_way_discard_predicate(
         return Ok(None);
     };
     filter.set_prior_effect_action_surface(Some(ironsmith_core::PriorEffectAction::Discarded));
-    Ok(Some(PredicateAst::Player(
-        PlayerPredicateAst::PlayerTaggedObjectMatches {
-            player,
-            tag: crate::tag::CompilerReferenceTag::It.bind(),
-            filter,
-            mode: ironsmith_core::TaggedObjectMatchMode::CurrentOrLastKnown,
-        },
-    )))
+    let predicate = PredicateAst::Player(PlayerPredicateAst::PlayerTaggedObjectMatches {
+        player,
+        tag: crate::tag::CompilerReferenceTag::It.bind(),
+        filter,
+        mode: ironsmith_core::TaggedObjectMatchMode::CurrentOrLastKnown,
+    });
+    let negated = matched
+        .capture_clause_by_role(WinnowCaptureRole::Action, clause)
+        .is_some_and(|action| {
+            action.tokens().first().is_some_and(|token| {
+                token.is_any_word(&["doesnt", "doesn't", "does", "didnt", "didn't", "did"])
+            })
+        });
+    Ok(Some(if negated {
+        PredicateAst::Not(Box::new(predicate))
+    } else {
+        predicate
+    }))
 }
 
 fn parse_positive_put_tagged_object_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
@@ -3711,7 +3854,15 @@ fn active_discard_player_subject_clause(clause: LexedClause<'_>) -> Option<Playe
     if surface::exact(clause, &["you"]) {
         return Some(PlayerAst::You);
     }
-    if surface::exact_any(clause, &[&["that", "player"], &["that", "players"]]) {
+    if surface::exact_any(
+        clause,
+        &[
+            &["that", "player"],
+            &["that", "players"],
+            &["the", "player"],
+            &["player"],
+        ],
+    ) {
         return Some(PlayerAst::That);
     }
     if surface::exact(clause, &["target", "player"]) {
@@ -3855,6 +4006,10 @@ fn parse_single_card_type_card_descriptor_tokens(tokens: &[OwnedLexToken]) -> Op
     }
     None
 }
+
+#[path = "predicate_phrases/referenced_characteristics.rs"]
+mod referenced_characteristics;
+use referenced_characteristics::parse_referenced_characteristic_state;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DemonstrativeReferenceKind {
@@ -4346,6 +4501,10 @@ fn parse_demonstrative_keyword_predicate(tokens: &[OwnedLexToken]) -> Option<Pre
                 &["doesnt", "have"],
                 &["doesn't", "have"],
                 &["does", "not", "have"],
+                &["had"],
+                &["didnt", "have"],
+                &["didn't", "have"],
+                &["did", "not", "have"],
             ]),
         ),
         WinnowSequence::object("keyword", WinnowCaptureKind::Rest),
@@ -4359,8 +4518,23 @@ fn parse_demonstrative_keyword_predicate(tokens: &[OwnedLexToken]) -> Option<Pre
         return None;
     }
     let mut filter = ObjectFilter::default();
-    apply_filter_keyword_constraint(&mut filter, constraint, false);
     let action = matched.capture_clause_by_role(WinnowCaptureRole::Action, clause)?;
+    let past = surface::exact_any(
+        action,
+        &[
+            &["had"],
+            &["didnt", "have"],
+            &["didn't", "have"],
+            &["did", "not", "have"],
+        ],
+    );
+    let negative = !surface::exact_any(action, &[&["has"], &["have"], &["had"]]);
+    apply_filter_keyword_constraint(&mut filter, constraint, past && negative);
+    if past {
+        // Missing historical evidence must not satisfy a negation merely
+        // because a positive current-state lookup failed.
+        return Some(PredicateAst::ItMatchedLastKnown(filter));
+    }
     let predicate = PredicateAst::ItMatches(filter);
     Some(if surface::exact_any(action, &[&["has"], &["have"]]) {
         predicate
@@ -4774,4 +4948,43 @@ fn parse_meld_subject_filter_clause(
 
 fn is_you_both_own_and_clause(clause: LexedClause<'_>) -> bool {
     surface::exact(clause, &["you", "both", "own", "and"])
+}
+
+fn parse_completed_die_result_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
+    let words = crate::lexer::token_word_refs(tokens);
+    let (grouped, number) = if let Some(rest) = words
+        .strip_prefix(&["any", "of", "those", "results", "was"])
+        .or_else(|| words.strip_prefix(&["any", "of", "those", "results", "were"]))
+    {
+        (true, rest)
+    } else if let Some(rest) = words.strip_prefix(&["the", "roll", "was"]) {
+        (false, rest)
+    } else {
+        return None;
+    };
+    let number = number.strip_suffix(&["or", "higher"])?;
+    let value = crate::grammar::trigger_clauses::parse_roll_result_words(number)?;
+    let crate::grammar::trigger_clauses::RollResultShape::Fixed(value) = value else {
+        return None;
+    };
+    let value = i32::try_from(value).ok()?;
+    Some(if grouped {
+        PredicateAst::ValueComparison {
+            left: Value::EventValue(crate::effect::EventValueSpec::DieResultsAtLeast(value)),
+            operator: crate::effect::ValueComparisonOperator::GreaterThan,
+            right: Value::Fixed(0),
+        }
+    } else {
+        PredicateAst::ValueComparison {
+            left: Value::PendingPriorEffectMetric(
+                ironsmith_core::PriorEffectMetricQuery::new(
+                    ironsmith_core::EffectMetricSource::Outcome,
+                    ironsmith_core::EffectMetric::Count,
+                )
+                .with_action(ironsmith_core::PriorEffectAction::Rolled),
+            ),
+            operator: crate::effect::ValueComparisonOperator::GreaterThanOrEqual,
+            right: Value::Fixed(value),
+        }
+    })
 }

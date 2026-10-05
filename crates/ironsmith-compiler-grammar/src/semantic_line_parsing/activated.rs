@@ -117,7 +117,9 @@ fn activation_cost_defines_x_for_mana_ability(
         }) => cost.has_x(),
         crate::model::CompilerCost::Life(amount) => value_uses_x(amount),
         crate::model::CompilerCost::Sacrifice { count, .. }
-        | crate::model::CompilerCost::ExileChosen { count, .. } => count.dynamic_x,
+        | crate::model::CompilerCost::ExileChosen { count, .. }
+        | crate::model::CompilerCost::TapChosen { count, .. }
+        | crate::model::CompilerCost::UntapChosen { count, .. } => count.dynamic_x,
         crate::model::CompilerCost::RemoveCounters { dynamic, .. } => *dynamic,
         _ => false,
     })
@@ -205,6 +207,13 @@ fn bind_event_amounts_to_cost_x_in_effect(effect: &mut EffectAst) {
                 amount, ..
             })
             | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { amount, .. })
+            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageToRecipients {
+                amount,
+                ..
+            })
+            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources {
+                amount, ..
+            })
             | SubjectVerbActionAst::Library(LibraryActionAst::Mill { count: amount })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count: amount })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaScaled { amount, .. })
@@ -304,6 +313,7 @@ struct SplitRewriteActivatedEffectText {
     restrictions: ParsedRestrictions,
     mana_restrictions: Vec<ParsedManaRestriction>,
     x_cant_be_zero: bool,
+    x_spending_rules: Vec<ironsmith_core::mana::ManaSpendingRestriction>,
 }
 
 fn parse_standalone_x_definition_value(tokens: &[OwnedLexToken]) -> Option<crate::effect::Value> {
@@ -381,13 +391,17 @@ fn merge_copy_retarget_sentences(sentences: Vec<Vec<OwnedLexToken>>) -> Vec<Vec<
     for sentence in sentences {
         let words = crate::lexer::token_word_refs(&sentence);
         let is_retarget = words.as_slice()
-            == ["you", "may", "choose", "new", "targets", "for", "the", "copy"];
+            == [
+                "you", "may", "choose", "new", "targets", "for", "the", "copy",
+            ];
         if is_retarget
             && let Some(previous) = merged.last_mut()
             && {
                 let previous_words = crate::lexer::token_word_refs(previous);
                 previous_words.first() == Some(&"when")
-                    && previous_words.windows(2).any(|pair| pair == ["this", "mana"] || pair == ["that", "mana"])
+                    && previous_words
+                        .windows(2)
+                        .any(|pair| pair == ["this", "mana"] || pair == ["that", "mana"])
                     && previous_words.contains(&"copy")
             }
         {
@@ -411,11 +425,16 @@ fn finalize_rewrite_activated_effect_sentences(
     let mut effect_sentence_tokens = Vec::new();
     let mut mana_restrictions = Vec::new();
     let mut x_cant_be_zero = false;
+    let mut x_spending_rules = Vec::new();
 
     for tokens in merge_copy_retarget_sentences(sentence_tokens) {
         let sentence = render_token_slice(&tokens).trim().to_string();
         let restriction_kind = activated_grammar::classify_activated_restriction_sentence(&tokens);
-        if restriction_kind == Some(ActivatedRestrictionSentenceKind::ManaSource) {
+        if let Some(rule) = crate::consumer_mana::x_spending_rule(&tokens) {
+            if !x_spending_rules.contains(&rule) {
+                x_spending_rules.push(rule);
+            }
+        } else if restriction_kind == Some(ActivatedRestrictionSentenceKind::ManaSource) {
             restrictions
                 .activation
                 .push(parse_activation_restriction_surface_tokens(&tokens));
@@ -433,7 +452,10 @@ fn finalize_rewrite_activated_effect_sentences(
             x_cant_be_zero = true;
         } else if is_standalone_x_definition_sentence(&tokens) {
             continue;
-        } else if is_any_player_may_activate_sentence_lexed(&tokens) {
+        } else if is_any_player_may_activate_sentence_lexed(&tokens)
+            || crate::grammar::abilities::parse_activate_only_timing_lexed(&tokens)
+                == Some(ActivationTiming::AnyTimeByEnchantedCreatureController)
+        {
             restrictions
                 .activation
                 .push(parse_activation_restriction_surface_tokens(&tokens));
@@ -449,6 +471,7 @@ fn finalize_rewrite_activated_effect_sentences(
         restrictions,
         mana_restrictions,
         x_cant_be_zero,
+        x_spending_rules,
     }
 }
 

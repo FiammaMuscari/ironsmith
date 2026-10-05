@@ -15,6 +15,23 @@ use std::collections::HashMap;
 
 use super::TriggerEvent;
 
+/// Forward a grouped alternative only when all arms subscribing to this
+/// event kind carry the same key. Unknown subscriptions or mixed singular/
+/// grouped arms keep the previous conservative ungrouped behavior.
+pub(crate) fn alternative_grouping_key<'a>(
+    branches: impl Iterator<Item = &'a super::Trigger>,
+    event: &TriggerEvent,
+) -> Option<SimultaneousTriggerKey> {
+    let mut agreed = None;
+    for branch in branches {
+        if !branch.subscribed_kinds()?.contains(&event.kind()) { continue; }
+        let key = branch.simultaneous_trigger_key(event)?;
+        if agreed.is_some_and(|agreed| agreed != key) { return None; }
+        agreed = Some(key);
+    }
+    agreed
+}
+
 /// Rules grouping key for a trigger that says "one or more" damage sources or
 /// recipients. Matches with the same key during one simultaneous action queue
 /// the ability only once.
@@ -24,6 +41,20 @@ pub enum SimultaneousTriggerKey {
     DamageBatch,
     /// All matching zone changes in one simultaneous action.
     ZoneChangeBatch,
+    /// Passive milling clauses combine all players in the same instruction.
+    MillingBatch,
+    /// An explicit player subject keeps each milling player independent.
+    PlayerMillingBatch(PlayerId),
+    /// One declared attacking player, across all matching defenders.
+    PlayerAttackActor(PlayerId),
+    /// One directly attacked player, across attacking teammates.
+    PlayerAttackDefender(PlayerId),
+    /// One simultaneous instruction changes several permanents' tap states.
+    TapStateBatch { tapped: bool },
+    /// One simultaneous phasing transition, including indirect attachments.
+    PhasingBatch { phased_in: bool },
+    /// Active player-subject clauses group each acting player separately.
+    PlayerTapStateBatch { tapped: bool, actor: PlayerId },
     /// Non-zone departures from one simultaneous game action.
     ObjectLeavesGameBatch,
     /// All counters one instruction puts on one or more objects.
@@ -38,6 +69,12 @@ pub enum SimultaneousTriggerKey {
     DamageSource(ObjectId),
     /// Damage assignments are grouped independently for each recipient.
     DamageTarget(DamageTarget),
+    /// A single damaging source and a single recipient, independently of other assignments.
+    DamageSourceTarget(ObjectId, DamageTarget),
+    /// A player's grouped dice remain distinct from another player's rolls.
+    PlayerDieRollBatch(PlayerId),
+    BecomesBlockedBatch,
+    KeywordActionBatch(crate::events::KeywordActionKind),
 }
 
 /// Context provided to trigger matchers for determining if they match an event.
@@ -202,6 +239,13 @@ pub trait TriggerMatcher:
     ///
     /// `true` if this trigger should fire for the given event.
     fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool;
+
+    /// Lossless shared model of this native matcher, including every qualifier.
+    /// Callbacks or unrepresented field combinations return None and remain an
+    /// explicit codec error. Display text is not a semantic reconstruction.
+    fn canonical_model(&self) -> Option<ironsmith_core::trigger_model::Trigger> {
+        None
+    }
 
     /// Superset of event kinds this matcher can return true for.
     ///

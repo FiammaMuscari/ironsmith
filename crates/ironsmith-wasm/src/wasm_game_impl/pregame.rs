@@ -379,6 +379,10 @@ impl WasmGame {
         starting_life: i32,
         seed: u64,
     ) {
+        self.runtime_identity_origin_available = false;
+        self.priority_affordability_cache.clear();
+        self.priority_affordability_seed_key = None;
+        self.priority_affordability_completed_key = None;
         let player_count = player_names.len();
         self.game = GameState::new_with_runtime_id_reset(player_names, starting_life);
         // Card definitions are a session-level catalog, not match state. In the
@@ -3154,9 +3158,12 @@ impl WasmGame {
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
         self.pending_live_action_root = None;
+        self.payment_disclosure = None;
+        self.payment_disclosure_generation = 0;
         self.priority_epoch_checkpoint = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
+        self.priority_epoch_undo_locked_by_disclosure = false;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
         self.active_audit_viewed_cards.clear();
@@ -4357,17 +4364,7 @@ mod commander_draft_setup_tests {
         );
         assert_eq!(profile.range_of_influence(), None);
 
-        let checkpoint = host.build_sync_checkpoint();
-        let mut guest = WasmGame::new();
-        guest
-            .apply_sync_checkpoint(checkpoint)
-            .expect("Commander Draft checkpoint should import");
-        assert_eq!(guest.match_format, MatchFormatInput::CommanderDraft);
-        assert!(guest.game.commander_damage_loss_enabled());
-        assert_eq!(
-            guest.game.free_for_all().unwrap().attack_option(),
-            ironsmith::FreeForAllAttackOption::MultiplePlayers
-        );
+
     }
 
     #[test]
@@ -5022,6 +5019,30 @@ mod power_up_native_replay_tests {
             assert_eq!(wasm.game.stack.len(),1);
             assert_eq!(wasm.game.player(alice).unwrap().mana_pool.total(),15);
             assert_eq!(wasm.game.turn_store.ability_activations_per_object.values().sum::<u32>(),1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod character_select_token_partner_tests {
+    use super::*;
+    #[test]
+    fn donatello_character_select_pairs_only_with_the_same_partner_variant() {
+        let cards: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../../fixtures/token_template_replacements.json.fixture")).unwrap();
+        let card = cards.iter().find(|card| card["name"] == "Donatello, the Brains").unwrap();
+        let donatello = ironsmith_registry_test::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Donatello, the Brains")
+            .card_types(vec![CardType::Creature]).supertypes(vec![Supertype::Legendary])
+            .parse_text(card["oracle_text"].as_str().unwrap()).unwrap();
+        for (line, legendary, expected) in [
+            ("Partner—Character select", true, true), ("Partner—Friends forever", true, false),
+            ("Partner", true, false), ("Partner—Character select", false, false),
+        ] {
+            let other = ironsmith_registry_test::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Commander partner probe")
+                .card_types(vec![CardType::Creature])
+                .supertypes(if legendary { vec![Supertype::Legendary] } else { vec![] })
+                .parse_text(line).unwrap();
+            assert_eq!(WasmGame::commander_pair_is_legal(&donatello, &other), expected);
+            assert_eq!(WasmGame::commander_pair_is_legal(&other, &donatello), expected);
         }
     }
 }

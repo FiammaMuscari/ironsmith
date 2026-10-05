@@ -30,9 +30,6 @@ import {
 import { reconcilePseudoHand } from "@/lib/pseudo-hand";
 
 const HAND_ROULETTE_THRESHOLD = 10;
-// Desktop hands pack up to this many cards into their fixed width; beyond it
-// the spacing stays put and the row scrolls horizontally.
-const HAND_MAX_PACKED_CARDS = 10;
 const HAND_ROULETTE_VISIBLE_CARDS = 7;
 const HAND_ROULETTE_EDGE_PADDING = 12;
 const HAND_ROULETTE_WRAP_GAP = 20;
@@ -201,13 +198,36 @@ function computeManabrewHandDimensions(scale, viewportHeight) {
   };
 }
 
+// Use the same available height as the local battlefield inspector, without
+// changing the hand's hover placement or its compressed fan layout.
+function useLocalPreviewHeight(enabled, viewportWidth, viewportHeight) {
+  const [height, setHeight] = useState(null);
+  useLayoutEffect(() => {
+    if (!enabled) return undefined;
+    const controls = document.querySelector('.topbar-shell');
+    const board = document.querySelector('[data-my-zone] .my-zone-board-shell');
+    const measure = () => {
+      const top = Math.max(8, ...[controls, board].map(element => {
+        const rect = element?.getBoundingClientRect();
+        return rect?.width > 0 && rect.height > 0 ? rect.top : 8;
+      }));
+      const preferred = viewportWidth <= 1180 ? 460 : Math.min(680, Math.max(520, viewportWidth * .32));
+      setHeight(Math.max(1, Math.min(preferred, viewportHeight - top - 8)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    for (const element of [controls, board]) if (element) observer.observe(element);
+    return () => observer.disconnect();
+  }, [enabled, viewportWidth, viewportHeight]);
+  return enabled ? height : null;
+}
+
 function computeManabrewSpread(total, dims) {
   if (total <= 1) return 0;
   if (dims.packWidth) {
-    const packed = Math.min(total, HAND_MAX_PACKED_CARDS);
-    return Math.max(1, Math.min(
+    return Math.max(0, Math.min(
       dims.maxSpread,
-      Math.floor((dims.packWidth - dims.cardW) / (packed - 1))
+      (dims.packWidth - dims.cardW) / (total - 1)
     ));
   }
   return Math.max(
@@ -425,7 +445,7 @@ export default function HandZone({
 }) {
   const ui = useUiText();
   const { state, multiplayer } = useGame();
-  const { hoveredObjectId, hoveredLinkedObjectIds, clearHover, clearAnchoredCardPreview } = useHover();
+  const { hoveredObjectId, hoveredLinkedObjectIds, activeHoveredLinkedObjectIds, clearHover, clearAnchoredCardPreview } = useHover();
   const { startDrag, updateDrag, endDrag } = useDragActions();
   const dragState = useDragSession();
   // A card being dragged out of the hand goes back to its tucked slot as a
@@ -777,7 +797,10 @@ export default function HandZone({
       window.removeEventListener(HAND_ACTION_HOVER_EVENT, handleHandActionHover);
     };
   }, [hoverableHandObjectIds]);
-  const activeMenuHoveredHandObjectId = (
+  const paymentOptionHandObjectId = state?.decision?.kind === "mana_payment"
+    ? [...activeHoveredLinkedObjectIds].find(id => hoverableHandObjectIds.has(id))
+    : null;
+  const activeMenuHoveredHandObjectId = paymentOptionHandObjectId || (
     menuHoveredHandObjectId && hoverableHandObjectIds.has(menuHoveredHandObjectId)
       ? menuHoveredHandObjectId
       : null
@@ -797,6 +820,9 @@ export default function HandZone({
   const isMobileFan = layout === "mobile-fan" || layout === "mobile-fullscreen";
   const handHoverSuppressed = handDropHoverSuppressed || (isMobileFan && mobileHandDismissed);
   const isVerticalRail = layout === "vertical-rail";
+  const localPreviewHeight = useLocalPreviewHeight(
+    (layout === 'fan' || layout === 'mobile-fan') && !(availableWidth > 0), viewportWidth, viewportHeight
+  );
   const handDimensions = useMemo(() => {
     const dimensions = computeManabrewHandDimensions(handScale, viewportHeight);
     // The fullscreen hand is already sized for reading. Desktop's upward lift
@@ -817,11 +843,14 @@ export default function HandZone({
         dimensions.spreadWidth,
         Math.max(dimensions.cardW * 2, viewportWidth - handSideReserve(viewportWidth) * 2 - 32)
       );
-      return { ...dimensions, packWidth };
+      const hoverScale = localPreviewHeight == null ? dimensions.hoverScale : Math.min(
+        localPreviewHeight / dimensions.cardH,
+        (localPreviewHeight * 63 / 88) / dimensions.cardW
+      );
+      return { ...dimensions, packWidth, hoverScale };
     }
     return dimensions;
-  }, [handScale, viewportHeight, viewportWidth, layout, availableWidth]);
-  const handOverflows = Boolean(handDimensions.packWidth) && renderedHandCardCount > HAND_MAX_PACKED_CARDS;
+  }, [handScale, viewportHeight, viewportWidth, layout, availableWidth, localPreviewHeight]);
   const isRoulette = !isVerticalRail && !isMobileFan && !handDimensions.packWidth
     && renderedHandCardCount >= HAND_ROULETTE_THRESHOLD;
   // Only one interaction source may drive the fan at a time. In particular,
@@ -1423,19 +1452,8 @@ export default function HandZone({
     return () => cancelAnimationFrame(frameId);
   }, [isRoulette]);
 
-  // Past the packed limit, a newly added card (always appended on the right)
-  // is scrolled into view.
-  const previousHandCountRef = useRef(renderedHandCardCount);
-  useLayoutEffect(() => {
-    const previousCount = previousHandCountRef.current;
-    previousHandCountRef.current = renderedHandCardCount;
-    if (!handOverflows || renderedHandCardCount <= previousCount) return;
-    const scrollEl = handScrollRef.current;
-    if (scrollEl) scrollEl.scrollLeft = scrollEl.scrollWidth;
-  }, [handOverflows, renderedHandCardCount]);
-
   const handleRouletteWheel = useCallback((event) => {
-    if (!isRoulette && !handOverflows) return;
+    if (!isRoulette) return;
     const scrollEl = handScrollRef.current;
     if (!scrollEl) return;
     const primaryDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
@@ -1447,7 +1465,7 @@ export default function HandZone({
       left: primaryDelta * 1.1,
       behavior: "auto",
     });
-  }, [handOverflows, isRoulette]);
+  }, [isRoulette]);
 
   const handleRouletteScroll = useCallback(() => {
     recenterRouletteIfNeeded();
@@ -1935,15 +1953,14 @@ export default function HandZone({
         <div className={`hand-zone-viewport min-h-0 h-full w-full min-w-0 overflow-visible ${isRoulette ? "hand-zone-viewport-roulette" : ""} ${isMobileFan ? "hand-zone-viewport-mobile-fan" : ""}`}>
           <div
             ref={handScrollRef}
-            className={`hand-zone-scroll min-h-0 h-full w-full min-w-0 -mx-2 px-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${isRoulette ? "hand-zone-scroll-roulette" : ""} ${isMobileFan ? "hand-zone-scroll-mobile-fan" : ""}`}
-            data-hand-overflow={handOverflows ? "true" : undefined}
+            className={`hand-zone-scroll min-h-0 h-full w-full min-w-0 -mx-2 px-2 ${handDimensions.packWidth ? "overflow-visible" : "overflow-x-auto overflow-y-hidden overscroll-x-contain"} ${isRoulette ? "hand-zone-scroll-roulette" : ""} ${isMobileFan ? "hand-zone-scroll-mobile-fan" : ""}`}
             onScroll={handleRouletteScroll}
             onPointerMove={handleHandPointerMove}
             onPointerLeave={handleHandPointerLeave}
           >
             <div
               ref={handListRef}
-              className={`hand-zone-row flex min-h-full w-max flex-nowrap items-end pt-1 pb-2 overflow-visible ${isRoulette ? "hand-zone-row-roulette justify-start px-1.5" : `mx-auto min-w-full ${handOverflows ? "justify-start" : "justify-center"} pl-4 pr-4`} ${isMobileFan ? "hand-zone-row-mobile-fan" : ""}`}
+              className={`hand-zone-row flex min-h-full w-max flex-nowrap items-end pt-1 pb-2 overflow-visible ${isRoulette ? "hand-zone-row-roulette justify-start px-1.5" : "mx-auto min-w-full justify-center pl-4 pr-4"} ${isMobileFan ? "hand-zone-row-mobile-fan" : ""}`}
             >
               {rouletteCycleIndexes.map((cycleIndex) => (
                 <Fragment key={`cycle-${cycleIndex}`}>

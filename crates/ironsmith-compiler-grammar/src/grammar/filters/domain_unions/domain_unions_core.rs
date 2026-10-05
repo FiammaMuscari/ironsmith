@@ -226,26 +226,100 @@ pub fn parse_elided_shared_domain_union(
             continue;
         }
 
-        let leading_scope = crate::grammar::primitives::probe_shape(parse_object_filter(
-            &tokens[..first_in],
-            other,
-        ));
+        // Each authored inner location is an independent selector constraint;
+        // it cannot be erased while distributing the shared outer locations.
+        if tokens[after_second..]
+            .iter()
+            .any(|token| token.is_any_word(&["in", "on", "from"]))
+        {
+            continue;
+        }
+        let leading_scope =
+            crate::grammar::filters::parse_simple_object_filter_lexed(&tokens[..first_in], other)
+                .or_else(|| {
+                    crate::grammar::primitives::probe_shape(parse_object_filter(
+                        &tokens[..first_in],
+                        other,
+                    ))
+                });
         let mut shared_tokens = Vec::with_capacity(tokens.len());
         shared_tokens.extend_from_slice(&tokens[..first_in]);
         shared_tokens.extend_from_slice(&tokens[after_second..]);
-        let Ok(mut outer) = parse_object_filter(&shared_tokens, other) else {
+        let parsed_outer = parse_object_filter(&shared_tokens, other);
+        let mut outer = parsed_outer.clone().unwrap_or_default();
+        let tail = &tokens[after_second..];
+        if tail.get(0).is_some_and(|token| token.is_word("that"))
+            && tail.get(1).is_some_and(|token| token.is_word("are"))
+            && let Some(or) = tail
+                .windows(2)
+                .position(|pair| pair[0].is_word("or") && pair[1].is_word("are"))
+        {
+            let Some(mut domain) = leading_scope.clone() else {
+                continue;
+            };
+            let mut selectors = Vec::new();
+            for predicate in [&tail[2..or], &tail[or + 2..]] {
+                let mut branch_tokens = Vec::new();
+                if predicate
+                    .first()
+                    .is_some_and(|token| token.is_word("named"))
+                {
+                    branch_tokens.extend_from_slice(&tokens[..first_in]);
+                    branch_tokens.extend_from_slice(predicate);
+                } else {
+                    branch_tokens.extend_from_slice(predicate);
+                    branch_tokens.extend_from_slice(&tokens[..first_in]);
+                }
+                let Some(mut selector) = crate::grammar::filters::parse_simple_object_filter_lexed(
+                    &branch_tokens,
+                    false,
+                )
+                .or_else(|| {
+                    crate::grammar::primitives::probe_shape(parse_object_filter(
+                        &branch_tokens,
+                        false,
+                    ))
+                }) else {
+                    selectors.clear();
+                    break;
+                };
+                if !clear_inferred_selector_domains(&mut selector) {
+                    selectors.clear();
+                    break;
+                }
+                selector.owner = None;
+                selectors.push(selector);
+            }
+            if selectors.len() != 2 {
+                continue;
+            }
+            domain.any_of = selectors;
+            outer = domain;
+        } else if parsed_outer.is_err() {
             continue;
-        };
+        }
         if !outer.any_of.is_empty() {
             let Some(leading_scope) = leading_scope.as_ref() else {
                 continue;
             };
-            let Some(flattened) =
-                flatten_elided_shared_characteristic_selector(leading_scope, outer)
-            else {
-                continue;
-            };
-            outer = flattened;
+            if let Some(flattened) =
+                flatten_elided_shared_characteristic_selector(leading_scope, outer.clone())
+            {
+                outer = flattened;
+            } else {
+                // A characteristic disjunction such as subtype OR exact name
+                // cannot use the compact type/subtype-union representation.
+                // Keep it nested under each location instead. Any authored
+                // location in that selector stays outside this inferred-domain
+                // correction rather than being silently erased.
+                if tokens[after_second..]
+                    .iter()
+                    .any(|token| token.is_any_word(&["in", "on", "from"]))
+                    || !clear_inferred_selector_domains(&mut outer)
+                {
+                    continue;
+                }
+            }
         }
         if outer.owner.is_none() {
             let leading_words = TokenWordView::new(&tokens[..first_in]).word_refs();
@@ -285,8 +359,35 @@ pub fn parse_elided_shared_domain_union(
         let mut second_branch = ObjectFilter::default();
         second_branch.zone = Some(second_zone);
         second_branch.owner = second_owner.filter(|owner| outer.owner.as_ref() != Some(owner));
-        outer.any_of = vec![first_branch, second_branch];
+        if outer.any_of.is_empty() {
+            outer.any_of = vec![first_branch, second_branch];
+        } else {
+            let mut first = outer.clone();
+            first.zone = first_branch.zone;
+            first.owner = first.owner.or(first_branch.owner);
+            let mut second = outer;
+            second.zone = second_branch.zone;
+            second.owner = second.owner.or(second_branch.owner);
+            outer = ObjectFilter {
+                any_of: vec![first, second],
+                ..Default::default()
+            };
+        }
         return Some(outer);
     }
     None
+}
+
+/// These selectors were parsed without the surrounding zones. Only their
+/// ordinary inferred battlefield defaults may be removed; an independently
+/// scoped off-battlefield branch must retain its own domain through its reader.
+fn clear_inferred_selector_domains(filter: &mut ObjectFilter) -> bool {
+    if !matches!(filter.zone, None | Some(Zone::Battlefield)) {
+        return false;
+    }
+    filter.zone = None;
+    filter
+        .any_of
+        .iter_mut()
+        .all(clear_inferred_selector_domains)
 }

@@ -171,7 +171,14 @@ pub fn compile_effects(
         &ReferenceImports::from_lowering_frame(&ctx.lowering_frame()),
         EffectReferenceResolutionConfig {
             allow_life_event_value: ctx.allow_life_event_value,
+            allow_excess_damage_event_value: ctx.allow_excess_damage_event_value,
+            milling_event_filter: ctx.milling_event_filter.clone(),
+            dice_event_grouped: ctx.dice_event_grouped,
+            life_event_binding: ctx.life_event_binding.clone(),
+            life_amount_producers: ctx.life_amount_producers.clone(),
+            die_result_producers: ctx.die_result_producers.clone(),
             bind_unbound_x_to_last_effect: ctx.bind_unbound_x_to_last_effect,
+            has_announced_x: ctx.has_announced_x,
             initial_last_effect_id: ctx.last_effect_id,
             initial_iterated_player: ctx.iterated_player,
             force_auto_tag_object_targets: ctx.force_auto_tag_object_targets
@@ -404,7 +411,8 @@ fn bind_exiled_host_before_its_attachments(compiled: &mut [Effect]) {
         {
             continue;
         }
-        let Some(dependents) = compiled[index].downcast_ref::<crate::effects::TaggedEffect>() else {
+        let Some(dependents) = compiled[index].downcast_ref::<crate::effects::TaggedEffect>()
+        else {
             continue;
         };
         let result_tag = dependents.tag.clone();
@@ -448,7 +456,9 @@ fn rebind_attachment_host_followups(compiled: &mut Vec<Effect>, ctx: &mut Effect
         filter
             .tagged_constraints
             .iter()
-            .find(|constraint| constraint.relation == TaggedOpbjectRelation::WasAttachedToTaggedObject)
+            .find(|constraint| {
+                constraint.relation == TaggedOpbjectRelation::WasAttachedToTaggedObject
+            })
             .map(|constraint| &constraint.tag)
     }
     fn object_filter_mut(spec: &mut ChooseSpec) -> Option<&mut ObjectFilter> {
@@ -481,7 +491,8 @@ fn rebind_attachment_host_followups(compiled: &mut Vec<Effect>, ctx: &mut Effect
 
     let mut index = 1;
     while index < compiled.len() {
-        let Some(first_attach) = compiled[index].downcast_ref::<crate::effects::AttachObjectsEffect>()
+        let Some(first_attach) =
+            compiled[index].downcast_ref::<crate::effects::AttachObjectsEffect>()
         else {
             index += 1;
             continue;
@@ -670,6 +681,29 @@ fn prepend_missing_target_choice_prelude(
 }
 
 fn effect_exposes_target_choice(effect: &Effect, choice: &ChooseSpec) -> bool {
+    // A transfer owns both endpoint declarations. Do not synthesize a
+    // recipient prelude whose assignment the executable would lose.
+    let endpoints =
+        if let Some(value) = effect.downcast_ref::<crate::effects::MoveAllCountersEffect>() {
+            Some((&value.from, &value.to))
+        } else if let Some(value) = effect.downcast_ref::<crate::effects::MoveCountersEffect>() {
+            Some((&value.from, &value.to))
+        } else if let Some(value) = effect.downcast_ref::<crate::effects::MoveOneCounterEffect>() {
+            Some((&value.from, &value.to))
+        } else if let Some(value) = effect.downcast_ref::<crate::effects::FightEffect>() {
+            Some((&value.creature1, &value.creature2))
+        } else {
+            None
+        };
+    if let Some((from, to)) = endpoints {
+        return from == choice || to == choice;
+    }
+    if let Some(value) = effect.downcast_ref::<crate::effects::MayEffect<Effect>>() {
+        return value
+            .effects
+            .iter()
+            .any(|child| effect_exposes_target_choice(child, choice));
+    }
     if effect.target_spec().is_some_and(|spec| spec == choice) {
         return true;
     }
@@ -946,6 +980,18 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
     player_filter: &PlayerFilter,
 ) {
     match value {
+        Value::DamageHistory(query) => {
+            for spec in query.reference_specs_mut() {
+                bind_relative_iterated_player_in_choose_spec_to_player_filter(spec, player_filter);
+            }
+            for filter in query.object_filters_mut() {
+                bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+            }
+            if let Some(player) = query.player_filter_mut() {
+                bind_relative_iterated_player_filter_to_player_filter(player, player_filter);
+            }
+        }
+
         Value::SurfaceHinted { value, .. } => {
             bind_relative_iterated_player_in_value_to_player_filter(value, player_filter);
         }
@@ -1000,7 +1046,8 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
                 | TurnHistoryCount::EnteredBattlefield(filter) => {
                     bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
                 }
-                TurnHistoryCount::TokensCreated(player)
+                TurnHistoryCount::LibrarySearches { player, .. }
+                | TurnHistoryCount::TokensCreated(player)
                 | TurnHistoryCount::TurnedFaceUp(player)
                 | TurnHistoryCount::PlayersAttackedThisCombat(player)
                 | TurnHistoryCount::OpponentsAttacked(player)
@@ -1035,7 +1082,8 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
                 TurnHistoryCount::MovedZones { filter, .. } => {
                     bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
                 }
-                TurnHistoryCount::Sacrificed { player, filter }
+                TurnHistoryCount::MaxEnteredBattlefieldByController { player, filter }
+                | TurnHistoryCount::Sacrificed { player, filter }
                 | TurnHistoryCount::SacrificedCardTypes { player, filter }
                 | TurnHistoryCount::CreaturesAttackedWith { player, filter } => {
                     bind_relative_iterated_player_filter_to_player_filter(player, player_filter);
@@ -1049,6 +1097,23 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
                     bind_relative_iterated_player_filter_to_player_filter(player, player_filter);
                     bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
                 }
+                TurnHistoryCount::DestroyedBy { filter, cause } => {
+                    bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+                    if let Some(filter) = cause.source_filter.as_mut() {
+                        bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+                    }
+                }
+                TurnHistoryCount::CastSpellsCounteredBy {
+                    caster,
+                    filter,
+                    cause,
+                } => {
+                    bind_relative_iterated_player_filter_to_player_filter(caster, player_filter);
+                    bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+                    if let Some(filter) = cause.source_filter.as_mut() {
+                        bind_relative_iterated_player_filters_to_chooser(filter, player_filter);
+                    }
+                }
                 TurnHistoryCount::DamageDealtToSource | TurnHistoryCount::DamageDealtBySource => {}
             }
         }
@@ -1059,6 +1124,8 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
         | Value::LifeTotal(player)
+        | Value::MaximumLifeTotal(player)
+        | Value::CountPlayersBelowHalfStartingLifeTotal(player)
         | Value::LifeTotalAsTurnBegan(player)
         | Value::LifeTotalDifference(player)
         | Value::UnspentMana(player)
@@ -1113,6 +1180,7 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
             bind_relative_iterated_player_filter_to_player_filter(player, player_filter);
         }
         Value::PowerOf(spec)
+        | Value::BasePowerOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
@@ -1158,6 +1226,16 @@ pub fn resolve_player_scoped_value(
     allow_target_opponent: bool,
     track_last_player_filter: bool,
 ) -> Result<(Value, PlayerFilter, Vec<ChooseSpec>), CardTextError> {
+    if value.has_surface_hint(ironsmith_core::ValueSurfaceHint::ThatPlayerPossessive)
+        && ctx.last_player_filter.is_none()
+        && ctx.last_object_tag.is_none()
+        && !ctx.iterated_player
+        && !ctx.iterated_object
+    {
+        return Err(CardTextError::ParseError(
+            "that player requires a preceding player or object antecedent".into(),
+        ));
+    }
     let subject = LoweredSubject::resolve_affected_player(
         player,
         ctx,
@@ -1606,10 +1684,9 @@ fn resolve_effect_player_filter(
         ),
         PlayerAst::AnotherTarget if allow_target => (
             PlayerFilter::another_target_player(),
-            vec![ChooseSpec::target(ChooseSpec::Player(PlayerFilter::excluding(
-                PlayerFilter::Any,
-                PlayerFilter::target_player(),
-            )))],
+            vec![ChooseSpec::target(ChooseSpec::Player(
+                PlayerFilter::excluding(PlayerFilter::Any, PlayerFilter::target_player()),
+            ))],
         ),
         PlayerAst::TargetOpponent if allow_target_opponent => (
             PlayerFilter::Target(Box::new(PlayerFilter::Opponent)),
@@ -1944,12 +2021,8 @@ fn lower_granted_ability_grant_modifications(
 
 fn granted_ability_mode_description(
     ability: &GrantedAbilityAst,
-    spec: &ChooseSpec,
+    _spec: &ChooseSpec,
 ) -> Result<String, CardTextError> {
-    if !matches!(spec, ChooseSpec::Source) {
-        return Ok(String::new());
-    }
-
     let display = match ability {
         GrantedAbilityAst::ThisAbility => "this ability".to_string(),
         GrantedAbilityAst::ParsedObjectAbility { display, .. } => display.clone(),
@@ -3047,6 +3120,24 @@ fn build_builtin_token_definition(shape: token_grammar::BuiltinTokenShape) -> Ca
         token_grammar::BuiltinTokenShape::Powerstone => {
             crate::cards::tokens::powerstone_token_definition()
         }
+        token_grammar::BuiltinTokenShape::Heartwood => {
+            crate::cards::tokens::heartwood_token_definition()
+        }
+        token_grammar::BuiltinTokenShape::Vibranium => {
+            crate::cards::tokens::vibranium_token_definition()
+        }
+        token_grammar::BuiltinTokenShape::Gingerbrute => {
+            crate::cards::tokens::gingerbrute_token_definition()
+        }
+        token_grammar::BuiltinTokenShape::Mutavault => {
+            crate::cards::tokens::mutavault_token_definition()
+        }
+        token_grammar::BuiltinTokenShape::SpellgorgerWeird => {
+            crate::cards::tokens::spellgorger_weird_token_definition()
+        }
+        token_grammar::BuiltinTokenShape::Tarmogoyf => {
+            crate::cards::tokens::tarmogoyf_token_definition()
+        }
     }
 }
 
@@ -3603,7 +3694,11 @@ where
 {
     let refs = current_reference_env(ctx);
     let (spec, choices) = resolve_target_spec_with_choices(target, &refs)?;
-    let effect = tag_object_target_effect(build(spec.clone()), &spec, ctx, tag_prefix);
+    let effect = if ctx.declared_target_references.contains(target) {
+        build(spec.clone())
+    } else {
+        tag_object_target_effect(build(spec.clone()), &spec, ctx, tag_prefix)
+    };
     Ok((vec![effect], choices))
 }
 

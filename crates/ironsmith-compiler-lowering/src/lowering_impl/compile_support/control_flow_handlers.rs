@@ -1060,7 +1060,17 @@ pub fn effect_predicate_from_if_result(predicate: IfResultPredicate) -> EffectPr
         | IfResultPredicate::ExplicitDidNot
         | IfResultPredicate::Otherwise => EffectPredicate::DidNotHappen,
         IfResultPredicate::SearchedLibrary => EffectPredicate::SearchedLibrary,
-        IfResultPredicate::DiesThisWay => EffectPredicate::HappenedNotReplaced,
+        IfResultPredicate::DiesThisWay => {
+            EffectPredicate::PriorEffectResult(ironsmith_core::PriorEffectResultSurface::new(
+                ironsmith_core::PriorEffectAction::Died,
+                crate::filter::ObjectFilter {
+                    zone: None,
+                    ..crate::filter::ObjectFilter::creature()
+                },
+                ironsmith_core::PriorEffectResultActor::Passive,
+                ironsmith_core::PriorEffectResultQuantifier::One,
+            ))
+        }
         IfResultPredicate::ExcessDamageDealt => EffectPredicate::ExcessDamageDealt,
         IfResultPredicate::DealtDamageToPlayer => EffectPredicate::DealtDamageToPlayer,
         IfResultPredicate::AffectedObjectMatchesCardType { card_type, negated } => {
@@ -1896,6 +1906,42 @@ pub fn collect_targeted_player_specs_from_filter(
 pub fn target_context_prelude_for_filter(filter: &ObjectFilter) -> (Vec<Effect>, Vec<ChooseSpec>) {
     let mut choices = Vec::new();
     collect_targeted_player_specs_from_filter(filter, &mut choices);
+    // A non-targeted set can depend on a targeted object's characteristic
+    // ("all creatures with power greater than target creature's power").
+    // Expose that operand as an actual announcement target, rather than
+    // letting a numeric reference silently select an object at resolution.
+    fn collect_numeric_targets(filter: &ObjectFilter, choices: &mut Vec<ChooseSpec>) {
+        use crate::filter::Comparison;
+        for comparison in [
+            filter.power.as_ref(),
+            filter.toughness.as_ref(),
+            filter.total_power_toughness.as_ref(),
+            filter.mana_value.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let value = match comparison {
+                Comparison::EqualExpr(value)
+                | Comparison::NotEqualExpr(value)
+                | Comparison::LessThanExpr(value)
+                | Comparison::LessThanOrEqualExpr(value)
+                | Comparison::GreaterThanExpr(value)
+                | Comparison::GreaterThanOrEqualExpr(value) => value,
+                _ => continue,
+            };
+            if let Value::PowerOf(spec) | Value::BasePowerOf(spec) | Value::ToughnessOf(spec) =
+                value.unhinted()
+                && spec.is_target()
+            {
+                push_choice(choices, (**spec).clone());
+            }
+        }
+        for option in &filter.any_of {
+            collect_numeric_targets(option, choices);
+        }
+    }
+    collect_numeric_targets(filter, &mut choices);
     let effects = choices
         .iter()
         .cloned()

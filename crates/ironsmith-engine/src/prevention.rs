@@ -191,6 +191,8 @@ pub(crate) fn shield_duration_is_active(
     use crate::game_state::{Phase, Step};
     use crate::zone::Zone;
     match &shield.duration {
+        Until::EndOfCombat => matches!(game.turn.phase, Phase::Combat)
+            && game.turn.turn_number == shield.created_turn,
         Until::YourNextTurn => {
             !(game.turn.turn_number > shield.created_turn
                 && game.is_active_player(shield.controller))
@@ -222,6 +224,31 @@ pub(crate) fn shield_duration_is_active(
     }
 }
 
+impl crate::game_state::GameState {
+    /// A conditional duration ends at its first false state, including phasing.
+    /// Removing the existing shield keeps its ordinary prevention owner and
+    /// prevents the same incarnation from reviving it when it phases back in.
+    pub(crate) fn expire_condition_ended_prevention_shields(&mut self) {
+        let expired: Vec<_> = self
+            .effect_store
+            .prevention_effects
+            .shields()
+            .iter()
+            .filter(|shield| {
+                matches!(
+                    shield.duration,
+                    Until::ForAsLongAs(_) | Until::YouStopControllingThis
+                )
+            })
+            .filter(|shield| !shield_duration_is_active(shield, self))
+            .map(|shield| shield.id)
+            .collect();
+        for id in expired {
+            self.effect_store.prevention_effects.remove_shield(id);
+        }
+    }
+}
+
 /// Manages all prevention shields in the game.
 #[derive(Debug, Clone, Default)]
 pub struct PreventionEffectManager {
@@ -249,42 +276,6 @@ pub struct PreventionEffectManager {
     prevented_totals: HashMap<PreventionShieldId, u32>,
 }
 
-/// Complete native prevention-manager state, including work deferred by damage
-/// applications. Wire conversion must supply all three executable converters.
-/// Owning continuation frames retain their deferral start markers separately.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
-pub struct PreventionEffectState<
-    S = PreventionShield, F = PendingPreventionFollowUp,
-    C = crate::effects::ReplacementExecutionContext,
-> {
-    pub shields: Vec<S>,
-    pub next_id: u64,
-    pub current_turn: u32,
-    pub pending_follow_ups: Vec<F>,
-    pub follow_up_deferral_depth: usize,
-    pub follow_up_replacement_scopes: Vec<C>,
-    /// Includes exhausted/removed shields still referenced by delayed effects.
-    pub prevented_totals: Vec<(PreventionShieldId, u32)>,
-}
-
-impl<S, F, C> PreventionEffectState<S, F, C> {
-    pub fn try_map_payloads<S2, F2, C2, Error>(
-        self, shield: impl FnMut(S) -> Result<S2, Error>,
-        follow_up: impl FnMut(F) -> Result<F2, Error>,
-        scope: impl FnMut(C) -> Result<C2, Error>,
-    ) -> Result<PreventionEffectState<S2, F2, C2>, Error> {
-        let Self { shields, next_id, current_turn, pending_follow_ups,
-            follow_up_deferral_depth, follow_up_replacement_scopes, prevented_totals } = self;
-        Ok(PreventionEffectState {
-            shields: shields.into_iter().map(shield).collect::<Result<Vec<_>, _>>()?,
-            pending_follow_ups: pending_follow_ups.into_iter().map(follow_up).collect::<Result<Vec<_>, _>>()?,
-            follow_up_replacement_scopes: follow_up_replacement_scopes.into_iter().map(scope).collect::<Result<Vec<_>, _>>()?,
-            next_id, current_turn, follow_up_deferral_depth, prevented_totals,
-        })
-    }
-}
-
 /// A follow-up to run after a prevention shield is applied to damage.
 ///
 /// `prevented` is zero when CR 615.12 applies the prevention effect to
@@ -304,6 +295,8 @@ pub struct PreventionFollowUp {
 pub struct PendingPreventionFollowUp {
     pub(crate) replacement_scope: crate::effects::ReplacementExecutionContext,
     pub source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    /// LKI of the damage source, distinct from the prevention ability's source.
+    pub damage_source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
     pub follow_up: PreventionFollowUp,
     pub damage: crate::events::DamageEvent,
     pub provenance: crate::provenance::ProvNodeId,
@@ -317,70 +310,6 @@ pub struct PreventionApplicationResult {
 }
 
 impl PreventionEffectManager {
-    /// Capture all manager fields. Do not drop queued work or metrics for a
-    /// shield which has already been consumed when publishing a checkpoint.
-    pub fn retained_state(&self) -> Result<PreventionEffectState, String> {
-        let Self { shields, next_id, current_turn, pending_follow_ups,
-            follow_up_deferral_depth, follow_up_replacement_scopes, prevented_totals } = self;
-        let mut totals: Vec<_> = prevented_totals.iter().map(|(id, amount)| (*id, *amount)).collect();
-        totals.sort_by_key(|(id, _)| id.0);
-        let state = PreventionEffectState {
-            shields: shields.clone(), next_id: *next_id, current_turn: *current_turn,
-            pending_follow_ups: pending_follow_ups.clone(),
-            follow_up_deferral_depth: *follow_up_deferral_depth,
-            follow_up_replacement_scopes: follow_up_replacement_scopes.clone(),
-            prevented_totals: totals,
-        };
-        Self::new().restore_retained_state(state.clone())?;
-        Ok(state)
-    }
-
-    /// Validate before publication; registration would reset remaining amounts,
-    /// creation turns and IDs. The owning importer also validates world and
-    /// provenance references, payloads and matching continuation/deferral frames.
-    pub fn restore_retained_state(&mut self, state: PreventionEffectState) -> Result<(), String> {
-        if state.next_id == u64::MAX || state.follow_up_deferral_depth == usize::MAX {
-            return Err("serialized prevention allocator or deferral depth cannot advance".into());
-        }
-        fn check_assignments(targets: &[ResolvedTarget], assignments: &[TargetAssignment]) -> Result<(), String> {
-            if assignments.iter().any(|assignment| assignment.range.start > assignment.range.end
-                || assignment.range.end > targets.len()) {
-                return Err("invalid prevention follow-up target assignment".into());
-            }
-            Ok(())
-        }
-        let mut ids = std::collections::HashSet::new();
-        for shield in &state.shields {
-            if shield.id.0 >= state.next_id || !ids.insert(shield.id) {
-                return Err("invalid retained prevention shield identity".into());
-            }
-            if shield.created_turn > state.current_turn {
-                return Err("prevention shield was created in a future turn".into());
-            }
-            check_assignments(&shield.follow_up_targets, &shield.follow_up_target_assignments)?;
-        }
-        for pending in &state.pending_follow_ups {
-            check_assignments(&pending.follow_up.targets, &pending.follow_up.target_assignments)?;
-        }
-        let mut totals = HashMap::new();
-        for (id, amount) in state.prevented_totals {
-            if id.0 >= state.next_id || totals.insert(id, amount).is_some() {
-                return Err("invalid retained prevention metric identity".into());
-            }
-        }
-        if ids.iter().any(|id| !totals.contains_key(id)) {
-            return Err("missing prevention metric for an active shield".into());
-        }
-        *self = Self {
-            shields: state.shields, next_id: state.next_id, current_turn: state.current_turn,
-            pending_follow_ups: state.pending_follow_ups,
-            follow_up_deferral_depth: state.follow_up_deferral_depth,
-            follow_up_replacement_scopes: state.follow_up_replacement_scopes,
-            prevented_totals: totals,
-        };
-        Ok(())
-    }
-
     /// Create a new empty manager.
     pub fn new() -> Self {
         Self::default()
@@ -473,9 +402,21 @@ impl PreventionEffectManager {
         provenance: crate::provenance::ProvNodeId,
         source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
     ) {
+        self.queue_follow_up_with_snapshots(follow_up, damage, provenance, source_snapshot, None);
+    }
+
+    pub(crate) fn queue_follow_up_with_snapshots(
+        &mut self,
+        follow_up: PreventionFollowUp,
+        damage: crate::events::DamageEvent,
+        provenance: crate::provenance::ProvNodeId,
+        source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
+        damage_source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    ) {
         self.pending_follow_ups.push(PendingPreventionFollowUp {
             replacement_scope: self.follow_up_replacement_scopes.last().cloned().unwrap_or_default(),
             source_snapshot,
+            damage_source_snapshot,
             follow_up,
             damage,
             provenance,
@@ -534,6 +475,18 @@ impl PreventionEffectManager {
         id
     }
 
+    /// Retain the explicit CR 400.7c exception without allowing another zone
+    /// change (including a later blink) to refresh the chosen source identity.
+    pub(crate) fn link_resolved_permanent_spell(&mut self, spell: ObjectId, permanent: ObjectId) {
+        for shield in &mut self.shields {
+            if shield.damage_filter.from_specific_source == Some(spell)
+                && shield.damage_filter.resolved_permanent_source.is_none()
+            {
+                shield.damage_filter.resolved_permanent_source = Some(permanent);
+            }
+        }
+    }
+
     /// Remove a shield by ID.
     pub fn remove_shield(&mut self, id: PreventionShieldId) {
         self.shields.retain(|s| s.id != id);
@@ -549,10 +502,21 @@ impl PreventionEffectManager {
         self.shields.retain(|s| !s.is_exhausted());
     }
 
+    /// Remove shields at the actual combat boundary, retaining metrics still
+    /// owned by later delayed effects. Pending additional actions are separate.
+    pub fn cleanup_end_of_combat_retaining_metrics(
+        &mut self,
+        retained_metrics: &std::collections::HashSet<PreventionShieldId>,
+    ) {
+        self.shields.retain(|shield| !matches!(shield.duration, Until::EndOfCombat));
+        let active = self.shields.iter().map(|shield| shield.id).collect::<Vec<_>>();
+        self.prevented_totals.retain(|id, _| active.contains(id) || retained_metrics.contains(id));
+    }
+
     /// Clean up shields at end of turn.
     pub fn cleanup_end_of_turn(&mut self) {
         self.shields
-            .retain(|s| !matches!(s.duration, Until::EndOfTurn));
+            .retain(|s| !matches!(s.duration, Until::EndOfTurn | Until::EndOfCombat));
         let active = self
             .shields
             .iter()
@@ -568,7 +532,7 @@ impl PreventionEffectManager {
         retained_metrics: &std::collections::HashSet<PreventionShieldId>,
     ) {
         self.shields
-            .retain(|s| !matches!(s.duration, Until::EndOfTurn));
+            .retain(|s| !matches!(s.duration, Until::EndOfTurn | Until::EndOfCombat));
         let active = self
             .shields
             .iter()
@@ -893,7 +857,7 @@ impl PreventionEffectManager {
 mod tests {
     use super::*;
 
-    fn transport_fixture() -> (PreventionEffectManager, PreventionShieldId, PreventionShieldId) {
+    fn native_clone_fixture() -> (PreventionEffectManager, PreventionShieldId, PreventionShieldId) {
         let mut manager = PreventionEffectManager::new();
         let alice = PlayerId::from_index(0);
         manager.set_turn(4);
@@ -908,10 +872,9 @@ mod tests {
     }
 
     #[test]
-    fn prevention_state_transport_preserves_remaining_total_expiry_and_allocation() {
-        let (original, consumed, live) = transport_fixture();
-        let mut restored = PreventionEffectManager::new();
-        restored.restore_retained_state(original.retained_state().unwrap()).unwrap();
+    fn native_clone_preserves_prevention_remaining_total_expiry_and_allocation() {
+        let (original, consumed, live) = native_clone_fixture();
+        let mut restored = original.clone();
         assert_eq!(restored.current_turn(), 4);
         assert_eq!(restored.next_id(), original.next_id());
         assert!(restored.get_shield_mut(consumed).is_none());
@@ -932,8 +895,8 @@ mod tests {
     }
 
     #[test]
-    fn prevention_state_transport_preserves_nested_deferral_and_replacement_scopes() {
-        let (mut original, _, live) = transport_fixture();
+    fn native_clone_preserves_prevention_nested_deferral_and_replacement_scopes() {
+        let (mut original, _, live) = native_clone_fixture();
         let mut outer = crate::effects::ReplacementExecutionContext::default();
         outer.suppressed_replacement_effects.insert(crate::replacement::ReplacementEffectId(7));
         original.begin_follow_up_replacement_scope(&outer);
@@ -947,8 +910,7 @@ mod tests {
             ObjectId::from_raw(82), crate::events::DamageTarget::Player(PlayerId::from_index(0)), 1, false,
             crate::events::cause::EventCause::effect(),
         ), crate::provenance::ProvNodeId::default());
-        let mut restored = PreventionEffectManager::new();
-        restored.restore_retained_state(original.retained_state().unwrap()).unwrap();
+        let mut restored = original.clone();
         assert!(restored.follow_ups_are_deferred());
         let pending = restored.end_follow_up_deferral(nested);
         assert_eq!(pending.len(), 1);
@@ -962,37 +924,6 @@ mod tests {
         assert!(restored.follow_up_replacement_scopes.is_empty());
     }
 
-    #[test]
-    fn prevention_state_transport_rejects_malformed_state_atomically() {
-        let (mut manager, consumed, live) = transport_fixture();
-        let valid = manager.retained_state().unwrap();
-        let before = format!("{manager:?}");
-        for case in 0..10 {
-            let mut state = valid.clone();
-            match case {
-                0 => state.next_id = u64::MAX,
-                1 => state.follow_up_deferral_depth = usize::MAX,
-                2 => state.shields.push(state.shields[0].clone()),
-                3 => state.next_id = live.0,
-                4 => state.shields[0].created_turn = state.current_turn + 1,
-                5 => state.prevented_totals.push(state.prevented_totals[0]),
-                6 => state.prevented_totals.push((PreventionShieldId(state.next_id), 1)),
-                7 => state.prevented_totals.retain(|(id, _)| *id != live),
-                8 => state.shields[0].follow_up_target_assignments.push(TargetAssignment {
-                    spec: crate::target::ChooseSpec::target_player(), range: 0..1,
-                }),
-                9 => state.shields[0].follow_up_target_assignments.push(TargetAssignment {
-                    spec: crate::target::ChooseSpec::target_player(), range: 1..0,
-                }),
-                _ => unreachable!(),
-            }
-            assert!(manager.restore_retained_state(state).is_err(), "malformed case {case}");
-            assert_eq!(format!("{manager:?}"), before);
-        }
-        manager.restore_retained_state(valid).unwrap();
-        assert_eq!(manager.prevented_by_shield(consumed), 3);
-        assert_eq!(manager.apply_chosen_shield(live, 4, true, None).remaining, 0);
-    }
 
     #[test]
     fn test_prevention_shield_creation() {
@@ -1344,5 +1275,34 @@ mod tests {
         // First shield exhausted (3), second shield used 2
         assert_eq!(manager.shields().len(), 1); // One exhausted and removed
         assert_eq!(manager.shields()[0].amount_remaining, Some(1));
+    }
+}
+
+#[cfg(test)]
+mod combat_expiry_tests {
+    use super::*;
+
+    #[test]
+    fn combat_expiry_preserves_only_owned_metrics_and_noncombat_durations() {
+        let mut manager = PreventionEffectManager::new();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1401);
+        let combat = manager.add_shield(PreventionShield::new(source, alice, PreventionTarget::You, None, Until::EndOfCombat));
+        let turn = manager.add_shield(PreventionShield::new(source, alice, PreventionTarget::You, None, Until::EndOfTurn));
+        manager.record_prevented(combat, 3);
+        let mut retained = std::collections::HashSet::new();
+        retained.insert(combat);
+        manager.cleanup_end_of_combat_retaining_metrics(&retained);
+        assert_eq!(manager.shields().len(), 1);
+        assert_eq!(manager.shields()[0].id, turn);
+        assert_eq!(manager.prevented_by_shield(combat), 3);
+        manager.cleanup_end_of_turn_retaining_metrics(&std::collections::HashSet::new());
+        assert_eq!(manager.prevented_by_shield(combat), 0);
+        assert!(manager.shields().is_empty());
+        // A combat duration restored outside normal combat advancement must
+        // still be removed by the turn cleanup backstop.
+        manager.add_shield(PreventionShield::new(source, alice, PreventionTarget::You, None, Until::EndOfCombat));
+        manager.cleanup_end_of_turn();
+        assert!(manager.shields().is_empty());
     }
 }

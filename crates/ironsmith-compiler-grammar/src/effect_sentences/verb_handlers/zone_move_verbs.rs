@@ -46,7 +46,7 @@ pub fn parse_move(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError> 
     };
 
     let from = parse_target_phrase(from_tokens)?;
-    let to = parse_target_phrase(to_tokens)?;
+    let to = parse_counter_move_destination(to_tokens, &from)?;
 
     Ok(if move_all {
         EffectAst::subject_verb_move_all_counters(from, to)
@@ -64,7 +64,11 @@ fn parse_move_counted_counters(
     use super::super::grammar::primitives as grammar;
     use winnow::Parser as _;
 
-    let Some((count, used)) = crate::util::parse_value(tokens) else {
+    let (count, used) = if grammar::strip_lexed_prefix_phrase(tokens, &["any", "number", "of"]).is_some() {
+        (ironsmith_core::effect::CounterMoveAmount::AnyNumber, 3)
+    } else if let Some((count, used)) = crate::util::parse_value(tokens) {
+        (ironsmith_core::effect::CounterMoveAmount::Exact(count), used)
+    } else {
         return Ok(None);
     };
     if used == 0 || used >= tokens.len() {
@@ -93,13 +97,57 @@ fn parse_move_counted_counters(
         return Ok(None);
     }
     let from = parse_target_phrase(from_tokens)?;
-    let to = parse_target_phrase(to_tokens)?;
-    Ok(Some(EffectAst::subject_verb_move_counters(
+    let to = parse_counter_move_destination(to_tokens, &from)?;
+    Ok(Some(EffectAst::subject_verb_move_counters_amount(
         counter_type,
         count,
         from,
         to,
     )))
+}
+
+
+/// A counter movement has a source endpoint and a destination endpoint.
+/// "With the same controller" relates the destination to the source, not to
+/// the spell's controller or a target set confined to one endpoint.
+fn parse_counter_move_destination(tokens: &[OwnedLexToken], from: &TargetAst) -> Result<TargetAst, CardTextError> {
+    use super::super::grammar::primitives as grammar;
+    let Some(core_tokens) = grammar::strip_lexed_suffix_phrase(tokens, &["with", "the", "same", "controller"])
+        .or_else(|| grammar::strip_lexed_suffix_phrase(tokens, &["with", "same", "controller"])) else {
+        return parse_target_phrase(tokens);
+    };
+    fn source_reference(from: &TargetAst) -> Result<crate::filter::ObjectRef, CardTextError> {
+        use crate::filter::ObjectRef;
+        match from {
+            TargetAst::Source(_) => Ok(ObjectRef::tagged(crate::tag::CompilerReferenceTag::SourceObject.bind())),
+            TargetAst::Tagged(tag, _) => Ok(ObjectRef::tagged(tag.clone())),
+            TargetAst::Object(_, Some(_), _) => Ok(ObjectRef::Target),
+            TargetAst::WithCount(inner, _) | TargetAst::WithCountValue(inner, _, _) => source_reference(inner),
+            _ => Err(CardTextError::ParseError("same-controller counter movement needs a bound source endpoint".into())),
+        }
+    }
+    fn constrain(target: TargetAst, reference: crate::filter::ObjectRef) -> Result<TargetAst, CardTextError> {
+        match target {
+            TargetAst::Object(mut filter, target_span, it_span) => {
+                let relation = PlayerFilter::ControllerOf(reference);
+                // Preserve an existing controller restriction through intersection.
+                filter.controller = Some(match filter.controller.take() {
+                    None => relation,
+                    Some(base) => PlayerFilter::Excluding {
+                        base: Box::new(base),
+                        excluded: Box::new(PlayerFilter::Excluding {
+                            base: Box::new(PlayerFilter::Any), excluded: Box::new(relation),
+                        }),
+                    },
+                });
+                Ok(TargetAst::Object(filter, target_span, it_span))
+            }
+            TargetAst::WithCount(inner, count) => Ok(TargetAst::WithCount(Box::new(constrain(*inner, reference)?), count)),
+            TargetAst::WithCountValue(inner, count, value) => Ok(TargetAst::WithCountValue(Box::new(constrain(*inner, reference)?), count, value)),
+            _ => Err(CardTextError::ParseError("same-controller counter movement needs an object destination".into())),
+        }
+    }
+    constrain(parse_target_phrase(core_tokens)?, source_reference(from)?)
 }
 
 fn draw_count_with_surface(count: Value, additional: bool) -> Value {
@@ -114,6 +162,19 @@ pub fn parse_draw(
     tokens: &[OwnedLexToken],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
+    if let Some(then_index) = tokens.iter().position(|token| token.is_word("then"))
+        && crate::lexer::parser_token_word_refs(&tokens[then_index + 1..]) == ["discard", "one", "of", "them"]
+    {
+        let player = extract_subject_player(subject.clone()).unwrap_or(PlayerAst::Implicit);
+        let draw_tokens = crate::util::trim_edge_punctuation_tokens(&tokens[..then_index]);
+        let draw = parse_draw(draw_tokens, subject)?;
+        let tag = crate::util::helper_tag_for_tokens(tokens, "drawn");
+        return Ok(EffectAst::Sequence { effects: vec![
+            EffectAst::TagAffected { tag: tag.clone(), effect: Box::new(draw) },
+            EffectAst::subject_verb_discard(player, Value::Fixed(1), false, false,
+                Some(ObjectFilter::tagged(tag).in_zone(Zone::Hand)), None),
+        ] });
+    }
     let clause_words = crate::lexer::token_word_refs(tokens);
     let head = zone_move_grammar::parse_draw_head_shape(tokens).map_err(|error| match error {
         zone_move_grammar::DrawHeadShapeError::MissingCount => CardTextError::ParseError(format!(
@@ -143,6 +204,18 @@ pub fn parse_draw(
     };
     let tail = head.tail_tokens;
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
+    if clause_words.starts_with(&["up", "to"]) && tail.is_empty() {
+        if let Value::Fixed(maximum) = count {
+            if let Ok(max) = u32::try_from(maximum) {
+                return Ok(EffectAst::Sequence { effects: vec![
+                    EffectAst::subject_verb(SubjectVerbRoleAst::Chooser, player.clone(),
+                        SubjectVerbActionAst::Choices(crate::cards::builders::ChoiceActionAst::ChooseNumber { min: 0, max })),
+                    subject_verb_player_resource_effect(SubjectVerbRoleAst::AffectedPlayer, player,
+                        SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count: Value::PendingEffectMetric { source: ironsmith_core::EffectMetricSource::Outcome, metric: ironsmith_core::EffectMetric::Count } })),
+                ] });
+            }
+        }
+    }
     // Preserve the source-zone restriction before the generic this-way
     // metric parser reduces the clause to an unqualified effect count.
     if let Some(hand_owner) = crate::grammar::effects::subject_verb_registry_shapes::parse_draw_for_exiled_hand_count_shape(tokens)
@@ -1045,5 +1118,27 @@ mod turn_history_draw_tests {
         };
         assert_eq!(filter.controller, Some(PlayerFilter::You));
         assert_eq!(filter.card_types, [crate::types::CardType::Creature]);
+    }
+}
+
+#[cfg(test)]
+mod relative_draw_tests {
+    use super::*;
+    #[test]
+    fn complete_draw_quantities_use_shared_semantic_values() {
+        let tokens = crate::lexer::lex_line("equal to the difference", 0).unwrap();
+        assert_eq!(
+            parse_draw_equal_to_value(&tokens).unwrap(),
+            Some(Value::PendingComparisonDifference)
+        );
+        let tokens = crate::lexer::lex_line("equal to the milled card's mana value", 0).unwrap();
+        assert!(
+            matches!(parse_draw_equal_to_value(&tokens).unwrap(), Some(Value::PendingPriorEffectMetric(query))
+            if query.action == Some(ironsmith_core::PriorEffectAction::Milled)
+                && query.metric == ironsmith_core::EffectMetric::FirstManaValue)
+        );
+        let tokens =
+            crate::lexer::lex_line("equal to the difference among strange things", 0).unwrap();
+        assert!(parse_draw_equal_to_value(&tokens).unwrap().is_none());
     }
 }

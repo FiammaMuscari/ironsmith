@@ -57,8 +57,9 @@ use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 use ironsmith_core::{DamagedBySource, TagKey, ValueSurfaceHint};
 
-mod replacements_and_rules;
+pub(crate) mod replacements_and_rules;
 pub use replacements_and_rules::*;
+pub(crate) use replacements_and_rules::DamageAmountReplacementMatcher;
 
 /// Counters on this object survive zone changes except when the destination
 /// is explicitly excluded by the ability.
@@ -1496,6 +1497,7 @@ impl StaticAbilityKind for EntersTappedUnlessTwoOrMoreOpponents {
 struct ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher {
+
     fn may_match_event_kind(&self, kind: crate::events::EventKind) -> bool {
         matches!(kind, crate::events::EventKind::ZoneChange | crate::events::EventKind::EnterBattlefield)
     }
@@ -1536,6 +1538,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLands
 struct ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher {
+
     fn may_match_event_kind(&self, kind: crate::events::EventKind) -> bool {
         matches!(kind, crate::events::EventKind::ZoneChange | crate::events::EventKind::EnterBattlefield)
     }
@@ -1576,6 +1579,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLand
 struct ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -1616,6 +1620,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLands
 struct ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -1648,6 +1653,7 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatc
 struct ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -1777,6 +1783,7 @@ struct ThisWouldEnterTappedUnlessConditionMatcher {
 }
 
 impl ReplacementMatcher for ThisWouldEnterTappedUnlessConditionMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -1901,6 +1908,7 @@ impl StaticAbilityKind for Bloodthirst {
 struct ThisWouldEnterWithBloodthirstMatcher;
 
 impl ReplacementMatcher for ThisWouldEnterWithBloodthirstMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -2359,6 +2367,7 @@ struct ThisWouldEnterWithCountersIfConditionMatcher {
 }
 
 impl ReplacementMatcher for ThisWouldEnterWithCountersIfConditionMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         true
     }
@@ -2955,7 +2964,10 @@ impl StaticAbilityKind for RedirectDamageToSource {
                 self.object_filter.clone(),
             ),
             ReplacementAction::Redirect {
-                target: RedirectTarget::ToSource,
+                // `ToSource` denotes the incoming damage event's source.
+                // This replacement instead names the permanent bearing the
+                // static ability, captured when its replacement is generated.
+                target: RedirectTarget::ToObject(source),
                 which: RedirectWhich::First,
             },
         ))
@@ -3190,6 +3202,7 @@ struct PreventableCombatDamageToOrByObjectMatcher {
 }
 
 impl ReplacementMatcher for PreventableCombatDamageToOrByObjectMatcher {
+
     fn matches_prepared_event(&self, event: &dyn GameEventType, ctx: &crate::events::context::PreparedEventContext) -> bool {
         if self.to.matches_prepared_event(event, ctx) {
             return true;
@@ -3297,6 +3310,7 @@ struct PreventableAnyDamageToObjectMatcher {
 }
 
 impl ReplacementMatcher for PreventableAnyDamageToObjectMatcher {
+
     fn matches_prepared_event(&self, event: &dyn GameEventType, ctx: &crate::events::context::PreparedEventContext) -> bool {
         self.combat.matches_prepared_event(event, ctx) || self.noncombat.matches_prepared_event(event, ctx)
     }
@@ -3595,7 +3609,7 @@ impl StaticAbilityKind for PreventDamageToSelfRemoveCounter {
             source,
             controller,
             crate::events::DamageToSelfMatcher::new(),
-            ReplacementAction::Instead(effects),
+            ReplacementAction::PreventDamageThenFromProposedAmount(effects),
         ))
     }
 }
@@ -3634,7 +3648,7 @@ impl StaticAbilityKind for PreventDamageToSelfPutCountersInstead {
             source,
             controller,
             crate::events::DamageToSelfMatcher::new(),
-            ReplacementAction::PreventDamageThen(vec![Effect::put_counters_on_source(
+            ReplacementAction::Instead(vec![Effect::put_counters_on_source(
                 self.counter_type,
                 Value::EventValue(EventValueSpec::Amount),
             )]),
@@ -4463,6 +4477,7 @@ impl ConditionalWouldEnterBattlefieldMatcher {
 }
 
 impl ReplacementMatcher for ConditionalWouldEnterBattlefieldMatcher {
+
     fn applies_from_entering_source(&self) -> bool {
         self.enter_matcher.applies_from_entering_source()
     }
@@ -5100,5 +5115,25 @@ impl StaticAbilityKind for DamagePreventionWithFollowUp {
             // Additional effects happen even when the damage cannot be prevented.
             ReplacementAction::PreventDamageThen(self.effects.clone()),
         ))
+    }
+}
+
+/// A live controller-scoped exception to the zero-loyalty state-based action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlaneswalkersYouControlDontDieAtZeroLoyalty;
+
+impl StaticAbilityKind for PlaneswalkersYouControlDontDieAtZeroLoyalty {
+    fn compiled_model(&self) -> Option<&super::CompiledStaticAbility> {
+        static MODEL: std::sync::LazyLock<super::CompiledStaticAbility> =
+            std::sync::LazyLock::new(
+                super::CompiledStaticAbility::planeswalkers_you_control_dont_die_at_zero_loyalty,
+            );
+        Some(&MODEL)
+    }
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::PlaneswalkersYouControlDontDieAtZeroLoyalty
+    }
+    fn display(&self) -> String {
+        "Planeswalkers you control aren't put into their owners' graveyards for having 0 loyalty".into()
     }
 }

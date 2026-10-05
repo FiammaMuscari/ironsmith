@@ -13,6 +13,36 @@ use crate::object::CounterType;
 use crate::target::{ObjectFilter, PlayerFilter};
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BlockingAsThoughNoLandwalk {
+    pub spec: ironsmith_core::static_ability_model::BlockingAsThoughNoLandwalkSpec,
+}
+
+impl StaticAbilityKind for BlockingAsThoughNoLandwalk {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::BlockingAsThoughNoLandwalk
+    }
+
+    fn display(&self) -> String {
+        self.spec.display.clone()
+    }
+
+    fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
+        !game.is_phased_out(source)
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
+        game.effect_store
+            .cant_effects
+            .blocking_as_though_landwalk_overrides
+            .push(crate::game_state::BlockingAsThoughLandwalkOverride {
+                spec: self.spec.clone(),
+                source,
+                controller,
+            });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TargetingAsThoughNoAbility {
     pub spec: ironsmith_core::static_ability_model::TargetingAsThoughNoAbilitySpec,
 }
@@ -156,6 +186,13 @@ impl StaticAbilityKind for YouCantLoseGame {
         "You can't lose the game".to_string()
     }
 
+    fn with_static_condition(&self, condition: crate::ConditionExpr) -> Option<StaticAbility> {
+        // A command-zone emblem changes game rules directly. A conditional
+        // self-granted ability would be confined to battlefield layer six.
+        StaticAbility::restriction(Restriction::lose_game(PlayerFilter::You), self.display())
+            .with_condition(condition)
+    }
+
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::lose_game(PlayerFilter::You).apply(game, &mut tracker, controller, None, None);
@@ -174,6 +211,16 @@ impl StaticAbilityKind for OpponentsCantWinGame {
 
     fn display(&self) -> String {
         "Your opponents can't win the game".to_string()
+    }
+
+    fn with_static_condition(&self, condition: crate::ConditionExpr) -> Option<StaticAbility> {
+        // A command-zone emblem changes game rules directly. A conditional
+        // self-granted ability would be confined to battlefield layer six.
+        StaticAbility::restriction(
+            Restriction::win_game(PlayerFilter::Opponent),
+            self.display(),
+        )
+        .with_condition(condition)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -602,6 +649,18 @@ impl StaticAbilityKind for CounterLimit {
     }
 }
 
+/// A restriction on copying this spell, not abilities of its source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantBeCopied;
+impl StaticAbilityKind for CantBeCopied {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeCopied
+    }
+    fn display(&self) -> String {
+        "This spell can't be copied".into()
+    }
+}
+
 /// "This spell can't be countered"
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CantBeCountered;
@@ -828,9 +887,14 @@ impl StaticAbilityKind for RuleRestriction {
         // mana dependency classifier. These unconditional derived limits do
         // not change characteristics or mana-source eligibility.
         self.condition.is_some()
-            || !std::iter::once(&self.restriction).chain(&self.additional_restrictions).all(|restriction| {
-                matches!(restriction, Restriction::AdditionalLandPlays(_, _) | Restriction::NoMaximumHandSize(_))
-            })
+            || !std::iter::once(&self.restriction)
+                .chain(&self.additional_restrictions)
+                .all(|restriction| {
+                    matches!(
+                        restriction,
+                        Restriction::AdditionalLandPlays(_, _) | Restriction::NoMaximumHandSize(_)
+                    )
+                })
     }
 
     fn id(&self) -> StaticAbilityId {
@@ -960,6 +1024,36 @@ impl StaticAbilityKind for RuleRestriction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn zero_life_loss_restriction_preserves_other_loss_causes() {
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(42);
+        game.add_restriction_effect(
+            Restriction::LoseGameForZeroLife(PlayerFilter::You),
+            crate::effect::Until::EndOfTurn,
+            source,
+            alice,
+            None,
+        );
+        game.update_cant_effects();
+        game.player_mut(alice).unwrap().life = 0;
+        assert!(game.can_lose_game(alice));
+        assert!(!crate::rules::state_based::check_state_based_actions(&game).iter().any(|action|
+            matches!(action, crate::rules::state_based::StateBasedAction::PlayerLoses { player, reason: crate::rules::state_based::LoseReason::ZeroLife } if *player == alice)));
+        game.player_mut(alice).unwrap().poison_counters = 10;
+        assert!(crate::rules::state_based::check_state_based_actions(&game).iter().any(|action|
+            matches!(action, crate::rules::state_based::StateBasedAction::PlayerLoses { player, reason: crate::rules::state_based::LoseReason::Poison } if *player == alice)));
+        let mut ctx = crate::effects::ExecutionContext::new_default(source, alice);
+        crate::effects::execute_effect(
+            &mut game,
+            &crate::effect::Effect::lose_the_game(),
+            &mut ctx,
+        )
+        .unwrap();
+        assert!(!game.player(alice).unwrap().is_in_game());
+    }
+
     use crate::effect::{Value, ValueComparisonOperator};
     use crate::zone::Zone;
 

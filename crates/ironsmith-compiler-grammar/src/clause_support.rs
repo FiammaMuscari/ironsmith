@@ -40,6 +40,7 @@ const TWO_WORD_KEYWORD_ACTIONS: &[(&[&str], KeywordAction)] = &[
     (&["read", "ahead"], KeywordAction::ReadAhead),
     (&["for", "mirrodin"], KeywordAction::ForMirrodin),
     (&["living", "weapon"], KeywordAction::LivingWeapon),
+    (&["job", "select"], KeywordAction::JobSelect),
     (&["umbra", "armor"], KeywordAction::UmbraArmor),
     (
         &["doctor", "companion"],
@@ -424,14 +425,19 @@ pub fn parse_protection_chain(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAct
                     },
                 )
             }
+            ProtectionTargetKind::Opponents => Some(KeywordAction::ProtectionFromFilter(
+                ObjectFilter::default().controlled_by(PlayerFilter::Opponent),
+            )),
             ProtectionTargetKind::ChosenPlayer => Some(KeywordAction::ProtectionFromChosenPlayer),
             ProtectionTargetKind::ChosenColor => Some(KeywordAction::ProtectionFromChosenColor),
             ProtectionTargetKind::ExiledCardTypes => {
                 let mut filter = ObjectFilter::default();
-                filter.tagged_constraints.push(crate::target::TaggedObjectConstraint {
-                    tag: crate::tag::CompilerReferenceTag::SourceExiled.key(),
-                    relation: crate::target::TaggedOpbjectRelation::SharesCardType,
-                });
+                filter
+                    .tagged_constraints
+                    .push(crate::target::TaggedObjectConstraint {
+                        tag: crate::tag::CompilerReferenceTag::SourceExiled.key(),
+                        relation: crate::target::TaggedOpbjectRelation::SharesCardType,
+                    });
                 Some(KeywordAction::ProtectionFromFilter(filter))
             }
             ProtectionTargetKind::ChosenCardType => {
@@ -466,8 +472,7 @@ pub fn parse_protection_chain(tokens: &[OwnedLexToken]) -> Option<Vec<KeywordAct
                     parse_color(target.value)
                         .map(KeywordAction::ProtectionFrom)
                         .or_else(|| {
-                            parse_card_type(target.value)
-                                .map(KeywordAction::ProtectionFromCardType)
+                            parse_card_type(target.value).map(KeywordAction::ProtectionFromCardType)
                         })
                         .or_else(|| {
                             parse_subtype_flexible(target.value)

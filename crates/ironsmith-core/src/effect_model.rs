@@ -15,6 +15,19 @@ pub enum Comparison {
 }
 
 impl Comparison {
+    /// Compare a resolved count without narrowing it to the printed bound type.
+    pub fn evaluate_wide(&self, value: i64) -> bool {
+        match self {
+            Self::GreaterThan(n) => value > i64::from(*n),
+            Self::GreaterThanOrEqual(n) => value >= i64::from(*n),
+            Self::Equal(n) => value == i64::from(*n),
+            Self::OneOf(values) => values.iter().any(|n| value == i64::from(*n)),
+            Self::LessThan(n) => value < i64::from(*n),
+            Self::LessThanOrEqual(n) => value <= i64::from(*n),
+            Self::NotEqual(n) => value != i64::from(*n),
+            Self::BetweenInclusive(min,max) => value >= i64::from(*min) && value <= i64::from(*max),
+        }
+    }
     pub fn evaluate(&self, value: i32) -> bool {
         match self {
             Self::GreaterThan(n) => value > *n,
@@ -62,6 +75,13 @@ pub enum EventValueSpec {
     LifeAmount,
     BlockersBeyondFirst { multiplier: i32 },
     DieResult,
+    /// Captured life gained/lost by the event's affected player. The optional
+    /// controller restriction preserves an authored "you" participant.
+    LifeChange { gained: bool, for_controller: bool },
+    /// Sum only the retained numeric results of this player's roll batch.
+    DieBatchTotal,
+    /// Number of this batch's numeric results satisfying the authored predicate.
+    DieResultsAtLeast(i32),
 }
 
 #[cfg(test)]

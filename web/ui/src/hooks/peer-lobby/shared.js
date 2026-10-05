@@ -844,7 +844,7 @@ export function commandMayProducePostApplyOpenings(command, state, previewedRequ
   ) {
     return true;
   }
-  return ["select_options", "select_objects", "targets"].includes(String(command.type || ""));
+  return ["select_options", "select_counters", "select_objects", "targets"].includes(String(command.type || ""));
 }
 
 export function isUnauthorizedAddCardCommand(command) {
@@ -1737,7 +1737,7 @@ export function isFaceDownCastCommand(command) {
   const actionRef = command.action_ref || command.actionRef || null;
   if (String(actionRef?.kind || "") !== "cast_spell") return false;
   const method = actionRef.casting_method || actionRef.castingMethod || null;
-  return String(method?.kind || "") === "face_down";
+  return ["face_down", "face_down_play_from"].includes(String(method?.kind || ""));
 }
 
 

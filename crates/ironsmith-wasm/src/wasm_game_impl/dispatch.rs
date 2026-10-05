@@ -13,7 +13,7 @@ struct HiddenCardMetadata {
 }
 
 impl WasmGame {
-    fn hidden_metadata_for_checkpoint_object(&self, id: ObjectId) -> Option<HiddenCardMetadata> {
+    fn hidden_metadata_for_committed_object(&self, id: ObjectId) -> Option<HiddenCardMetadata> {
         let object = self.game.object(id)?;
         let info = self.game.hidden_card_info(id)?;
         Some(HiddenCardMetadata {
@@ -29,24 +29,53 @@ impl WasmGame {
         })
     }
 
-    // Match exportSyncCheckpoint's object set and committed game, including
-    // proposed/resolving stack objects. Never substitute pending_decision_game.
-    fn checkpoint_hidden_metadata(&self, id: ObjectId) -> Option<HiddenCardMetadata> {
-        self.sync_checkpoint_object_ids().binary_search(&id).ok()?;
-        self.hidden_metadata_for_checkpoint_object(id)
+    // A single committed-state read for hydration/authorization. No continuous
+    // effects, stack programs or other executable checkpoint payloads are encoded.
+    fn hidden_card_state(&self) -> serde_json::Value {
+        let players = self.game.players.iter().map(|player| serde_json::json!({
+            "id": player.id.0,
+            "hand": player.hand.iter().map(|id| id.0).collect::<Vec<_>>(),
+            "library": player.library.iter().map(|id| id.0).collect::<Vec<_>>(),
+            "graveyard": player.graveyard.iter().map(|id| id.0).collect::<Vec<_>>(),
+            "commanders": player.commanders.iter().map(|id| id.0).collect::<Vec<_>>(),
+            "sideboard": player.sideboard.iter().map(|id| id.0).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>();
+        let objects = self.committed_object_ids().into_iter().filter_map(|id| {
+            let object = self.game.object(id)?;
+            Some(serde_json::json!({
+                "id": id.0,
+                "stableId": object.stable_id.0.0,
+                "name": object.name.to_string(),
+                "originalCardName": object.card.and_then(|card| self.registry.get_by_id(card))
+                    .map(|definition| &definition.card.name),
+                "zone": sync_zone_name(object.zone),
+                "hiddenCard": self.hidden_metadata_for_committed_object(id),
+            }))
+        }).collect::<Vec<_>>();
+        serde_json::json!({
+            "players": players, "objects": objects,
+            "exile": self.game.exile.iter().map(|id| id.0).collect::<Vec<_>>(),
+        })
     }
 
-    fn checkpoint_hidden_metadata_at_position(
+    // Read the committed game, including
+    // proposed/resolving stack objects. Never substitute pending_decision_game.
+    fn committed_hidden_metadata(&self, id: ObjectId) -> Option<HiddenCardMetadata> {
+        self.committed_object_ids().binary_search(&id).ok()?;
+        self.hidden_metadata_for_committed_object(id)
+    }
+
+    fn committed_hidden_metadata_at_position(
         &self, owner: u8, position: u16, commitment: &str,
     ) -> Vec<HiddenCardMetadata> {
-        self.sync_checkpoint_object_ids().into_iter()
+        self.committed_object_ids().into_iter()
             .filter(|id| self.game.hidden_card_info(*id).is_some_and(|info| {
                 info.owner.0 == owner
                     && info.public_slot.unwrap_or(info.slot) == position
                     && info.public_commitment.as_deref().filter(|value| !value.is_empty())
                         .unwrap_or(&info.commitment) == commitment
             }))
-            .filter_map(|id| self.hidden_metadata_for_checkpoint_object(id))
+            .filter_map(|id| self.hidden_metadata_for_committed_object(id))
             .collect()
     }
 }
@@ -66,6 +95,8 @@ enum SnapshotJsonError {
     HiddenLibraryEpoch(String),
     ContinuousDiscovery(ironsmith::static_ability_processor::StaticEffectDiscoveryError),
     JsonEncoding(serde_json::Error),
+    PriorityEligibility(ironsmith::effects::ExecutionError),
+    PaymentAnalysis(ironsmith::effects::ExecutionError),
 }
 
 impl std::fmt::Display for SnapshotJsonError {
@@ -73,7 +104,9 @@ impl std::fmt::Display for SnapshotJsonError {
         match self {
             Self::HiddenLibraryEpoch(error) => write!(f, "{error}"),
             Self::ContinuousDiscovery(error) => write!(f, "snapshot refresh failed: {error}"),
+            Self::PaymentAnalysis(error) => write!(f, "payment options incomplete: {error}"),
             Self::JsonEncoding(error) => write!(f, "json encode failed: {error}"),
+            Self::PriorityEligibility(error) => write!(f, "priority timing refresh failed: {error}"),
         }
     }
 }
@@ -190,6 +223,8 @@ impl WasmGame {
         }
         self.prepare_snapshot_continuous_state()
             .map_err(SnapshotJsonError::ContinuousDiscovery)?;
+        self.refresh_priority_affordability_display().map_err(SnapshotJsonError::PriorityEligibility)?;
+        let mana_payment_view = self.current_mana_payment_view_checked().map_err(SnapshotJsonError::PaymentAnalysis)?;
         self.cached_snapshot = None;
         let pending_cast_stack_id = self
             .priority_state
@@ -202,11 +237,12 @@ impl WasmGame {
         let snapshot_id = self.snapshot_serial;
         let battlefield_transitions =
             battlefield_transition_snapshots(self.game.take_ui_battlefield_transitions());
-        let mut snap = GameSnapshot::from_game_with_object_view_cache(
+        let disclosure_view = self.payment_disclosure_view();
+        let mut snap = GameSnapshot::from_game_with_object_view_cache_during_action(
             self.pending_decision_game.as_deref().unwrap_or(&self.game),
             self.perspective,
             self.pending_decision.as_ref(),
-            self.current_mana_payment_view(),
+            mana_payment_view,
             self.game_over.as_ref(),
             pending_cast_stack_id,
             self.active_resolving_stack_object.clone(),
@@ -216,7 +252,11 @@ impl WasmGame {
             undo_land_stable_id,
             snapshot_id,
             &self.snapshot_object_view_cache,
+            self.static_library_top_visibility_window(),
         );
+        if let Some(view) = disclosure_view.as_ref() {
+            snap.include_payment_disclosure(self.pending_decision_game.as_deref().unwrap_or(&self.game), view, &self.snapshot_object_view_cache);
+        }
         snap.crypto_requirements = self.last_crypto_requirements.clone();
         insert_pending_stack_object_snapshots(&mut snap, self.pending_trigger_stack_objects());
         serde_json::to_string_pretty(&snap)
@@ -1051,6 +1091,7 @@ impl WasmGame {
             active_resolving_stack_hash: hash_debug_value(&self.active_resolving_stack_object),
             active_viewed_cards_hash: hash_debug_value(&self.active_viewed_cards),
             crypto_requirements_hash: hash_debug_value(&self.last_crypto_requirements),
+            static_library_top_visibility_hash: self.static_library_top_visibility_hash(),
             cancelable,
             undo_land_stable_id,
         }
@@ -1107,10 +1148,10 @@ impl WasmGame {
         self.last_dispatch_perf = Some(perf);
     }
 
-    fn current_mana_payment_view(&self) -> Option<ManaPaymentView> {
+    fn current_mana_payment_view_checked(&self) -> Result<Option<ManaPaymentView>, ironsmith::effects::ExecutionError> {
         let Some(DecisionContext::ManaPayment(context)) = self.pending_decision.as_ref() else {
             self.mana_activation_inventory_cache.borrow_mut().take();
-            return None;
+            return Ok(None);
         };
         // A valid proposal must not wait for speculative alternatives. Those are
         // computed on an isolated runtime after this snapshot reaches the UI.
@@ -1123,9 +1164,10 @@ impl WasmGame {
                 self.game.zone_revisions().all, &self.game.players, &self.game.turn,
             ));
             if cache.as_ref().is_none_or(|(key, _)| *key != inventory_key) {
-                *cache = Some((inventory_key, mana_activation_option_views(&self.game, &inventory_request)));
+                *cache = Some((inventory_key, mana_activation_option_views(&self.game, &inventory_request)?));
             }
         }
+        let manual = if self.defer_mana_options { Vec::new() } else { manual_mana_ability_views(&self.game, &context.request)? };
         let options = if self.defer_mana_options { &[][..] } else { &cache.as_ref().unwrap().1[..] };
         // A cost/effect decision inside a manual mana activation temporarily owns
         // the payment UI. Only reuse the parent's provisional view when it matches.
@@ -1133,13 +1175,13 @@ impl WasmGame {
             .priority_state
             .pending_cast
             .as_ref()
-            .and_then(|pending| mana_payment_view_from_pending_cast(&self.game, pending, options, self.defer_mana_options))
+            .and_then(|pending| mana_payment_view_from_pending_cast(&self.game, pending, options, &manual))
             .or_else(|| {
                 self.priority_state
                     .pending_activation
                     .as_ref()
                     .and_then(|pending| {
-                        mana_payment_view_from_pending_activation(&self.game, pending, options, self.defer_mana_options)
+                        mana_payment_view_from_pending_activation(&self.game, pending, options, &manual)
                     })
             });
         if let Some(mut view) = parent
@@ -1147,11 +1189,16 @@ impl WasmGame {
             && view.plan_id == context.plan.id.to_string()
         {
             view.editor.activation_options_complete = !self.defer_mana_options;
-            return Some(view);
+            return Ok(Some(view));
         }
-        let mut view = mana_payment_view_from_context(&self.game, context, options, self.defer_mana_options);
+        let mut view = mana_payment_view_from_context(&self.game, context, options, &manual);
         view.editor.activation_options_complete = !self.defer_mana_options;
-        Some(view)
+        Ok(Some(view))
+    }
+
+    #[cfg(test)]
+    fn current_mana_payment_view(&self) -> Option<ManaPaymentView> {
+        self.current_mana_payment_view_checked().expect("fixture payment analysis must complete")
     }
 
     fn pending_priority_decision_is_stale(&self) -> bool {
@@ -1435,6 +1482,7 @@ impl WasmGame {
         #[cfg(not(test))]
         let registry = CardRegistry::new();
         Self {
+            runtime_identity_origin_available: true,
             game: GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20),
             registry,
             trigger_queue: TriggerQueue::new(),
@@ -1444,6 +1492,9 @@ impl WasmGame {
             runtime_savepoints: HashMap::new(),
             next_runtime_savepoint: 0,
             priority_analysis_job: None,
+            priority_affordability_cache: HashMap::new(),
+            priority_affordability_seed_key: None,
+            priority_affordability_completed_key: None,
             payment_analysis_job: None,
             inspector_analysis_job: None,
             last_analysis_slice_nodes: 0,
@@ -1451,6 +1502,8 @@ impl WasmGame {
             pending_replay_action: None,
             pending_action_checkpoint: None,
             pending_live_action_root: None,
+            payment_disclosure: None,
+            payment_disclosure_generation: 0,
             pending_live_continuation: None,
             game_over: None,
             perspective: PlayerId::from_index(0),
@@ -1463,6 +1516,7 @@ impl WasmGame {
             priority_epoch_checkpoint: None,
             priority_epoch_has_undoable_action: false,
             priority_epoch_undo_locked_by_mana: false,
+            priority_epoch_undo_locked_by_disclosure: false,
             priority_epoch_undo_land_stable_id: None,
             semantic_threshold: 0.0,
             snapshot_serial: 0,
@@ -2858,6 +2912,14 @@ impl WasmGame {
         })
     }
 
+    /// Local metadata for hand hydration and reveal authorization; never a
+    /// recovery checkpoint and never authority to reveal another player's card.
+    #[wasm_bindgen(js_name = getHiddenCardState)]
+    pub fn get_hidden_card_state(&self) -> Result<JsValue, JsValue> {
+        self.hidden_card_state().serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| JsValue::from_str(&format!("hidden card state encode failed: {error}")))
+    }
+
     /// Read only the identity fields needed by opening verification. This is
     /// not a checkpoint export or an authorization to disclose a card's name.
     #[wasm_bindgen(js_name = getHiddenCardMetadata)]
@@ -2866,7 +2928,7 @@ impl WasmGame {
             || object_id > 9_007_199_254_740_991.0 || object_id.fract() != 0.0 {
             return Ok(JsValue::NULL);
         }
-        self.checkpoint_hidden_metadata(ObjectId::from_raw(object_id as u64))
+        self.committed_hidden_metadata(ObjectId::from_raw(object_id as u64))
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
             .map_err(|error| JsValue::from_str(&format!("hidden metadata encode failed: {error}")))
     }
@@ -2879,7 +2941,7 @@ impl WasmGame {
         let result = if owner.is_finite() && owner >= 0.0 && owner <= u8::MAX as f64
             && owner.fract() == 0.0 && position.is_finite() && position >= 0.0
             && position <= u16::MAX as f64 && position.fract() == 0.0 {
-            self.checkpoint_hidden_metadata_at_position(owner as u8, position as u16, &commitment)
+            self.committed_hidden_metadata_at_position(owner as u8, position as u16, &commitment)
         } else {
             Vec::new()
         };
@@ -2947,6 +3009,9 @@ impl WasmGame {
         let pending_replay_action = self.pending_replay_action.clone();
         let pending_action_checkpoint = self.pending_action_checkpoint.clone();
         let pending_live_action_root = self.pending_live_action_root.clone();
+        let payment_disclosure = self.payment_disclosure.clone();
+        let payment_disclosure_generation = self.payment_disclosure_generation;
+        let priority_epoch_undo_locked_by_disclosure = self.priority_epoch_undo_locked_by_disclosure;
         let pending_live_continuation = self.pending_live_continuation.clone();
         let runner = self.runner.clone();
         let runner_awaiting_priority = self.runner_awaiting_priority;
@@ -2977,6 +3042,9 @@ impl WasmGame {
         self.pending_replay_action = pending_replay_action;
         self.pending_action_checkpoint = pending_action_checkpoint;
         self.pending_live_action_root = pending_live_action_root;
+        self.payment_disclosure = payment_disclosure;
+        self.payment_disclosure_generation = payment_disclosure_generation;
+        self.priority_epoch_undo_locked_by_disclosure = priority_epoch_undo_locked_by_disclosure;
         self.pending_live_continuation = pending_live_continuation;
         self.runner = runner;
         self.runner_awaiting_priority = runner_awaiting_priority;
@@ -3402,7 +3470,8 @@ impl WasmGame {
         let mut request: Option<ironsmith::mana_payment::ManaPaymentRequest> =
             serde_json::from_str(request_json)
                 .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        let result = request.as_mut().map(|request| mana_payment_options_view(&self.game, request));
+        let result = request.as_mut().map(|request| mana_payment_options_view(&self.game, request))
+            .transpose().map_err(|error| JsValue::from_str(&format!("payment options incomplete: {error}")))?;
         serde_wasm_bindgen::to_value(&result)
             .map_err(|error| JsValue::from_str(&error.to_string()))
     }
@@ -3416,6 +3485,7 @@ impl WasmGame {
         let snapshot_started_at = PerfTimer::start();
         self.prepare_snapshot_continuous_state()
             .map_err(|error| JsValue::from_str(&format!("snapshot refresh failed: {error}")))?;
+        self.refresh_priority_affordability_display().map_err(|error| JsValue::from_str(&format!("priority timing refresh failed: {error}")))?;
         let pending_cast_stack_id = self
             .priority_state
             .pending_cast
@@ -3423,7 +3493,8 @@ impl WasmGame {
             .map(|p| p.stack_id);
         let cancelable = self.is_cancelable();
         let undo_land_stable_id = self.visible_undo_land_stable_id(cancelable);
-        let mana_payment_view = self.current_mana_payment_view();
+        let mana_payment_view = self.current_mana_payment_view_checked()
+            .map_err(|error| JsValue::from_str(&format!("payment options incomplete: {error}")))?;
         let cache_key = self.snapshot_cache_key(
             pending_cast_stack_id,
             cancelable,
@@ -3452,7 +3523,8 @@ impl WasmGame {
         if let Some(before) = self.pending_crypto_audit_before.take() {
             self.update_crypto_requirements_from(before);
         }
-        let mut snap = GameSnapshot::from_game_with_object_view_cache(
+        let disclosure_view = self.payment_disclosure_view();
+        let mut snap = GameSnapshot::from_game_with_object_view_cache_during_action(
             self.pending_decision_game.as_deref().unwrap_or(&self.game),
             self.perspective,
             self.pending_decision.as_ref(),
@@ -3466,7 +3538,11 @@ impl WasmGame {
             undo_land_stable_id,
             snapshot_id,
             &self.snapshot_object_view_cache,
+            self.static_library_top_visibility_window(),
         );
+        if let Some(view) = disclosure_view.as_ref() {
+            snap.include_payment_disclosure(self.pending_decision_game.as_deref().unwrap_or(&self.game), view, &self.snapshot_object_view_cache);
+        }
         snap.crypto_requirements = self.last_crypto_requirements.clone();
         let snapshot_build_ms = build_started_at.elapsed_ms();
         let pending_insert_started_at = PerfTimer::start();
@@ -3753,7 +3829,7 @@ impl WasmGame {
             ));
         }
 
-        self.game.mark_player_lost(player_id);
+        self.game.mark_player_lost(player_id).map_err(|error| JsValue::from_str(&format!("player departure execution incomplete: {error}")))?;
         self.priority_state.player_left_game(&self.game);
 
         let remaining: Vec<_> = self
@@ -4174,6 +4250,21 @@ impl WasmGame {
     /// Add many cards to player zones and recompute UI state once.
     #[wasm_bindgen(js_name = addCardsToZones)]
     pub fn add_cards_to_zones(&mut self, cards_js: JsValue) -> Result<JsValue, JsValue> {
+        self.add_cards_to_zones_impl(cards_js, true)
+    }
+
+    /// Populate an empty puzzle before running pregame or turn procedures.
+    /// This is a setup command, not a state or executable-program importer.
+    #[wasm_bindgen(js_name = stagePuzzleCardsToZones)]
+    pub fn stage_puzzle_cards_to_zones(&mut self, cards_js: JsValue) -> Result<JsValue, JsValue> {
+        if self.runner.is_some() || self.pregame.is_some() || !self.loaded_decks.is_empty()
+            || self.pending_decision.is_some() || !self.game.objects_in_deterministic_order().is_empty() {
+            return Err(JsValue::from_str("Puzzle staging requires an empty resetEmpty runtime"));
+        }
+        self.add_cards_to_zones_impl(cards_js, false)
+    }
+
+    fn add_cards_to_zones_impl(&mut self, cards_js: JsValue, recompute: bool) -> Result<JsValue, JsValue> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct AddCardToZoneInput {
@@ -4226,6 +4317,9 @@ impl WasmGame {
 
         let mut validated = Vec::with_capacity(cards.len());
         for card in &cards {
+            if !recompute && !card.skip_triggers {
+                return Err(JsValue::from_str("Puzzle staging requires skipTriggers"));
+            }
             let player_id = PlayerId::from_index(card.player_index);
             if self.game.player(player_id).is_none() {
                 return Err(JsValue::from_str("invalid player index"));
@@ -4282,10 +4376,41 @@ impl WasmGame {
                 object_ids.push(object_id);
             }
         }
-        self.recompute_ui_decision()?;
+        if recompute { self.recompute_ui_decision()?; }
         serde_wasm_bindgen::to_value(&object_ids).map_err(|e| {
             JsValue::from_str(&format!("failed to serialize addCardsToZones result: {e}"))
         })
+    }
+
+    /// Explicit fixture editing; executable effects remain owned by the runtime.
+    #[wasm_bindgen(js_name = addObjectCountersForSetup)]
+    pub fn add_object_counters_for_setup(&mut self, object_id: u64, kind: &str, amount: u32) -> Result<(), JsValue> {
+        let id = ObjectId::from_raw(object_id);
+        if self.game.object(id).is_none() {
+            return Err(JsValue::from_str("Counter fixture object does not exist"));
+        }
+        let counter_type = counter_type_from_preview_name(kind);
+        let _ = self.game.add_counters(id, counter_type, amount);
+        self.recompute_ui_decision()
+    }
+
+    /// Remove one owner's cards from a fixture zone without resolving effects.
+    #[wasm_bindgen(js_name = clearPlayerZoneForSetup)]
+    pub fn clear_player_zone_for_setup(&mut self, player_index: u8, zone_name: &str) -> Result<(), JsValue> {
+        let player = PlayerId::from_index(player_index);
+        if self.game.player(player).is_none() {
+            return Err(JsValue::from_str("invalid player index"));
+        }
+        let zone = zone_from_ui_name(zone_name).map_err(|error| JsValue::from_str(&error))?;
+        if zone == Zone::Stack {
+            return Err(JsValue::from_str("Stack fixtures must resolve through commands"));
+        }
+        self.validate_commander_manual_zone_addition(zone).map_err(|error| JsValue::from_str(&error))?;
+        let ids = self.game.objects_in_deterministic_order().into_iter()
+            .filter(|object| object.owner == player && object.zone == zone)
+            .map(|object| object.id).collect::<Vec<_>>();
+        for id in ids { self.game.remove_object(id); }
+        self.recompute_ui_decision()
     }
 
     /// Set an explicit combat damage assignment for the next combat damage step.
@@ -4762,24 +4887,6 @@ impl WasmGame {
         Ok(())
     }
 
-    /// Serialized checkpoints do not encode live instruction continuations or
-    /// undo transactions. Recovery anchors may only sample a complete boundary.
-    #[wasm_bindgen(js_name = isReplayCheckpointBoundary)]
-    pub fn is_replay_checkpoint_boundary(&self) -> bool {
-        self.pregame.is_none()
-            && matches!(self.pending_decision, Some(DecisionContext::Priority(_)))
-            && self.pending_decision_game.is_none()
-            && self.pending_replay_action.is_none()
-            && self.pending_live_continuation.is_none()
-            && self.pending_action_checkpoint.is_none()
-            && self.pending_live_action_root.is_none()
-            && self.priority_state.pending_cast.is_none()
-            && self.priority_state.pending_activation.is_none()
-            && self.priority_state.pending_continuation.is_none()
-            && !self.runner_pending_decision
-            && !self.priority_epoch_has_undoable_action
-    }
-
     /// Cancel the current pending decision chain.
     ///
     /// Rollback preference:
@@ -4794,6 +4901,7 @@ impl WasmGame {
         if !self.is_cancelable() {
             return Err(JsValue::from_str("current decision cannot be cancelled"));
         }
+        let disclosure_epoch_lock = self.priority_epoch_undo_locked_by_disclosure;
         if let Some(checkpoint) = self.pending_action_checkpoint.as_ref().cloned() {
             self.restore_replay_checkpoint(&checkpoint);
         } else if let Some(checkpoint) = self
@@ -4812,6 +4920,7 @@ impl WasmGame {
         self.pending_live_continuation = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
+        self.priority_epoch_undo_locked_by_disclosure = disclosure_epoch_lock;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
         self.pending_decision_game = None;
@@ -4828,7 +4937,10 @@ impl WasmGame {
         self.dispatch_advance_until_decision_perfs.clear();
         let prior_decision_game = self.pending_decision_game.clone();
         let prior_decision = self.pending_decision.clone();
-        let result = self.dispatch_routed(command);
+        let decode_started_at = PerfTimer::start();
+        let command: UiCommand = serde_wasm_bindgen::from_value(command)
+            .map_err(|error| JsValue::from_str(&format!("invalid command payload: {error}")))?;
+        let result = self.dispatch_typed_command(command, decode_started_at.elapsed_ms());
         if result.is_err() && self.pending_decision_game.is_none() && self.pending_decision.is_some()
             && hash_debug_value(&self.pending_decision) == hash_debug_value(&prior_decision) {
             self.pending_decision_game = prior_decision_game;
@@ -4837,20 +4949,11 @@ impl WasmGame {
         result
     }
 
-    fn dispatch_routed(&mut self, command: JsValue) -> Result<JsValue, JsValue> {
+    fn dispatch_routed_command(&mut self, command: UiCommand, command_decode_ms: f64) -> Result<JsValue, JsValue> {
         let dispatch_started_at = PerfTimer::start();
         self.last_dispatch_perf = None;
-        if self.pending_priority_decision_is_stale() {
-            self.recompute_stale_priority_decision()?;
-            return Err(JsValue::from_str(
-                "pending priority decision no longer matches the game priority holder",
-            ));
-        }
-        let command_decode_started_at = PerfTimer::start();
-        let command: UiCommand = serde_wasm_bindgen::from_value(command)
-            .map_err(|e| JsValue::from_str(&format!("invalid command payload: {e}")))?;
-        let command_decode_ms = command_decode_started_at.elapsed_ms();
-        // A face-down cast of a hidden hand card carries its public cast kind
+
+        // A face-down cast of a hidden card carries its public cast kind
         // (morph, megamorph, disguise). Record it before the command is
         // replayed so every peer, including those holding only a placeholder
         // that is never opened for the cast, agrees the cast is legal and on
@@ -4863,7 +4966,7 @@ impl WasmGame {
             && self
                 .game
                 .object(spell)
-                .is_some_and(|object| object.zone == Zone::Hand)
+                .is_some_and(|object| !matches!(object.zone, Zone::Battlefield | Zone::Stack))
         {
             self.game.set_hidden_face_down_cast_claim(spell, kind);
         }
@@ -5107,6 +5210,7 @@ impl WasmGame {
                         return self.snapshot();
                     }
 
+                    self.finish_payment_disclosure();
                     // The spell/ability is now committed. Follow-up prompts
                     // produced during resolution must not preserve Undo for
                     // the action that just finished paying its costs.
@@ -5117,6 +5221,7 @@ impl WasmGame {
                 }
                 progress => {
                     self.clear_active_resolving_stack_object();
+                    self.finish_payment_disclosure();
                     if Self::replay_root_starts_undoable_action(&replay.root) {
                         self.priority_epoch_has_undoable_action = true;
                     }
@@ -5208,6 +5313,7 @@ impl WasmGame {
                                 );
                             }
 
+                            self.finish_payment_disclosure();
                             // The spell/ability is now committed. Follow-up prompts
                             // produced during resolution must not preserve Undo for
                             // the action that just finished paying its costs.
@@ -5223,6 +5329,7 @@ impl WasmGame {
                         }
                         progress => {
                             self.clear_active_resolving_stack_object();
+                            self.finish_payment_disclosure();
                             if Self::replay_root_starts_undoable_action(&root) {
                                 self.priority_epoch_has_undoable_action = true;
                             }
@@ -5597,7 +5704,31 @@ mod narrow_hidden_metadata_tests {
     use super::*;
 
     #[test]
-    fn narrow_hidden_metadata_matches_checkpoint_without_using_pending_game() {
+    fn draw_reveal_eligibility_uses_match_decklists_instead_of_registry_cache() {
+        let _guard = crate::test_id_counter_guard();
+        let mut wasm = WasmGame::new();
+        let plain = CardDefinition::new(ironsmith::CardBuilder::new(CardId::new(), "Plain fixture")
+            .card_types(vec![CardType::Land]).build());
+        let mut miracle = CardDefinition::new(ironsmith::CardBuilder::new(CardId::new(), "Miracle fixture")
+            .card_types(vec![CardType::Sorcery]).build());
+        miracle.alternative_casts = vec![ironsmith::alternative_cast::AlternativeCastingMethod::Miracle {
+            cost: ironsmith::mana::ManaCost::new(),
+        }];
+        wasm.registry.register(plain);
+        wasm.registry.register(miracle);
+        let manifests: Vec<HiddenDeckManifestInput> = [0, 1].into_iter().map(|owner|
+            serde_json::from_value(serde_json::json!({"owner": owner})).unwrap()).collect();
+        let lists = vec![vec!["Plain fixture".to_string()], vec!["Plain fixture".to_string()]];
+        assert!(wasm.hidden_draw_reveal_players_for_setup(&manifests, Some(&lists), None).is_empty());
+        let miracle_lists = vec![vec!["Miracle fixture".to_string()], lists[1].clone()];
+        assert_eq!(wasm.hidden_draw_reveal_players_for_setup(&manifests, Some(&miracle_lists), None),
+            vec![PlayerId::from_index(0)]);
+        assert_eq!(wasm.hidden_draw_reveal_players_for_setup(&manifests, None, None),
+            vec![PlayerId::from_index(0), PlayerId::from_index(1)]);
+    }
+
+    #[test]
+    fn narrow_hidden_metadata_reads_committed_game_without_using_pending_game() {
         let _guard = crate::test_id_counter_guard();
         let mut wasm = WasmGame::new();
         wasm.initialize_empty_match(vec!["Alice".into(), "Bob".into()], 20, 1);
@@ -5607,7 +5738,7 @@ mod narrow_hidden_metadata_tests {
         info.public_slot = Some(4);
         info.public_commitment = Some("public-4".into());
         wasm.game.set_hidden_card_info(id, info);
-        let before = serde_json::to_value(wasm.build_sync_checkpoint()).unwrap();
+        let before = wasm.hidden_card_state();
         let object = before["objects"].as_array().unwrap().iter()
             .find(|object| object["id"].as_u64() == Some(id.0)).unwrap();
         let hidden = &object["hiddenCard"];
@@ -5624,12 +5755,49 @@ mod narrow_hidden_metadata_tests {
         other.public_commitment = Some("uncommitted-other".into());
         pending.set_hidden_card_info(id, other);
         wasm.pending_decision_game = Some(Box::new(pending));
-        assert_eq!(serde_json::to_value(wasm.checkpoint_hidden_metadata(id)).unwrap(), expected);
-        let matches = wasm.checkpoint_hidden_metadata_at_position(1, 4, "public-4");
+        assert_eq!(serde_json::to_value(wasm.committed_hidden_metadata(id)).unwrap(), expected);
+        let matches = wasm.committed_hidden_metadata_at_position(1, 4, "public-4");
         assert_eq!(matches.len(), 1);
         assert_eq!(serde_json::to_value(&matches[0]).unwrap(), expected);
-        assert!(wasm.checkpoint_hidden_metadata_at_position(1, 4, "uncommitted-other").is_empty());
-        assert_eq!(serde_json::to_value(wasm.build_sync_checkpoint()).unwrap(), before);
+        assert!(wasm.committed_hidden_metadata_at_position(1, 4, "uncommitted-other").is_empty());
+        assert_eq!(wasm.hidden_card_state(), before);
+    }
+
+    #[test]
+    fn hidden_card_state_survives_earthbend_and_reads_committed_zones() {
+        use ironsmith::effects::{EffectExecutor, ResolvedTarget};
+        use ironsmith::effects::EffectContext as ExecutionContext;
+        let _guard = crate::test_id_counter_guard();
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(vec!["Alice".into(), "Bob".into()], 20, 1);
+        let owner = PlayerId::from_index(0);
+        let hand = wasm.game.create_hidden_card_placeholder(owner, Zone::Hand, 7, "ziffle:root:7".into());
+        let library = wasm.game.create_hidden_card_placeholder(owner, Zone::Library, 8, "ziffle:root:8".into());
+        let exile = wasm.game.create_hidden_card_placeholder(owner, Zone::Exile, 9, "ziffle:root:9".into());
+        let definition = CardDefinition::new(ironsmith::CardBuilder::new(CardId::new(), "Forest")
+            .card_types(vec![CardType::Land]).build());
+        wasm.registry.register(definition.clone());
+        let land = wasm.game.create_object_from_definition(&definition, owner, Zone::Battlefield);
+        let before = wasm.hidden_card_state();
+        let effect = ironsmith::effects::EarthbendEffect::new(
+            ironsmith::target::ChooseSpec::target(ironsmith::target::ChooseSpec::Object(
+                ironsmith::target::ObjectFilter::land())), 2);
+        let mut ctx = ExecutionContext::new_default(land, owner)
+            .with_targets(vec![ResolvedTarget::Object(land)]);
+        effect.execute(&mut wasm.game, &mut ctx).unwrap();
+        assert!(wasm.game.current_has_static_ability_id(land, ironsmith::static_abilities::StaticAbilityId::Haste));
+        assert_eq!(wasm.game.calculated_power(land), Some(2));
+        assert_eq!(wasm.hidden_card_state(), before,
+            "executable effects must not affect the identity/zone query");
+        let mut pending = wasm.game.clone();
+        pending.move_object_by_game_rule(hand, Zone::Graveyard).unwrap();
+        wasm.pending_decision_game = Some(Box::new(pending));
+        let state = wasm.hidden_card_state();
+        assert_eq!(state["players"][0]["hand"], serde_json::json!([hand.0]));
+        assert_eq!(state["exile"], serde_json::json!([exile.0]));
+        let object = state["objects"].as_array().unwrap().iter().find(|entry| entry["id"] == library.0).unwrap();
+        assert_eq!(object["hiddenCard"]["commitment"], "ziffle:root:8");
+        assert!(state.get("registeredContinuous").is_none());
     }
 
     #[test]
@@ -5643,23 +5811,23 @@ mod narrow_hidden_metadata_tests {
         let mut info = wasm.game.hidden_card_info(second).unwrap().clone();
         info.public_commitment = Some(String::new());
         wasm.game.set_hidden_card_info(second, info);
-        assert_eq!(wasm.checkpoint_hidden_metadata_at_position(0, 7, "same").len(), 2);
-        assert!(wasm.checkpoint_hidden_metadata_at_position(1, 7, "same").is_empty());
-        assert!(wasm.checkpoint_hidden_metadata_at_position(0, 8, "same").is_empty());
-        assert!(wasm.checkpoint_hidden_metadata_at_position(0, 7, "other").is_empty());
+        assert_eq!(wasm.committed_hidden_metadata_at_position(0, 7, "same").len(), 2);
+        assert!(wasm.committed_hidden_metadata_at_position(1, 7, "same").is_empty());
+        assert!(wasm.committed_hidden_metadata_at_position(0, 8, "same").is_empty());
+        assert!(wasm.committed_hidden_metadata_at_position(0, 7, "other").is_empty());
         let moved = wasm.game.move_object_by_game_rule(first, Zone::Graveyard).unwrap();
-        assert!(wasm.checkpoint_hidden_metadata(first).is_none());
-        assert_eq!(wasm.checkpoint_hidden_metadata(moved).unwrap().zone, "graveyard");
-        assert_eq!(wasm.checkpoint_hidden_metadata(second).unwrap().public_slot, None);
+        assert!(wasm.committed_hidden_metadata(first).is_none());
+        assert_eq!(wasm.committed_hidden_metadata(moved).unwrap().zone, "graveyard");
+        assert_eq!(wasm.committed_hidden_metadata(second).unwrap().public_slot, None);
         // Proposed/resolving spells retain identity while absent from game.stack.
         let stack_id = wasm.game.move_object_by_game_rule(moved, Zone::Stack).unwrap();
         assert!(wasm.game.stack.is_empty());
-        assert!(wasm.checkpoint_hidden_metadata(moved).is_none());
-        assert_eq!(wasm.checkpoint_hidden_metadata(stack_id).unwrap().zone, "stack");
+        assert!(wasm.committed_hidden_metadata(moved).is_none());
+        assert_eq!(wasm.committed_hidden_metadata(stack_id).unwrap().zone, "stack");
         // An object in the map but outside the exported checkpoint must stay absent.
         wasm.game.player_mut(owner).unwrap().library.retain(|id| *id != second);
         assert!(wasm.game.object(second).is_some());
-        assert!(wasm.checkpoint_hidden_metadata(second).is_none());
-        assert_eq!(wasm.checkpoint_hidden_metadata_at_position(0, 7, "same").len(), 1);
+        assert!(wasm.committed_hidden_metadata(second).is_none());
+        assert_eq!(wasm.committed_hidden_metadata_at_position(0, 7, "same").len(), 1);
     }
 }

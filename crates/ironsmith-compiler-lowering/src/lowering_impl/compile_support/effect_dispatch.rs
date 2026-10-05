@@ -357,19 +357,26 @@ fn preserve_nested_result_value_links(effects: &mut [Effect]) {
     }
 }
 
-fn nested_effect_result_references_deep(effect: &Effect, references: &mut Vec<NestedResultReference>) {
+fn nested_effect_result_references_deep(
+    effect: &Effect,
+    references: &mut Vec<NestedResultReference>,
+) {
     for reference in direct_nested_effect_result_references(effect) {
-        if !references.iter().any(|existing| existing.id == reference.id) {
+        if !references
+            .iter()
+            .any(|existing| existing.id == reference.id)
+        {
             references.push(reference);
         }
     }
-    let predicate_reference = if let Some(if_effect) = effect.downcast_ref::<crate::effects::IfEffect>() {
-        Some((if_effect.condition, &if_effect.predicate))
-    } else {
-        effect
-            .downcast_ref::<crate::effects::ReflexiveTriggerEffect>()
-            .map(|reflexive| (reflexive.condition, &reflexive.predicate))
-    };
+    let predicate_reference =
+        if let Some(if_effect) = effect.downcast_ref::<crate::effects::IfEffect>() {
+            Some((if_effect.condition, &if_effect.predicate))
+        } else {
+            effect
+                .downcast_ref::<crate::effects::ReflexiveTriggerEffect>()
+                .map(|reflexive| (reflexive.condition, &reflexive.predicate))
+        };
     if let Some((id, predicate)) = predicate_reference
         && !references.iter().any(|existing| existing.id == id)
     {
@@ -382,7 +389,8 @@ fn nested_effect_result_references_deep(effect: &Effect, references: &mut Vec<Ne
             kind: NestedResultReferenceKind::ResultPredicate { action },
         });
     }
-    effect.visit_child_effects(&mut |child| nested_effect_result_references_deep(child, references));
+    effect
+        .visit_child_effects(&mut |child| nested_effect_result_references_deep(child, references));
 }
 
 fn nested_effect_defined_result_ids(effect: &Effect, ids: &mut Vec<EffectId>) {
@@ -495,7 +503,10 @@ pub(crate) fn link_unproduced_result_references_in_program(
     }
     for segment in &mut program.segments {
         for branch in &mut segment.self_replacements {
-            link_unproduced_result_references_in_list(&mut branch.replacement_effects, &mut missing);
+            link_unproduced_result_references_in_list(
+                &mut branch.replacement_effects,
+                &mut missing,
+            );
         }
     }
 }
@@ -539,7 +550,10 @@ fn link_unproduced_result_references_in_children(
     None
 }
 
-fn link_unproduced_result_references_in_list(effects: &mut Vec<Effect>, missing: &mut Vec<EffectId>) {
+fn link_unproduced_result_references_in_list(
+    effects: &mut Vec<Effect>,
+    missing: &mut Vec<EffectId>,
+) {
     if missing.is_empty() {
         return;
     }
@@ -618,7 +632,10 @@ fn nested_effect_contains<T: 'static>(effect: &Effect) -> bool {
     found
 }
 
-fn nested_effect_performs_action(effect: &Effect, action: ironsmith_core::PriorEffectAction) -> bool {
+fn nested_effect_performs_action(
+    effect: &Effect,
+    action: ironsmith_core::PriorEffectAction,
+) -> bool {
     use ironsmith_core::PriorEffectAction as Action;
     match action {
         Action::Destroyed => {
@@ -645,24 +662,31 @@ fn nested_effect_performs_action(effect: &Effect, action: ironsmith_core::PriorE
     }
 }
 
-fn rewrite_outcome_reference_in_value(value: &Value, from: EffectId, to: EffectId) -> Option<Value> {
+fn rewrite_outcome_reference_in_value(
+    value: &Value,
+    from: EffectId,
+    to: EffectId,
+) -> Option<Value> {
     Some(match value {
         Value::EffectValue(id) if *id == from => Value::EffectValue(to),
-        Value::EffectValueOffset(id, offset) if *id == from => Value::EffectValueOffset(to, *offset),
+        Value::EffectValueOffset(id, offset) if *id == from => {
+            Value::EffectValueOffset(to, *offset)
+        }
         Value::SurfaceHinted { value, hints } => Value::SurfaceHinted {
             value: Box::new(rewrite_outcome_reference_in_value(value, from, to)?),
             hints: hints.clone(),
         },
-        Value::Scaled(value, factor) => {
-            Value::Scaled(Box::new(rewrite_outcome_reference_in_value(value, from, to)?), *factor)
-        }
+        Value::Scaled(value, factor) => Value::Scaled(
+            Box::new(rewrite_outcome_reference_in_value(value, from, to)?),
+            *factor,
+        ),
         Value::DividedRoundedDown(value, divisor) => Value::DividedRoundedDown(
             Box::new(rewrite_outcome_reference_in_value(value, from, to)?),
             *divisor,
         ),
-        Value::HalfRoundedDown(value) => {
-            Value::HalfRoundedDown(Box::new(rewrite_outcome_reference_in_value(value, from, to)?))
-        }
+        Value::HalfRoundedDown(value) => Value::HalfRoundedDown(Box::new(
+            rewrite_outcome_reference_in_value(value, from, to)?,
+        )),
         Value::Add(left, right) | Value::Min(left, right) => {
             let new_left = rewrite_outcome_reference_in_value(left, from, to);
             let new_right = rewrite_outcome_reference_in_value(right, from, to);
@@ -684,7 +708,11 @@ fn rewrite_outcome_reference_in_value(value: &Value, from: EffectId, to: EffectI
 /// Re-point a consumer's direct "that many" amount from one prior result to
 /// another. Only the common single-amount instruction shapes are rewritten;
 /// anything else is left for the adjacent-producer link.
-fn rewrite_direct_outcome_reference(effect: &Effect, from: EffectId, to: EffectId) -> Option<Effect> {
+fn rewrite_direct_outcome_reference(
+    effect: &Effect,
+    from: EffectId,
+    to: EffectId,
+) -> Option<Effect> {
     if let Some(tagged) = effect.as_tagged() {
         let inner = rewrite_direct_outcome_reference(&tagged.effect, from, to)?;
         let mut tagged = tagged.clone();
@@ -1270,10 +1298,12 @@ fn compile_effect_inner(
     }
     if let EffectAst::PayToEndThisEffect { cost } = effect {
         return Ok((
-            vec![Effect::new(crate::effects::GrantEndThisEffectPaymentEffect::new(
-                PlayerFilter::You,
-                cost.clone(),
-            ))],
+            vec![Effect::new(
+                crate::effects::GrantEndThisEffectPaymentEffect::new(
+                    PlayerFilter::You,
+                    cost.clone(),
+                ),
+            )],
             Vec::new(),
         ));
     }
@@ -1448,8 +1478,7 @@ fn compile_effect_inner(
         // choice by the acting player), not the ability's controller.
         let chooser = if *chooser == PlayerFilter::You
             && let Some(actor) = common_choose_one_mode_actor(modes)
-            && let Ok(filter) =
-                resolve_non_target_player_filter(actor, &current_reference_env(ctx))
+            && let Ok(filter) = resolve_non_target_player_filter(actor, &current_reference_env(ctx))
             && !matches!(filter, PlayerFilter::You)
         {
             filter
@@ -1938,6 +1967,9 @@ fn compile_compiler_control_flow(
                         | SubjectVerbActionAst::StatChanges(
                             StatChangeActionAst::RemoveCardTypes { duration, .. },
                         )
+                        | SubjectVerbActionAst::StatChanges(
+                            StatChangeActionAst::RemoveSupertypes { duration, .. },
+                        )
                         | SubjectVerbActionAst::Characteristics(
                             CharacteristicActionAst::AddSubtypes { duration, .. },
                         )
@@ -2227,6 +2259,41 @@ fn compile_subject_verb_effect(
     subject_verb: &SubjectVerbEffectAst,
     ctx: &mut EffectLoweringContext,
 ) -> Result<EffectCompileOutcome, CardTextError> {
+    // An explicitly targeted grammatical subject owns the local possessive
+    // references in its instruction: "Target player untaps lands they
+    // control" and "Target opponent puts their hand ...". Establish that
+    // declaration before the action reads its filters, rather than waiting
+    // for the next sentence's reference frame. This is a lexical scope, not
+    // a fallback for unrelated unbound player references.
+    if matches!(
+        subject_verb.subject.player,
+        PlayerAst::Target | PlayerAst::TargetOpponent
+    ) {
+        let subject = resolve_subject_verb_subject(
+            subject_verb_role(subject_verb.subject.role),
+            subject_verb.subject.player,
+            ctx,
+            true,
+            true,
+            true,
+        )?;
+        let outer_iteration = ctx.iterated_player;
+        ctx.iterated_player = false;
+        let result = compile_subject_verb_action(subject_verb, ctx);
+        ctx.iterated_player = outer_iteration;
+        let (effects, mut choices) = result?;
+        for choice in subject.into_choices() {
+            push_choice(&mut choices, choice);
+        }
+        return Ok((effects, choices));
+    }
+    compile_subject_verb_action(subject_verb, ctx)
+}
+
+fn compile_subject_verb_action(
+    subject_verb: &SubjectVerbEffectAst,
+    ctx: &mut EffectLoweringContext,
+) -> Result<EffectCompileOutcome, CardTextError> {
     if matches!(
         subject_verb.action,
         SubjectVerbActionAst::Library(LibraryActionAst::ExileTopOfLibrary { .. })
@@ -2440,10 +2507,7 @@ fn try_compile_plain_all_move_to_nonbattlefield_zone(
     };
     let mut move_effect = crate::effects::MoveToZoneEffect::new(spec.clone(), *zone, *to_top)
         .with_verb_surface(*verb_surface);
-    if !matches!(
-        subject_verb.subject.player,
-        PlayerAst::Implicit | PlayerAst::Target | PlayerAst::TargetOpponent
-    ) {
+    if !matches!(subject_verb.subject.player, PlayerAst::Implicit) {
         move_effect = move_effect.with_actor_surface(resolve_non_target_player_filter(
             subject_verb.subject.player,
             &current_reference_env(ctx),
@@ -2567,13 +2631,12 @@ fn compile_become_copy(
         }
         (spec, _) => spec,
     };
-    let granted_modifications = lower_granted_ability_grant_modifications(granted_abilities)?;
+    let copiable_abilities = lower_granted_abilities_ast_to_object_abilities(granted_abilities)?;
     let apply_target_spec = declared_copy_target
         .as_ref()
         .map(|tag| ChooseSpec::Tagged(tag.as_str().into()))
         .unwrap_or_else(|| target_spec.clone());
-    let mut apply = crate::effects::ApplyContinuousEffect::with_spec_runtime(
-        apply_target_spec,
+    let runtime_copy = if copiable_abilities.is_empty() {
         crate::effects::continuous::RuntimeModification::CopyOf {
             source: source_spec,
             preserve_source_abilities: *preserve_source_abilities,
@@ -2581,7 +2644,21 @@ fn compile_become_copy(
             name_override_surface: name_override_surface.clone(),
             add_supertypes: add_supertypes.clone(),
             copy_exception_surface: copy_exception_surface.clone(),
-        },
+        }
+    } else {
+        crate::effects::continuous::RuntimeModification::CopyOfWithAbilities {
+            source: source_spec,
+            preserve_source_abilities: *preserve_source_abilities,
+            name_override: name_override.clone(),
+            name_override_surface: name_override_surface.clone(),
+            add_supertypes: add_supertypes.clone(),
+            copy_exception_surface: copy_exception_surface.clone(),
+            abilities: copiable_abilities,
+        }
+    };
+    let mut apply = crate::effects::ApplyContinuousEffect::with_spec_runtime(
+        apply_target_spec,
+        runtime_copy,
         duration.clone(),
     )
     .lock_filter_at_resolution();
@@ -2627,9 +2704,6 @@ fn compile_become_copy(
                 sublayer: crate::continuous::PtSublayer::Setting,
             })
             .resolve_set_pt_values_at_resolution();
-    }
-    for modification in granted_modifications {
-        apply = apply.with_additional_modification(modification);
     }
     let effect = Effect::new(apply);
     let effect = if let Some(tag) = declared_copy_target {
@@ -2889,6 +2963,16 @@ where
     YouBuilder: FnOnce(Value) -> Effect,
     OtherBuilder: FnOnce(Value, PlayerFilter) -> Effect,
 {
+    if value.has_surface_hint(ironsmith_core::ValueSurfaceHint::ThatPlayerPossessive)
+        && ctx.last_player_filter.is_none()
+        && ctx.last_object_tag.is_none()
+        && !ctx.iterated_player
+        && !ctx.iterated_object
+    {
+        return Err(CardTextError::ParseError(
+            "that player requires a preceding player or object antecedent".into(),
+        ));
+    }
     let subject = resolve_subject_verb_subject(
         role,
         player,
@@ -2955,7 +3039,10 @@ where
     Ok((prelude_effects, merged_choices))
 }
 
-pub(super) fn player_target_choice_matches_filter(choice: &ChooseSpec, player: &PlayerFilter) -> bool {
+pub(super) fn player_target_choice_matches_filter(
+    choice: &ChooseSpec,
+    player: &PlayerFilter,
+) -> bool {
     let ChooseSpec::Player(choice_filter) = choice.base() else {
         return false;
     };
@@ -2968,6 +3055,18 @@ pub(super) fn player_target_choice_matches_filter(choice: &ChooseSpec, player: &
 
 fn collect_value_player_target_choices(value: &Value, choices: &mut Vec<ChooseSpec>) {
     match value {
+        Value::DamageHistory(query) => {
+            for spec in query.reference_specs() {
+                collect_choose_spec_player_target_choices(spec, choices);
+            }
+            for filter in query.object_filters() {
+                collect_object_filter_player_target_choices(filter, choices);
+            }
+            if let Some(player) = query.player_filter() {
+                collect_player_filter_target_choice(player, choices);
+            }
+        }
+
         Value::SurfaceHinted { value, .. } => collect_value_player_target_choices(value, choices),
         Value::Add(left, right) | Value::Min(left, right) => {
             collect_value_player_target_choices(left, choices);
@@ -3025,6 +3124,8 @@ fn collect_value_player_target_choices(value: &Value, choices: &mut Vec<ChooseSp
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
         | Value::LifeTotal(player)
+        | Value::MaximumLifeTotal(player)
+        | Value::CountPlayersBelowHalfStartingLifeTotal(player)
         | Value::LifeTotalAsTurnBegan(player)
         | Value::LifeTotalDifference(player)
         | Value::Speed(player)
@@ -3067,6 +3168,7 @@ fn collect_value_player_target_choices(value: &Value, choices: &mut Vec<ChooseSp
             collect_player_filter_target_choice(owner, choices);
         }
         Value::PowerOf(spec)
+        | Value::BasePowerOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
@@ -3114,6 +3216,7 @@ pub(super) fn collect_object_filter_player_target_choices(
             .as_ref()
             .map(|constraint| &constraint.source_controller),
         filter.dealt_damage_to_player_this_turn.as_ref(),
+        filter.last_drawn_this_turn.as_ref(),
     ]
     .into_iter()
     .flatten()
@@ -3153,6 +3256,7 @@ fn value_object_target_spec(value: &Value) -> Option<ChooseSpec> {
             value_object_target_spec(left).or_else(|| value_object_target_spec(right))
         }
         Value::PowerOf(spec)
+        | Value::BasePowerOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)

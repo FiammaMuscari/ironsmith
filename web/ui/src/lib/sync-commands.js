@@ -31,7 +31,7 @@ export function findPriorityActionForCommand(decision, command) {
     const method = ref?.casting_method || null;
     if (
       String(ref?.kind || "") === "cast_spell"
-      && String(method?.kind || "") === "face_down"
+      && ["face_down", "face_down_play_from"].includes(String(method?.kind || ""))
       && method?.face_down_kind
     ) {
       return {
@@ -117,6 +117,8 @@ export function isDecisionCommandCompatible(decision, command) {
     case "hybrid_choice":
     case "colors":
       return command.type === "select_options";
+    case "select_counters":
+      return command.type === "select_counters" || command.type === "select_options";
     case "select_objects":
       return command.type === "select_objects";
     case "number":
@@ -338,6 +340,18 @@ export function resolveSyncedCommand(command) {
     return {
       type: "priority_action",
       action_index: Number(command.action_index),
+    };
+  }
+
+  if (command.type === "select_counters" && Array.isArray(command.allocations)) {
+    return {
+      type: "select_counters",
+      allocations: command.allocations.map(({ index, count }) => {
+        if (!Number.isSafeInteger(index) || index < 0 || !Number.isInteger(count) || count < 0 || count > 4294967295) {
+          throw new Error("Invalid counter allocation quantity or index");
+        }
+        return { index, count };
+      }),
     };
   }
 

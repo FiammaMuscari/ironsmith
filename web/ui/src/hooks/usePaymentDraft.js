@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { clearSourcePreferences, excludePaymentSource, paymentPreferences, paymentTransactionKey, preferenceKey, removePaymentStep, selectPaymentSource } from "@/lib/payment-draft";
 import { manaActivationCommand } from "@/lib/mana-payment-actions";
+import { selectPaymentPipSource } from "@/lib/payment-pip-rows";
 
 export default function usePaymentDraft({ payment, dispatch, cancelBackgroundDispatch, enabled = true }) {
   const key = enabled ? paymentTransactionKey(payment) : null;
@@ -75,11 +76,13 @@ export default function usePaymentDraft({ payment, dispatch, cancelBackgroundDis
   return {
     draft: current.draft, dirty, confirming, error, edited: current.edited,
     select: (source, options) => edit(draft => selectPaymentSource(draft, source, options)),
+    selectPip: (source, row, rows) => edit(draft => selectPaymentPipSource(draft, source, row, rows)),
     remove: source => edit(draft => removePaymentStep(draft, source, source.occurrence)),
     exclude: sourceId => edit(draft => excludePaymentSource(draft, sourceId)),
     restore: sourceId => edit(draft => ({ ...draft, excluded_source_ids: draft.excluded_source_ids.filter(id => id !== String(sourceId)) })),
     unpin: sourceId => edit(draft => clearSourcePreferences(draft, sourceId)),
     preserve: sourceId => edit(draft => ({ ...draft, preserved_source_ids: draft.preserved_source_ids.includes(String(sourceId)) ? draft.preserved_source_ids.filter(id => id !== String(sourceId)) : [...draft.preserved_source_ids, String(sourceId)] })),
+    allocateX: allocation => edit(draft => ({ ...draft, x_allocation: allocation })),
     toggleLife: pipId => edit(draft => ({ ...draft, required_life_pips: draft.required_life_pips.includes(pipId) ? draft.required_life_pips.filter(id => id !== pipId) : [...draft.required_life_pips, pipId] })),
     reset: () => edit(() => paymentPreferences({ excluded_source_ids: payment?.fixed_excluded_source_ids || [] })), confirm, activate,
   };

@@ -165,9 +165,12 @@ fn sacrifice_fraction_rounded_shape_preserves_denominator_and_controlled_filter(
 }
 
 #[test]
-fn sacrifice_fraction_shape_requires_a_rounding_surface_and_valid_unit_fraction() {
+fn sacrifice_fraction_shape_defaults_down_and_requires_a_valid_unit_fraction() {
+    let default = lex_line("a tenth of the creatures they control of their choice", 0).unwrap();
+    let shape = parse_sacrifice_fraction_rounded_shape(&default).unwrap();
+    assert_eq!(shape.denominator, 10);
+    assert!(!shape.rounded_up);
     for text in [
-        "a tenth of the creatures they control of their choice",
         "a first of the creatures they control of their choice, rounded up",
         "a tenth creatures they control of their choice, rounded up",
     ] {
@@ -210,5 +213,26 @@ fn sacrifice_all_except_shape_preserves_filter_and_keep_count() {
             ),
             "near miss must not claim {text:?}"
         );
+    }
+}
+
+#[test]
+fn sacrifice_fraction_can_take_its_rounding_from_the_following_sentence() {
+    for (text, up) in [
+        ("half the creatures they control of their choice", false),
+        (
+            "half the nonland permanents they control of their choice, rounded down",
+            false,
+        ),
+        (
+            "half the creatures they control of their choice, rounded up",
+            true,
+        ),
+    ] {
+        let tokens = lex_line(text, 0).unwrap();
+        let shape = parse_sacrifice_fraction_rounded_shape(&tokens).unwrap();
+        assert_eq!(shape.denominator, 2);
+        assert_eq!(shape.rounded_up, up);
+        assert!(!parser_token_word_refs(shape.filter_tokens).contains(&"choice"));
     }
 }

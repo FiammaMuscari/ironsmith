@@ -277,6 +277,7 @@ pub fn has_extended_effect_head_tokens(tokens: &[OwnedLexToken]) -> bool {
     has_basic_effect_head_tokens(tokens)
         || parse_prevent_next_damage(tokens)
         || parse_prevent_all_damage(tokens)
+        || crate::grammar::effects::clause_pattern_shapes::parse_can_attack_no_defender_subject_tokens(tokens).is_some()
         || is_can_attack_as_though(tokens)
         || is_attack_or_block_if_able(tokens)
         || is_attack_if_able(tokens)
@@ -635,7 +636,8 @@ pub fn starts_effect_clause_tokens(after: &[OwnedLexToken]) -> bool {
                 &["defending", "player"],
             ],
         );
-    after_verb.is_some_and(|found| found.word_index == 0)
+    starts_any(after, &[&["can", "attack", "as", "though"]])
+        || after_verb.is_some_and(|found| found.word_index == 0)
         || explicit_subject_action
         || has_extended_effect_head_tokens(after)
 }
@@ -650,8 +652,7 @@ pub(super) fn comma_boundary_facts(
         && (contains_any(before, &["whenever", "when"])
             || primitives::has_phrase(before, &["at", "the"]));
     let target_card_type_list = primitives::contains_word(before, "target")
-        && (first_word(after).is_some_and(is_card_type_word)
-            || starts_any(after, &[&["or"]]) && nth_word(after, 1).is_some_and(is_card_type_word))
+        && crate::grammar::effects::coordination::starts_card_type_list_arm(after)
         && !is_cant_restriction(after);
     let inline_token_rules = (is_token_creation_context_tokens(before)
         || has_inline_token_rules_context(before))
@@ -669,7 +670,8 @@ pub(super) fn comma_boundary_facts(
     let named_token_appositive =
         is_create_named_token_prefix(before) && starts_like_named_token_appositive(after);
     let filter_keyword_list =
-        starts_filter_keyword_list_continuation_words(&token_word_refs(after));
+        starts_filter_keyword_list_continuation_words(&token_word_refs(after))
+            && !starts_any(after, &[&["can", "attack", "as", "though"]]);
     CommaBoundaryFacts {
         before_has_verb,
         after_starts_effect,

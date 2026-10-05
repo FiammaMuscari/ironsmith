@@ -253,6 +253,14 @@ fn replace_creature_death_event_amounts(effects: &mut [EffectAst]) {
                     amount: count,
                     ..
                 })
+                | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageToRecipients {
+                    amount: count,
+                    ..
+                })
+                | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources {
+                    amount: count,
+                    ..
+                })
                 | SubjectVerbActionAst::DamagePrevention(
                     DamagePreventionActionAst::PreventDamage { amount: count, .. },
                 )
@@ -805,9 +813,14 @@ fn preserve_counter_removed_this_way_damage_amount(effect: &mut EffectAst) {
             | SubjectVerbActionAst::Damage(DamageActionAst::DealDistributedDamage {
                 amount, ..
             })
-            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { amount, .. }) => {
-                Some(amount)
-            }
+            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { amount, .. })
+            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageToRecipients {
+                amount,
+                ..
+            })
+            | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources {
+                amount, ..
+            }) => Some(amount),
             _ => None,
         };
         if let Some(amount) = amount
@@ -1067,9 +1080,10 @@ fn default_trigger_last_object_prelude(
             event_participant_filter(filter),
         )),
         TriggerSpec::BlocksObjectWithLesserPower { blocked, .. }
-        | TriggerSpec::BlocksObject { blocked, .. } => Some(
-            EffectPreludeTag::TriggeringAttacker(tag.clone(), event_participant_filter(blocked)),
-        ),
+        | TriggerSpec::BlocksObject { blocked, .. } => Some(EffectPreludeTag::TriggeringAttacker(
+            tag.clone(),
+            event_participant_filter(blocked),
+        )),
         TriggerSpec::KeywordAction {
             action: crate::events::KeywordActionKind::ManifestDread,
             ..
@@ -2090,7 +2104,9 @@ fn trigger_provides_stack_object(trigger: &TriggerSpec) -> bool {
         // Becomes-targeted triggers record the TARGETING spell or ability as
         // the triggering event object ("counter that spell", "choose new
         // targets for that spell").
-        TriggerSpec::ThisBecomesTargeted
+        TriggerSpec::BecomesTargetedByAbilitySource { .. }
+        | TriggerSpec::PlayerBecomesTargeted { .. }
+        | TriggerSpec::ThisBecomesTargeted
         | TriggerSpec::BecomesTargeted(_)
         | TriggerSpec::ThisBecomesTargetedBySpell(_)
         | TriggerSpec::ThisBecomesTargetedByStackObject(_)
@@ -2255,10 +2271,12 @@ fn has_prior_effect_before_it_reference(effects: &[EffectAst]) -> bool {
                         continue;
                     }
                     let ordered_after_prior_member = index > 0
-                        && coordination.boundaries.get(index - 1).is_some_and(|boundary| {
-                            boundary.ordering
-                                != crate::model::EffectOrderingAst::Alternative
-                        });
+                        && coordination
+                            .boundaries
+                            .get(index - 1)
+                            .is_some_and(|boundary| {
+                                boundary.ordering != crate::model::EffectOrderingAst::Alternative
+                            });
                     if ordered_after_prior_member {
                         return true;
                     }
@@ -2569,13 +2587,19 @@ fn stage_effects_from_normalized(
         imports.last_object_tag = Some(tag.clone());
     }
 
-    let initial_env = ReferenceEnv::from_imports(
+    let mut initial_env = ReferenceEnv::from_imports(
         &imports,
         config.initial_iterated_player,
         config.allow_life_event_value,
         config.bind_unbound_x_to_last_effect,
         config.initial_last_effect_id,
     );
+    initial_env.allow_excess_damage_event_value = config.allow_excess_damage_event_value;
+    initial_env.milling_event_filter = config.milling_event_filter.clone();
+    initial_env.dice_event_grouped = config.dice_event_grouped;
+    initial_env.life_event_binding = config.life_event_binding.clone();
+    initial_env.life_amount_producers = config.life_amount_producers.clone();
+    initial_env.die_result_producers = config.die_result_producers.clone();
     let implicit_trigger_references = include_trigger_prelude.then(|| {
         semantic_effects
             .iter()
@@ -2584,8 +2608,12 @@ fn stage_effects_from_normalized(
             })
             .collect::<Vec<_>>()
     });
-    let annotated =
-        annotate_effect_sequence_owned(semantic_effects, &imports, config, Default::default())?;
+    let annotated = annotate_effect_sequence_owned(
+        semantic_effects,
+        &imports,
+        config.clone(),
+        Default::default(),
+    )?;
 
     if include_trigger_prelude {
         let needs_triggering_prelude = annotated
@@ -3134,6 +3162,8 @@ fn statement_terminal_needs_participant_result_export(effect: &EffectAst) -> boo
                 action,
                 SubjectVerbActionAst::Damage(DamageActionAst::DealDamage { .. })
                     | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { .. })
+                    | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageToRecipients { .. })
+                    | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources { .. })
                     | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEqualToPower { .. })
                     | SubjectVerbActionAst::Damage(DamageActionAst::DealDistributedDamage { .. })
             ),
@@ -3349,6 +3379,18 @@ pub fn stage_effects_with_trigger_context_for_lowering(
         imports,
         EffectReferenceResolutionConfig {
             allow_life_event_value,
+            allow_excess_damage_event_value: trigger.is_some_and(
+                ironsmith_compiler_semantic::trigger_references::trigger_binds_excess_damage_amount,
+            ),
+            milling_event_filter: trigger.and_then(
+                ironsmith_compiler_semantic::trigger_references::trigger_milling_event_filter,
+            ),
+            dice_event_grouped: trigger.and_then(
+                ironsmith_compiler_semantic::trigger_references::trigger_die_event_grouped,
+            ),
+            life_event_binding: trigger.and_then(
+                ironsmith_compiler_semantic::trigger_references::trigger_life_event_binding,
+            ),
             ..Default::default()
         },
         trigger.and_then(inferred_trigger_player_filter),
@@ -3940,6 +3982,39 @@ pub fn stage_owned_triggered_effects_for_lowering(
         }
     }
 
+    fn is_blocked_trigger(trigger: &TriggerSpec) -> bool {
+        match trigger {
+            TriggerSpec::WithIntro { trigger, .. } => is_blocked_trigger(trigger),
+            TriggerSpec::ThisBecomesBlocked | TriggerSpec::BecomesBlocked(_) => true,
+            _ => false,
+        }
+    }
+    if is_blocked_trigger(&trigger) {
+        fn bind_blockers(effects: &mut [EffectAst]) {
+            for effect in effects {
+                if let EffectAst::SubjectVerb(subject) = effect
+                    && let SubjectVerbActionAst::StatChanges(StatChangeActionAst::PumpAll {
+                        filter,
+                        power,
+                        toughness,
+                        duration,
+                        ..
+                    }) = &subject.action
+                    && filter.blocking
+                {
+                    *effect = EffectAst::subject_verb_pump(
+                        power.clone(),
+                        toughness.clone(),
+                        TargetAst::Tagged(crate::tag::CompilerReferenceTag::Blocking.bind(), None),
+                        duration.clone(),
+                        None,
+                    );
+                }
+                for_each_nested_effects_mut(effect, false, bind_blockers);
+            }
+        }
+        bind_blockers(&mut body_effects);
+    }
     bind_block_pair_subject(&mut body_effects, Some(&trigger));
     bind_damage_source_typed_demonstratives(&mut body_effects, &trigger);
     let intervening_if_uses_trigger_object = intervening_if
@@ -3993,7 +4068,9 @@ pub fn stage_owned_triggered_effects_for_lowering(
             && effects_reference_it_tag(&body_effects);
         let alias =
             ironsmith_compiler_resolve::reference_helpers::source_superseded_antecedent_alias();
-        imports.snapshot_tag_aliases.retain(|(existing, _)| existing != &alias);
+        imports
+            .snapshot_tag_aliases
+            .retain(|(existing, _)| existing != &alias);
         imports.snapshot_tag_aliases.push((alias, event_tag));
     }
     import_triggering_stack_targets_alias(&mut imports, &trigger);
@@ -4001,11 +4078,37 @@ pub fn stage_owned_triggered_effects_for_lowering(
         || intervening_if
             .as_ref()
             .is_some_and(predicate_counts_creature_deaths);
+    // Promoting the leading condition to an intervening-if must retain its
+    // operands for a consequent such as "draw cards equal to the difference".
+    if let Some(predicate) = intervening_if.as_ref() {
+        let env = ReferenceEnv::from_imports(&imports, false, allow_life_event_value, false, None);
+        if let Some(values) =
+            ironsmith_compiler_resolve::reference_resolution::predicate_comparison_operands(
+                predicate, &env,
+            )
+        {
+            imports.last_value_comparison = Some(values);
+        }
+    }
     let mut prepared = stage_effects_from_normalized(
         body_effects,
         imports,
         EffectReferenceResolutionConfig {
             allow_life_event_value,
+            allow_excess_damage_event_value:
+                ironsmith_compiler_semantic::trigger_references::trigger_binds_excess_damage_amount(
+                    &trigger,
+                ),
+            milling_event_filter:
+                ironsmith_compiler_semantic::trigger_references::trigger_milling_event_filter(
+                    &trigger,
+                ),
+            dice_event_grouped:
+                ironsmith_compiler_semantic::trigger_references::trigger_die_event_grouped(&trigger),
+            life_event_binding:
+                ironsmith_compiler_semantic::trigger_references::trigger_life_event_binding(
+                    &trigger,
+                ),
             ..Default::default()
         },
         inferred_trigger_player_filter(&trigger),
@@ -4418,6 +4521,7 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         | KeywordAction::BattleCry
         | KeywordAction::Dethrone
         | KeywordAction::Evolve
+        | KeywordAction::Increment
         | KeywordAction::Ingest
         | KeywordAction::Mentor => None,
         KeywordAction::Skulk => Some(StaticAbility::skulk()),
@@ -4426,6 +4530,7 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         KeywordAction::Renown(_)
         | KeywordAction::Modular(_)
         | KeywordAction::Graft(_)
+        | KeywordAction::Ripple(_)
         | KeywordAction::Soulbond
         | KeywordAction::Soulshift(_)
         | KeywordAction::SoulshiftValue(_)
@@ -4492,9 +4597,11 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         KeywordAction::ProtectionFromChosenColor => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::ChosenColor,
         )),
-        KeywordAction::ProtectionFromColorsOutsideCommanderIdentity => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::ColorsOutsideCommanderIdentity,
-        )),
+        KeywordAction::ProtectionFromColorsOutsideCommanderIdentity => {
+            Some(StaticAbility::protection(
+                crate::ability::ProtectionFrom::ColorsOutsideCommanderIdentity,
+            ))
+        }
         KeywordAction::ProtectionFromManaValuesOtherThanChosenNumber => {
             Some(StaticAbility::protection(
                 crate::ability::ProtectionFrom::ManaValuesOtherThanChosenNumber,
@@ -4656,6 +4763,33 @@ fn direct_named_granting_source_spec(effect: &Effect) -> Option<ChooseSpec> {
 }
 
 fn preserve_named_granting_source_in_effect(effect: Effect) -> Effect {
+    // A fight has two independent participants. Rebinding the whole effect
+    // would also change the receiving creature's "this creature" reference.
+    if let Some(fight) = effect.downcast_ref::<crate::effects::FightEffect>() {
+        let mut fight = fight.clone();
+        for spec in [&mut fight.creature1, &mut fight.creature2] {
+            if matches!(spec.base(), ChooseSpec::Source)
+                && matches!(
+                    spec.source_reference_surface(),
+                    Some(
+                        SourceReferenceSurface::FullName(_) | SourceReferenceSurface::ShortName(_)
+                    )
+                )
+            {
+                *spec = granting_source_scope_spec(spec);
+            }
+        }
+        return Effect::new(fight);
+    }
+    if let Some(optional) = effect.downcast_ref::<crate::effects::MayEffect<Effect>>() {
+        let mut optional = optional.clone();
+        optional.effects = optional
+            .effects
+            .into_iter()
+            .map(preserve_named_granting_source_in_effect)
+            .collect();
+        return Effect::new(optional);
+    }
     // A sentence already scoped to the card's own name ("Shuriken deals 2
     // damage ...", lowered with the named source as the damage source)
     // names the granting attachment too.
@@ -4792,7 +4926,8 @@ fn bind_granting_source_unattach_costs(
         }
         let mut choose = choose.clone();
         let zone = choose.filter.zone;
-        let mut filter = ObjectFilter::tagged(crate::tag::CompilerReferenceTag::GrantingSource.key());
+        let mut filter =
+            ObjectFilter::tagged(crate::tag::CompilerReferenceTag::GrantingSource.key());
         filter.zone = zone;
         filter.source_surface = choose.filter.source_surface.clone();
         choose.filter = filter;
@@ -5059,6 +5194,51 @@ pub fn lower_static_ability_ast(ability: StaticAbilityAst) -> Result<StaticAbili
             effect_before_timing,
             display,
         ),
+        StaticAbilityAst::TokenCreationTemplates {
+            controller,
+            token_filter,
+            templates,
+            mode,
+            choose_one,
+            optional,
+            display,
+        } => {
+            let (templates, choices) = compile_trigger_effects(None, &templates)?;
+            if !choices.is_empty()
+                || templates.is_empty()
+                || templates.iter().any(|effect| {
+                    effect
+                        .downcast_ref::<crate::effects::CreateTokenEffect>()
+                        .is_none_or(|create| {
+                            !matches!(create.count.unhinted(), crate::effect::Value::Fixed(1))
+                                || create.controller != crate::target::PlayerFilter::You
+                                || create.controller_target.is_some()
+                                || create.use_source_chosen_color
+                                || create.use_source_chosen_creature_type
+                                || create.enters_tapped
+                                || create.enters_attacking
+                                || create.enters_blocking.is_some()
+                                || create.attack_target_mode.is_some()
+                                || create.exile_at_end_of_combat
+                                || create.sacrifice_at_end_of_combat
+                                || create.sacrifice_at_next_end_step
+                                || create.exile_at_next_end_step
+                                || create.link_source_exiled_this_resolution
+                        })
+                })
+            {
+                return Err(CardTextError::InvariantViolation("token replacement requires complete single-token templates without unresolved targets".into()));
+            }
+            Ok(StaticAbility::token_creation_templates(
+                controller,
+                token_filter,
+                templates,
+                mode,
+                choose_one,
+                optional,
+                display,
+            ))
+        }
         StaticAbilityAst::LoseGameReplacement {
             effects,
             optional,
@@ -5322,6 +5502,38 @@ pub(crate) fn lower_compiler_static_ability_core(
                 },
             })
         }
+        crate::model::CompilerStaticAbilityPayloadCore::ConditionalDrawReplacement {
+            condition,
+            replacement_effects,
+            optional,
+            display,
+        } => {
+            let mut replacement_effects = replacement_effects;
+            crate::effect_ast_normalization::normalize_effects_ast_in_place(
+                &mut replacement_effects,
+            );
+            let mut ctx = crate::model::facts::EffectLoweringContext::new();
+            ctx.iterated_player = true;
+            ctx.last_player_filter = Some(PlayerFilter::IteratedPlayer);
+            let (replacement_effects, choices) =
+                crate::compile_support::compile_effects(&replacement_effects, &mut ctx)?;
+            if !choices.is_empty() {
+                return Err(CardTextError::InvariantViolation(
+                    "draw replacement cannot announce targets".into(),
+                ));
+            }
+            Ok(StaticAbility {
+                id,
+                label,
+                payload:
+                    crate::static_abilities::StaticAbilityPayload::ConditionalDrawReplacement {
+                        condition: resolve_intervening_if_without_trigger(&condition)?,
+                        replacement_effects,
+                        optional,
+                        display,
+                    },
+            })
+        }
         crate::model::CompilerStaticAbilityPayloadCore::DrawReplacementWithEffects {
             drawer,
             except_first_of_draw_step,
@@ -5339,6 +5551,10 @@ pub(crate) fn lower_compiler_static_ability_core(
                 &mut replacement_effects,
             );
             let mut ctx = crate::model::facts::EffectLoweringContext::new();
+            // Native replacement execution binds the affected drawer here,
+            // independently of the replacement ability's controller ("you").
+            ctx.iterated_player = true;
+            ctx.last_player_filter = Some(PlayerFilter::IteratedPlayer);
             let (replacement_effects, choices) =
                 crate::compile_support::compile_effects(&replacement_effects, &mut ctx)?;
             if !choices.is_empty() {
@@ -5349,12 +5565,13 @@ pub(crate) fn lower_compiler_static_ability_core(
             Ok(StaticAbility {
                 id,
                 label,
-                payload: crate::static_abilities::StaticAbilityPayload::DrawReplacementWithEffects {
-                    drawer,
-                    except_first_of_draw_step,
-                    replacement_effects,
-                    display,
-                },
+                payload:
+                    crate::static_abilities::StaticAbilityPayload::DrawReplacementWithEffects {
+                        drawer,
+                        except_first_of_draw_step,
+                        replacement_effects,
+                        display,
+                    },
             })
         }
         crate::model::CompilerStaticAbilityPayloadCore::ExileWouldDieInstead {
@@ -5389,6 +5606,31 @@ pub(crate) fn lower_compiler_static_ability_core(
                 },
             })
         }
+        crate::model::CompilerStaticAbilityPayloadCore::PreventMatchingDamageWithFollowUp(spec) => {
+            let mut ctx = crate::model::facts::EffectLoweringContext::new();
+            ctx.allow_life_event_value = true;
+            ctx.last_object_tag = spec.damage_source_tag.clone();
+            let (effects, choices) =
+                crate::compile_support::compile_effects(&spec.effects, &mut ctx)?;
+            if !choices.is_empty() {
+                return Err(CardTextError::InvariantViolation(
+                    "damage prevention follow-up cannot announce targets".into(),
+                ));
+            }
+            Ok(StaticAbility::prevent_matching_damage_with_follow_up(
+                ironsmith_core::StaticDamagePreventionFollowUp {
+                    source_filter: spec.source_filter,
+                    target_player_filter: spec.target_player_filter,
+                    target_object_filter: spec.target_object_filter,
+                    combat_only: spec.combat_only,
+                    noncombat_only: spec.noncombat_only,
+                    damage_source_tag: spec.damage_source_tag,
+                    effects,
+                    amount_basis: spec.amount_basis,
+                    display: spec.display,
+                },
+            ))
+        }
         crate::model::CompilerStaticAbilityPayloadCore::DamagePreventionWithFollowUp {
             source_filter,
             target_filter,
@@ -5397,6 +5639,9 @@ pub(crate) fn lower_compiler_static_ability_core(
             effects,
         } => {
             let mut ctx = crate::model::facts::EffectLoweringContext::new();
+            // The prevention event supplies the amount prevented to its
+            // follow-up; there is no earlier resolution effect to bind it to.
+            ctx.allow_life_event_value = true;
             ctx.last_object_tag = Some(recipient_tag.clone());
             let mut lowered = Vec::new();
             for effect in effects {
@@ -5460,6 +5705,8 @@ pub(crate) fn lower_compiler_static_ability_core(
                         added_abilities,
                         set_base_power_toughness: spec.set_base_power_toughness,
                         additional_counters: spec.additional_counters.clone(),
+                        additional_x_counters: spec.additional_x_counters.clone(),
+                        keep_other_source_abilities: spec.keep_other_source_abilities,
                         additional_counters_source_filter: spec
                             .additional_counters_source_filter
                             .clone(),

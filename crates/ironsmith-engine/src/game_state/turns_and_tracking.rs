@@ -3,11 +3,19 @@ use super::*;
 impl GameState {
     /// Record an actual upkeep boundary, including additional upkeeps.
     pub fn mark_upkeep_began(&mut self, player: PlayerId) {
-        let controlled = self.battlefield.iter().copied()
-            .filter(|&id| self.current_controller(id) == Some(player)).collect::<Vec<_>>();
+        let controlled = self
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&id| self.current_controller(id) == Some(player))
+            .collect::<Vec<_>>();
         for id in controlled {
             self.turn_store.echo_eligible_this_upkeep.remove(&id);
-            if self.turn_store.came_under_control_since_last_upkeep.remove(&id) {
+            if self
+                .turn_store
+                .came_under_control_since_last_upkeep
+                .remove(&id)
+            {
                 self.turn_store.echo_eligible_this_upkeep.insert(id);
             }
         }
@@ -657,15 +665,14 @@ impl GameState {
                 .unwrap_or(0);
             let mut normal_index = (current_index + 1) % self.turn_store.turn_order.len();
             let next_player = loop {
-                let (candidate, is_extra_turn) = if let Some(extra_turn) =
-                    simulated_extra_turns.pop()
-                {
-                    (extra_turn, true)
-                } else {
-                    let candidate = self.turn_store.turn_order[normal_index];
-                    normal_index = (normal_index + 1) % self.turn_store.turn_order.len();
-                    (candidate, false)
-                };
+                let (candidate, is_extra_turn) =
+                    if let Some(extra_turn) = simulated_extra_turns.pop() {
+                        (extra_turn, true)
+                    } else {
+                        let candidate = self.turn_store.turn_order[normal_index];
+                        normal_index = (normal_index + 1) % self.turn_store.turn_order.len();
+                        (candidate, false)
+                    };
                 if !self
                     .player(candidate)
                     .is_some_and(|candidate| candidate.is_in_game())
@@ -690,6 +697,47 @@ impl GameState {
         self.turn.turn_number.saturating_add(1)
     }
 
+    /// Retain the actual departure state for independent pending abilities.
+    /// Only the same incarnation and expected zone may refresh an old receipt.
+    pub(crate) fn refresh_pending_ability_source_lki(
+        &mut self,
+        snapshot: &crate::snapshot::ObjectSnapshot,
+    ) {
+        for entry in &mut self.stack {
+            if entry.is_ability
+                && (entry.object_id == snapshot.object_id
+                    || entry
+                        .source_snapshot
+                        .as_ref()
+                        .is_some_and(|source| source.object_id == snapshot.object_id))
+                && entry
+                    .source_snapshot
+                    .as_ref()
+                    .is_none_or(|source| source.zone == snapshot.zone)
+            {
+                entry.source_stable_id = Some(snapshot.stable_id);
+                entry
+                    .source_name
+                    .get_or_insert_with(|| snapshot.name.clone());
+                entry.source_snapshot = Some(snapshot.clone());
+            }
+        }
+        for entry in &mut self.effect_store.pending_trigger_entries {
+            if (entry.source == snapshot.object_id
+                || entry
+                    .source_snapshot
+                    .as_ref()
+                    .is_some_and(|source| source.object_id == snapshot.object_id))
+                && entry
+                    .source_snapshot
+                    .as_ref()
+                    .is_none_or(|source| source.zone == snapshot.zone)
+            {
+                entry.source_snapshot = Some(snapshot.clone());
+            }
+        }
+    }
+
     /// Perform the immediate multiplayer leave-game procedure (CR 800.4).
     ///
     /// Owned objects cease to exist without a zone change, control effects end,
@@ -697,23 +745,90 @@ impl GameState {
     /// the departing player are exiled. Runtime effects, queued choices, combat
     /// state, and future turns that can no longer involve that player are also
     /// pruned in the same atomic procedure.
-    pub fn leave_game(&mut self, player: PlayerId) -> bool {
-        // The departure procedure performs its own CR 800.4a/c sweep once the
-        // control effects it ends are gone; suppress the refresh-time sweep
-        // until then.
-        let was_in_progress =
-            std::mem::replace(&mut self.turn_store.leave_game_in_progress, true);
-        let left = self.leave_game_procedure(player);
-        self.turn_store.leave_game_in_progress = was_in_progress;
-        left
+    pub fn leave_game(&mut self, player: PlayerId) -> Result<bool, crate::effects::ExecutionError> {
+        self.leave_game_group(&[player])
+            .map(|left| left.contains(&player))
+    }
+    pub(crate) fn leave_game_group(
+        &mut self,
+        players: &[PlayerId],
+    ) -> Result<Vec<PlayerId>, crate::effects::ExecutionError> {
+        if players.is_empty() {
+            return Ok(Vec::new());
+        }
+        let checkpoint = self.clone();
+        let result = (|| {
+            let was_in_progress =
+                std::mem::replace(&mut self.turn_store.leave_game_in_progress, true);
+            self.refresh_continuous_state()
+                .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+            let previous_monarch = self.monarch;
+            // Departure can advance a lane or its active team representative.
+            // CR 725.4 uses the original turn's anchor, not that later mutation.
+            let active_player = self.turn.active_player;
+            let turn_order = self.turn_store.turn_order.clone();
+            let pinned_lookback =
+                crate::effects::helpers::begin_simultaneous_zone_change_lookback(self);
+            let opened_batch = self.open_simultaneous_action();
+            let mut left = Vec::new();
+            for player in players {
+                if self.leave_game_procedure(*player)? {
+                    left.push(*player);
+                }
+            }
+            if previous_monarch.is_some_and(|holder| left.contains(&holder)) {
+                // Every original departure must finish before eligibility is
+                // queried: another departing player's static restriction may
+                // have prevented the eventual successor in an intermediate frame.
+                self.set_monarch_designation_unpublished(None);
+                self.refresh_continuous_state()
+                    .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+                let eligible = |candidate: PlayerId| {
+                    self.player(candidate)
+                        .is_some_and(|player| player.is_in_game())
+                        && self.can_become_monarch(candidate)
+                };
+                let successor = if eligible(active_player) {
+                    Some(active_player)
+                } else {
+                    let len = turn_order.len();
+                    let start = turn_order
+                        .iter()
+                        .position(|candidate| *candidate == active_player)
+                        .or_else(|| {
+                            previous_monarch.and_then(|holder| {
+                                turn_order.iter().position(|candidate| *candidate == holder)
+                            })
+                        })
+                        .unwrap_or(0);
+                    (1..=len)
+                        .map(|offset| turn_order[(start + offset) % len])
+                        .find(|candidate| eligible(*candidate))
+                };
+                self.set_monarch_designation_unpublished(successor);
+            }
+            self.turn_store.leave_game_in_progress = was_in_progress;
+            self.close_simultaneous_action(opened_batch);
+            crate::effects::helpers::end_simultaneous_zone_change_lookback(self, pinned_lookback);
+            self.publish_monarch_change(previous_monarch)?;
+            self.synchronize_focused_grand_melee_lane();
+            Ok(left)
+        })();
+        if result.is_err() {
+            self.restore_execution_checkpoint(checkpoint, false);
+        }
+        result
     }
 
-    fn leave_game_procedure(&mut self, player: PlayerId) -> bool {
+    fn leave_game_procedure(
+        &mut self,
+        player: PlayerId,
+    ) -> Result<bool, crate::effects::ExecutionError> {
         if self
             .player(player)
             .is_none_or(|candidate| candidate.has_left_game)
         {
-            return false;
+            return Ok(false);
         }
 
         let departing_turn_boundary = self.next_turn_number_if_player_stayed(player);
@@ -722,7 +837,7 @@ impl GameState {
         let had_priority = self.turn.priority_player == Some(player);
         let priority_team = had_priority.then(|| self.priority_team_index()).flatten();
         let Some(mut player_lki) = self.players.get(player.index()).cloned() else {
-            return false;
+            return Ok(false);
         };
         player_lki.has_left_game = true;
         let last_turn_history = if was_active_player {
@@ -807,21 +922,46 @@ impl GameState {
         } else {
             self.trigger_source_lookback_snapshots()
         };
+        // CR 800.4a also removes phased-out permanents and other owned objects
+        // without a zone change. Their independently controlled pending
+        // abilities still need exact source LKI after this history expires.
+        let departing_source_snapshots = owned_objects
+            .iter()
+            .filter_map(|(id, _)| {
+                self.object(*id).map(|object| {
+                    self.cached_object_snapshot_with_calculated_characteristics(object)
+                })
+            })
+            .collect::<Vec<_>>();
+        for snapshot in &departing_source_snapshots {
+            self.refresh_pending_ability_source_lki(snapshot);
+        }
         for (object_id, _) in &owned_objects {
             self.remove_object(*object_id);
         }
-        let departure_batch = (!departing_permanents.is_empty()).then(||
-            self.provenance_graph_mut().alloc_root_event(crate::events::EventKind::ObjectLeavesGame));
+        let departure_batch = if departing_permanents.is_empty() {
+            None
+        } else {
+            Some(self.simultaneous_action_batch().unwrap_or_else(|| {
+                self.provenance_graph_mut()
+                    .alloc_root_event(crate::events::EventKind::ObjectLeavesGame)
+            }))
+        };
         for (object_id, snapshot) in departing_permanents {
             let event = crate::events::zones::ObjectLeavesGameEvent::new(
-                object_id, snapshot, crate::events::cause::EventCause::from_game_rule(),
+                object_id,
+                snapshot,
+                crate::events::cause::EventCause::from_game_rule(),
             );
-            let provenance = self.provenance_graph_mut()
+            let provenance = self
+                .provenance_graph_mut()
                 .alloc_root_event(crate::events::EventKind::ObjectLeavesGame);
             self.queue_trigger_event(
                 provenance,
                 crate::triggers::TriggerEvent::new_with_provenance(event, provenance)
-                    .with_simultaneous_batch(departure_batch.expect("departing permanent has a batch"))
+                    .with_simultaneous_batch(
+                        departure_batch.expect("departing permanent has a batch"),
+                    )
                     .with_lookback_source_snapshots(departing_lookback.clone()),
             );
         }
@@ -992,7 +1132,8 @@ impl GameState {
         // end, before checking which remaining objects are still controlled by
         // a player outside the game.
         self.mark_continuous_state_dirty();
-        self.refresh_continuous_state();
+        self.refresh_continuous_state()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
 
         // Ability copies and other noncard stack objects controlled by the
         // departing player cease to exist. A remaining card spell they control
@@ -1071,6 +1212,9 @@ impl GameState {
             .retain(|(candidate, _), _| *candidate != player);
         self.turn_store.skip_next_combat_phases.remove(&player);
         self.turn_store
+            .pending_combat_phase_skips
+            .remove_all(player);
+        self.turn_store
             .skip_all_combat_phases_next_turn
             .remove(&player);
         self.turn_store
@@ -1089,10 +1233,7 @@ impl GameState {
                 assignments.retain(|recipient, _| !removed_ids.contains(recipient));
                 true
             });
-        if self.turn_store.tracked_draw_step_player == Some(player) {
-            self.turn_store.tracked_draw_step_player = None;
-            self.turn_store.cards_drawn_this_draw_step = 0;
-        }
+        self.turn_store.cards_drawn_this_draw_step.remove(&player);
 
         if let Some(combat) = self.combat.as_mut() {
             combat.remember_blocked_attackers();
@@ -1152,34 +1293,6 @@ impl GameState {
             .player(self.turn.active_player)
             .filter(|candidate| candidate.is_in_game())
             .map(|candidate| candidate.id);
-        if self.monarch == Some(player) {
-            // CR 724.4: the active player becomes the monarch. When there's
-            // no active player still in the game, or it can't become the
-            // monarch, the next player in turn order who can does; if no one
-            // can, the game continues with no monarch.
-            let successor = if let Some(active) = active_player_still_in_game
-                && self.can_become_monarch(active)
-            {
-                Some(active)
-            } else {
-                let len = self.turn_store.turn_order.len();
-                let anchor = active_player_still_in_game.unwrap_or(player);
-                let start = self
-                    .turn_store
-                    .turn_order
-                    .iter()
-                    .position(|candidate| *candidate == anchor)
-                    .unwrap_or(0);
-                (1..=len)
-                    .map(|offset| self.turn_store.turn_order[(start + offset) % len])
-                    .find(|candidate| {
-                        self.player(*candidate)
-                            .is_some_and(|candidate| candidate.is_in_game())
-                            && self.can_become_monarch(*candidate)
-                    })
-            };
-            self.set_monarch(successor);
-        }
         if self.initiative == Some(player) {
             let successor =
                 active_player_still_in_game.or_else(|| self.next_player_in_game_after(player));
@@ -1206,9 +1319,10 @@ impl GameState {
         }
 
         self.mark_continuous_state_dirty();
-        self.refresh_continuous_state();
+        self.refresh_continuous_state()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
         self.synchronize_focused_grand_melee_lane();
-        true
+        Ok(true)
     }
 
     /// Keep a Forecast source publicly revealed while it remains in hand and
@@ -1319,8 +1433,7 @@ impl GameState {
         self.turn_store
             .extra_turns_after_next_turn
             .retain(|(player, created_turn)| {
-                let is_due =
-                    completed_turn > *created_turn && completed_players.contains(player);
+                let is_due = completed_turn > *created_turn && completed_players.contains(player);
                 if is_due {
                     due.push(*player);
                 }
@@ -1428,16 +1541,17 @@ impl GameState {
         // CR 723.1: controlling a turn lasts through every cleanup step.
         // Expire it only when the next actual (non-skipped) turn begins.
         let new_turn = self.turn.turn_number;
-        self.auxiliary_tracking_mut().player_control_effects.retain(|effect| {
-            !matches!(effect.duration, PlayerControlDuration::WholeTurn)
-                || !effect.active
-                || effect.expires_on_turn.is_none_or(|turn| turn >= new_turn)
-        });
+        self.auxiliary_tracking_mut()
+            .player_control_effects
+            .retain(|effect| {
+                !matches!(effect.duration, PlayerControlDuration::WholeTurn)
+                    || !effect.active
+                    || effect.expires_on_turn.is_none_or(|turn| turn >= new_turn)
+            });
         self.refresh_range_of_influence_snapshot();
         self.turn.phase = Phase::Beginning;
         self.turn.step = Some(Step::Untap);
-        self.turn_store.tracked_draw_step_player = None;
-        self.turn_store.cards_drawn_this_draw_step = 0;
+        self.finish_draw_step_tracking();
         self.turn_store.combat_phases_started_this_turn = 0;
         self.turn_store.main_phases_started_this_turn = 0;
         self.turn_store.additional_phases.clear();
@@ -1446,6 +1560,7 @@ impl GameState {
         self.turn_store.phase_schedule_continuation = None;
         self.turn_store.additional_phase_continuation = None;
         self.turn_store.skip_current_turn_combat_phases.clear();
+        self.turn_store.skip_next_combat_phases.clear();
         // "Skips all combat phases of their next turn" covers every combat
         // phase of that turn, including additional ones (CR 500.11).
         if self
@@ -1493,6 +1608,7 @@ impl GameState {
                 .insert(player, completed_turn_history.clone());
         }
         self.turn_store.previous_turn_history = completed_turn_history;
+        self.turn_store.turn_history.monarch_at_turn_start = self.monarch;
         // CR 730.2a-b: both transitions look only at the previous turn's
         // active player (or team, for shared turns), not every player.
         if self.has_day_night && self.is_night {
@@ -1551,6 +1667,7 @@ impl GameState {
         // Reconcile them before the untap step establishes which permanents
         // have been continuously controlled since this turn began (CR 302.6).
         self.refresh_continuous_state();
+        self.establish_turn_start_continuous_control();
         self.activate_restrictions_starting_this_turn();
 
         // Printed static restrictions can switch on or off solely because the
@@ -1560,6 +1677,30 @@ impl GameState {
         // the cant tracker for them. Keep direct legality queries made at the
         // new-turn boundary in sync with the newly selected turn.
         self.update_cant_effects();
+    }
+
+    /// CR 302.6 is tied to the beginning of an actual turn, not to untapping.
+    /// The guard prevents added untap steps and resumed choice prompts from
+    /// clearing sickness on permanents acquired later in the same turn.
+    pub fn establish_turn_start_continuous_control(&mut self) {
+        if self.turn_store.continuous_control_turn_started == Some(self.turn.turn_number) {
+            return;
+        }
+        self.turn_store.continuous_control_turn_started = Some(self.turn.turn_number);
+        self.turn_store.turn_history.monarch_at_turn_start = self.monarch;
+        let active = self.turn_players();
+        let ids: Vec<_> = self
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.current_controller(*id)
+                    .is_some_and(|player| active.contains(&player))
+            })
+            .collect();
+        for id in ids {
+            self.remove_summoning_sickness(id);
+        }
     }
 
     pub fn record_turn_start_hand_sizes(&mut self) {
@@ -1605,7 +1746,9 @@ impl GameState {
             .effect_store
             .restriction_effects
             .iter_mut()
-            .filter(|effect| matches!(effect.duration, Until::YourNextTurnEnd) && !effect.is_pending())
+            .filter(|effect| {
+                matches!(effect.duration, Until::YourNextTurnEnd) && !effect.is_pending()
+            })
         {
             if let Some(expires) = correction(
                 effect.expires_end_of_turn,
@@ -1694,7 +1837,12 @@ impl GameState {
             expires_on_turn: None,
         };
 
-        if effect.active && matches!(duration, PlayerControlDuration::UntilEndOfTurn | PlayerControlDuration::WholeTurn) {
+        if effect.active
+            && matches!(
+                duration,
+                PlayerControlDuration::UntilEndOfTurn | PlayerControlDuration::WholeTurn
+            )
+        {
             effect.expires_on_turn = Some(current_turn);
         }
 
@@ -1730,10 +1878,18 @@ impl GameState {
     pub(crate) fn capture_pending_decision_controllers(&mut self) {
         // The innermost owner captured the actual prompt. An outer owner
         // observing the same suspension must not replace it after scopes unwind.
-        if self.auxiliary_tracking.pending_decision_controllers.is_some() { return; }
-        let controllers = self.players.iter().map(|player| {
-            (player.id, self.controlling_player_for(player.id))
-        }).collect();
+        if self
+            .auxiliary_tracking
+            .pending_decision_controllers
+            .is_some()
+        {
+            return;
+        }
+        let controllers = self
+            .players
+            .iter()
+            .map(|player| (player.id, self.controlling_player_for(player.id)))
+            .collect();
         self.auxiliary_tracking_mut().pending_decision_controllers = Some(controllers);
     }
 
@@ -1741,16 +1897,22 @@ impl GameState {
     /// committing its provisional physical state. The outer owner still rolls
     /// back its own checkpoint and retains this view only for pending success.
     pub(crate) fn retain_pending_decision_controllers_from(&mut self, staged: &mut GameState) {
-        self.auxiliary_tracking_mut().pending_decision_controllers =
-            staged.auxiliary_tracking_mut().pending_decision_controllers.take();
+        self.auxiliary_tracking_mut().pending_decision_controllers = staged
+            .auxiliary_tracking_mut()
+            .pending_decision_controllers
+            .take();
     }
 
     /// Restore physical state while retaining only an actual pending decision's
     /// routing view. Errors never retain a partial execution's routing state.
     pub fn restore_execution_checkpoint(&mut self, checkpoint: GameState, pending: bool) {
         let controllers = if pending {
-            self.auxiliary_tracking_mut().pending_decision_controllers.take()
-        } else { None };
+            self.auxiliary_tracking_mut()
+                .pending_decision_controllers
+                .take()
+        } else {
+            None
+        };
         *self = checkpoint;
         self.auxiliary_tracking_mut().pending_decision_controllers = controllers;
     }
@@ -1828,7 +1990,10 @@ impl GameState {
             }
         }
 
-        let controller = self.auxiliary_tracking.pending_decision_controllers.as_ref()
+        let controller = self
+            .auxiliary_tracking
+            .pending_decision_controllers
+            .as_ref()
             .and_then(|controllers| controllers.iter().find(|(target, _)| *target == player))
             .map(|(_, controller)| *controller)
             .unwrap_or_else(|| best.map(|(controller, _)| controller).unwrap_or(player));
@@ -1866,7 +2031,10 @@ impl GameState {
             }
 
             effect.active = true;
-            if matches!(effect.duration, PlayerControlDuration::UntilEndOfTurn | PlayerControlDuration::WholeTurn) {
+            if matches!(
+                effect.duration,
+                PlayerControlDuration::UntilEndOfTurn | PlayerControlDuration::WholeTurn
+            ) {
                 effect.expires_on_turn = Some(current_turn);
             }
         }
@@ -1968,129 +2136,56 @@ impl GameState {
             .is_some_and(|obj| obj.zone == Zone::Battlefield)
     }
 
-    /// Empties all players' mana pools.
-    /// Called at the end of each step and phase per MTG rules.
-    /// Players covered by a "don't lose unspent mana" effect (Upwelling,
-    /// Kruphix, Omnath) keep the retained portion of their pool. Individual
-    /// mana units can also carry a retention duration (for example,
-    /// Firebending); those units do not cause unrelated mana of the same color
-    /// to persist.
-    pub fn empty_mana_pools(&mut self) {
-        let ending_combat = matches!(
-            (self.turn.phase, self.turn.step),
-            (Phase::Combat, Some(Step::EndCombat))
-        );
-        let ending_turn = matches!(
-            (self.turn.phase, self.turn.step),
-            (Phase::Ending, Some(Step::Cleanup))
-        );
-        let retention: Vec<Option<HashSet<Option<crate::color::Color>>>> = self
+    /// Empty pools at a step/phase boundary without manufacturing a player's
+    /// choice. Interactive owners use `empty_mana_pools_with_dm` instead.
+    pub fn empty_mana_pools(&mut self) -> Result<(), crate::effects::ExecutionError> {
+        crate::turn_runner::empty_mana_pools_without_choices(self)
+    }
+
+    pub fn empty_mana_pools_with_dm(
+        &mut self,
+        dm: &mut dyn crate::decision::DecisionMaker,
+    ) -> Result<(), crate::effects::ExecutionError> {
+        if self.players.iter().all(|player| {
+            !player.has_runtime_mana_provenance()
+                && crate::events::mana::POOL_SYMBOLS
+                    .iter()
+                    .all(|symbol| player.mana_pool.amount(*symbol) == 0)
+        }) {
+            return Ok(());
+        }
+        let checkpoint = self.clone();
+        let players = self
             .players
             .iter()
-            .map(|player| {
-                self.effect_store
-                    .cant_effects
-                    .retained_mana_scopes(player.id)
-                    .cloned()
-            })
+            .filter(|player| player.is_in_game())
+            .map(|player| player.id)
             .collect();
-        for (player, scopes) in self.players.iter_mut().zip(retention) {
-            let scopes = scopes.unwrap_or_default();
-
-            // Expiration belongs to the duration itself, even when a separate
-            // global retention effect is currently keeping the same mana. If
-            // we left the marker attached, an expired Firebending unit could
-            // start retaining mana again after the global effect ended.
-            if ending_combat || ending_turn {
-                for unit in &mut player.mana_source_provenance {
-                    if (ending_combat
-                        && unit.retention
-                            == Some(ironsmith_core::ManaRetentionDuration::EndOfCombat))
-                        || (ending_turn
-                            && unit.retention
-                                == Some(ironsmith_core::ManaRetentionDuration::EndOfTurn))
-                    {
-                        unit.retention = None;
-                    }
-                }
-            }
-            if scopes.contains(&None) {
-                continue;
-            }
-
-            let globally_retained = |symbol: crate::mana::ManaSymbol| match symbol {
-                crate::mana::ManaSymbol::White => {
-                    scopes.contains(&Some(crate::color::Color::White))
-                }
-                crate::mana::ManaSymbol::Blue => scopes.contains(&Some(crate::color::Color::Blue)),
-                crate::mana::ManaSymbol::Black => {
-                    scopes.contains(&Some(crate::color::Color::Black))
-                }
-                crate::mana::ManaSymbol::Red => scopes.contains(&Some(crate::color::Color::Red)),
-                crate::mana::ManaSymbol::Green => {
-                    scopes.contains(&Some(crate::color::Color::Green))
-                }
-                _ => false,
-            };
-
-            let original_pool = player.mana_pool.clone();
-            player.mana_source_provenance.retain(|unit| {
-                globally_retained(unit.symbol)
-                    || match unit.retention {
-                        Some(ironsmith_core::ManaRetentionDuration::EndOfCombat) => !ending_combat,
-                        Some(ironsmith_core::ManaRetentionDuration::EndOfTurn) => true,
-                        None => false,
-                    }
-            });
-
-            let mut retained_unit_pool = crate::player::ManaPool::default();
-            let mut retained_restricted = std::collections::HashMap::new();
-            for unit in &player.mana_source_provenance {
-                retained_unit_pool.add(unit.symbol, 1);
-                if unit.restricted {
-                    *retained_restricted
-                        .entry((unit.symbol, unit.source))
-                        .or_insert(0usize) += 1;
-                }
-            }
-
-            for symbol in [
-                crate::mana::ManaSymbol::White,
-                crate::mana::ManaSymbol::Blue,
-                crate::mana::ManaSymbol::Black,
-                crate::mana::ManaSymbol::Red,
-                crate::mana::ManaSymbol::Green,
-                crate::mana::ManaSymbol::Colorless,
-            ] {
-                let retained = if globally_retained(symbol) {
-                    original_pool.amount(symbol)
-                } else {
-                    retained_unit_pool
-                        .amount(symbol)
-                        .min(original_pool.amount(symbol))
-                };
-                let current = player.mana_pool.amount(symbol);
-                if current > retained {
-                    let _ = player.mana_pool.remove(symbol, current - retained);
-                }
-            }
-
-            player.restricted_mana.retain(|unit| {
-                if globally_retained(unit.symbol) {
-                    return true;
-                }
-                let Some(remaining) = retained_restricted.get_mut(&(unit.symbol, unit.source))
-                else {
-                    return false;
-                };
-                if *remaining == 0 {
-                    return false;
-                }
-                *remaining -= 1;
-                true
-            });
-            player.trim_mana_source_provenance_to_pool();
+        let provenance = self
+            .provenance_graph_mut()
+            .alloc_root_event(crate::events::EventKind::ManaLost);
+        let mut ctx = crate::effects::ExecutionContext::new(
+            ObjectId::from_raw(0),
+            self.turn.active_player,
+            dm,
+        )
+        .with_cause(crate::events::cause::EventCause::from_game_rule())
+        .with_provenance(provenance);
+        let result =
+            crate::effects::mana::mana_loss::execute_mana_losses(self, &mut ctx, players, true);
+        let pending = ctx.decision_maker.awaiting_choice();
+        if pending || result.is_err() {
+            self.restore_execution_checkpoint(checkpoint, pending && result.is_ok());
         }
+        if pending {
+            return result.map(|_| ());
+        }
+        let mut outcome = result?;
+        crate::effects::retain_unmatched_outcome_events(self, &mut outcome.events);
+        for event in outcome.events {
+            self.queue_trigger_event(event.provenance(), event);
+        }
+        Ok(())
     }
 
     /// Clears turn-scoped activated ability tracking.
@@ -2255,6 +2350,12 @@ impl GameState {
     /// Check whether an object was exerted this turn.
     pub fn object_exerted_this_turn(&self, object_id: ObjectId) -> bool {
         self.object_performed_keyword_action_this_turn(object_id, KeywordActionKind::Exert)
+    }
+
+    pub fn creature_was_blocked_this_turn(&self, creature: ObjectId) -> bool {
+        self.turn_store
+            .turn_history
+            .creature_was_blocked_this_turn(creature)
     }
 
     pub fn creature_blocked_this_turn(&self, creature: ObjectId) -> bool {
@@ -2533,70 +2634,170 @@ impl GameState {
     }
 
     pub(crate) fn announce_exhaust_activation(
-        &mut self, source: ObjectId, ability_index: usize,
+        &mut self,
+        source: ObjectId,
+        ability_index: usize,
     ) -> Option<ExhaustActivationAnnouncement> {
         if !self.current_ability(source, ability_index).is_some_and(|ability|
             matches!(&ability.kind, crate::ability::AbilityKind::Activated(activated) if activated.is_exhaust_ability()))
         { return None; }
-        let origin = self.current_characteristics(source).and_then(|chars| chars.abilities.origin(ability_index).cloned());
-        let origin_before = origin.as_ref().and_then(|origin| self.turn_store.ability_activations_per_object.get(&(source, origin.clone())).copied());
-        let mut keys = vec![TurnCounterKey::Named(activated_ability_turn_counter_name(source, ability_index))];
+        let origin = self
+            .current_characteristics(source)
+            .and_then(|chars| chars.abilities.origin(ability_index).cloned());
+        let origin_before = origin.as_ref().and_then(|origin| {
+            self.turn_store
+                .ability_activations_per_object
+                .get(&(source, origin.clone()))
+                .copied()
+        });
+        let mut keys = vec![TurnCounterKey::Named(activated_ability_turn_counter_name(
+            source,
+            ability_index,
+        ))];
         if let Some(controller) = self.object(source).map(|object| self.controller_of(object)) {
-            keys.push(TurnCounterKey::Named(exhaust_ability_turn_counter_name(controller)));
+            keys.push(TurnCounterKey::Named(exhaust_ability_turn_counter_name(
+                controller,
+            )));
         }
-        let counters: Vec<_> = keys.into_iter().map(|key| {
-            let before = self.turn_store.turn_history.turn_counters.counters.get(&key).copied();
-            (key, before)
-        }).collect();
-        let was_activated = self.turn_store.turn_history.activated_abilities_this_turn.contains(&(source, ability_index));
-        let was_exhausted = self.turn_store.exhaust_abilities_activated.contains(&(source, ability_index));
-        let was_in_progress = self.turn_store.exhaust_activations_in_progress.contains(&(source, ability_index));
+        let counters: Vec<_> = keys
+            .into_iter()
+            .map(|key| {
+                let before = self
+                    .turn_store
+                    .turn_history
+                    .turn_counters
+                    .counters
+                    .get(&key)
+                    .copied();
+                (key, before)
+            })
+            .collect();
+        let was_activated = self
+            .turn_store
+            .turn_history
+            .activated_abilities_this_turn
+            .contains(&(source, ability_index));
+        let was_exhausted = self
+            .turn_store
+            .exhaust_abilities_activated
+            .contains(&(source, ability_index));
+        let was_in_progress = self
+            .turn_store
+            .exhaust_activations_in_progress
+            .contains(&(source, ability_index));
         self.begin_exhaust_activation(source, ability_index);
         let origin = origin.map(|origin| {
-            let after = self.turn_store.ability_activations_per_object.get(&(source, origin.clone())).copied().unwrap_or(0);
-            (origin, origin_before, after.saturating_sub(origin_before.unwrap_or(0)))
+            let after = self
+                .turn_store
+                .ability_activations_per_object
+                .get(&(source, origin.clone()))
+                .copied()
+                .unwrap_or(0);
+            (
+                origin,
+                origin_before,
+                after.saturating_sub(origin_before.unwrap_or(0)),
+            )
         });
-        let counters = counters.into_iter().map(|(key, before)| {
-            let added = self.turn_store.turn_history.turn_counters.get(&key).saturating_sub(before.unwrap_or(0));
-            (key, before, added)
-        }).collect();
-        Some(ExhaustActivationAnnouncement { source, ability_index, origin, counters, was_activated, was_exhausted, was_in_progress })
+        let counters = counters
+            .into_iter()
+            .map(|(key, before)| {
+                let added = self
+                    .turn_store
+                    .turn_history
+                    .turn_counters
+                    .get(&key)
+                    .saturating_sub(before.unwrap_or(0));
+                (key, before, added)
+            })
+            .collect();
+        Some(ExhaustActivationAnnouncement {
+            source,
+            ability_index,
+            origin,
+            counters,
+            was_activated,
+            was_exhausted,
+            was_in_progress,
+        })
     }
 
-    pub(crate) fn cancel_exhaust_announcement(&mut self, announcement: ExhaustActivationAnnouncement) {
-        let ExhaustActivationAnnouncement { source, ability_index, origin, counters, was_activated, was_exhausted, was_in_progress } = announcement;
+    pub(crate) fn cancel_exhaust_announcement(
+        &mut self,
+        announcement: ExhaustActivationAnnouncement,
+    ) {
+        let ExhaustActivationAnnouncement {
+            source,
+            ability_index,
+            origin,
+            counters,
+            was_activated,
+            was_exhausted,
+            was_in_progress,
+        } = announcement;
         if let Some((origin, before, added)) = origin {
             let key = (source, origin);
-            if let Some(current) = self.turn_store.ability_activations_per_object.get(&key).copied() {
+            if let Some(current) = self
+                .turn_store
+                .ability_activations_per_object
+                .get(&key)
+                .copied()
+            {
                 let remaining = current.saturating_sub(added);
-                if remaining == 0 && before.is_none() { self.turn_store.ability_activations_per_object.remove(&key); }
-                else { self.turn_store.ability_activations_per_object.insert(key, remaining); }
+                if remaining == 0 && before.is_none() {
+                    self.turn_store.ability_activations_per_object.remove(&key);
+                } else {
+                    self.turn_store
+                        .ability_activations_per_object
+                        .insert(key, remaining);
+                }
             }
         }
         for (key, before, added) in counters {
             let tracker = &mut self.turn_store.turn_history.turn_counters;
             if let Some(current) = tracker.counters.get(&key).copied() {
                 let remaining = current.saturating_sub(added);
-                if remaining == 0 && before.is_none() { tracker.counters.remove(&key); }
-                else { tracker.counters.insert(key, remaining); }
+                if remaining == 0 && before.is_none() {
+                    tracker.counters.remove(&key);
+                } else {
+                    tracker.counters.insert(key, remaining);
+                }
             }
         }
         if self.ability_activation_count_this_turn(source, ability_index) == 0 {
-            if !was_activated { self.turn_store.turn_history.activated_abilities_this_turn.remove(&(source, ability_index)); }
-            if !was_exhausted { self.turn_store.exhaust_abilities_activated.remove(&(source, ability_index)); }
+            if !was_activated {
+                self.turn_store
+                    .turn_history
+                    .activated_abilities_this_turn
+                    .remove(&(source, ability_index));
+            }
+            if !was_exhausted {
+                self.turn_store
+                    .exhaust_abilities_activated
+                    .remove(&(source, ability_index));
+            }
         }
-        if !was_in_progress { self.turn_store.exhaust_activations_in_progress.remove(&(source, ability_index)); }
+        if !was_in_progress {
+            self.turn_store
+                .exhaust_activations_in_progress
+                .remove(&(source, ability_index));
+        }
     }
 
     /// CR 702.177b counts beginning an Exhaust activation, including while
     /// paying for it. Action checkpoints roll this fact back on cancellation.
     pub(crate) fn begin_exhaust_activation(&mut self, source: ObjectId, ability_index: usize) {
-        if self.current_ability(source, ability_index).is_some_and(|ability|
-            matches!(&ability.kind, crate::ability::AbilityKind::Activated(activated)
-                if activated.is_exhaust_ability()))
+        if self
+            .current_ability(source, ability_index)
+            .is_some_and(|ability| {
+                matches!(&ability.kind, crate::ability::AbilityKind::Activated(activated)
+                if activated.is_exhaust_ability())
+            })
         {
             self.record_ability_activation(source, ability_index);
-            self.turn_store.exhaust_activations_in_progress.insert((source, ability_index));
+            self.turn_store
+                .exhaust_activations_in_progress
+                .insert((source, ability_index));
         }
     }
 
@@ -2615,7 +2816,11 @@ impl GameState {
         ability_index: usize,
         origin: Option<crate::continuous::AbilityOrigin>,
     ) {
-        if self.turn_store.exhaust_activations_in_progress.remove(&(source, ability_index)) {
+        if self
+            .turn_store
+            .exhaust_activations_in_progress
+            .remove(&(source, ability_index))
+        {
             return;
         }
         if let Some(origin) = origin {
@@ -2626,9 +2831,12 @@ impl GameState {
                 .or_default();
             *total = total.saturating_add(1);
         }
-        let exhaust_controller = self.current_ability(source, ability_index)
-            .filter(|ability| matches!(&ability.kind,
-                crate::ability::AbilityKind::Activated(activated) if activated.is_exhaust_ability()))
+        let exhaust_controller = self
+            .current_ability(source, ability_index)
+            .filter(|ability| {
+                matches!(&ability.kind,
+                crate::ability::AbilityKind::Activated(activated) if activated.is_exhaust_ability())
+            })
             .and_then(|_| self.object(source).map(|object| self.controller_of(object)));
         self.turn_store
             .turn_history
@@ -2684,13 +2892,21 @@ impl GameState {
 
     /// Check if an exhaust ability has already been activated by this object instance.
     pub fn exhaust_ability_activated(&self, source: ObjectId, ability_index: usize) -> bool {
-        if let Some(origin) = self.current_characteristics(source)
+        if let Some(origin) = self
+            .current_characteristics(source)
             .and_then(|chars| chars.abilities.origin(ability_index).cloned())
         {
-            return self.turn_store.ability_activations_per_object
-                .get(&(source, origin)).copied().unwrap_or(0) > 0;
+            return self
+                .turn_store
+                .ability_activations_per_object
+                .get(&(source, origin))
+                .copied()
+                .unwrap_or(0)
+                > 0;
         }
-        self.turn_store.exhaust_abilities_activated.contains(&(source, ability_index))
+        self.turn_store
+            .exhaust_abilities_activated
+            .contains(&(source, ability_index))
     }
 
     /// Count exhaust activations by this player during the current turn.
@@ -2827,9 +3043,15 @@ impl GameState {
         }
         // Costs record their choice before this entry is constructed. Consume
         // it now so countering or copying another activation cannot change it.
-        if entry.is_ability && entry.ninjutsu_attack_target.is_none()
-            && entry.ability_effects.as_ref().is_some_and(|program|
-                program.all_effects().into_iter().any(|effect| effect.downcast_ref::<crate::effects::NinjutsuEffect>().is_some()))
+        if entry.is_ability
+            && entry.ninjutsu_attack_target.is_none()
+            && entry.ability_effects.as_ref().is_some_and(|program| {
+                program.all_effects().into_iter().any(|effect| {
+                    effect
+                        .downcast_ref::<crate::effects::NinjutsuEffect>()
+                        .is_some()
+                })
+            })
         {
             entry.ninjutsu_attack_target = self.pop_ninjutsu_attack_target(entry.object_id);
         }
@@ -2865,7 +3087,12 @@ impl GameState {
         // tags they recorded at the objects the cards became; any later move
         // makes a new object the resolution can't follow (CR 400.7).
         if entry.triggering_event.is_none() {
-            for snapshots in entry.tagged_objects.values_mut() {
+            for (tag, snapshots) in entry.tagged_objects.iter_mut() {
+                if tag.as_str().starts_with("__paid_departure__")
+                    || tag.as_str().starts_with("__pre_move_history__")
+                {
+                    continue;
+                }
                 for snapshot in snapshots.iter_mut() {
                     if let Some(current) = self.find_object_by_stable_id(snapshot.stable_id)
                         && current != snapshot.object_id
@@ -2979,7 +3206,12 @@ impl GameState {
         let Some(entry) = self.stack.get(stack_idx) else {
             return;
         };
-        if entry.is_ability || !self.turn_store.cast_spell_lki.contains_key(&entry.object_id) {
+        if entry.is_ability
+            || !self
+                .turn_store
+                .cast_spell_lki
+                .contains_key(&entry.object_id)
+        {
             return;
         }
         let Some(object) = self.object(entry.object_id).cloned() else {
@@ -3251,6 +3483,37 @@ impl GameState {
             }
         }
 
+        // Resolution-time filters need the same defending-player domain as
+        // target announcement. An attacking source identifies its own defender;
+        // a combat spell can refer to any player currently being attacked.
+        let mut defending_players = Vec::new();
+        if let Some(combat) = &self.combat {
+            let source_attack =
+                source.and_then(|id| crate::combat_state::get_attack_target(combat, id));
+            for target in source_attack.into_iter().chain(
+                combat
+                    .attackers
+                    .iter()
+                    .filter(|_| source_attack.is_none())
+                    .map(|attacker| &attacker.target),
+            ) {
+                if let Some(player) =
+                    crate::combat_state::defending_player_for_attack_target(self, target)
+                {
+                    let players = if self.shared_team_turns_enabled() {
+                        self.team_players_for(player)
+                    } else {
+                        vec![player]
+                    };
+                    for player in players {
+                        if !defending_players.contains(&player) {
+                            defending_players.push(player);
+                        }
+                    }
+                }
+            }
+        }
+        let defending_player = (defending_players.len() == 1).then(|| defending_players[0]);
         crate::target::FilterContext {
             you: Some(controller),
             source,
@@ -3261,8 +3524,8 @@ impl GameState {
             opponents,
             teammates,
             players_in_range: self.range_players_for_source(controller, source),
-            defending_player: None,
-            defending_players: Vec::new(),
+            defending_player,
+            defending_players,
             attacking_player: None,
             attacking_players: Vec::new(),
             your_commanders,
@@ -3295,6 +3558,20 @@ impl GameState {
         let mut ctx = self.filter_context_for(controller, source);
         ctx.defending_player = defending_player;
         ctx.attacking_player = attacking_player;
+        ctx.defending_players = if self.shared_team_turns_enabled() {
+            defending_player
+                .map(|player| self.team_players_for(player))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        ctx.attacking_players = if self.shared_team_turns_enabled() {
+            attacking_player
+                .map(|player| self.team_players_for(player))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         ctx
     }
 
@@ -3461,7 +3738,9 @@ impl GameState {
         // to layers. Use the same conservative dependency proof as payment
         // projection, including values and copied-ability donor filters.
         self.continuous_state_is_clean()
-            && self.object(id).is_some_and(|object| object.zone == Zone::Battlefield)
+            && self
+                .object(id)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
             && !self.continuous_effects_are_tap_sensitive()
     }
 
@@ -3586,15 +3865,15 @@ impl GameState {
         include_activation_history: bool,
     ) -> bool {
         let reads_nested = |nested: &crate::target::ObjectFilter| {
-            Self::filter_reads_tapped_state_or_activation_history(nested, include_activation_history)
+            Self::filter_reads_tapped_state_or_activation_history(
+                nested,
+                include_activation_history,
+            )
         };
         (include_activation_history && filter.ability_activated_this_turn)
             || filter.tapped
             || filter.untapped
-            || filter
-                .targets_object
-                .as_deref()
-                .is_some_and(reads_nested)
+            || filter.targets_object.as_deref().is_some_and(reads_nested)
             || filter
                 .targets_only_object
                 .as_deref()
@@ -3876,6 +4155,12 @@ impl GameState {
         })
     }
 
+    pub(super) fn condition_reads_case_solved(condition: &crate::ConditionExpr) -> bool {
+        Self::condition_matches_or_nested(condition, |condition| {
+            matches!(condition, crate::ConditionExpr::SourceCaseSolved)
+        })
+    }
+
     pub(super) fn condition_reads_class_level(condition: &crate::ConditionExpr) -> bool {
         Self::condition_matches_or_nested(condition, |condition| {
             matches!(condition, crate::ConditionExpr::SourceClassLevelAtLeast(_))
@@ -4090,23 +4375,31 @@ mod stack_characteristic_invalidation_tests {
         let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
         let alice = game.players[0].id;
         let grant = CardBuilder::new(CardId::new(), "Stack type grant")
-            .card_types(vec![CardType::Artifact]).build();
+            .card_types(vec![CardType::Artifact])
+            .build();
         let source = game.create_object_from_card(&grant, alice, Zone::Battlefield);
         let mut filter = crate::target::ObjectFilter::creature();
         filter.zone = Some(Zone::Stack);
         filter.stack_kind = Some(StackObjectKind::Spell);
-        game.object_mut(source).unwrap().abilities = std::sync::Arc::new(vec![
-            Ability::static_ability(StaticAbility::add_all_subtypes_of_family(
-                filter, SubtypeFamily::Creature))]);
+        game.object_mut(source).unwrap().abilities =
+            std::sync::Arc::new(vec![Ability::static_ability(
+                StaticAbility::add_all_subtypes_of_family(filter, SubtypeFamily::Creature),
+            )]);
         let spell = CardBuilder::new(CardId::new(), "Stack type subject")
-            .card_types(vec![CardType::Creature]).build();
+            .card_types(vec![CardType::Creature])
+            .build();
         let id = game.create_object_from_card(&spell, alice, Zone::Stack);
         game.refresh_continuous_state();
         assert!(!game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         game.push_to_stack(StackEntry::new(id, alice));
         assert!(game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         let checkpoint = game.clone();
-        assert!(checkpoint.current_subtypes(id).unwrap().contains(&Subtype::Elf));
+        assert!(
+            checkpoint
+                .current_subtypes(id)
+                .unwrap()
+                .contains(&Subtype::Elf)
+        );
         assert_eq!(game.pop_from_stack().unwrap().object_id, id);
         assert!(!game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         game.refresh_continuous_state();
@@ -4122,28 +4415,41 @@ mod stack_characteristic_invalidation_tests {
         let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
         let alice = game.players[0].id;
         let grant = CardBuilder::new(CardId::new(), "Stack type grant")
-            .card_types(vec![CardType::Artifact]).build();
+            .card_types(vec![CardType::Artifact])
+            .build();
         let source = game.create_object_from_card(&grant, alice, Zone::Battlefield);
         let mut filter = crate::target::ObjectFilter::creature();
         filter.zone = Some(Zone::Stack);
         filter.stack_kind = Some(StackObjectKind::Spell);
         filter.controller = Some(crate::target::PlayerFilter::You);
-        game.object_mut(source).unwrap().abilities = std::sync::Arc::new(vec![
-            Ability::static_ability(StaticAbility::add_all_subtypes_of_family(
-                filter, SubtypeFamily::Creature))]);
+        game.object_mut(source).unwrap().abilities =
+            std::sync::Arc::new(vec![Ability::static_ability(
+                StaticAbility::add_all_subtypes_of_family(filter, SubtypeFamily::Creature),
+            )]);
         let spell = CardBuilder::new(CardId::new(), "Stack type subject")
-            .card_types(vec![CardType::Creature]).build();
+            .card_types(vec![CardType::Creature])
+            .build();
         let id = game.create_object_from_card(&spell, alice, Zone::Stack);
         game.refresh_continuous_state();
         assert!(!game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         game.stack.push(StackEntry::new(id, alice));
         assert!(game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         let checkpoint = game.clone();
-        assert!(checkpoint.current_subtypes(id).unwrap().contains(&Subtype::Elf));
+        assert!(
+            checkpoint
+                .current_subtypes(id)
+                .unwrap()
+                .contains(&Subtype::Elf)
+        );
         // Changing an existing entry must invalidate as well as insertion.
         game.stack[0].is_ability = true;
         assert!(!game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
-        assert!(checkpoint.current_subtypes(id).unwrap().contains(&Subtype::Elf));
+        assert!(
+            checkpoint
+                .current_subtypes(id)
+                .unwrap()
+                .contains(&Subtype::Elf)
+        );
         game.stack[0].is_ability = false;
         assert!(game.current_subtypes(id).unwrap().contains(&Subtype::Elf));
         // Restoring an independently cloned stack is another mutation source.

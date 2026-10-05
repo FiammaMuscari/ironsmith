@@ -385,6 +385,11 @@ pub struct ObjectSnapshot {
     pub cast_order_this_turn: Option<u32>,
     /// Mana spent to cast this object when it was a spell on the stack.
     pub mana_spent_to_cast: ManaPool,
+    /// Actual mana spent by the caster, excluding Assist payments by others.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub caster_mana_spent_to_cast: Option<u32>,
+    #[cfg_attr(feature = "serialization", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub mana_spent_on_x: Option<crate::mana::XManaAllocation>,
     /// Optional costs paid for this cast, retained for historical spell filters.
     pub optional_costs_paid: crate::cost::OptionalCostsPaid,
     pub snow_mana_spent_to_cast: ManaPool,
@@ -406,6 +411,10 @@ pub struct ObjectSnapshot {
     /// Last-known goad designation for a snapshot with calculated state.
     /// Raw snapshots leave this unset rather than recursively calculating layers.
     pub goaded: Option<bool>,
+    /// Historical designation, separate from which permanent is the bearer now.
+    /// Older/public snapshots may lack this evidence. Never assume false.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub ring_bearer: Option<bool>,
     /// Whether the object was flipped.
     pub flipped: bool,
     /// Whether the object was face-down.
@@ -429,6 +438,10 @@ pub struct ObjectSnapshot {
     pub is_commander: bool,
     /// The zone the object was in.
     pub zone: Zone,
+    /// Last life total actually noted for this exact incarnation. This is
+    /// noncopiable information available to already-pending abilities.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub noted_life_total: Option<i32>,
 }
 
 /// Counters encoded as `(kind, count)` pairs: a named counter kind is not a
@@ -506,6 +519,8 @@ impl ObjectSnapshot {
             x_value: None,
             cast_order_this_turn: None,
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: None,
             optional_costs_paid: crate::cost::OptionalCostsPaid::default(),
             snow_mana_spent_to_cast: ManaPool::default(),
             mana_sources_spent_to_cast: Vec::new(),
@@ -514,6 +529,7 @@ impl ObjectSnapshot {
             tapped: false,
             attacking: false,
             goaded: None,
+            ring_bearer: None,
             flipped: false,
             face_down: false,
             transform_count: 0,
@@ -525,6 +541,7 @@ impl ObjectSnapshot {
             is_prepared: false,
             is_commander: false,
             zone,
+            noted_life_total: None,
         }
     }
 
@@ -638,6 +655,8 @@ impl ObjectSnapshot {
             x_value: obj.x_value,
             cast_order_this_turn: game.turn_store.turn_history.spell_cast_order(obj.id),
             mana_spent_to_cast: obj.mana_spent_to_cast.clone(),
+            caster_mana_spent_to_cast: obj.caster_mana_spent_to_cast,
+            mana_spent_on_x: obj.mana_spent_on_x,
             optional_costs_paid: obj.optional_costs_paid.clone(),
             snow_mana_spent_to_cast: obj.snow_mana_spent_to_cast.clone(),
             mana_sources_spent_to_cast: obj
@@ -655,6 +674,7 @@ impl ObjectSnapshot {
                 .as_ref()
                 .is_some_and(|combat| crate::combat_state::is_attacking(combat, obj.id)),
             goaded: None,
+            ring_bearer: Some(obj.zone == Zone::Battlefield && game.player(game.controller_of(obj)).is_some_and(|player| player.ring_bearer == Some(obj.id))),
             flipped: game.is_flipped(obj.id),
             face_down: game.is_face_down(obj.id),
             transform_count: game.transform_count(obj.id),
@@ -666,6 +686,7 @@ impl ObjectSnapshot {
             is_prepared: game.is_prepared(obj.id),
             is_commander: game.is_commander(obj.id),
             zone: obj.zone,
+            noted_life_total: game.noted_life_total_for_source(obj.id),
         }
     }
 
@@ -813,6 +834,8 @@ impl ObjectSnapshot {
             snapshot.ability_labels = calculated.ability_labels.to_vec();
             snapshot.power = calculated.power;
             snapshot.toughness = calculated.toughness;
+            snapshot.base_power = calculated.base_power;
+            snapshot.base_toughness = calculated.base_toughness;
             snapshot.card_types = calculated.card_types.to_vec();
             snapshot.subtypes = calculated.subtypes.to_vec();
             snapshot.supertypes = calculated.supertypes.to_vec();
@@ -1034,6 +1057,8 @@ impl ObjectSnapshot {
             x_value: None,
             cast_order_this_turn: None,
             mana_spent_to_cast: ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: None,
             snow_mana_spent_to_cast: ManaPool::default(),
             mana_sources_spent_to_cast: Vec::new(),
             optional_costs_paid: crate::cost::OptionalCostsPaid::default(),
@@ -1042,6 +1067,7 @@ impl ObjectSnapshot {
             tapped: false,
             attacking: false,
             goaded: Some(false),
+            ring_bearer: Some(false),
             flipped: false,
             face_down: false,
             transform_count: 0,
@@ -1053,6 +1079,7 @@ impl ObjectSnapshot {
             is_prepared: false,
             is_commander: false,
             zone: Zone::Battlefield,
+            noted_life_total: None,
         }
     }
 
@@ -1235,587 +1262,5 @@ mod tests {
 
         // Grizzly Bears costs {1}{G} = mana value 2
         assert_eq!(snapshot.mana_value(), 2);
-    }
-}
-
-/// Complete historical rules state for checkpoints, distinct from public claims.
-/// The owning exporter controls perspective redaction. Every executable ability,
-/// secret choice, nested history and card-definition reference is retained.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-#[cfg_attr(
-    feature = "serialization",
-    serde(bound(deserialize = "A: serde::Deserialize<'de>, I: serde::Deserialize<'de>"))
-)]
-pub struct RetainedObjectSnapshot<A, I = CardId> {
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub chosen_subtype: Option<Subtype>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub chosen_object: Option<Box<RetainedObjectSnapshot<A, I>>>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub secret_chosen_subtype: Option<(PlayerId, Subtype)>,
-    pub object_id: ObjectId,
-    pub stable_id: StableId,
-    pub kind: ObjectKind,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub card: Option<I>,
-    pub controller: PlayerId,
-    pub owner: PlayerId,
-    pub name: String,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub first_printed_set_name: Option<String>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub mana_cost: Option<ManaCost>,
-    pub colors: ColorSet,
-    pub supertypes: Vec<Supertype>,
-    pub card_types: Vec<CardType>,
-    pub subtypes: Vec<Subtype>,
-    pub compiled_card_text: String,
-    pub ability_labels: Vec<String>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub other_face: Option<I>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub other_face_name: Option<String>,
-    pub linked_face_layout: LinkedFaceLayout,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub linked_face_mana_value: Option<u32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub power: Option<i32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub toughness: Option<i32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub base_power: Option<i32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub base_toughness: Option<i32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub loyalty: Option<u32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub defense: Option<u32>,
-    pub abilities: Vec<A>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub aura_attach_filter: Option<AuraAttachmentFilter>,
-    pub copiable_values: RetainedCopiableValues<A>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub x_value: Option<u32>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub cast_order_this_turn: Option<u32>,
-    pub mana_spent_to_cast: ManaPool,
-    pub optional_costs_paid: crate::cost::OptionalCostsPaid,
-    pub snow_mana_spent_to_cast: ManaPool,
-    pub mana_sources_spent_to_cast: Vec<RetainedObjectSnapshot<A, I>>,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(
-            serialize_with = "counter_pairs::serialize",
-            deserialize_with = "deserialize_unique_snapshot_counters"
-        )
-    )]
-    pub counters: std::collections::BTreeMap<CounterType, u32>,
-    pub is_token: bool,
-    pub tapped: bool,
-    pub attacking: bool,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub goaded: Option<bool>,
-    pub flipped: bool,
-    pub face_down: bool,
-    pub transform_count: u64,
-    #[cfg_attr(
-        feature = "serialization",
-        serde(deserialize_with = "deserialize_present_optional")
-    )]
-    pub attached_to: Option<AttachmentTarget>,
-    pub attachments: Vec<ObjectId>,
-    pub attachment_snapshots: Vec<RetainedObjectSnapshot<A, I>>,
-    pub was_enchanted: bool,
-    pub is_monstrous: bool,
-    pub is_prepared: bool,
-    pub is_commander: bool,
-    pub zone: Zone,
-}
-impl From<ObjectSnapshot> for RetainedObjectSnapshot<Ability> {
-    fn from(value: ObjectSnapshot) -> Self {
-        let ObjectSnapshot {
-            chosen_subtype,
-            chosen_object,
-            secret_chosen_subtype,
-            object_id,
-            stable_id,
-            kind,
-            card,
-            controller,
-            owner,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            colors,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_value,
-            power,
-            toughness,
-            base_power,
-            base_toughness,
-            loyalty,
-            defense,
-            abilities,
-            aura_attach_filter,
-            copiable_values,
-            x_value,
-            cast_order_this_turn,
-            mana_spent_to_cast,
-            optional_costs_paid,
-            snow_mana_spent_to_cast,
-            mana_sources_spent_to_cast,
-            counters,
-            is_token,
-            tapped,
-            attacking,
-            goaded,
-            flipped,
-            face_down,
-            transform_count,
-            attached_to,
-            attachments,
-            attachment_snapshots,
-            was_enchanted,
-            is_monstrous,
-            is_prepared,
-            is_commander,
-            zone,
-        } = value;
-        Self {
-            chosen_subtype: chosen_subtype,
-            chosen_object: chosen_object.map(|value| Box::new((*value).into())),
-            secret_chosen_subtype: secret_chosen_subtype,
-            object_id: object_id,
-            stable_id: stable_id,
-            kind: kind,
-            card: card,
-            controller: controller,
-            owner: owner,
-            name: name,
-            first_printed_set_name: first_printed_set_name,
-            mana_cost: mana_cost,
-            colors: colors,
-            supertypes: supertypes,
-            card_types: card_types,
-            subtypes: subtypes,
-            compiled_card_text: compiled_card_text,
-            ability_labels: ability_labels,
-            other_face: other_face,
-            other_face_name: other_face_name,
-            linked_face_layout: linked_face_layout,
-            linked_face_mana_value: linked_face_mana_value,
-            power: power,
-            toughness: toughness,
-            base_power: base_power,
-            base_toughness: base_toughness,
-            loyalty: loyalty,
-            defense: defense,
-            abilities: abilities.as_ref().clone(),
-            aura_attach_filter: aura_attach_filter,
-            copiable_values: copiable_values.into(),
-            x_value: x_value,
-            cast_order_this_turn: cast_order_this_turn,
-            mana_spent_to_cast: mana_spent_to_cast,
-            optional_costs_paid: optional_costs_paid,
-            snow_mana_spent_to_cast: snow_mana_spent_to_cast,
-            mana_sources_spent_to_cast: mana_sources_spent_to_cast
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            counters: counters,
-            is_token: is_token,
-            tapped: tapped,
-            attacking: attacking,
-            goaded: goaded,
-            flipped: flipped,
-            face_down: face_down,
-            transform_count: transform_count,
-            attached_to: attached_to,
-            attachments: attachments,
-            attachment_snapshots: attachment_snapshots.into_iter().map(Into::into).collect(),
-            was_enchanted: was_enchanted,
-            is_monstrous: is_monstrous,
-            is_prepared: is_prepared,
-            is_commander: is_commander,
-            zone: zone,
-        }
-    }
-}
-impl From<RetainedObjectSnapshot<Ability>> for ObjectSnapshot {
-    fn from(value: RetainedObjectSnapshot<Ability>) -> Self {
-        let RetainedObjectSnapshot {
-            chosen_subtype,
-            chosen_object,
-            secret_chosen_subtype,
-            object_id,
-            stable_id,
-            kind,
-            card,
-            controller,
-            owner,
-            name,
-            first_printed_set_name,
-            mana_cost,
-            colors,
-            supertypes,
-            card_types,
-            subtypes,
-            compiled_card_text,
-            ability_labels,
-            other_face,
-            other_face_name,
-            linked_face_layout,
-            linked_face_mana_value,
-            power,
-            toughness,
-            base_power,
-            base_toughness,
-            loyalty,
-            defense,
-            abilities,
-            aura_attach_filter,
-            copiable_values,
-            x_value,
-            cast_order_this_turn,
-            mana_spent_to_cast,
-            optional_costs_paid,
-            snow_mana_spent_to_cast,
-            mana_sources_spent_to_cast,
-            counters,
-            is_token,
-            tapped,
-            attacking,
-            goaded,
-            flipped,
-            face_down,
-            transform_count,
-            attached_to,
-            attachments,
-            attachment_snapshots,
-            was_enchanted,
-            is_monstrous,
-            is_prepared,
-            is_commander,
-            zone,
-        } = value;
-        Self {
-            chosen_subtype: chosen_subtype,
-            chosen_object: chosen_object.map(|value| Box::new((*value).into())),
-            secret_chosen_subtype: secret_chosen_subtype,
-            object_id: object_id,
-            stable_id: stable_id,
-            kind: kind,
-            card: card,
-            controller: controller,
-            owner: owner,
-            name: name,
-            first_printed_set_name: first_printed_set_name,
-            mana_cost: mana_cost,
-            colors: colors,
-            supertypes: supertypes,
-            card_types: card_types,
-            subtypes: subtypes,
-            compiled_card_text: compiled_card_text,
-            ability_labels: ability_labels,
-            other_face: other_face,
-            other_face_name: other_face_name,
-            linked_face_layout: linked_face_layout,
-            linked_face_mana_value: linked_face_mana_value,
-            power: power,
-            toughness: toughness,
-            base_power: base_power,
-            base_toughness: base_toughness,
-            loyalty: loyalty,
-            defense: defense,
-            abilities: abilities.into(),
-            aura_attach_filter: aura_attach_filter,
-            copiable_values: copiable_values.into(),
-            x_value: x_value,
-            cast_order_this_turn: cast_order_this_turn,
-            mana_spent_to_cast: mana_spent_to_cast,
-            optional_costs_paid: optional_costs_paid,
-            snow_mana_spent_to_cast: snow_mana_spent_to_cast,
-            mana_sources_spent_to_cast: mana_sources_spent_to_cast
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            counters: counters,
-            is_token: is_token,
-            tapped: tapped,
-            attacking: attacking,
-            goaded: goaded,
-            flipped: flipped,
-            face_down: face_down,
-            transform_count: transform_count,
-            attached_to: attached_to,
-            attachments: attachments,
-            attachment_snapshots: attachment_snapshots.into_iter().map(Into::into).collect(),
-            was_enchanted: was_enchanted,
-            is_monstrous: is_monstrous,
-            is_prepared: is_prepared,
-            is_commander: is_commander,
-            zone: zone,
-        }
-    }
-}
-
-impl<A, I> RetainedObjectSnapshot<A, I> {
-    pub fn try_map_payloads<B, J, Error>(
-        self,
-        mut ability: impl FnMut(A) -> Result<B, Error>,
-        mut card: impl FnMut(I) -> Result<J, Error>,
-    ) -> Result<RetainedObjectSnapshot<B, J>, Error> {
-        self.try_map_with(&mut ability, &mut card)
-    }
-    fn try_map_with<B, J, Error>(
-        self,
-        ability: &mut impl FnMut(A) -> Result<B, Error>,
-        card: &mut impl FnMut(I) -> Result<J, Error>,
-    ) -> Result<RetainedObjectSnapshot<B, J>, Error> {
-        Ok(RetainedObjectSnapshot {
-            chosen_subtype: self.chosen_subtype,
-            chosen_object: self
-                .chosen_object
-                .map(|value| value.try_map_with(ability, card).map(Box::new))
-                .transpose()?,
-            secret_chosen_subtype: self.secret_chosen_subtype,
-            object_id: self.object_id,
-            stable_id: self.stable_id,
-            kind: self.kind,
-            card: self.card.map(&mut *card).transpose()?,
-            controller: self.controller,
-            owner: self.owner,
-            name: self.name,
-            first_printed_set_name: self.first_printed_set_name,
-            mana_cost: self.mana_cost,
-            colors: self.colors,
-            supertypes: self.supertypes,
-            card_types: self.card_types,
-            subtypes: self.subtypes,
-            compiled_card_text: self.compiled_card_text,
-            ability_labels: self.ability_labels,
-            other_face: self.other_face.map(&mut *card).transpose()?,
-            other_face_name: self.other_face_name,
-            linked_face_layout: self.linked_face_layout,
-            linked_face_mana_value: self.linked_face_mana_value,
-            power: self.power,
-            toughness: self.toughness,
-            base_power: self.base_power,
-            base_toughness: self.base_toughness,
-            loyalty: self.loyalty,
-            defense: self.defense,
-            abilities: self
-                .abilities
-                .into_iter()
-                .map(&mut *ability)
-                .collect::<Result<Vec<_>, _>>()?,
-            aura_attach_filter: self.aura_attach_filter,
-            copiable_values: self.copiable_values.try_map_abilities(&mut *ability)?,
-            x_value: self.x_value,
-            cast_order_this_turn: self.cast_order_this_turn,
-            mana_spent_to_cast: self.mana_spent_to_cast,
-            optional_costs_paid: self.optional_costs_paid,
-            snow_mana_spent_to_cast: self.snow_mana_spent_to_cast,
-            mana_sources_spent_to_cast: self
-                .mana_sources_spent_to_cast
-                .into_iter()
-                .map(|value| value.try_map_with(ability, card))
-                .collect::<Result<Vec<_>, _>>()?,
-            counters: self.counters,
-            is_token: self.is_token,
-            tapped: self.tapped,
-            attacking: self.attacking,
-            goaded: self.goaded,
-            flipped: self.flipped,
-            face_down: self.face_down,
-            transform_count: self.transform_count,
-            attached_to: self.attached_to,
-            attachments: self.attachments,
-            attachment_snapshots: self
-                .attachment_snapshots
-                .into_iter()
-                .map(|value| value.try_map_with(ability, card))
-                .collect::<Result<Vec<_>, _>>()?,
-            was_enchanted: self.was_enchanted,
-            is_monstrous: self.is_monstrous,
-            is_prepared: self.is_prepared,
-            is_commander: self.is_commander,
-            zone: self.zone,
-        })
-    }
-}
-#[cfg(feature = "serialization")]
-fn deserialize_unique_snapshot_counters<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<std::collections::BTreeMap<CounterType, u32>, D::Error> {
-    let pairs: Vec<(CounterType, u32)> = serde::Deserialize::deserialize(deserializer)?;
-    let mut counters = std::collections::BTreeMap::new();
-    for (kind, count) in pairs {
-        if counters.insert(kind, count).is_some() {
-            return Err(serde::de::Error::custom(
-                "duplicate retained snapshot counter",
-            ));
-        }
-    }
-    Ok(counters)
-}
-
-#[cfg(test)]
-mod retained_historical_snapshot_schema_tests {
-    use super::*;
-    fn fixture() -> ObjectSnapshot {
-        let mut snapshot = ObjectSnapshot::public_placeholder(
-            ObjectId::from_raw(10),
-            StableId::from_raw(11),
-            PlayerId::from_index(0),
-            PlayerId::from_index(1),
-            Zone::Battlefield,
-        );
-        snapshot.card = Some(CardId::new());
-        snapshot.other_face = Some(CardId::new());
-        snapshot.secret_chosen_subtype = Some((PlayerId::from_index(1), Subtype::Elf));
-        snapshot.chosen_subtype = Some(Subtype::Human);
-        snapshot.counters.insert(CounterType::PlusOnePlusOne, 2);
-        let ability = Ability::static_ability(crate::static_abilities::StaticAbility::flying());
-        snapshot.abilities = vec![ability.clone()].into();
-        snapshot.copiable_values.abilities = vec![ability].into();
-        snapshot.chosen_object = Some(Box::new(snapshot.clone()));
-        snapshot
-            .mana_sources_spent_to_cast
-            .push(snapshot.chosen_object.as_ref().unwrap().as_ref().clone());
-        snapshot
-            .attachment_snapshots
-            .push(snapshot.chosen_object.as_ref().unwrap().as_ref().clone());
-        snapshot
-    }
-    #[test]
-    fn retained_historical_snapshot_preserves_native_fields_secrets_nested_state_and_bindings() {
-        let original = fixture();
-        let retained = RetainedObjectSnapshot::from(original.clone());
-        let restored: ObjectSnapshot = retained
-            .try_map_payloads(Ok::<_, &'static str>, Ok::<_, &'static str>)
-            .unwrap()
-            .into();
-        assert_eq!(restored, original);
-        for child in [
-            restored.chosen_object.as_ref().unwrap().as_ref(),
-            &restored.mana_sources_spent_to_cast[0],
-            &restored.attachment_snapshots[0],
-        ] {
-            assert_eq!(child.secret_chosen_subtype, original.secret_chosen_subtype);
-            let AbilityKind::Static(ability) = &child.abilities[0].kind else {
-                panic!("static occurrence")
-            };
-            let AbilityKind::Static(copiable) = &child.copiable_values.abilities[0].kind else {
-                panic!("copiable occurrence")
-            };
-            assert_eq!(ability.instance_id(), copiable.instance_id());
-        }
-        assert!(
-            RetainedObjectSnapshot::from(original.clone())
-                .try_map_payloads(|_| Err::<(), _>("ability"), Ok::<_, &'static str>)
-                .is_err()
-        );
-        assert!(
-            RetainedObjectSnapshot::from(original)
-                .try_map_payloads(Ok::<_, &'static str>, |_| Err::<(), _>("card graph"))
-                .is_err()
-        );
-    }
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn retained_historical_snapshot_requires_all_fields_and_rejects_duplicate_counters() {
-        type Wire = RetainedObjectSnapshot<u8, u8>;
-        let retained: Wire = RetainedObjectSnapshot::from(fixture())
-            .try_map_payloads(|_| Ok::<_, ()>(1), |_| Ok::<_, ()>(2))
-            .unwrap();
-        let json = serde_json::to_value(retained).unwrap();
-        let _: Wire = serde_json::from_value(json.clone()).unwrap();
-        for field in json.as_object().unwrap().keys() {
-            let mut bad = json.clone();
-            bad.as_object_mut().unwrap().remove(field);
-            assert!(
-                serde_json::from_value::<Wire>(bad).is_err(),
-                "missing {field}"
-            );
-        }
-        let mut bad = json.clone();
-        bad["chosen_object"]
-            .as_object_mut()
-            .unwrap()
-            .remove("abilities");
-        assert!(serde_json::from_value::<Wire>(bad).is_err());
-        let mut bad = json;
-        let counter = bad["counters"][0].clone();
-        bad["counters"].as_array_mut().unwrap().push(counter);
-        assert!(serde_json::from_value::<Wire>(bad).is_err());
     }
 }

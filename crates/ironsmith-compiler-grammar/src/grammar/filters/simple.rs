@@ -60,8 +60,13 @@ enum SimpleObjectFilterAtom {
     Transformed,
     Stickered,
     Goaded,
+    RingBearer,
+    Commander,
+    Noncommander,
     Tapped,
     Untapped,
+    Unblocked,
+    Equipped,
     Colorless,
     Multicolored,
     Monocolored,
@@ -420,6 +425,35 @@ fn parse_simple_object_filter_words_with_list_marker(
     other: bool,
     saw_type_list_separator: bool,
 ) -> Option<ObjectFilter> {
+    let subject_words = non_article_word_refs(input_words);
+    if subject_words.starts_with(&["equipped", "creature"]) {
+        // Singular Equipment-host references belong to the source attachment
+        // grammar; plural equipped creatures describe a battlefield set.
+        return None;
+    }
+    if input_words.first() == Some(&"equipped") && input_words.get(1) == Some(&"creatures") {
+        let mut filter = parse_simple_object_filter_words_with_list_marker(
+            &input_words[1..],
+            other,
+            saw_type_list_separator,
+        )?;
+        filter.with_attached_object = Some(Box::new(ObjectFilter {
+            subtypes: vec![Subtype::Equipment],
+            ..ObjectFilter::default()
+        }));
+        return Some(filter);
+    }
+    if input_words.first() == Some(&"your")
+        && matches!(
+            &input_words[1..],
+            ["ring", "bearer" | "bearers"] | ["ring-bearer" | "ring-bearers"]
+        )
+    {
+        let mut filter = ObjectFilter::default().ring_bearer().you_control();
+        filter.zone = Some(Zone::Battlefield);
+        filter.other = other;
+        return Some(filter);
+    }
     if input_words.starts_with(&["one", "or", "more"]) {
         let mut filter = parse_simple_object_filter_words_with_list_marker(
             &input_words[3..],
@@ -514,8 +548,21 @@ fn parse_simple_filter_body(
                 filter.sticker = Some(crate::events::KeywordActionKind::Sticker);
             }
             SimpleObjectFilterAtom::Goaded => filter.goaded = true,
+            SimpleObjectFilterAtom::RingBearer => {
+                filter.ring_bearer = true;
+                filter.zone.get_or_insert(Zone::Battlefield);
+            }
+            SimpleObjectFilterAtom::Commander => filter.is_commander = true,
+            SimpleObjectFilterAtom::Noncommander => filter.noncommander = true,
             SimpleObjectFilterAtom::Tapped => filter.tapped = true,
             SimpleObjectFilterAtom::Untapped => filter.untapped = true,
+            SimpleObjectFilterAtom::Unblocked => filter.unblocked = true,
+            SimpleObjectFilterAtom::Equipped => {
+                filter.with_attached_object = Some(Box::new(ObjectFilter {
+                    subtypes: vec![Subtype::Equipment],
+                    ..ObjectFilter::default()
+                }));
+            }
             SimpleObjectFilterAtom::Colorless => filter.colorless = true,
             SimpleObjectFilterAtom::Multicolored => filter.multicolored = true,
             SimpleObjectFilterAtom::Monocolored => filter.monocolored = true,
@@ -647,10 +694,10 @@ fn parse_simple_filter_body(
 
 fn parse_simple_object_filter_atom(input: &mut WordInput<'_>) -> WResult<SimpleObjectFilterAtom> {
     alt((
-        parse_type_list_separator,
-        parse_of_named_atom,
+        alt((parse_type_list_separator, parse_of_named_atom)),
         parse_alternative_cast_atom,
         parse_filter_face_state.map(SimpleObjectFilterAtom::FaceState),
+        parse_ring_bearer_atom,
         parse_simple_flag_atom,
         parse_named_object_filter_atom.map(SimpleObjectFilterAtom::Named),
         parse_split_non_atom,
@@ -798,6 +845,16 @@ fn parse_alternative_cast_atom(input: &mut WordInput<'_>) -> WResult<SimpleObjec
     Ok(SimpleObjectFilterAtom::AlternativeCast(kind))
 }
 
+fn parse_ring_bearer_atom(input: &mut WordInput<'_>) -> WResult<SimpleObjectFilterAtom> {
+    let consumed = match *input {
+        ["ring", "bearer" | "bearers", ..] => 2,
+        ["ring-bearer" | "ring-bearers", ..] => 1,
+        _ => return Err(primitives::backtrack_err("Ring-bearer noun", "Ring-bearer")),
+    };
+    *input = &input[consumed..];
+    Ok(SimpleObjectFilterAtom::RingBearer)
+}
+
 fn parse_simple_flag_atom(input: &mut WordInput<'_>) -> WResult<SimpleObjectFilterAtom> {
     let checkpoint = *input;
     let word = parse_any_word.parse_next(input)?;
@@ -813,8 +870,12 @@ fn parse_simple_flag_atom(input: &mut WordInput<'_>) -> WResult<SimpleObjectFilt
         "transformed" => SimpleObjectFilterAtom::Transformed,
         "stickered" => SimpleObjectFilterAtom::Stickered,
         "goaded" => SimpleObjectFilterAtom::Goaded,
+        "commander" | "commanders" => SimpleObjectFilterAtom::Commander,
+        "noncommander" | "noncommanders" => SimpleObjectFilterAtom::Noncommander,
         "tapped" => SimpleObjectFilterAtom::Tapped,
         "untapped" => SimpleObjectFilterAtom::Untapped,
+        "unblocked" => SimpleObjectFilterAtom::Unblocked,
+        "equipped" => SimpleObjectFilterAtom::Equipped,
         "colorless" => SimpleObjectFilterAtom::Colorless,
         "multicolored" | "multicolour" | "multicoloured" => SimpleObjectFilterAtom::Multicolored,
         "monocolored" | "monocolour" | "monocoloured" => SimpleObjectFilterAtom::Monocolored,

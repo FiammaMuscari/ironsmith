@@ -3,10 +3,70 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
-// Node cannot import the .jsx module that owns these, so they are restated:
-// CARD_FRAME_RENDER_WIDTH / _HEIGHT in src/components/cards/MiniatureCardFrame.jsx.
-const CARD_FRAME_RENDER_WIDTH = 380;
-const CARD_FRAME_RENDER_HEIGHT = 531;
+test('arrow-key hand navigation keeps the selected card above the phase tracker', async () => {
+  const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
+  await vite.listen();
+  const browser = await chromium.launch();
+  try {
+    for (const width of [1365, 2048]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.route('https://**/*', route => route.abort());
+      await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/hand-hover-frame-size.html`);
+      await page.locator('.hand-card[data-object-id="4"]').focus();
+      for (const key of ['ArrowRight', 'ArrowRight', 'ArrowLeft']) {
+        await page.keyboard.press(key);
+        await page.waitForTimeout(350);
+        const aboveTracker = await page.evaluate(() => {
+          const card = document.activeElement;
+          if (!card?.classList.contains('keyboard-selected') || card.classList.contains('hovered')) return false;
+          const rect = card.getBoundingClientRect();
+          const phase = document.querySelector('.topbar-shell').getBoundingClientRect();
+          const y = Math.max(rect.top, phase.top) + 12;
+          return y < Math.min(rect.bottom, phase.bottom)
+            && card.contains(document.elementFromPoint(rect.left + rect.width / 2, y));
+        });
+        assert.ok(aboveTracker, `keyboard-selected card stays above phase controls at ${width}px after ${key}`);
+      }
+      await page.close();
+    }
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('large desktop hands keep compressing without horizontal scrolling', async () => {
+  const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
+  await vite.listen();
+  const browser = await chromium.launch();
+  try {
+    for (const width of [1365, 2048]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.route('https://**/*', route => route.abort());
+      let previousGap = Infinity;
+      let cardWidth;
+      for (const count of [10, 18, 40]) {
+        await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/hand-hover-frame-size.html?count=${count}`);
+        await page.locator('.hand-layout-item').last().waitFor();
+        const geometry = await page.evaluate(() => {
+          const scroll = document.querySelector('.hand-zone-scroll');
+          const slots = Array.from(document.querySelectorAll('.hand-layout-item'), el => el.getBoundingClientRect());
+          const viewport = scroll.closest('.hand-zone-surface').getBoundingClientRect();
+          return { count: slots.length, gap: slots[1].left - slots[0].left, cardWidth: slots[0].width,
+            left: slots[0].left, right: slots.at(-1).right, viewportLeft: viewport.left, viewportRight: viewport.right,
+            overflowX: getComputedStyle(scroll).overflowX };
+        });
+        assert.equal(geometry.count, count);
+        assert.ok(geometry.gap < previousGap, 'overlap increases as cards are added');
+        previousGap = geometry.gap;
+        cardWidth ??= geometry.cardWidth;
+        assert.equal(geometry.cardWidth, cardWidth, 'cards retain their resting size');
+        assert.ok(geometry.left >= geometry.viewportLeft - 5 && geometry.right <= geometry.viewportRight + 5, `all ${count} slots fit at ${width}px: ${JSON.stringify(geometry)}`);
+        assert.equal(geometry.overflowX, 'visible');
+        await page.locator('.hand-zone-scroll').dispatchEvent('wheel', { deltaX: 200, deltaY: 0 });
+        assert.equal(await page.locator('.hand-zone-scroll').evaluate(el => el.scrollLeft), 0);
+      }
+      await page.close();
+    }
+  } finally { await browser.close(); await vite.close(); }
+});
 
 test('pre-game hand hover resumes after clicking outside the fan', { timeout: 30000 }, async () => {
   const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
@@ -30,7 +90,7 @@ test('pre-game hand hover resumes after clicking outside the fan', { timeout: 30
     await page.waitForFunction(() => document.querySelector('.hand-card[data-object-id="4"]')?.classList.contains('hovered'), null, { timeout: 3000 });
     await page.waitForFunction(() => {
       const card = document.querySelector('.hand-card[data-object-id="4"]');
-      return card && card.getBoundingClientRect().height > 500;
+      return card && card.getBoundingClientRect().height > 400;
     }, null, { timeout: 3000 });
     assert.ok((await card.boundingBox()).width > resting.width * 2, 'the hovered card fans out again');
 
@@ -79,12 +139,14 @@ test('hovered hand cards show live text before their image URL and art arrive', 
   } finally { releaseLookup(); releaseArt(); await browser.close(); await vite.close(); }
 });
 
-test('a hovered hand card grows to the size the table renders frames at', async () => {
+test('a hovered hand card matches the local battlefield preview size', async () => {
   const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
   await vite.listen();
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.route('https://api.scryfall.com/**', route => route.fulfill({ status: 404, body: '' }));
+    await page.route('https://cards.scryfall.io/**', route => route.fulfill({ contentType: 'image/svg+xml', headers: { 'access-control-allow-origin': '*' }, body: '<svg xmlns="http://www.w3.org/2000/svg" width="488" height="684"><rect width="488" height="684" fill="#917659"/></svg>' }));
     await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/hand-hover-frame-size.html`);
     const card = page.locator('.game-card.hand-card').nth(3);
     await card.waitFor();
@@ -98,16 +160,15 @@ test('a hovered hand card grows to the size the table renders frames at', async 
     await page.waitForTimeout(600);
     const hovered = await card.boundingBox();
 
-    // The frame renderer lays every card out at 380x531 before scaling it into
-    // its slot, so the hand's zoom lands on whichever of the two binds first.
-    const grown = Math.min(
-      CARD_FRAME_RENDER_WIDTH / resting.width,
-      CARD_FRAME_RENDER_HEIGHT / resting.height,
-    );
-    assert.ok(
-      Math.abs(hovered.height - (resting.height * grown)) < 2,
-      `hovered ${hovered.height} should reach ${resting.height * grown}`,
-    );
+    await page.mouse.move(20, 20);
+    await page.waitForTimeout(200);
+    await page.locator('.game-card[data-object-id="100"]').hover();
+    const preview = page.locator('.floating-card-preview[data-visible="true"]');
+    await preview.waitFor();
+    await page.waitForTimeout(300);
+    const fieldPreview = await preview.boundingBox();
+    assert.ok(Math.abs(hovered.height - fieldPreview.height) < 2, `hand height ${hovered.height} matches field height ${fieldPreview.height}`);
+    assert.ok(Math.abs(hovered.width - fieldPreview.width) < 3, `hand width ${hovered.width} matches field width ${fieldPreview.width}`);
     assert.ok(hovered.width > resting.width * 2, `hovered width ${hovered.width} vs resting ${resting.width}`);
 
     // Hand cards scale from their bottom edge, so the zoom grows upwards on its

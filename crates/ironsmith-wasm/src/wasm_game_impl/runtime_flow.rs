@@ -1,3 +1,31 @@
+// Counter quantities are sparse: aggregate limits do not depend on pointer
+// width, and the selected kind order reaches the owning executor unchanged.
+fn validate_counter_allocations(
+    ctx: &ironsmith::decisions::context::CountersContext,
+    allocations: &[CounterAllocation],
+) -> Result<Vec<(ironsmith::object::CounterType, u32)>, String> {
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
+    let mut selected = Vec::new();
+    for allocation in allocations {
+        if !seen.insert(allocation.index) {
+            return Err(format!("duplicate counter allocation index {}", allocation.index));
+        }
+        let (kind, available) = ctx.available_counters.get(allocation.index).copied()
+            .ok_or_else(|| format!("counter allocation index {} is out of range", allocation.index))?;
+        if allocation.count > available {
+            return Err(format!("cannot remove {} {} counters; only {available} available", allocation.count, kind.description()));
+        }
+        total = total.checked_add(u64::from(allocation.count))
+            .ok_or_else(|| "counter allocation aggregate overflow".to_string())?;
+        if allocation.count > 0 { selected.push((kind, allocation.count)); }
+    }
+    if total < ctx.min_total || total > ctx.max_total {
+        return Err(format!("counter allocation total {total} must be between {} and {}",ctx.min_total,ctx.max_total));
+    }
+    Ok(selected)
+}
+
 // Runner replay and ordinary effect replay share the same option contract.
 // Counts are mode points for weighted decisions; repeating a nonrepeatable
 // option must never stand in for selecting another legal mode.
@@ -68,6 +96,7 @@ impl WasmGame {
         self.priority_epoch_checkpoint = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
+        self.priority_epoch_undo_locked_by_disclosure = false;
         self.priority_epoch_undo_land_stable_id = None;
     }
 
@@ -129,6 +158,7 @@ impl WasmGame {
         self.priority_epoch_checkpoint = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
+        self.priority_epoch_undo_locked_by_disclosure = false;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
         self.pending_decision_game = None;
@@ -173,6 +203,9 @@ impl WasmGame {
         &mut self,
         checkpoint: ReplayCheckpoint,
     ) -> Result<JsValue, JsValue> {
+        if self.payment_disclosure.is_some() {
+            return Err(payment_disclosure_error("committed disclosure payment failed; resume the retained command instead of undoing its announcement"));
+        }
         self.restore_live_action_chain_to_checkpoint(checkpoint)?;
         self.snapshot()
     }
@@ -353,6 +386,7 @@ impl WasmGame {
                 self.priority_epoch_checkpoint = Some(self.capture_replay_checkpoint());
                 self.priority_epoch_has_undoable_action = false;
                 self.priority_epoch_undo_locked_by_mana = false;
+                self.priority_epoch_undo_locked_by_disclosure = false;
                 self.priority_epoch_undo_land_stable_id = None;
             }
             let checkpoint = self.capture_replay_checkpoint();
@@ -393,6 +427,7 @@ impl WasmGame {
                         self.priority_epoch_checkpoint = None;
                         self.priority_epoch_has_undoable_action = false;
                         self.priority_epoch_undo_locked_by_mana = false;
+                        self.priority_epoch_undo_locked_by_disclosure = false;
                         self.priority_epoch_undo_land_stable_id = None;
                         self.pending_decision = None;
                         self.clear_active_resolving_stack_object();
@@ -408,6 +443,7 @@ impl WasmGame {
                         self.priority_epoch_checkpoint = None;
                         self.priority_epoch_has_undoable_action = false;
                         self.priority_epoch_undo_locked_by_mana = false;
+                        self.priority_epoch_undo_locked_by_disclosure = false;
                         self.priority_epoch_undo_land_stable_id = None;
                         self.clear_active_resolving_stack_object();
                         if started_child {
@@ -454,6 +490,7 @@ impl WasmGame {
                 self.priority_epoch_checkpoint = None;
                 self.priority_epoch_has_undoable_action = false;
                 self.priority_epoch_undo_locked_by_mana = false;
+                self.priority_epoch_undo_locked_by_disclosure = false;
                 self.priority_epoch_undo_land_stable_id = None;
                 self.pending_decision = None;
                 self.clear_active_resolving_stack_object();
@@ -474,6 +511,7 @@ impl WasmGame {
                 self.priority_epoch_checkpoint = None;
                 self.priority_epoch_has_undoable_action = false;
                 self.priority_epoch_undo_locked_by_mana = false;
+                self.priority_epoch_undo_locked_by_disclosure = false;
                 self.priority_epoch_undo_land_stable_id = None;
                 self.pending_decision = None;
                 self.clear_active_resolving_stack_object();
@@ -603,6 +641,7 @@ impl WasmGame {
         &mut self,
         action_checkpoint: Option<&ReplayCheckpoint>,
     ) {
+        self.finish_payment_disclosure();
         if let Some(root_response) = self.pending_live_action_root.take() {
             self.priority_epoch_has_undoable_action |=
                 Self::response_starts_cancelable_action_chain(&root_response);
@@ -636,6 +675,7 @@ impl WasmGame {
             GameProgress::NeedsDecisionCtx(next_ctx) => {
                 let action_still_pending = self.priority_action_chain_still_pending();
                 let next_is_priority = matches!(next_ctx, DecisionContext::Priority(_));
+                if !action_still_pending { self.finish_payment_disclosure(); }
                 if !action_still_pending && next_is_priority {
                     // Completing directly into a priority context must retain the
                     // same undo safety checks as the ordinary progress path.
@@ -1058,6 +1098,8 @@ impl WasmGame {
             priority_state: self.priority_state.clone(),
             game_over: self.game_over.clone(),
             id_counters: snapshot_id_counters(),
+            public_hand_disclosures: self.public_hand_disclosure_identities(),
+            payment_disclosure_generation: self.payment_disclosure_generation,
             diag_tag: tag,
         }
     }
@@ -1076,6 +1118,11 @@ impl WasmGame {
     }
 
     fn restore_replay_checkpoint(&mut self, checkpoint: &ReplayCheckpoint) {
+        // Priority replay also restores ordinary checkpoints before each prompt.
+        // Keep the last presentation result and recompute its non-mana gates.
+
+        self.priority_affordability_seed_key = None;
+        self.priority_affordability_completed_key = None;
         restore_id_counters(checkpoint.id_counters);
         self.game = (*checkpoint.game).clone();
         self.trigger_queue = checkpoint.trigger_queue.clone();
@@ -1496,50 +1543,26 @@ impl WasmGame {
                 }
                 Ok(ReplayDecisionAnswer::Colors(selected))
             }
+            (DecisionContext::Counters(counters), UiCommand::SelectCounters { allocations }) => {
+                validate_counter_allocations(counters, &allocations)
+                    .map(ReplayDecisionAnswer::Counters)
+                    .map_err(|error| JsValue::from_str(&error))
+            }
             (DecisionContext::Counters(counters), UiCommand::SelectOptions { option_indices }) => {
-                let legal: Vec<usize> = counters
-                    .available_counters
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (_, available))| *available > 0)
-                    .map(|(index, _)| index)
-                    .collect();
-                validate_option_selection(
-                    0,
-                    Some(counters.max_total as usize),
-                    &option_indices,
-                    &legal,
-                )?;
-
-                let mut counts: HashMap<usize, u32> = HashMap::new();
+                let mut allocations: Vec<CounterAllocation> = Vec::new();
+                let mut positions: HashMap<usize, usize> = HashMap::new();
                 for index in option_indices {
-                    *counts.entry(index).or_insert(0) += 1;
-                }
-
-                let mut selected: Vec<(ironsmith::object::CounterType, u32)> = Vec::new();
-                for index in 0..counters.available_counters.len() {
-                    let Some(chosen) = counts.get(&index).copied() else {
-                        continue;
-                    };
-                    let Some((counter_type, available)) =
-                        counters.available_counters.get(index).copied()
-                    else {
-                        continue;
-                    };
-                    if chosen > available {
-                        return Err(JsValue::from_str(&format!(
-                            "cannot remove {} of counter {} (only {} available)",
-                            chosen,
-                            counter_type.description(),
-                            available
-                        )));
-                    }
-                    if chosen > 0 {
-                        selected.push((counter_type, chosen));
+                    if let Some(position) = positions.get(&index).copied() {
+                        allocations[position].count = allocations[position].count.checked_add(1)
+                            .ok_or_else(|| JsValue::from_str("counter allocation exceeds per-kind range"))?;
+                    } else {
+                        positions.insert(index, allocations.len());
+                        allocations.push(CounterAllocation { index, count: 1 });
                     }
                 }
-
-                Ok(ReplayDecisionAnswer::Counters(selected))
+                validate_counter_allocations(counters, &allocations)
+                    .map(ReplayDecisionAnswer::Counters)
+                    .map_err(|error| JsValue::from_str(&error))
             }
             (
                 DecisionContext::Partition(partition),
@@ -1772,7 +1795,7 @@ impl WasmGame {
                         ActivationStage::ChoosingSacrifice => Ok(
                             PriorityResponse::SacrificeTarget(ObjectId::from_raw(chosen)),
                         ),
-                        ActivationStage::ChoosingCardCost => {
+                        ActivationStage::ChoosingCardCost | ActivationStage::ChoosingCostReferences => {
                             Ok(PriorityResponse::CardCostChoice(ObjectId::from_raw(chosen)))
                         }
                         _ => Err(JsValue::from_str(
@@ -2465,7 +2488,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
         let mountain = wasm.game.create_object_from_definition(
             &ironsmith_registry_test::cards::definitions::basic_mountain(),
             alice,
@@ -2558,17 +2581,11 @@ mod live_action_rollback_tests {
         assert_eq!(request.source, spell);
         let Some(DecisionContext::ManaPayment(context)) = wasm.pending_decision.as_ref() else { unreachable!() };
         assert_eq!(request, context.request);
-        // The browser options worker receives a checkpoint, not the live engine.
-        let checkpoint = wasm.try_build_sync_checkpoint().unwrap();
-        let mut isolated = WasmGame::new();
-        // The browser worker registers the captured card sources before import.
-        isolated.registry.register(CardDefinitionBuilder::new(CardId::new(), "Manual Payment Spell")
-            .card_types(vec![CardType::Sorcery])
-            .mana_cost(ManaCost::new().add_generic(1))
-            .build());
-        isolated.apply_sync_checkpoint(checkpoint).unwrap();
-        let options = mana_activation_option_views(&isolated.game, &request);
+        // Native analysis must retain the same pending payment request.
+        let original = RuntimeSavepoint::capture(&wasm);
+        let options = mana_activation_option_views(&wasm.game, &request).unwrap();
         assert_eq!(serde_json::to_value(options).unwrap(), serde_json::to_value(eager.editor.activation_options).unwrap());
+        original.restore(&mut wasm);
         assert_eq!(wasm.export_mana_payment_options_request("stale", &immediate.plan_id).unwrap(), "null");
         confirm_pending_mana_payment(&mut wasm);
         assert!(wasm.priority_state.pending_cast.is_none());
@@ -3092,6 +3109,7 @@ mod live_action_rollback_tests {
                     preserved_source_ids: vec![],
                     prefer_life: false,
                     required_life_pips: vec![],
+                    x_allocation: None,
                 },
             },
         );
@@ -3193,7 +3211,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
 
         let lotus = ObjectId(
             wasm.add_card_to_zone(
@@ -3280,7 +3298,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::DrawPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(1, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(1, 2);
         wasm.game
             .create_hidden_card_placeholder(alice, Zone::Hand, 7, "alice-slot-7".to_string());
         wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(&wasm.game,
@@ -3322,7 +3340,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::DrawPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
         wasm.game
             .create_hidden_card_placeholder(bob, Zone::Hand, 7, "bob-slot-7".to_string());
         wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(&wasm.game,
@@ -3364,7 +3382,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
 
         let selvala = CardDefinitionBuilder::new(CardId::new(), "Selvala, Explorer Returned")
             .card_types(vec![CardType::Creature])
@@ -3465,7 +3483,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::DrawPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
         wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(&wasm.game,
             alice,
             compute_legal_actions(&wasm.game, alice).expect("fixture has complete replacement state"),
@@ -3949,7 +3967,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
 
         let skeleton_def = ironsmith_registry_test::compile_to_runtime_definition(
             "Probe Skeleton",
@@ -4052,7 +4070,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
 
         let discharge = ObjectId(
             wasm.add_card_to_zone(0, "Galvanic Discharge".to_string(), "Hand".to_string(), true)
@@ -4140,7 +4158,7 @@ mod live_action_rollback_tests {
             ironsmith::turn_runner::TurnState::FirstMainPriority,
         ));
         wasm.runner_awaiting_priority = true;
-        wasm.priority_state.restore_priority_tracker_for_sync(0, 2);
+        wasm.priority_state.seed_priority_tracker_for_test(0, 2);
 
         let spell = ObjectId(
             wasm.add_card_to_zone(0, "Join the Maestros".to_string(), "Hand".to_string(), true)
@@ -4266,4 +4284,10 @@ mod live_action_rollback_tests {
         assert_eq!(wasm.game.stack.len(), 1, "no copy trigger without the casualty cost");
         assert_eq!(resolve_stack_and_count_ogres(&mut wasm), 1);
     }
+
+    include!("payment_disclosure_undo_tests.rs");
+    include!("snc_payment_disclosure_undo_tests.rs");
+    include!("payment_disclosure_transaction_tests.rs");
+    include!("grouped_hand_payment_disclosure_tests.rs");
+
 }

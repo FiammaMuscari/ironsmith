@@ -473,12 +473,15 @@ fn mixed_cant_and_becomes_chain_keeps_the_shared_target_and_both_actions() {
         debug.contains("Cant") && debug.contains("Block"),
         "the can't-block restriction must survive: {debug}"
     );
-    assert!(
-        debug.contains("AddSubtypes")
-            && debug.contains("Coward")
-            && debug.matches("EndOfTurn").count() >= 2,
-        "the Coward modification and both authored durations must survive: {debug}"
-    );
+    assert!(coordinated.iter().any(|effect| matches!(effect,
+        EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action: SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeBasePtCreature {
+                base_power_toughness: None, subtypes, preserve_other_types: true,
+                duration: crate::effect::Until::EndOfTurn, ..
+            }), ..
+        }) if subtypes == &[crate::types::Subtype::Coward]
+    )), "the additive Coward modification must retain its duration: {debug}");
+    assert!(debug.matches("EndOfTurn").count() >= 2, "{debug}");
 }
 
 #[test]
@@ -509,8 +512,7 @@ fn multicolor_source_animation_then_unblockable_keeps_both_typed_arms() {
         EffectAst::SubjectVerb(SubjectVerbEffectAst {
             action:
                 SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeBasePtCreature {
-                    power,
-                    toughness,
+                    base_power_toughness: Some((power, toughness)),
                     target,
                     card_types,
                     subtypes,
@@ -2565,6 +2567,11 @@ fn trailing_duration_applies_to_ability_loss_before_type_change() {
                 | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::AddSubtypes {
                     duration: second_duration,
                     ..
+                })
+                | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeBasePtCreature {
+                    base_power_toughness: None,
+                    duration: second_duration,
+                    ..
                 }),
             ..
         }),
@@ -3282,7 +3289,10 @@ fn counter_then_anaphoric_destroy_battlefield_guard_scopes_to_destroy_target() {
     let TargetAst::Object(filter, _, _) = target else {
         panic!("expected an anaphoric object filter: {target:#?}");
     };
-    assert_eq!(filter.zone, Some(Zone::Battlefield), "{filter:#?}");
+    assert_eq!(
+        filter.zone, None,
+        "the reference must not introduce a second target: {filter:#?}"
+    );
     assert!(!filter.tagged_constraints.is_empty(), "{filter:#?}");
     assert!(
         !format!("{effects:#?}").contains("ControlFlow"),
@@ -4525,7 +4535,7 @@ fn opportunistic_dragon_keeps_source_lifetime_target_effects_in_its_trigger() {
     let clause_effects = parse_effect_chain_lexed(&clause)
         .expect("source-lifetime clause should parse as a resolution chain");
     assert!(
-        format!("{clause_effects:#?}").contains("ThisLeavesTheBattlefield"),
+        format!("{clause_effects:#?}").contains("ObjectOnBattlefield"),
         "{clause_effects:#?}"
     );
 
@@ -4540,7 +4550,7 @@ fn opportunistic_dragon_keeps_source_lifetime_target_effects_in_its_trigger() {
         debug.contains("ChangeControllerToEffectController"),
         "{debug}"
     );
-    assert!(debug.contains("ThisLeavesTheBattlefield"), "{debug}");
+    assert!(debug.contains("ObjectOnBattlefield"), "{debug}");
     assert!(debug.contains("RemoveAllAbilities"), "{debug}");
     assert!(
         debug.contains("BeBlocked") || debug.contains("Block"),
@@ -4563,7 +4573,7 @@ fn wondrous_wasp_keeps_source_lifetime_ability_loss_on_the_tapped_target() {
         .expect("The Wondrous Wasp source-lifetime trigger should parse");
     let debug = format!("{def:#?}");
     assert!(debug.contains("TapEffect"), "{debug}");
-    assert!(debug.contains("ThisLeavesTheBattlefield"), "{debug}");
+    assert!(debug.contains("ObjectOnBattlefield"), "{debug}");
     assert!(debug.contains("RemoveAllAbilities"), "{debug}");
     assert!(
         !debug.contains("RemoveAllAbilitiesForFilter"),

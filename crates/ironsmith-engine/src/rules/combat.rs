@@ -53,6 +53,18 @@ fn get_static_abilities(object: &Object) -> Vec<crate::static_abilities::StaticA
 ///
 /// Takes `GameState` to check abilities granted by continuous effects (like protection from Akroma's Will).
 pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::GameState) -> bool {
+    // Check the authoritative live restrictions before refreshing derived ones.
+    if !game.can_be_blocked(attacker.id) || !game.can_block_attacker(blocker.id, attacker.id) {
+        return false;
+    }
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if refreshed.refresh_continuous_state().is_err() {
+            return false;
+        }
+        let view = DerivedGameView::new(&refreshed);
+        return can_block_with_view(attacker, blocker, &refreshed, &view);
+    }
     let view = DerivedGameView::new(game);
     can_block_with_view(attacker, blocker, game, &view)
 }
@@ -292,6 +304,15 @@ pub(crate) fn can_block_with_view(
         .iter()
         .filter_map(|ability| ability.landwalk_kind())
     {
+        // CR 609.4: this permission changes only this blocking check. The
+        // attacker keeps landwalk for every other characteristic query.
+        if game
+            .effect_store
+            .cant_effects
+            .ignores_landwalk_for_blocking(game, attacker.id, landwalk_kind)
+        {
+            continue;
+        }
         let blocker_controller = game.current_controller(blocker.id);
         let defending_has_required_land = game
             .battlefield
@@ -465,12 +486,9 @@ fn protection_prevents_blocking_with_view(
             .chosen_player(attacker.id)
             .is_some_and(|chosen| game.controller_of(blocker) == chosen),
         ProtectionFrom::ColorsOutsideCommanderIdentity => {
-            !crate::targeting::colors_outside_commander_identity(
-                game,
-                game.controller_of(attacker),
-            )
-            .intersection(blocker_colors)
-            .is_empty()
+            !crate::targeting::colors_outside_commander_identity(game, game.controller_of(attacker))
+                .intersection(blocker_colors)
+                .is_empty()
         }
         // Auras such as Cho-Manno's Blessing store the choice on the Aura.
         ProtectionFrom::ChosenColor => {
@@ -626,11 +644,66 @@ pub(crate) fn can_attack_defending_player_with_view(
     game: &crate::game_state::GameState,
     view: &DerivedGameView<'_>,
 ) -> bool {
+    can_attack_defender_kind_with_view(creature, defending_player, false, game, view)
+}
+
+/// Attack-target-aware restriction owner. A battle's protector is still its
+/// defending player for landwalk and other defender rules, but a prohibition
+/// on attacking that player or their planeswalkers does not prohibit a battle.
+pub(crate) fn can_attack_target_with_view(
+    creature: &Object,
+    defending_player: crate::ids::PlayerId,
+    target: &crate::combat_state::AttackTarget,
+    game: &crate::game_state::GameState,
+    view: &DerivedGameView<'_>,
+) -> bool {
+    if matches!(target, crate::combat_state::AttackTarget::Player(_))
+        && !game.can_attack_player_directly(creature.id, defending_player)
+    {
+        return false;
+    }
+    can_attack_defender_kind_with_view(
+        creature,
+        defending_player,
+        matches!(target, crate::combat_state::AttackTarget::Battle(_)),
+        game,
+        view,
+    )
+}
+
+pub fn can_attack_target(
+    creature: &Object,
+    defending_player: crate::ids::PlayerId,
+    target: &crate::combat_state::AttackTarget,
+    game: &crate::game_state::GameState,
+) -> bool {
+    can_attack_target_with_view(
+        creature,
+        defending_player,
+        target,
+        game,
+        &DerivedGameView::new(game),
+    )
+}
+
+fn can_attack_defender_kind_with_view(
+    creature: &Object,
+    defending_player: crate::ids::PlayerId,
+    battle: bool,
+    game: &crate::game_state::GameState,
+    view: &DerivedGameView<'_>,
+) -> bool {
     if !can_attack_with_view(creature, game, view) {
         return false;
     }
-
-    if !game.can_attack_defending_player(creature.id, defending_player) {
+    let allowed = if battle {
+        game.are_opponents(game.controller_of(creature), defending_player)
+            && game.attack_direction_allows_defender(game.controller_of(creature), defending_player)
+            && game.can_attack(creature.id)
+    } else {
+        game.can_attack_defending_player(creature.id, defending_player)
+    };
+    if !allowed {
         return false;
     }
 
@@ -673,6 +746,11 @@ pub(crate) fn must_attack_with_view(
     view: &DerivedGameView<'_>,
 ) -> bool {
     view.object_has_static_ability_id(creature.id, StaticAbilityId::MustAttack)
+        || game
+            .effect_store
+            .cant_effects
+            .must_attack
+            .contains_key(&creature.id)
         || game.is_goaded(creature.id)
 }
 
@@ -829,12 +907,17 @@ mod tests {
             cast_alternative_method: None,
             cast_play_from_constraints: None,
             cast_grant_usage_identity: None,
+            cast_price: None,
             has_fuse: false,
             optional_costs: vec![].into(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: crate::player::ManaPool::default(),
+            caster_mana_spent_to_cast: None,
+            mana_spent_on_x: None,
             snow_mana_spent_to_cast: crate::player::ManaPool::default(),
-            temporary_static_ability_grants: crate::object::TemporaryStaticAbilityGrants::new(ObjectId::from_raw(raw)),
+            temporary_static_ability_grants: crate::object::TemporaryStaticAbilityGrants::new(
+                ObjectId::from_raw(raw),
+            ),
             x_value: None,
             keyword_payment_contributions_to_cast: vec![],
             cast_tagged_objects: HashMap::new(),
@@ -1378,13 +1461,16 @@ mod tests {
         assert_eq!(game.object(island_id).unwrap().owner, bob);
         assert_eq!(game.current_controller(island_id), Some(bob));
         let effect = game.effect_store.continuous_effects.add_effect(
-            crate::continuous::ContinuousEffect::gain_control(island_id, alice, island_id, alice));
-        game.refresh_continuous_state().expect("Island control change completes");
+            crate::continuous::ContinuousEffect::gain_control(island_id, alice, island_id, alice),
+        );
+        game.refresh_continuous_state()
+            .expect("Island control change completes");
         assert_eq!(game.object(island_id).unwrap().owner, bob);
         assert_eq!(game.current_controller(island_id), Some(alice));
         assert!(!can_attack_defending_player(&attacker, bob, &game));
         game.effect_store.continuous_effects.remove_effect(effect);
-        game.refresh_continuous_state().expect("Island control restores");
+        game.refresh_continuous_state()
+            .expect("Island control restores");
         assert!(can_attack_defending_player(&attacker, bob, &game));
     }
 
@@ -1430,13 +1516,16 @@ mod tests {
         );
 
         game.add_object(attacker.clone());
-        game.set_monarch(None);
+        game.set_monarch(None)
+            .expect("checked designation/departure fixture");
         assert!(!can_attack_defending_player(&attacker, bob, &game));
 
-        game.set_monarch(Some(alice));
+        game.set_monarch(Some(alice))
+            .expect("checked designation/departure fixture");
         assert!(!can_attack_defending_player(&attacker, bob, &game));
 
-        game.set_monarch(Some(bob));
+        game.set_monarch(Some(bob))
+            .expect("checked designation/departure fixture");
         assert!(can_attack_defending_player(&attacker, bob, &game));
     }
 
@@ -1582,14 +1671,19 @@ mod tests {
         assert_eq!(game.object(artifact).unwrap().owner, bob);
         assert_eq!(game.current_controller(artifact), Some(bob));
         let effect = game.effect_store.continuous_effects.add_effect(
-            crate::continuous::ContinuousEffect::gain_control(artifact, alice, artifact, alice));
-        game.refresh_continuous_state().expect("artifact control change completes");
+            crate::continuous::ContinuousEffect::gain_control(artifact, alice, artifact, alice),
+        );
+        game.refresh_continuous_state()
+            .expect("artifact control change completes");
         assert_eq!(game.object(artifact).unwrap().owner, bob);
         assert_eq!(game.current_controller(artifact), Some(alice));
-        assert!(!can_block(&attacker, &nonmatching_blocker, &game),
-            "newly controlled artifact contributes its mana value despite Bob's ownership");
+        assert!(
+            !can_block(&attacker, &nonmatching_blocker, &game),
+            "newly controlled artifact contributes its mana value despite Bob's ownership"
+        );
         game.effect_store.continuous_effects.remove_effect(effect);
-        game.refresh_continuous_state().expect("artifact control restores");
+        game.refresh_continuous_state()
+            .expect("artifact control restores");
         assert!(can_block(&attacker, &nonmatching_blocker, &game));
     }
 

@@ -16,6 +16,7 @@ use super::context::EventContext;
 ///
 /// This allows O(1) type checking without downcasting for common operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
 pub enum EventKind {
     /// Damage being dealt
     Damage,
@@ -147,6 +148,20 @@ pub enum EventKind {
     StateTrigger,
     /// A Saga chapter ability resolved
     ChapterAbilityResolved,
+    /// An Aura, Equipment or Fortification became attached.
+    ObjectBecameAttached,
+    /// A permanent phased in (not a zone change).
+    PermanentPhasedIn,
+    /// One card was moved by an actual mill instruction.
+    CardMilled,
+    /// A player declared one or more attackers attacking another player.
+    PlayerAttackDeclaration,
+    /// A batch of existing unspent mana would leave a pool.
+    ManaLost,
+    /// A successfully completed life payment (not generic life loss).
+    LifePaid,
+    /// A different player acquired the monarch designation.
+    MonarchChanged,
 }
 
 /// A target within an event that can potentially be redirected.
@@ -244,6 +259,10 @@ pub trait GameEventType: Debug + Send + Sync + GameEventTypeClone {
     fn source_object(&self) -> Option<ObjectId> {
         None
     }
+
+    /// Captured cause of a completed action, when this event kind owns one.
+    /// A missing cause cannot prove a spell/ability or its controller.
+    fn cause(&self) -> Option<&crate::events::cause::EventCause> { None }
 
     // === Accessor methods for trigger matching ===
 
@@ -350,6 +369,7 @@ where
 }
 
 pub trait ReplacementMatcher: Debug + Send + Sync + ReplacementMatcherClone + Any {
+
     /// Exact mana-event predicate for compact evaluation. Wrappers with
     /// additional conditions must expose those conditions or leave this unknown.
     fn mana_predicate(&self) -> Option<crate::events::mana::ManaEventPredicate<'_>> {

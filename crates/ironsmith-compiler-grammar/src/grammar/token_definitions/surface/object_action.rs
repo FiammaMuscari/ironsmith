@@ -3,6 +3,17 @@ use super::*;
 pub fn parse_token_definition_shape_tokens(
     tokens: &[OwnedLexToken],
 ) -> Option<TokenDefinitionSpec> {
+    // CR 111.10w/x and 111.11: these names denote a complete canonical
+    // token definition, not a host-card special case or runtime name lookup.
+    // A complete parser prevents modifiers/trailing text from being discarded.
+    let canonical_tokens = if tokens.first().is_some_and(|token| token.is_word("tapped")) {
+        &tokens[1..]
+    } else {
+        tokens
+    };
+    if let Some(shape) = super::super::rules::parse_canonical_named_token_shape(canonical_tokens) {
+        return Some(TokenDefinitionSpec::Builtin(shape));
+    }
     let words = parser_token_word_refs(tokens);
     let has = |word| common::word_present(&words, word);
     let all = |expected: &[&str]| common::all_words_present(&words, expected);

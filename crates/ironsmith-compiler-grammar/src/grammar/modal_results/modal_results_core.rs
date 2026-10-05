@@ -22,6 +22,65 @@ pub(super) fn parse_direct_prior_effect_result_surface(
     {
         return None;
     }
+    // Keep this complete destination phrase separate from a generic "did".
+    // Revealing a chosen card and moving the remainder can both succeed even
+    // when the selected card's hand move was prevented or redirected.
+    if let Some(mut tail) = normalized_words.strip_prefix(&["you"]) {
+        let negated = if let Some(rest) = tail.strip_prefix(&["did", "not"]) {
+            tail = rest;
+            true
+        } else if tail
+            .first()
+            .is_some_and(|word| matches!(*word, "didnt" | "didn't"))
+        {
+            tail = &tail[1..];
+            true
+        } else {
+            false
+        };
+        if tail == ["put", "card", "into", "your", "hand", "this", "way"] {
+            let mut surface = PriorEffectResultSurface::new(
+                PriorEffectAction::PutIntoHand,
+                crate::target::ObjectFilter::default(),
+                PriorEffectResultActor::You,
+                PriorEffectResultQuantifier::One,
+            );
+            surface.negated = negated;
+            return Some(surface);
+        }
+    }
+    // Qualified death results retain the creature's characteristics at the
+    // actual battlefield departure, rather than testing the graveyard card.
+    if let Some(dies) = tokens
+        .iter()
+        .position(|token| token.is_any_word(&["dies", "died"]))
+    {
+        let tail = tokens[dies + 1..]
+            .iter()
+            .filter_map(OwnedLexToken::as_word)
+            .collect::<Vec<_>>();
+        let subject = &tokens[..dies];
+        if tail == ["this", "way"]
+            && !subject
+                .first()
+                .is_some_and(|token| token.is_any_word(&["that", "it"]))
+            && let Some(mut filter) = parse_prior_result_object_filter(subject)
+        {
+            if !filter
+                .card_types
+                .contains(&crate::types::CardType::Creature)
+            {
+                return None;
+            }
+            filter.zone = None;
+            return Some(PriorEffectResultSurface::new(
+                PriorEffectAction::Died,
+                filter,
+                PriorEffectResultActor::Passive,
+                PriorEffectResultQuantifier::One,
+            ));
+        }
+    }
     let one_or_more =
         crate::word_primitives::parse_sequence_prefix(&normalized_words, &["one", "or", "more"]);
     let ordinary_quantifier = if one_or_more {

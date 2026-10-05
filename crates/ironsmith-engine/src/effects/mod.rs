@@ -76,19 +76,23 @@ pub const PUBLIC_REVEALED_TAG: &str = "__public_revealed";
 pub const REVEALED_THIS_WAY_TAG: &str = crate::tag::REVEALED_THIS_WAY_TAG;
 
 // Re-export the traits, modal spec, and cost validation error
-pub use context::{DoThisLimit, ExecutionError, ReplacementContextMappingError, ReplacementExecutionContext, ResolvedTarget, TargetError, rebase_target_scope};
+pub use context::{
+    DoThisLimit, ExecutionError, IterationContext, ReplacementExecutionContext, ResolvedTarget,
+    TargetError, rebase_target_scope,
+};
 pub use executor_trait::{
     CostExecutableEffect, CostValidationError, DeferredPlayerActionProposal,
-    EffectExecutionCategory, EffectExecutor, ModalEffectSpec, ModalSpec,
-    SimultaneousEffectProposal, TargetReusePolicy, TargetSelectionProfile,
+    EffectExecutionCategory, EffectExecutor, ModalEffectSpec, ModalSpec, SimultaneousEffectCommit,
+    SimultaneousEffectCompletion, SimultaneousEffectProposal, TargetReusePolicy,
+    TargetSelectionProfile,
 };
 pub type EffectContext<'a> = context::ExecutionContext<'a>;
 pub(crate) use context::{ExecutionContext, ExecutionContextCheckpoint};
-pub use runtime::{execute_effect, resolve_value, validate_target};
 pub(crate) use runtime::{
-    match_triggers_at_instruction_boundary, retain_unmatched_outcome_events,
-    with_per_event_trigger_matching,
+    capture_triggers_before_added_program, match_triggers_at_instruction_boundary,
+    retain_unmatched_outcome_events, with_per_event_trigger_matching,
 };
+pub use runtime::{execute_effect, resolve_value, validate_target};
 
 // Re-export effect implementations
 pub use cards::{
@@ -104,7 +108,7 @@ pub use cards::{
     ShuffleLibraryEffect, SurveilEffect,
 };
 pub use combat::{
-    AssignNoCombatDamageEffect, ClearGoadEffect, CombatDamagePreventionTarget,
+    AssignNoCombatDamageEffect, BecomeBlockedEffect, ClearGoadEffect, CombatDamagePreventionTarget,
     EnterAttackingEffect, ExchangeValueKind, ExchangeValueOperand, ExchangeValuesEffect,
     FightEffect, GoadEffect, GrantAbilitiesAllEffect, GrantAbilitiesTargetEffect, MeleeEffect,
     ModifyPowerToughnessAllEffect, ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
@@ -115,22 +119,22 @@ pub use combat::{
 pub use composition::{
     AdaptEffect, AmplifyEffect, AuraSwapEffect, BackupEffect, BeholdEffect, BidLifeEffect,
     BolsterEffect, CastEncodedCardCopyEffect, ChooseModeEffect, ChooseObjectsEffect,
-    ChooseSpellCastHistoryEffect, CipherEffect, ConditionalEffect, CounterAbilityEffect,
-    CumulativeUpkeepEffect, DevourEffect, EmitGiftGivenEffect, EmitKeywordActionEffect,
-    ExecuteWithSourceEffect, ExploreEffect, ForEachControllerOfTaggedEffect, ForEachObject,
-    ForEachObjectCorrelatedResultEffect, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
-    ForPlayersEffect, GrantEndThisEffectPaymentEffect,
-    GrantRepeatableManaPaymentActionUntilEndOfTurnEffect, IfEffect, LifeBidStart,
-    LocalRewriteEffect, ManaRestrictedEffect, ManaRetainedEffect, ManifestCardFromHandEffect,
-    ManifestDreadEffect, ManifestObjectsEffect, ManifestTopCardOfLibraryEffect, MayEffect,
-    OpenAttractionEffect, PopulateEffect, ReflexiveTriggerEffect, RepeatEffectsEffect,
-    RepeatProcessEffect, RepeatProcessPromptEffect, SecretChoiceEffect, SecretChoiceResult,
-    SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
-    TagMatchingObjectsEffect, TagOtherBlockParticipantEffect, TagTriggeringAttackerEffect,
-    TagTriggeringBlockersEffect, TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect,
-    TagTriggeringSourceEffect, TaggedEffect, TargetOnlyEffect, UnlessActionEffect,
-    UnlessPaysEffect, VOTE_WINNERS_TAG, VOTED_OBJECTS_TAG, VillainousChoiceEffect, VoteChoice,
-    VoteEffect, VoteOption, VoteResult, WithIdEffect,
+    ChooseSpellCastHistoryEffect, CipherEffect, CollectEvidenceEffect, ConditionalEffect,
+    CounterAbilityEffect, CumulativeUpkeepEffect, DevourEffect, EmitGiftGivenEffect,
+    EmitKeywordActionEffect, ExecuteWithSourceEffect, ExploreEffect,
+    ForEachControllerOfTaggedEffect, ForEachObject, ForEachObjectCorrelatedResultEffect,
+    ForEachTaggedEffect, ForEachTaggedPlayerEffect, ForPlayersEffect,
+    GrantEndThisEffectPaymentEffect, GrantRepeatableManaPaymentActionUntilEndOfTurnEffect,
+    IfEffect, LifeBidStart, LocalRewriteEffect, ManaRestrictedEffect, ManaRetainedEffect,
+    ManifestCardFromHandEffect, ManifestDreadEffect, ManifestObjectsEffect,
+    ManifestTopCardOfLibraryEffect, MayEffect, OpenAttractionEffect, PopulateEffect,
+    ReflexiveTriggerEffect, RepeatEffectsEffect, RepeatProcessEffect, RepeatProcessPromptEffect,
+    SecretChoiceEffect, SecretChoiceResult, SequenceEffect, SupportEffect, TagAllEffect,
+    TagAttachedToSourceEffect, TagMatchingObjectsEffect, TagOtherBlockParticipantEffect,
+    TagTriggeringAttackerEffect, TagTriggeringBlockersEffect, TagTriggeringDamageTargetEffect,
+    TagTriggeringObjectEffect, TagTriggeringSourceEffect, TaggedEffect, TargetOnlyEffect,
+    UnlessActionEffect, UnlessPaysEffect, VOTE_WINNERS_TAG, VOTED_OBJECTS_TAG,
+    VillainousChoiceEffect, VoteChoice, VoteEffect, VoteOption, VoteResult, WithIdEffect,
 };
 pub use continuous::{ApplyContinuousEffect, ExchangeTextBoxesEffect, RuntimeModification};
 pub use control::{
@@ -186,7 +190,7 @@ pub use player::{
     AdditionalLandPlaysEffect, AdditionalPhase, AdditionalPhasesEffect, AscendEffect,
     BecomeMonarchEffect, CascadeEffect, CastSourceEffect, CastTaggedEffect, ChooseCardNameEffect,
     ChooseCardTypeEffect, ChooseColorEffect, ChooseCreatureTypeEffect, ChooseLandTypeEffect,
-    ChooseNamedOptionEffect, ChooseNumberAtRandomEffect, ChoosePlayerEffect,
+    ChooseNamedOptionEffect, ChooseNumberAtRandomEffect, ChooseNumberEffect, ChoosePlayerEffect,
     ControlCombatChoicesThisTurnEffect, ControlPlayerEffect, CreateEmblemEffect, DiscoverEffect,
     DrawTheGameEffect, EndCombatPhaseEffect, EndTurnEffect, EnergyCountersEffect,
     ExileInsteadOfGraveyardEffect, ExileThenGrantPlayEffect, ExileUntilMatchCastEffect,
@@ -198,17 +202,18 @@ pub use player::{
     MayCastMatchingSpellWithoutPayingManaCostEffect, PayAnyEnergyEffect, PayAnyLifeEffect,
     PayEnergyEffect, PlaySubgameEffect, PlayerCountersEffect, PoisonCountersEffect,
     RadiationEffect, ReduceSpeedEffect, RestartGameEffect, RevealChosenSubtypeEffect,
-    ReverseTurnOrderEffect, RingTemptsYouEffect, RollDiceChooseResultEffect, RollDieEffect,
-    SkipCombatPhasesEffect, SkipCombatPhasesThisTurnEffect, SkipDrawStepEffect,
-    SkipMainPhasesThisTurnEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
-    TakeInitiativeEffect, TicketCountersEffect, VentureIntoDungeonEffect, WinTheGameEffect,
+    ReverseTurnOrderEffect, RingTemptsYouEffect, RippleEffect, RollDiceChooseResultEffect,
+    RollDieEffect, SkipCombatPhasesEffect, SkipCombatPhasesThisTurnEffect, SkipDrawStepEffect,
+    SkipMainPhasesThisTurnEffect, SkipNextCombatPhaseThisTurnEffect, SkipScheduledEffect,
+    SkipTurnEffect, TakeInitiativeEffect, TicketCountersEffect, VentureIntoDungeonEffect,
+    WinTheGameEffect,
 };
 pub use replacement::{
     ApplyReplacementEffect, RegisterCounterPlacementReplacementEffect,
-    RegisterDamagedBySourceZoneReplacementEffect,
-    RegisterDrawReplacementEffect, RegisterEnterTappedReplacementEffect,
-    RegisterEnterUnderControlReplacementEffect, RegisterEnterWithCountersReplacementEffect,
-    RegisterFutureZoneReplacementEffect, RegisterManaReplacementEffect,
+    RegisterDamagedBySourceZoneReplacementEffect, RegisterDrawReplacementEffect,
+    RegisterEnterTappedReplacementEffect, RegisterEnterUnderControlReplacementEffect,
+    RegisterEnterWithCountersReplacementEffect, RegisterFutureZoneReplacementEffect,
+    RegisterManaReplacementEffect, RegisterManaRewriteEffect, RegisterManaSpendPermissionEffect,
     RegisterNextBatchEnterWithCountersEffect, RegisterZoneReplacementEffect, ReplacementApplyMode,
 };
 pub use restrictions::CantEffect;
@@ -219,8 +224,8 @@ pub use stack::{
     VariableCasualtyPlaneswalkerCopyEffect,
 };
 pub use tokens::{
-    AmassEffect, CopyAttackTargetMode, CreateTokenCopyEffect, CreateTokenEffect, IncubateEffect,
-    InvestigateEffect, TokenCopyReferenceSurface,
+    AmassEffect, CopyAttackTargetMode, CreateTokenCopyEffect, CreateTokenEffect, EmpowerJaceEffect,
+    IncubateEffect, InvestigateEffect, TokenCopyReferenceSurface,
 };
 pub use zones::{
     BattlefieldController, BecomePlottedEffect, DestroyEffect, DestroyNoRegenerationEffect,
@@ -233,3 +238,20 @@ pub use zones::{
     ReturnFromGraveyardToHandEffect, ReturnToHandEffect, SacrificeEffect, SacrificeTargetEffect,
     ShuffleObjectsIntoLibraryEffect,
 };
+
+pub use damage::DealDamageToRecipientsEffect;
+pub use replacement::RegisterDamageAdditionEffect;
+pub use replacement::RegisterDamageMultiplierEffect;
+
+pub(crate) use composition::{
+    TaggedRuntimeState, apply_outcome_tags, capture_tagged_runtime_state, is_object_selection,
+    prepare_conditional_branch, resolve_source_binding,
+};
+
+pub(crate) use composition::{PreparedIfBranch, execute_if_branches, prepare_if_branches};
+
+pub(crate) use composition::{ForPlayersDrawContinuation, ForPlayersDrawProgress};
+
+pub use damage::DealDamageBySourcesEffect;
+
+pub use damage::DealDamageEachEffect;

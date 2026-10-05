@@ -1,4 +1,5 @@
 import useUiText from "@/i18n/useUiText";
+import CardCreationControls from "@/components/layout/CardCreationControls";
 import DiagnosticsSheet from "@/components/layout/DiagnosticsSheet";
 import PriorityHoldControl from "@/components/decisions/PriorityHoldControl";
 import { useCastPlayerHovered } from "@/context/DragContext";
@@ -12,6 +13,7 @@ import DeckLoadingView from "./DeckLoadingView";
 import OpenDecklistModal from "./OpenDecklistModal";
 import PuzzleSetupView from "./PuzzleSetupView";
 import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
+import ManaPaymentDecision from "@/components/decisions/ManaPaymentDecision";
 import MobileBattleScene from "./MobileBattleScene";
 import PlanarZone from "./PlanarZone";
 import ManaPool from "@/components/left-rail/ManaPool";
@@ -23,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 import { playerDisplayName, samePlayerId } from "@/lib/player-display";
 import { useI18n } from "@/i18n/I18nContext";
-import { anchorFloatingDock, dockMaxWidth } from "@/lib/floating-dock-position";
+import { anchorFloatingDock, anchorManaPaymentDock, DECISION_DOCK_BOTTOM_INSET, dockMaxWidth } from "@/lib/floating-dock-position";
 import { ZONE_PILES_MOVED_EVENT } from "./PlayerZonePiles";
 
 // The dock stays anchored bottom-right and sized against the local
@@ -126,6 +128,7 @@ export default function TableCore({
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const tableRef = useRef(null);
   const humanActionDockRef = useRef(null);
+  const previousHoldRuleRef = useRef("never");
   const [openDecklist, setOpenDecklist] = useState(null);
   const [humanActionDockPosition, setHumanActionDockPosition] = useState(null);
   const {
@@ -251,15 +254,26 @@ export default function TableCore({
       zoneElements.forEach(observe);
       observe(dock);
       observe(table);
-      const protectedZones = zoneElements.map(visibleRect).filter(Boolean);
+      const protectedZones = zoneElements.flatMap(element => [element, ...element.querySelectorAll(".zone-pile, .zone-pile-label")]).map(visibleRect).filter(Boolean);
+      if (state?.decision?.kind === 'mana_payment') {
+        const opponentRows = [...table.querySelectorAll('.battlefield-panel--opponents [data-zone-anchor-player]')].map(zone => zone.querySelector('.battlefield-row[data-bf-side="top"]')).filter(Boolean);
+        const opponentCards = opponentRows.flatMap(row => [...row.querySelectorAll('.battlefield-row-card')]);
+        opponentCards.forEach(observe);
+        const opponentCardBottom = opponentCards.map(visibleRect).filter(Boolean).reduce((bottom, rect) => Math.max(bottom, rect.bottom), 48);
+        const next = anchorManaPaymentDock({ viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, dockHeight, protectedZones, opponentCardBottom });
+        setHumanActionDockPosition(previous => Object.keys(next).every(key => previous?.[key] === next[key]) ? previous : next);
+        return;
+      }
       // Bottom-right corner, beside the hand: the hand keeps a reserve on
-      // its right (see handSideReserve) that bounds the dock's width, and the
-      // dock may only grow up to just below Graveyard/Exile; taller content
-      // scrolls inside it.
-      const bottomLimit = window.innerHeight - 16;
+      // its right (see handSideReserve) that bounds the dock's width.
+      // Keep enough room for the decision header, a useful portion of the
+      // choices, and Submit. When the pile column leaves less room than that,
+      // anchorFloatingDock slides the dock beside it; longer lists scroll.
+      const bottomLimit = window.innerHeight - DECISION_DOCK_BOTTOM_INSET;
       const pilesBottom = protectedZones.reduce((bottom, rect) => Math.max(bottom, rect.bottom), -Infinity);
+      const minimumDecisionRoom = Math.min(280, Math.round(window.innerHeight * 0.6));
       const maxHeight = Number.isFinite(pilesBottom)
-        ? Math.max(150, Math.floor(bottomLimit - pilesBottom - 14))
+        ? Math.max(minimumDecisionRoom, Math.floor(bottomLimit - pilesBottom - 14))
         : Math.round(window.innerHeight * 0.6);
       const maxWidth = Math.round(dockMaxWidth(window.innerWidth));
       const position = anchorFloatingDock({
@@ -326,8 +340,8 @@ export default function TableCore({
     && typeof onChangePerspective === "function"
     && players.length > 1;
   const humanQuickControlsElement = focusedHudDesktop ? (
-    <div className="battlefield-human-quick-controls">
-      <PriorityHoldControl compact />
+    <div className="battlefield-human-quick-controls decision-quick-controls">
+      <PriorityHoldControl compact previousRuleRef={previousHoldRuleRef} />
       <button
         type="button"
         className="battlefield-auto-pass-toggle"
@@ -391,38 +405,27 @@ export default function TableCore({
           >
             {me.life}
           </span>
-          {/* The seat menu hangs under the name; it is a sibling of the name
-              (not inside it) so its clicks never target the player. */}
-          <span className="player-header-name-stack">
-            <span
-              className={cn(
-                "battlefield-name min-w-0 text-[16px] uppercase tracking-wider font-bold"
-              )}
-              data-player-target={me.id}
-              data-player-target-name={me.id}
-              onPointerDown={handlePlayerTargetPointerDown}
-              onClick={handlePlayerTargetClick}
-              style={{
-                cursor: isPlayerLegalTarget && canPickTargetFromBoard ? "pointer" : undefined,
-              }}
-            >
-              <span className={cn(isActivePlayer && "battlefield-name-text--active")}>
-                {playerDisplayName(state?.players || [], me)}
+          <div className="player-header-name-stack">
+            {canChoosePerspective ? (
+              <PlayerPerspectiveMenu
+                label={t("action.playingAs")}
+                currentId={state?.perspective ?? me?.id ?? 0}
+                isActivePlayer={isActivePlayer}
+                onSelect={onChangePerspective}
+                players={players.map((player) => ({
+                  id: player.id,
+                  name: playerDisplayName(players, player),
+                  accent: getPlayerAccent(players, player.id, state?.perspective, playerAccentOverrides)?.hex,
+                }))}
+              />
+            ) : (
+              <span className="battlefield-name min-w-0 text-[16px] uppercase tracking-wider font-bold" data-player-target-name={me.id}>
+                <span className={cn(isActivePlayer && "battlefield-name-text--active")}>
+                  {playerDisplayName(state?.players || [], me)}
+                </span>
               </span>
-            </span>
-                {canChoosePerspective ? (
-                  <PlayerPerspectiveMenu
-                    label={t("action.playingAs")}
-                    currentId={state?.perspective ?? me?.id ?? 0}
-                    onSelect={onChangePerspective}
-                    players={players.map((player) => ({
-                      id: player.id,
-                      name: playerDisplayName(players, player),
-                      accent: getPlayerAccent(players, player.id, state?.perspective, playerAccentOverrides)?.hex,
-                    }))}
-                  />
-                ) : null}
-          </span>
+            )}
+          </div>
         </div>
         {!focusedHudDesktop ? <PriorityHoldControl /> : null}
         <ManaPool
@@ -435,10 +438,9 @@ export default function TableCore({
           // Chat tab sits right after the player's name, between it and the
           // hand; the panel opens upward from there.
           <div className="player-header-chat-dock">
-            <LobbyChat showOffline />
+            <LobbyChat showOffline onOpenLobby={zoneActionControls?.props?.onOpenLobby} />
           </div>
         ) : null}
-        {humanQuickControlsElement}
         {middleUtilityControls ? (
           <div className="player-header-utility-controls">
             {cloneElement(middleUtilityControls, {
@@ -452,6 +454,11 @@ export default function TableCore({
           </div>
         ) : null}
       </div>
+      {focusedHudDesktop ? (
+        <div className="player-header-card-controls">
+          <CardCreationControls shortLabels onAddCardNotice={zoneActionControls?.props?.onAddCardNotice} />
+        </div>
+      ) : null}
       {!dockStackRailInBoard ? (
         <StackTimelineRail
           selectedObjectId={selectedObjectId}
@@ -539,6 +546,7 @@ export default function TableCore({
       ref={humanActionDockRef}
       className="battlefield-human-action-dock"
       data-human-action-dock
+      data-mana-payment={decision?.kind === 'mana_payment' ? 'true' : undefined}
       style={{
         "--decision-panel-content-width": decisionContentPreferredWidth(decision),
         "--decision-panel-compact-width": decisionCompactPreferredWidth(decision),
@@ -547,6 +555,7 @@ export default function TableCore({
             left: `${humanActionDockPosition.left}px`,
             top: `${humanActionDockPosition.top}px`,
             maxWidth: `${humanActionDockPosition.maxWidth}px`,
+            ...(decision?.kind === 'mana_payment' ? { width: `${humanActionDockPosition.maxWidth}px` } : {}),
             "--dock-max-height": `${humanActionDockPosition.maxHeight}px`,
             right: "auto",
             bottom: "auto",
@@ -557,11 +566,15 @@ export default function TableCore({
     >
       <div className="battlefield-human-decision-dock">
         <div className="table-action-bar battlefield-human-decision-panel">
-          <DecisionPopupLayer
+          {decision?.kind === 'mana_payment' ? <ManaPaymentDecision
+            decision={decision}
+            canAct={samePlayerId(decision.player, perspective) && !multiplayer?.submittingAction && !multiplayer?.peerWait}
+          /> : <DecisionPopupLayer
             priorityInline
             dockSubmitFooter
+            quickControls={humanQuickControlsElement}
             selectedObjectId={selectedObjectId}
-          />
+          />}
         </div>
       </div>
     </div>

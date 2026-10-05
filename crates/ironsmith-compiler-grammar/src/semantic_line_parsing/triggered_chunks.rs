@@ -60,6 +60,7 @@ pub(crate) fn apply_trigger_intro_surface(
         | TriggerSpec::ThisAttacksWithExactlyNOthers(_)
         | TriggerSpec::ThisAttacksAndIsntBlocked
         | TriggerSpec::ThisAttacksWhileSaddled
+        | TriggerSpec::ThisAttacksPlayerWithMostLife
         | TriggerSpec::Attacks(_)
         | TriggerSpec::AttacksAndIsntBlocked(_)
         | TriggerSpec::AttacksAndIsntBlockedOneOrMore(_)
@@ -349,6 +350,11 @@ pub fn derive_triggered_ability_functional_zones_from_facts(
         TriggerSpec::WithIntro { trigger, .. } => {
             return derive_triggered_ability_functional_zones_from_facts(trigger, facts);
         }
+        TriggerSpec::ZoneChange(ironsmith_core::trigger_model::ZoneChangeTrigger {
+            this: true,
+            from: Some(origin),
+            ..
+        }) => vec![*origin],
         TriggerSpec::YouCastThisSpell => vec![Zone::Stack],
         TriggerSpec::KeywordActionFromSource {
             action: crate::events::KeywordActionKind::Cycle,
@@ -377,10 +383,10 @@ pub fn derive_triggered_ability_functional_zones_from_facts(
             zones.push(Zone::Battlefield);
         }
     }
-    if facts.returns_self_from_graveyard && !trigger_references_attached_object(trigger) {
-        zones = vec![Zone::Graveyard];
-    } else if facts.discards_this_card {
+    if facts.discards_this_card {
         zones = vec![Zone::Hand];
+    } else if facts.returns_self_from_graveyard && !trigger_references_attached_object(trigger) {
+        zones = vec![Zone::Graveyard];
     }
     zones
 }

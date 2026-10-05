@@ -103,7 +103,7 @@ test("a redacted journal withholds arguments and refuses to claim it is replayab
 });
 
 test("peer transport arguments are never captured even under the full policy", () => {
-  const entry = beginJournalEntry("importSyncCheckpoint", [{ blob: "other players' hidden state" }]);
+  const entry = beginJournalEntry("applyVerifiedHiddenLibraryShuffle", [{ blob: "other players' hidden state" }]);
   completeJournalEntry(entry, null);
   const [recorded] = getJournal().entries;
   assert.equal(recorded.args, null);
@@ -168,4 +168,14 @@ test('branch-aware journal distinguishes speculative and canonical dispatch and 
   assert.equal(journal.entries[1].runtimeBranch, null);
   assert.equal(journal.entries[2].runtimeBranch, 7);
   assert.equal(journal.entries[3].method, 'releaseRuntimeSavepoint');
+});
+
+test('exact-build restore never serializes or traverses private instance bytes', () => {
+  resetJournal(); setJournalPolicy('full');
+  const image={get memory(){throw new Error('Private image must not be read by diagnostics');}};
+  const entry=beginJournalEntry('restoreExactBuildSnapshot',[image]);
+  assert.equal(entry.argsOmitted,true);
+  assert.equal(entry.args,null);
+  assert.deepEqual(entry.argShape,['private instance image']);
+  assert.equal(beginJournalEntry('captureExactBuildSnapshot',[image]),null);
 });

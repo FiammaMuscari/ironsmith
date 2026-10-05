@@ -7,6 +7,7 @@ use crate::cards::builders::PlayerAst;
 use crate::effect::Value;
 use crate::grammar::{primitives, values};
 use crate::lexer::{LexStream, LexedClause, OwnedLexToken, TokenWordView};
+use crate::zone::Zone;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceLookObjectKind {
@@ -51,6 +52,15 @@ pub enum ResourceLookShape<'a> {
 pub enum ResourceShuffleShape {
     HandIntoLibrary {
         player: PlayerAst,
+    },
+    GraveyardIntoLibrary {
+        player: PlayerAst,
+        explicit_all_cards_from: bool,
+    },
+    ObjectsIntoSubjectLibrary {
+        target_len: usize,
+        player: PlayerAst,
+        all: bool,
     },
     /// "Shuffle this creature and target creature with a stun counter on it
     /// into their owners' libraries." (Floodpits Drowner): the first
@@ -191,7 +201,7 @@ fn exact_unit<'a>(
     parser: fn(&mut LexStream<'a>) -> WResult<()>,
 ) -> bool {
     primitives::parse_prefix(trimmed(tokens), parser)
-        .is_some_and(|(_, rest)| trimmed(rest).is_empty())
+        .is_some_and(|(_, rest)| sentence_finished(rest))
 }
 
 fn strip_articles(mut tokens: &[OwnedLexToken]) -> &[OwnedLexToken] {
@@ -487,6 +497,19 @@ pub fn parse_resource_look_shape<'a>(
     if exact_unit(clause, tagged_reference) {
         return Some(ResourceLookShape::Tagged);
     }
+    // Looking at a face-down exiled reference remembers view permission for
+    // that exact incarnation; the engine clears it when the card leaves exile.
+    if let Some(((), rest)) = primitives::parse_prefix(clause, tagged_reference) {
+        let words = crate::lexer::token_word_refs(rest);
+        if matches!(
+            words.as_slice(),
+            ["for", "as", "long", "as", "it", "remains", "exiled"]
+                | ["for", "as", "long", "as", "they", "remain", "exiled"]
+        ) {
+            return Some(ResourceLookShape::Tagged);
+        }
+    }
+
     if exact_unit(clause, play_tagged_while_exiled) {
         return Some(ResourceLookShape::PlayTaggedWhileExiled);
     }

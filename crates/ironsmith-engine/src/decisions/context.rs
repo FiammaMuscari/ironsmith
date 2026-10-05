@@ -501,6 +501,8 @@ pub struct SelectObjectsContext {
     pub max: Option<usize>,
     /// Optional aggregate characteristic bound for the complete selection.
     pub aggregate_constraint: Option<crate::effect::ChoiceAggregateConstraint>,
+    /// Selection-only relations; candidate membership still comes from `candidates`.
+    pub relation_filter: Option<crate::filter::ObjectFilter>,
     /// Whether the chooser may stop short of `min` after seeing the candidates.
     ///
     /// Used for hidden-zone searches where "fail to find" means the player can
@@ -535,6 +537,7 @@ impl SelectObjectsContext {
             min,
             max,
             aggregate_constraint: None,
+            relation_filter: None,
             allow_partial_completion: false,
             require_explicit_choice: false,
             selection_identity: SelectionIdentity::StableId,
@@ -551,6 +554,53 @@ impl SelectObjectsContext {
     pub fn require_explicit_choice(mut self) -> Self {
         self.require_explicit_choice = true;
         self
+    }
+
+    pub fn with_relation_filter(mut self, filter: crate::filter::ObjectFilter) -> Self {
+        self.relation_filter = Some(filter);
+        self
+    }
+
+    /// Validate a submitted public group before an external payment layer
+    /// commits its disclosure. Availability may consider unknown placeholders;
+    /// actual submitted groups require their opened identities and full filter.
+    pub fn selection_satisfies_relation_filter(
+        &self,
+        game: &crate::game_state::GameState,
+        selected: &[ObjectId],
+    ) -> bool {
+        use crate::filter::ObjectFilterExt;
+        let Some(filter) = self.relation_filter.as_ref() else { return true; };
+        let mut context = crate::filter::FilterContext::new(self.player);
+        if let Some(source) = self.source { context = context.with_source(source); }
+        selected.iter().all(|id| game.object(*id).is_some_and(|object|
+            !game.is_hidden_card_placeholder(*id) && filter.matches(object, &context, game)))
+            && crate::effects::composition::selection_relations::allows(game, filter, selected, false)
+    }
+
+    pub fn legal_relation_selection(
+        &self,
+        game: &crate::game_state::GameState,
+        desired: usize,
+    ) -> Option<Vec<ObjectId>> {
+        let filter = self.relation_filter.as_ref()?;
+        let candidates: Vec<_> = self
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id)
+            .collect();
+        (self.min..=desired.min(candidates.len()))
+            .rev()
+            .find_map(|count| {
+                crate::effects::composition::selection_relations::find_group(
+                    game,
+                    filter,
+                    &candidates,
+                    count,
+                    true,
+                )
+            })
     }
 
     pub fn with_aggregate_constraint(
@@ -1126,9 +1176,9 @@ pub struct CountersContext {
     /// Display name of the target.
     pub target_name: String,
     /// Minimum total counters that must be removed.
-    pub min_total: u32,
+    pub min_total: u64,
     /// Maximum total counters that can be removed.
-    pub max_total: u32,
+    pub max_total: u64,
     /// Available counters: (counter_type, count_available).
     pub available_counters: Vec<(CounterType, u32)>,
 }
@@ -1142,6 +1192,18 @@ impl CountersContext {
         target_name: impl Into<String>,
         min_total: u32,
         max_total: u32,
+        available_counters: Vec<(CounterType, u32)>,
+    ) -> Self {
+        Self::new_wide(player, source, target, target_name, u64::from(min_total), u64::from(max_total), available_counters)
+    }
+
+    pub fn new_wide(
+        player: PlayerId,
+        source: Option<ObjectId>,
+        target: Target,
+        target_name: impl Into<String>,
+        min_total: u64,
+        max_total: u64,
         available_counters: Vec<(CounterType, u32)>,
     ) -> Self {
         Self {
@@ -1355,6 +1417,14 @@ impl PriorityContext {
 pub struct SharedTargetPlayerGroup {
     pub group: usize,
     pub target_players: Vec<(crate::game_state::Target, PlayerId)>,
+    /// Exact dependency on an earlier target role, including exclusions.
+    pub pair_constraint: Option<TargetPairConstraint>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetPairConstraint {
+    pub prior_requirement: usize,
+    pub allowed_pairs: Vec<(crate::game_state::Target, crate::game_state::Target)>,
 }
 
 #[derive(Debug, Clone)]

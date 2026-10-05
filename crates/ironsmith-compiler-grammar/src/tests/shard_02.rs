@@ -833,6 +833,7 @@ pub(super) fn rewrite_possessive_self_counters_move_from_source_lki() {
     assert!(!loss.is_lossy(), "{}", loss.reasons_text());
     let debug = format!("{:#?}", compiled.definition.abilities);
     assert!(debug.contains("MoveAllCountersEffect"), "{debug}");
+    assert!(debug.contains("remove_from_source: false"), "{debug}");
     assert!(debug.contains("from: Source"), "{debug}");
     let attach = compiled
         .definition
@@ -1197,7 +1198,9 @@ pub(super) fn rewrite_token_copy_followup_recognizes_next_upkeep_sacrifice() {
 
     assert_eq!(
         followup,
-        super::super::effect_sentences::TokenCopyFollowup::SacrificeAtNextUpkeep(crate::cards::builders::PlayerAst::Any)
+        super::super::effect_sentences::TokenCopyFollowup::SacrificeAtNextUpkeep(
+            crate::cards::builders::PlayerAst::Any
+        )
     );
 }
 
@@ -1795,7 +1798,7 @@ pub(super) fn draw_equal_to_removed_counters_keeps_typed_prior_effect_metric() {
 
     let debug = format!("{:#?}", def.abilities);
     assert!(
-        debug.contains("RemoveUpToCountersEffect")
+        debug.contains("RemoveAnyCountersAmongEffect")
             && debug.contains("DrawCardsEffect")
             && debug.contains("PriorEffectMetric")
             && debug.contains("action: Some(\n")
@@ -1879,7 +1882,7 @@ pub(super) fn died_this_way_count_binds_to_the_destroy_effect() {
     let debug = format!("{:#?}", def.spell_effect);
     assert!(
         debug.contains("DestroyEffect")
-            && debug.contains("TaggedObjectConstraint")
+            && debug.contains("PriorEffectMetric")
             && debug.contains("destroyed_0")
             && debug.contains("DiedThisWay"),
         "expected the died count to bind to the prior destroy result, got {debug}"
@@ -2014,8 +2017,14 @@ pub(super) fn filtered_mill_draw_counts_bind_graveyard_and_concrete_mill_tag() {
         let debug = format!("{def:#?}");
 
         assert!(debug.contains("DrawCardsEffect"), "{debug}");
-        assert!(debug.contains("Graveyard"), "{debug}");
-        assert!(debug.contains("\"milled_0\""), "{debug}");
+        assert!(
+            debug.contains("PriorEffectMetric") && debug.contains("PutIntoGraveyard"),
+            "{debug}"
+        );
+        assert!(
+            debug.contains("WithIdEffect") && debug.contains("AffectedObjects"),
+            "{debug}"
+        );
         assert!(!debug.contains("\"__it__\""), "{debug}");
     }
 }

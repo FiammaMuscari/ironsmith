@@ -8,12 +8,64 @@ use crate::model::{
 };
 use crate::recognition::{ParseDiagnostic, ParseExpectation, ParseOutcome, RuleId};
 
-use super::chain_splitting::{ChainVerbKind, find_chain_verb_tokens, preserve_and_reason};
+use super::chain_splitting::{
+    ChainVerbKind, ChainVerbMatch, find_chain_verb_tokens, preserve_and_reason,
+};
 use super::typed_clause_heads::{
     ClauseActorHeadAst, ClauseHeadFormAst, TypedClauseHeadAst, classify_typed_clause_head,
 };
 
 const COORDINATION_RULE: RuleId = RuleId::new("typed-effect-coordination");
+
+/// State-setting heads participate in shared-subject coordination as well as
+/// imperative action verbs. Recognize them only after a complete carryable
+/// subject (or at an omitted-subject head), not inside a relative predicate.
+fn find_coordination_verb_tokens(tokens: &[OwnedLexToken]) -> Option<ChainVerbMatch> {
+    let action = find_chain_verb_tokens(tokens);
+    let view = crate::lexer::TokenWordView::new(tokens);
+    let words = view.word_refs();
+    let state = words.iter().enumerate().find_map(|(index, word)| {
+        let kind = match *word {
+            "has" | "have"
+                if words.get(index + 1) == Some(&"base")
+                    && matches!(words.get(index + 2), Some(&"power" | &"toughness")) =>
+            {
+                ChainVerbKind::Gain
+            }
+            "is" | "are" | "isnt" | "isn't" | "arent" | "aren't" => ChainVerbKind::Become,
+            _ => return None,
+        };
+        let token_index = *view.token_start_indices().get(index)?;
+        let subject_prefix = trim_lexed_commas(&tokens[..token_index]);
+        let subject = super::chain_carry::parse_carry_duration_prefix_tokens(subject_prefix)
+            .map_or(subject_prefix, |shape| shape.rest);
+        // A relative head belongs to an operand: "target creature that is
+        // red" must not become a new executable characteristic-setting arm.
+        if subject
+            .last()
+            .is_some_and(|token| token.is_any_word(&["that", "which", "who"]))
+        {
+            return None;
+        }
+        if !subject.is_empty()
+            && super::chain_carry::parse_carryable_subject_tokens(subject).is_none()
+        {
+            return None;
+        }
+        Some(ChainVerbMatch {
+            kind,
+            word_index: token_index,
+        })
+    });
+    match (action, state) {
+        (Some(action), Some(state)) => Some(if state.word_index < action.word_index {
+            state
+        } else {
+            action
+        }),
+        (action, state) => action.or(state),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoordinationOmissionAst {
@@ -127,7 +179,7 @@ impl CoordinationPlan<'_> {
                     member_tokens.to_vec()
                 }
                 CoordinationOmissionAst::Subject => {
-                    let verb_index = find_chain_verb_tokens(previous)?.word_index;
+                    let verb_index = find_coordination_verb_tokens(previous)?.word_index;
                     if verb_index == 0 {
                         return None;
                     }
@@ -140,7 +192,7 @@ impl CoordinationPlan<'_> {
                     tokens
                 }
                 CoordinationOmissionAst::Action | CoordinationOmissionAst::Object => {
-                    let verb = find_chain_verb_tokens(previous)?;
+                    let verb = find_coordination_verb_tokens(previous)?;
                     if !matches!(
                         verb.kind,
                         ChainVerbKind::Deal
@@ -352,7 +404,7 @@ pub fn materialize_shared_subject_followup(
     previous: &[OwnedLexToken],
     followup: &[OwnedLexToken],
 ) -> Option<Vec<OwnedLexToken>> {
-    let followup_verb = find_chain_verb_tokens(followup)?;
+    let followup_verb = find_coordination_verb_tokens(followup)?;
     if followup_verb.word_index != 0
         || !matches!(
             followup_verb.kind,
@@ -361,7 +413,7 @@ pub fn materialize_shared_subject_followup(
     {
         return None;
     }
-    let previous_verb = find_chain_verb_tokens(previous)?;
+    let previous_verb = find_coordination_verb_tokens(previous)?;
     if previous_verb.word_index == 0 {
         return None;
     }
@@ -401,12 +453,74 @@ pub fn recognize_coordination(tokens: &[OwnedLexToken]) -> ParseOutcome<Coordina
     if sacrifices_object_union(tokens) {
         return ParseOutcome::NoMatch;
     }
+    // A complete aggregate amount owns its selector connectives. Prove the
+    // amount before considering those words as omitted executable actions.
+    let aggregate_amount = tokens.iter().position(|token| token.is_word("damage"))
+        .and_then(|start| {
+            let damage = &tokens[start..];
+            crate::grammar::effects::combat_shapes::parse_combat_damage_equal_shape_lexed(damage)
+                .map(|shape| shape.amount_tokens)
+                .or_else(|| crate::grammar::effects::combat_shapes::parse_combat_damage_to_target_equal_shape_lexed(damage)
+                    .map(|shape| shape.amount_clause_tokens))
+        })
+        .filter(|amount| {
+            if amount.iter().any(|token| token.is_word("target")) {
+                return false;
+            }
+            let (value, loss) = crate::parse_loss::capture(||
+                crate::grammar::shared_util::value_semantics::parse_equal_to_number_of_filter_value(amount)
+                    .or_else(|| crate::grammar::values::parse_add_mana_equal_amount_value_lexed(amount)));
+            value.is_some() && !loss.is_lossy()
+        });
+    // A fully parsed damage cap owns its commas and "or" recipient list.
+    // Those connectives do not introduce additional life-gain instructions.
+    let capped_amount = tokens
+        .windows(3)
+        .position(|head| {
+            head[0].is_word("equal") && head[1].is_word("to") && head[2].is_word("the")
+        })
+        .map(|start| &tokens[start + 2..])
+        .filter(|amount| amount.iter().any(|token| token.is_word("before")))
+        .and_then(|amount| {
+            let end = amount.iter().rposition(|token| {
+                !matches!(
+                    token.kind,
+                    crate::lexer::TokenKind::Period | crate::lexer::TokenKind::Comma
+                )
+            })? + 1;
+            let amount = &amount[..end];
+            let (value, used) =
+                crate::grammar::shared_util::value_expr::parse_value_expr_tokens(amount)?;
+            let _ = value;
+            (used == amount.len()).then_some(amount)
+        });
     let candidates = top_level_boundaries(tokens);
     let mut members = Vec::new();
     let mut boundaries = Vec::new();
     let mut member_start = 0usize;
 
     for candidate in candidates {
+        if aggregate_amount.or(capped_amount).is_some_and(|amount| {
+            amount
+                .iter()
+                .any(|token| std::ptr::eq(token, &tokens[candidate.start]))
+        }) {
+            continue;
+        }
+
+        // Coordinated locations qualify one selector; `in ... and in ...`
+        // cannot be an omitted second executable verb.
+        if candidate.operator == CoordinationOperatorAst::And
+            && tokens
+                .get(candidate.end)
+                .is_some_and(|token| token.is_word("in"))
+            && tokens[member_start..candidate.start]
+                .iter()
+                .any(|token| token.is_word("in"))
+        {
+            continue;
+        }
+
         // Numeric alternatives in an explicit target head belong to one
         // selector, e.g. `one, two, or three target creature cards`.
         // Let the target grammar prove the complete prefix before treating
@@ -583,6 +697,21 @@ fn classify_boundary<'a>(
     Option<TypedClauseHeadAst<'a>>,
 )> {
     if candidate.operator == CoordinationOperatorAst::Or
+        && (before.last().is_some_and(|token| token.is_word("blocking"))
+            && after.first().is_some_and(|token| token.is_word("blocked"))
+            && after.get(1).is_some_and(|token| token.is_word("by"))
+            || before.last().is_some_and(|token| token.is_word("blocked"))
+                && after
+                    .first()
+                    .is_some_and(|token| token.is_any_word(&["was", "were"]))
+                && after.get(1).is_some_and(|token| token.is_word("blocked"))
+                && after.get(2).is_some_and(|token| token.is_word("by")))
+    {
+        // A reciprocal combat relation stays inside one object selector,
+        // even when a later conjunction starts an actual action such as tap.
+        return None;
+    }
+    if candidate.operator == CoordinationOperatorAst::Or
         && before
             .last()
             .is_some_and(|token| token.is_any_word(&["spell", "spells"]))
@@ -666,10 +795,11 @@ fn classify_boundary<'a>(
         CoordinationOperatorAst::Comma | CoordinationOperatorAst::And
     ) && before.last().is_some_and(token_is_card_type_noun)
         && starts_card_type_list_arm(after)
-        && (find_chain_verb_tokens(before).is_some_and(|verb| {
+        && (find_coordination_verb_tokens(before).is_some_and(|verb| {
             matches!(
                 verb.kind,
                 ChainVerbKind::Destroy
+                    | ChainVerbKind::Return
                     | ChainVerbKind::Exile
                     | ChainVerbKind::Sacrifice
                     | ChainVerbKind::Tap
@@ -838,13 +968,7 @@ fn classify_boundary<'a>(
                     .and_then(crate::util::parse_subtype_word)
                     .is_some()
         })
-        && after.first().is_some_and(|token| {
-            token_is_card_type_noun(token)
-                || token
-                    .as_word()
-                    .and_then(crate::util::parse_subtype_word)
-                    .is_some()
-        })
+        && starts_modified_type_filter_arm(after, true)
     {
         // A card-type union is one object operand even when a later action
         // follows in the same sentence. Do not let the typed clause-head
@@ -856,7 +980,7 @@ fn classify_boundary<'a>(
     if candidate.operator == CoordinationOperatorAst::And
         && before.last().is_some_and(token_is_card_type_noun)
         && after.first().is_some_and(token_is_card_type_noun)
-        && find_chain_verb_tokens(after).is_none()
+        && find_coordination_verb_tokens(after).is_none()
     {
         // A conjunctive card-type list is likewise one object operand when
         // the later type arm contains no executable verb. Relative filter
@@ -916,8 +1040,8 @@ fn classify_boundary<'a>(
         // union intact for the typed damage recognizer.
         return None;
     }
-    let before_verb = find_chain_verb_tokens(before);
-    let after_verb = find_chain_verb_tokens(after);
+    let before_verb = find_coordination_verb_tokens(before);
+    let after_verb = find_coordination_verb_tokens(after);
     let after_head = matched_head(after);
     let starts_shared_object_operand = after.first().is_some_and(|token| {
         token.is_word("a")
@@ -1147,7 +1271,7 @@ fn token_is_card_type_noun(token: &OwnedLexToken) -> bool {
     })
 }
 
-fn starts_card_type_list_arm(tokens: &[OwnedLexToken]) -> bool {
+pub(crate) fn starts_card_type_list_arm(tokens: &[OwnedLexToken]) -> bool {
     let tokens = trim_lexed_commas(tokens);
     let tokens = if tokens.first().is_some_and(|token| {
         token.is_word("and")
@@ -1158,17 +1282,38 @@ fn starts_card_type_list_arm(tokens: &[OwnedLexToken]) -> bool {
     } else {
         tokens
     };
-    let tokens = if tokens.first().is_some_and(|token| {
-        token.is_word("basic")
-            || token.is_word("nonbasic")
-            || token.is_word("token")
-            || token.is_word("nontoken")
+    starts_modified_type_filter_arm(tokens, false)
+}
+
+/// A qualified noun arm is still an object selector: `non-Aura enchantment`,
+/// `tapped creature`, or `legendary land`. Prove its head with the existing
+/// filter grammar instead of maintaining another list of allowed adjectives.
+/// Only inspect through the first type noun; later `counters`, relative verbs,
+/// and coordinated actions must not decide whether this noun starts an effect.
+fn starts_modified_type_filter_arm(tokens: &[OwnedLexToken], allow_subtype: bool) -> bool {
+    if tokens.first().is_some_and(|token| {
+        token.is_any_word(&[
+            "a", "an", "all", "another", "target", "this", "that", "each",
+        ])
     }) {
-        &tokens[1..]
-    } else {
-        tokens
+        return false;
+    }
+    let Some(noun_index) = tokens.iter().position(|token| {
+        token_is_card_type_noun(token)
+            || (allow_subtype
+                && token
+                    .as_word()
+                    .and_then(crate::util::parse_subtype_word)
+                    .is_some())
+    }) else {
+        return false;
     };
-    tokens.first().is_some_and(token_is_card_type_noun)
+    // Preserve the existing bare-noun recognition, including negated card
+    // types. Modified heads must be complete simple filters, so an explicit
+    // action such as `draw a creature card` cannot become a target union.
+    noun_index == 0
+        || crate::grammar::filters::parse_simple_object_filter_lexed(&tokens[..=noun_index], false)
+            .is_some()
 }
 
 fn or_continues_explicit_target_domain(before_words: &[&str], after_words: &[&str]) -> bool {
@@ -1408,3 +1553,7 @@ fn sacrifices_object_union(tokens: &[OwnedLexToken]) -> bool {
             )
         })
 }
+
+#[cfg(test)]
+#[path = "coordination_tests.rs"]
+mod tests;

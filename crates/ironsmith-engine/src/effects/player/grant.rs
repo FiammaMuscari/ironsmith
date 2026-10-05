@@ -60,6 +60,28 @@ impl EffectExecutor for GrantEffect {
         let owner = obj.owner;
         let zone = obj.zone;
 
+        // Battlefield abilities participate in the continuous-effect layers;
+        // the casting-permission registry serves cards in other zones.
+        if zone == crate::zone::Zone::Battlefield
+            && let Grantable::Ability(ability) = &self.grantable
+        {
+            let until = match self.duration {
+                GrantDuration::UntilEndOfTurn => crate::effect::Until::EndOfTurn,
+                GrantDuration::Forever => crate::effect::Until::Forever,
+                GrantDuration::UntilYourNextTurn => crate::effect::Until::YourNextTurn,
+                GrantDuration::UntilYourNextTurnEnd => crate::effect::Until::YourNextTurnEnd,
+            };
+            return crate::effects::ApplyContinuousEffect::new(
+                crate::continuous::EffectTarget::Specific(target_id),
+                crate::continuous::Modification::AddAbility(ability.clone()),
+                until,
+            )
+            .with_source_type(crate::continuous::EffectSourceType::Resolution {
+                locked_targets: vec![target_id],
+            })
+            .execute(game, ctx);
+        }
+
         // Calculate expiration
         let expires = match self.duration {
             GrantDuration::UntilEndOfTurn => game.turn.turn_number,
@@ -124,14 +146,14 @@ impl EffectExecutor for GrantEffect {
                 );
                 Ok(EffectOutcome::resolved())
             }
-            Grantable::PlayFrom => {
+            Grantable::PlayFrom | Grantable::AlternativePrice { .. } => {
                 // PlayFrom is typically granted via grant_to_filter (Yawgmoth's Will)
                 // rather than targeting individual cards. If used here, just grant it.
                 game.effect_store.grant_registry.grant_to_card(
                     target_id,
                     zone,
                     owner,
-                    Grantable::PlayFrom,
+                    self.grantable.clone(),
                     grant_source,
                 );
                 Ok(EffectOutcome::resolved())
@@ -148,7 +170,7 @@ impl EffectExecutor for GrantEffect {
             Grantable::DerivedAlternativeCast(_) => "card",
             Grantable::Ability(_) => "card",
             Grantable::AlternativeCast(_) => "card",
-            Grantable::PlayFrom => "card",
+            Grantable::PlayFrom | Grantable::AlternativePrice { .. } => "card",
         }
     }
 }

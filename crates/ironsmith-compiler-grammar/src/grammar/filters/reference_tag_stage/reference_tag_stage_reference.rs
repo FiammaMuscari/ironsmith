@@ -5,6 +5,12 @@ pub(in super::super) fn parse_object_filter_inner(
     other: bool,
     strict: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    if let Some(filter) =
+        crate::grammar::filters::simple::parse_simple_object_filter_lexed(tokens, other)
+        && filter.ring_bearer
+    {
+        return Ok(filter);
+    }
     let (tokens, vote_winners_only) = trim_vote_winner_suffix(tokens);
     let trailing_couldnt_attack_exception = tokens.len() >= 6
         && tokens[tokens.len() - 6].is_word("except")
@@ -38,7 +44,12 @@ pub(in super::super) fn parse_object_filter_inner(
     let source_relation_split = crate::object_filters::split_source_relation_phrases(tokens);
     let (attacking_same_defender_as_source, could_be_enchanted_by_source) = source_relation_split
         .as_ref()
-        .map(|split| (split.attacking_same_defender_as_source, split.could_be_enchanted_by_source))
+        .map(|split| {
+            (
+                split.attacking_same_defender_as_source,
+                split.could_be_enchanted_by_source,
+            )
+        })
         .unwrap_or((false, false));
     let tokens = source_relation_split
         .as_ref()
@@ -310,6 +321,24 @@ pub(in super::super) fn parse_object_filter_inner(
         base_tokens = head_tokens;
     }
 
+    // A cost-result exclusion refers to the selected object, not its type.
+    for index in 0..base_tokens.len() {
+        let tail = non_article_parser_word_refs(&base_tokens[index..]);
+        if tail.len() >= 6
+            && tail[..2] == ["other", "than"]
+            && parse_word_choice(tail[2], OBJECT_REFERENCE_NOUN_WORDS).is_some()
+            && tail[3..6] == ["tapped", "this", "way"]
+        {
+            filter.tagged_constraints.push(TaggedObjectConstraint {
+                tag: crate::tag::PRIOR_TAPPED_OBJECT_QUANTITY_TAG.into(),
+                relation: TaggedOpbjectRelation::IsNotTaggedObject,
+            });
+            // This trailing relation owns the complete reference phrase.
+            base_tokens.truncate(index);
+            break;
+        }
+    }
+
     // A chosen-object exclusion is an identity relation to the preceding
     // choice. Do not let the generic "other than <type>" pass reinterpret
     // the final noun as an excluded card type (for example, as
@@ -573,6 +602,13 @@ pub(in super::super) fn parse_object_filter_inner(
     };
 
     let mut all_words = non_article_word_refs(&all_words_with_articles);
+    let enchanted_set = all_words
+        .windows(3)
+        .any(|part| part == ["that", "are", "enchanted"])
+        || all_words
+            .windows(2)
+            .any(|part| part == ["enchanted", "creatures"]);
+
     let has_tap_activated_ability = has_tap_activated_ability_phrase(&all_words);
     let has_non_mana_activated_ability = has_non_mana_activated_ability_phrase(&all_words);
     if parse_phrase_whole(
@@ -640,6 +676,15 @@ pub(in super::super) fn parse_object_filter_inner(
         filter.zone = Some(Zone::Stack);
         filter.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
     }
+    if filter.stack_kind.is_none()
+        && crate::word_primitives::parse_any_sequence_prefix(
+            &ability_words,
+            &[&["ability"], &["abilities"]],
+        )
+    {
+        filter.zone = Some(Zone::Stack);
+        filter.stack_kind = Some(crate::filter::StackObjectKind::Ability);
+    }
     if parse_phrase_choice_whole(
         &non_article_parser_word_refs(&base_tokens),
         REST_REVEALED_OBJECT_PHRASES,
@@ -667,6 +712,9 @@ pub(in super::super) fn parse_object_filter_inner(
 
     try_apply_could_be_targeted_by_that_spell_clause(&mut filter, &mut all_words);
 
+    // Preserve the direction and time scope before the generic "blocked"
+    // adjective reader can widen it to every blocked attacker.
+    try_apply_directional_source_block_clause(&mut filter, &mut all_words, &mut segment_tokens);
     try_apply_blocked_or_was_blocked_by_this_turn_clause(
         &mut filter,
         &mut all_words,
@@ -1271,12 +1319,11 @@ pub(in super::super) fn parse_object_filter_inner(
                 "triggering",
             )))
         };
-        filter.total_power_toughness = Some(crate::filter::Comparison::EqualExpr(Box::new(
-            Value::Add(
+        filter.total_power_toughness =
+            Some(crate::filter::Comparison::EqualExpr(Box::new(Value::Add(
                 Box::new(Value::PowerOf(triggering())),
                 Box::new(Value::ToughnessOf(triggering())),
-            ),
-        )));
+            ))));
     }
     for idx in 0..all_words.len() {
         let value_tokens = match all_words.get(idx..) {
@@ -1765,6 +1812,31 @@ pub(in super::super) fn parse_object_filter_inner(
             // line HARD-FAILS ("parser does not yet support line family"),
             // meaning the predicate route that used to claim it is gone;
             // find that regression before re-adding the guard.
+            "equipped"
+                if !is_negated_word
+                    && all_words
+                        .get(idx + 1)
+                        .is_some_and(|noun| matches!(*noun, "creatures" | "permanents")) =>
+            {
+                // Plural equipped permanents are a state-qualified group,
+                // not the one permanent carrying this source Equipment.
+                // Keep a pre-existing attachment condition conjunctive: an
+                // Aura and an Equipment may be different attached objects.
+                let equipment = ObjectFilter {
+                    subtypes: vec![Subtype::Equipment],
+                    ..ObjectFilter::default()
+                };
+                if filter.with_attached_object.is_none() {
+                    filter.with_attached_object = Some(Box::new(equipment));
+                } else {
+                    let previous_union = std::mem::take(&mut filter.any_of);
+                    filter.any_of = vec![ObjectFilter {
+                        with_attached_object: Some(Box::new(equipment)),
+                        any_of: previous_union,
+                        ..ObjectFilter::default()
+                    }];
+                }
+            }
             "equipped" if !is_negated_word => {
                 filter.tagged_constraints.push(TaggedObjectConstraint {
                     tag: (crate::tag::CompilerReferenceTag::Equipped.bind()).into(),
@@ -2712,6 +2784,58 @@ pub(in super::super) fn parse_object_filter_inner(
         let input_words = non_article_parser_word_refs(tokens);
         let all_words = input_words.as_slice();
 
+        // A controller clause is complete at its verb. A following word must
+        // introduce a supported qualifier or another selector; an arbitrary
+        // noun cannot be silently discarded by the domain fallback.
+        for (index, words) in all_words.windows(2).enumerate() {
+            if words == ["you", "control"]
+                && let Some(next) = all_words.get(index + 2)
+                && !matches!(
+                    *next,
+                    "and"
+                        | "or"
+                        | "that"
+                        | "thats"
+                        | "that's"
+                        | "with"
+                        | "without"
+                        | "which"
+                        | "this"
+                        | "among"
+                        | "as"
+                        | "during"
+                        | "since"
+                        | "other"
+                        | "at"
+                        | "in"
+                        | "on"
+                        | "from"
+                        | "except"
+                        | "named"
+                        | "each"
+                        | "unless"
+                        | "if"
+                        | "when"
+                        | "have"
+                        | "has"
+                        | "are"
+                        | "is"
+                        | "whose"
+                        | "but"
+                        | "of"
+                        | "tapped"
+                        | "untapped"
+                        | "attacking"
+                        | "blocking"
+                )
+            {
+                return Err(CardTextError::ParseError(format!(
+                    "object filter has an unsupported controller qualifier '{}'",
+                    all_words[index + 2..].join(" "),
+                )));
+            }
+        }
+
         // "and each" / "and every" signals a compound count source when
         // the word after "each"/"every" introduces a new filter (type word,
         // zone word, etc.) rather than qualifying the current subject
@@ -2758,6 +2882,14 @@ pub(in super::super) fn parse_object_filter_inner(
         }
     }
 
+    if enchanted_set {
+        filter
+            .tagged_constraints
+            .retain(|constraint| constraint.tag.as_str() != "enchanted");
+        let mut aura = ObjectFilter::default();
+        aura.subtypes.push(crate::types::Subtype::Aura);
+        filter.with_attached_object = Some(Box::new(aura));
+    }
     Ok(filter)
 }
 
@@ -2827,4 +2959,55 @@ pub(super) fn try_apply_shared_creature_type_with_source_clause(
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod equipped_plural_tests {
+    use super::*;
+    fn parse(text: &str) -> ObjectFilter {
+        parse_object_filter_inner(&crate::lexer::lex_line(text, 0).unwrap(), false, true).unwrap()
+    }
+    #[test]
+    fn plural_equipped_creatures_select_hosts_while_singular_keeps_source_attachment() {
+        let plural = parse("equipped creatures you control");
+        assert_eq!(plural.controller, Some(PlayerFilter::You));
+        assert!(plural.card_types.contains(&CardType::Creature));
+        assert_eq!(
+            plural.with_attached_object.as_ref().unwrap().subtypes,
+            vec![Subtype::Equipment]
+        );
+        assert!(
+            !plural
+                .tagged_constraints
+                .iter()
+                .any(|constraint| constraint.tag.as_str()
+                    == crate::tag::CompilerReferenceTag::Equipped.as_str())
+        );
+        let singular = parse("equipped creature");
+        assert!(
+            singular
+                .tagged_constraints
+                .iter()
+                .any(|constraint| constraint.tag.as_str()
+                    == crate::tag::CompilerReferenceTag::Equipped.as_str())
+        );
+        assert!(singular.with_attached_object.is_none());
+    }
+    #[test]
+    fn equipment_state_does_not_overwrite_an_existing_aura_attachment_predicate() {
+        let both = parse("equipped creatures with an Aura attached to it");
+        assert_eq!(
+            both.with_attached_object.as_ref().unwrap().subtypes,
+            vec![Subtype::Aura]
+        );
+        assert_eq!(both.any_of.len(), 1);
+        assert_eq!(
+            both.any_of[0]
+                .with_attached_object
+                .as_ref()
+                .unwrap()
+                .subtypes,
+            vec![Subtype::Equipment]
+        );
+    }
 }

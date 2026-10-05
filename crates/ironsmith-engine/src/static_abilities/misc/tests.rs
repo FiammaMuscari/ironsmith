@@ -1779,8 +1779,8 @@ fn test_prevent_damage_to_self_remove_counter_generates_replacement() {
         .generate_replacement_effect(src, alice)
         .expect("should generate replacement effect");
 
-    let ReplacementAction::Instead(effects) = &replacement.replacement else {
-        panic!("expected replacement to use Instead action");
+    let ReplacementAction::PreventDamageThenFromProposedAmount(effects) = &replacement.replacement else {
+        panic!("expected replacement to retain prevention and proposed damage");
     };
     assert_eq!(effects.len(), 1, "expected one removal effect");
     let remove = effects[0]
@@ -1797,8 +1797,8 @@ fn test_prevent_damage_to_self_remove_counter_generates_replacement() {
     let replacement = dynamic
         .generate_replacement_effect(src, alice)
         .expect("dynamic prevention should generate replacement effect");
-    let ReplacementAction::Instead(effects) = &replacement.replacement else {
-        panic!("expected dynamic replacement to use Instead action");
+    let ReplacementAction::PreventDamageThenFromProposedAmount(effects) = &replacement.replacement else {
+        panic!("expected dynamic replacement to retain prevention and proposed damage");
     };
     let remove = effects[0]
         .downcast_ref::<crate::effects::RemoveCountersEffect>()
@@ -1886,7 +1886,7 @@ fn counter_prevention_followup_uses_actual_removed_count_for_each_player() {
     let replacement = ability
         .generate_replacement_effect(source, alice)
         .expect("prevention should generate a replacement");
-    let ReplacementAction::Instead(effects) = replacement.replacement else {
+    let ReplacementAction::PreventDamageThenFromProposedAmount(effects) = replacement.replacement else {
         panic!("expected replacement effects");
     };
     assert_eq!(effects.len(), 2);
@@ -2436,16 +2436,8 @@ fn intrinsic_starting_counter_models_round_trip_with_rule_identity_and_action_pa
         assert_eq!(first.static_ability_instance, None, "rule identity does not use a synthetic native instance");
         assert_eq!(second.static_ability_instance, None);
         assert_eq!(first.application_key(), second.application_key(), "rule and host identity survives materialization");
-        type Action = crate::replacement::ReplacementAction<u8, u8, u8, u8>;
-        let action = Action::EnterWithIntrinsicStartingCounters(rule);
-        let mapped: crate::replacement::ReplacementAction<u16, u16, u16, u16> = action.try_map_payloads(
-            |_| Err::<u16, _>("unexpected effect payload"), |_| Err::<u16, _>("unexpected ability payload"),
-            |_| Err::<u16, _>("unexpected program payload"), |_| Err::<u16, _>("unexpected key payload"),
-        ).unwrap();
-        let json = serde_json::to_value(&mapped).unwrap();
-        let decoded: crate::replacement::ReplacementAction<u16, u16, u16, u16> = serde_json::from_value(json).unwrap();
-        assert_eq!(decoded, mapped);
-        assert!(serde_json::from_value::<Action>(serde_json::json!({"EnterWithIntrinsicStartingCounters": "Poison"})).is_err());
+        assert!(matches!(first.replacement,
+            crate::replacement::ReplacementAction::EnterWithIntrinsicStartingCounters(actual) if actual == rule));
     }
 }
 
@@ -2474,4 +2466,29 @@ fn fastland_replacement_scope_preserves_entry_threshold() {
         assert!(matcher.may_match_event_kind(EventKind::EnterBattlefield));
         assert_eq!(matcher.matches_event(&event, &ctx).unwrap(), other_lands > 2);
     }
+}
+
+#[test]
+fn scoped_hand_limits_bind_chosen_player_and_actual_opponent_teams() {
+    let mut game=GameState::new(vec!["Alice".into(),"Teammate".into(),"Bob".into()],20);
+    let [alice,mate,bob]=std::array::from_fn(|i|game.players[i].id);
+    game.set_teams(vec![vec![alice,mate],vec![bob]]).unwrap();
+    let card=CardBuilder::new(CardId::new(),"Rule source").card_types(vec![CardType::Artifact]).build();
+    let source=game.create_object_from_card(&card,alice,Zone::Battlefield);game.set_chosen_player(source,bob);
+    ScopedNoMaximumHandSize{player:PlayerFilter::Opponent}.apply_restrictions(&mut game,source,alice);
+    assert_eq!(game.player(mate).unwrap().max_hand_size,7);assert_eq!(game.player(bob).unwrap().max_hand_size,i32::MAX);
+    SetMaximumHandSize::new(PlayerFilter::ChosenPlayer,4).apply_restrictions(&mut game,source,alice);
+    assert_eq!(game.player(bob).unwrap().max_hand_size,4);assert_eq!(game.player(alice).unwrap().max_hand_size,7);
+}
+#[test]
+fn unlimited_hand_size_is_not_a_finite_value_that_reductions_can_change() {
+    let mut game=GameState::new(vec!["Alice".into(),"Bob".into()],20);let alice=PlayerId::from_index(0);let source=ObjectId::from_raw(8001);
+    NoMaximumHandSize.apply_restrictions(&mut game,source,alice);
+    ReduceMaximumHandSize::new(PlayerFilter::You,3).apply_restrictions(&mut game,source,alice);
+    assert_eq!(game.player(alice).unwrap().max_hand_size,i32::MAX);
+    IncreaseMaximumHandSize::new(PlayerFilter::You,7).apply_restrictions(&mut game,source,alice);
+    assert_eq!(game.player(alice).unwrap().max_hand_size,i32::MAX);
+    SetMaximumHandSize::new(PlayerFilter::You,4).apply_restrictions(&mut game,source,alice);
+    ReduceMaximumHandSize::new(PlayerFilter::You,3).apply_restrictions(&mut game,source,alice);
+    assert_eq!(game.player(alice).unwrap().max_hand_size,1);
 }

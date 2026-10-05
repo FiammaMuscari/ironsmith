@@ -50,11 +50,10 @@ const ARGS_NEVER_CAPTURED = new Set([
   "applyVerifiedHiddenLibraryShuffle",
   "queueVerifiedHiddenLibraryEpoch",
   "queueVerifiedHiddenLibraryOpening",
-  "importSyncCheckpoint",
-  "importForeignSyncCheckpoint",
   "injectTranscriptRandomSeeds",
   "replayTrustedActions",
   "replayTrustedMatch",
+  "restoreExactBuildSnapshot",
 ]);
 
 const store = {
@@ -232,7 +231,9 @@ export function beginJournalEntry(method, args, { runtimeBranch = null } = {}) {
     }
   } else {
     entry.argsOmitted = true;
-    entry.argShape = argListShape(args);
+    // Do not traverse the image: it contains private host state and a large
+    // typed array whose Object.keys() would enumerate every byte.
+    entry.argShape = method === 'restoreExactBuildSnapshot' ? ['private instance image'] : argListShape(args);
   }
 
   store.entries.push(entry);

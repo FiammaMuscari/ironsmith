@@ -236,7 +236,14 @@ pub struct ReferenceFrame {
     pub auto_tag_object_targets: bool,
     pub force_auto_tag_object_targets: bool,
     pub allow_life_event_value: bool,
+    pub allow_excess_damage_event_value: bool,
+    pub milling_event_filter: Option<std::sync::Arc<ObjectFilter>>,
+    pub dice_event_grouped: Option<bool>,
+    pub life_event_binding: Option<std::sync::Arc<crate::trigger_references::LifeEventBinding>>,
+    pub life_amount_producers: std::sync::Arc<Vec<crate::trigger_references::LifeAmountProducer>>,
+    pub die_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
     pub bind_unbound_x_to_last_effect: bool,
+    pub has_announced_x: bool,
 }
 
 impl ReferenceFrame {
@@ -257,12 +264,20 @@ impl ReferenceFrame {
             auto_tag_object_targets: frame.auto_tag_object_targets,
             force_auto_tag_object_targets: frame.force_auto_tag_object_targets,
             allow_life_event_value: frame.allow_life_event_value,
+            allow_excess_damage_event_value: frame.allow_excess_damage_event_value,
+            milling_event_filter: frame.milling_event_filter.clone(),
+            dice_event_grouped: frame.dice_event_grouped,
+            life_event_binding: frame.life_event_binding.clone(),
+            life_amount_producers: frame.life_amount_producers.clone(),
+            die_result_producers: frame.die_result_producers.clone(),
             bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
+            has_announced_x: frame.has_announced_x,
         }
     }
 
     pub fn to_lowering_frame(&self) -> LoweringFrame {
         LoweringFrame {
+            declared_target_references: Vec::new(),
             last_effect_id: self.last_effect_id,
             last_library_search_effect_id: self.last_library_search_effect_id,
             last_object_tag: self.last_object_tag.clone(),
@@ -283,7 +298,14 @@ impl ReferenceFrame {
             auto_tag_object_targets: self.auto_tag_object_targets,
             force_auto_tag_object_targets: self.force_auto_tag_object_targets,
             allow_life_event_value: self.allow_life_event_value,
+            allow_excess_damage_event_value: self.allow_excess_damage_event_value,
+            milling_event_filter: self.milling_event_filter.clone(),
+            dice_event_grouped: self.dice_event_grouped,
+            life_event_binding: self.life_event_binding.clone(),
+            life_amount_producers: self.life_amount_producers.clone(),
+            die_result_producers: self.die_result_producers.clone(),
             bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
+            has_announced_x: self.has_announced_x,
         }
     }
 }
@@ -393,7 +415,14 @@ pub struct ReferenceEnv {
     pub iterated_player: bool,
     pub iterated_object: bool,
     pub allow_life_event_value: bool,
+    pub allow_excess_damage_event_value: bool,
+    pub milling_event_filter: Option<std::sync::Arc<ObjectFilter>>,
+    pub dice_event_grouped: Option<bool>,
+    pub life_event_binding: Option<std::sync::Arc<crate::trigger_references::LifeEventBinding>>,
+    pub life_amount_producers: std::sync::Arc<Vec<crate::trigger_references::LifeAmountProducer>>,
+    pub die_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
     pub bind_unbound_x_to_last_effect: bool,
+    pub has_announced_x: bool,
 }
 
 impl Default for ReferenceEnv {
@@ -411,7 +440,14 @@ impl Default for ReferenceEnv {
             iterated_player: false,
             iterated_object: false,
             allow_life_event_value: false,
+            allow_excess_damage_event_value: false,
+            milling_event_filter: None,
+            dice_event_grouped: None,
+            life_event_binding: None,
+            life_amount_producers: Default::default(),
+            die_result_producers: Default::default(),
             bind_unbound_x_to_last_effect: false,
+            has_announced_x: false,
         }
     }
 }
@@ -441,7 +477,14 @@ impl ReferenceEnv {
             iterated_player,
             iterated_object: imports.iterated_object,
             allow_life_event_value,
+            allow_excess_damage_event_value: false,
+            milling_event_filter: None,
+            dice_event_grouped: None,
+            life_event_binding: None,
+            life_amount_producers: Default::default(),
+            die_result_producers: Default::default(),
             bind_unbound_x_to_last_effect,
+            has_announced_x: false,
         }
     }
 
@@ -461,7 +504,14 @@ impl ReferenceEnv {
             iterated_player: frame.iterated_player,
             iterated_object: frame.iterated_object,
             allow_life_event_value: frame.allow_life_event_value,
+            allow_excess_damage_event_value: frame.allow_excess_damage_event_value,
+            milling_event_filter: frame.milling_event_filter.clone(),
+            dice_event_grouped: frame.dice_event_grouped,
+            life_event_binding: frame.life_event_binding.clone(),
+            life_amount_producers: frame.life_amount_producers.clone(),
+            die_result_producers: frame.die_result_producers.clone(),
             bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
+            has_announced_x: frame.has_announced_x,
         }
     }
 
@@ -490,7 +540,14 @@ impl ReferenceEnv {
             auto_tag_object_targets: auto_tag_object_targets || force_auto_tag_object_targets,
             force_auto_tag_object_targets,
             allow_life_event_value: self.allow_life_event_value,
+            allow_excess_damage_event_value: self.allow_excess_damage_event_value,
+            milling_event_filter: self.milling_event_filter.clone(),
+            dice_event_grouped: self.dice_event_grouped,
+            life_event_binding: self.life_event_binding.clone(),
+            life_amount_producers: self.life_amount_producers.clone(),
+            die_result_producers: self.die_result_producers.clone(),
             bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
+            has_announced_x: self.has_announced_x,
         }
     }
 

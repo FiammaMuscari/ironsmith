@@ -41,6 +41,47 @@ fn compose_total_cost<C: CostComponent>(
     TotalCost::from_costs(components)
 }
 
+// Serialize the payload as a struct inside the externally tagged variant.
+// erased-serde 0.4.9 dispatches StructVariant::skip_field to its Struct arm;
+// this preserves the legacy omitted empty rider without that invalid dispatch.
+#[cfg(feature = "serde")]
+fn serialize_from_zone_payload<S, C, Cond>(
+    name: &crate::InternedStr,
+    zone: &Zone,
+    total_cost: &TotalCost<C>,
+    condition: &Option<Cond>,
+    exiles_after_resolution: &bool,
+    entry_counters: &Vec<(crate::CounterType, u32)>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    C: serde::Serialize,
+    Cond: serde::Serialize,
+{
+    #[derive(serde::Serialize)]
+    struct Payload<'a, C, Cond> {
+        name: &'a crate::InternedStr,
+        zone: &'a Zone,
+        total_cost: &'a TotalCost<C>,
+        condition: &'a Option<Cond>,
+        exiles_after_resolution: &'a bool,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        entry_counters: &'a Vec<(crate::CounterType, u32)>,
+    }
+    serde::Serialize::serialize(
+        &Payload {
+            name,
+            zone,
+            total_cost,
+            condition,
+            exiles_after_resolution,
+            entry_counters,
+        },
+        serializer,
+    )
+}
+
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub enum AlternativeCastingMethod<E, C, Cond> {
@@ -120,12 +161,20 @@ pub enum AlternativeCastingMethod<E, C, Cond> {
         /// apply Prototype without reparsing keyword display text.
         prototype_power_toughness: Option<PowerToughness>,
     },
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "serialize_from_zone_payload")
+    )]
     FromZone {
         name: crate::InternedStr,
         zone: Zone,
         total_cost: TotalCost<C>,
         condition: Option<Cond>,
         exiles_after_resolution: bool,
+        /// Entry replacement instructions belonging only to this chosen cost.
+        /// Spell copies retain the alternative-cost choice (CR 707.10).
+        #[cfg_attr(feature = "serde", serde(default))]
+        entry_counters: Vec<(crate::CounterType, u32)>,
     },
     Trap {
         name: crate::InternedStr,
@@ -432,6 +481,21 @@ where
             total_cost,
             condition,
             exiles_after_resolution,
+            entry_counters: Vec::new(),
+        }
+    }
+
+    pub fn with_entry_counters(mut self, counters: Vec<(crate::CounterType, u32)>) -> Self {
+        if let Self::FromZone { entry_counters, .. } = &mut self {
+            *entry_counters = counters;
+        }
+        self
+    }
+
+    pub fn entry_counters(&self) -> &[(crate::CounterType, u32)] {
+        match self {
+            Self::FromZone { entry_counters, .. } => entry_counters,
+            _ => &[],
         }
     }
 
@@ -668,12 +732,14 @@ impl<E, C, Cond> AlternativeCastingMethod<E, C, Cond> {
                 total_cost,
                 condition,
                 exiles_after_resolution,
+                entry_counters,
             } => AlternativeCastingMethod::FromZone {
                 name,
                 zone,
                 total_cost: map_total_cost(total_cost)?,
                 condition,
                 exiles_after_resolution,
+                entry_counters,
             },
             Self::Trap {
                 name,

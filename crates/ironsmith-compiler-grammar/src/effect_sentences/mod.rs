@@ -1,3 +1,11 @@
+mod ability_loss_templates;
+mod bounded_number_choice;
+mod characteristic_assertions;
+mod declared_any_target;
+mod duration_source_prevention;
+pub(crate) mod life_unit_programs;
+mod temporary_attack_requirement;
+mod timed_draw_replacement;
 use self::sentence_helpers::*;
 use super::object_filters::parse_object_filter;
 use super::util::{parse_target_phrase, span_from_tokens};
@@ -94,6 +102,12 @@ mod mill_procedure;
 mod next_spell_family;
 mod optional_companion_fanout;
 mod pair_procedure;
+mod toughness_assignment;
+pub(crate) fn recognizes_life_gain_replacement_sentence(
+    tokens: &[crate::lexer::OwnedLexToken],
+) -> bool {
+    pair_procedure::recognizes_life_gain_replacement_sentence(tokens)
+}
 mod player_subject_sequences;
 mod procedures;
 mod rider_procedure;
@@ -169,3 +183,5 @@ pub use zone_counter_helpers::{
     parse_starting_life_total_value,
 };
 pub use zone_handlers::parse_destroy;
+
+pub(crate) use bundle_rules::parse_consult_then_put_matches_battlefield_rest_bottom_bundle;

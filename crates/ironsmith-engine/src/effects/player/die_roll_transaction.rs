@@ -1,3 +1,5 @@
+#[path = "die_roll_replacements.rs"]
+mod die_roll_replacements;
 use crate::decision::FallbackStrategy;
 use crate::decisions::{ask_choose_multiple, ask_choose_one, ask_may_choice};
 use crate::effect::OutcomeStatus;
@@ -39,7 +41,7 @@ fn available_modifiers(
     game.battlefield
         .iter()
         .flat_map(|source| {
-            let Some(object) = game.object(*source) else {
+            let Some(object) = game.object(*source).filter(|_| !game.is_phased_out(*source)) else {
                 return Vec::new();
             };
             let controller = game.controller_of(object);
@@ -205,14 +207,14 @@ fn apply_numerical_modifiers(
     ctx: &mut ExecutionContext,
     player: PlayerId,
     roll: &mut ResolvedDieRoll,
-) -> bool {
+) -> Result<bool, ExecutionError> {
     let mut remaining = available_modifiers(game, player, false);
     while !remaining.is_empty() {
         let Some(index) = choose_next_modifier(game, ctx, player, &remaining, std::slice::from_ref(roll)) else {
-            return false;
+            return Ok(false);
         };
         if ctx.decision_maker.awaiting_choice() {
-            return false;
+            return Ok(false);
         }
         let modifier = remaining.remove(index);
         let description = format!(
@@ -228,38 +230,40 @@ fn apply_numerical_modifiers(
             FallbackStrategy::Decline,
         );
         if ctx.decision_maker.awaiting_choice() {
-            return false;
+            return Ok(false);
         }
         if !should_apply {
             continue;
         }
         let options = [
-            ("Increase".to_string(), modifier.spec.amount as i32),
-            ("Decrease".to_string(), -(modifier.spec.amount as i32)),
+            ("Increase".to_string(), true),
+            ("Decrease".to_string(), false),
         ];
-        let Some(delta) = ask_choose_one(
+        let Some(increase) = ask_choose_one(
             game,
             &mut ctx.decision_maker,
             player,
             modifier.source,
             &options,
         ) else {
-            return false;
+            return Ok(false);
         };
         if ctx.decision_maker.awaiting_choice() {
-            return false;
+            return Ok(false);
         }
-        if !game.pay_life(player, modifier.spec.life_cost) {
-            continue;
+        if modifier.spec.life_cost > 0 {
+            let paid = game.pay_life_with_context(player, modifier.spec.life_cost, ctx)?.is_some();
+            if ctx.decision_maker.awaiting_choice() { return Ok(false); }
+            if !paid { continue; }
         }
-        roll.result = if delta.is_negative() {
-            roll.result.saturating_sub(delta.unsigned_abs())
+        roll.result = if increase {
+            roll.result.saturating_add(modifier.spec.amount)
         } else {
-            roll.result.saturating_add(delta as u32)
+            roll.result.saturating_sub(modifier.spec.amount)
         };
         mark_used(game, &modifier);
     }
-    true
+    Ok(true)
 }
 
 pub(crate) fn roll_dice_with_modifiers(
@@ -269,20 +273,12 @@ pub(crate) fn roll_dice_with_modifiers(
     count: u32,
     sides: u32,
 ) -> Result<Option<Vec<ResolvedDieRoll>>, ExecutionError> {
-    let mut rolls = (0..count)
-        .map(|_| {
-            let face = draw_die_face(game, sides);
-            ResolvedDieRoll {
-                natural_result: face,
-                result: face,
-            }
-        })
-        .collect::<Vec<_>>();
+    let Some(mut rolls) = die_roll_replacements::roll_replacement_batch(game, ctx, player, count, sides)? else { return Ok(None); };
     if !apply_reroll_modifiers(game, ctx, player, sides, &mut rolls)? {
         return Ok(None);
     }
     for roll in &mut rolls {
-        if !apply_numerical_modifiers(game, ctx, player, roll) {
+        if !apply_numerical_modifiers(game, ctx, player, roll)? {
             return Ok(None);
         }
     }

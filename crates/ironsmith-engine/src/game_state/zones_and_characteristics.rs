@@ -188,9 +188,11 @@ impl GameState {
                     )
                     .until(crate::effect::Until::EndOfTurn)
                     .with_expires_end_of_turn(self.turn.turn_number)
-                    .with_source_type(crate::continuous::EffectSourceType::Resolution {
-                        locked_targets: vec![new_id],
-                    });
+                    .with_source_type(
+                        crate::continuous::EffectSourceType::Resolution {
+                            locked_targets: vec![new_id],
+                        },
+                    );
                     self.effect_store.continuous_effects.add_effect(effect);
                     self.mark_continuous_state_dirty();
                 }
@@ -208,9 +210,9 @@ impl GameState {
                         self,
                         new_id,
                         controller,
-                        vec![crate::effect::Effect::exile(crate::target::ChooseSpec::Tagged(
-                            copied_tag,
-                        ))],
+                        vec![crate::effect::Effect::exile(
+                            crate::target::ChooseSpec::Tagged(copied_tag),
+                        )],
                         tagged_objects,
                     );
                 }
@@ -338,7 +340,10 @@ impl GameState {
             decision_maker,
         );
         if result.is_err() || decision_maker.awaiting_choice() {
-            self.restore_execution_checkpoint(checkpoint, result.is_ok() && decision_maker.awaiting_choice());
+            self.restore_execution_checkpoint(
+                checkpoint,
+                result.is_ok() && decision_maker.awaiting_choice(),
+            );
             return result.map(|_| AsEntersProgramExecution::default());
         }
         result
@@ -413,13 +418,21 @@ impl GameState {
     }
 
     pub(crate) fn execute_entry_programs(
-        &mut self, source: ObjectId, controller: PlayerId,
+        &mut self,
+        source: ObjectId,
+        controller: PlayerId,
         programs: Vec<crate::resolution::ResolutionProgram>,
         entry_event: Option<&crate::events::EnterBattlefieldEvent>,
         dm: &mut dyn crate::decision::DecisionMaker,
     ) -> Result<Option<PreparedEtbChoices>, crate::effects::ExecutionError> {
-        self.execute_entry_programs_with_reservations(source, controller, programs,
-            entry_event, &std::collections::HashSet::from([source]), dm)
+        self.execute_entry_programs_with_reservations(
+            source,
+            controller,
+            programs,
+            entry_event,
+            &std::collections::HashSet::from([source]),
+            dm,
+        )
     }
 
     pub(crate) fn execute_entry_programs_with_reservations(
@@ -432,7 +445,14 @@ impl GameState {
         dm: &mut dyn crate::decision::DecisionMaker,
     ) -> Result<Option<PreparedEtbChoices>, crate::effects::ExecutionError> {
         let checkpoint = self.clone();
-        let result = self.execute_entry_programs_inner(source, controller, programs, entry_event, entry_reserved_objects, dm);
+        let result = self.execute_entry_programs_inner(
+            source,
+            controller,
+            programs,
+            entry_event,
+            entry_reserved_objects,
+            dm,
+        );
         if result.is_err() || dm.awaiting_choice() {
             *self = checkpoint;
             return result.map(|_| None);
@@ -449,17 +469,38 @@ impl GameState {
         entry_reserved_objects: &std::collections::HashSet<ObjectId>,
         dm: &mut dyn crate::decision::DecisionMaker,
     ) -> Result<Option<PreparedEtbChoices>, crate::effects::ExecutionError> {
-        let before = self.object(source).ok_or(crate::effects::ExecutionError::InvalidTarget)?.counters.clone();
-        let execution = self.execute_immediate_effect_programs(source, controller, programs, true, entry_event, entry_reserved_objects, dm)?;
+        let before = self
+            .object(source)
+            .ok_or(crate::effects::ExecutionError::InvalidTarget)?
+            .counters
+            .clone();
+        let execution = self.execute_immediate_effect_programs(
+            source,
+            controller,
+            programs,
+            true,
+            entry_event,
+            entry_reserved_objects,
+            dm,
+        )?;
         if dm.awaiting_choice() {
             return Ok(None);
         }
-        let after = self.object(source).ok_or(crate::effects::ExecutionError::InvalidTarget)?.counters.clone();
-        let counters = after.iter().filter_map(|(kind, count)| {
-            let previous = before.get(kind).copied().unwrap_or(0);
-            (*count > previous).then(|| (*kind, *count - previous))
-        }).collect();
-        self.object_mut(source).ok_or(crate::effects::ExecutionError::InvalidTarget)?.counters = before;
+        let after = self
+            .object(source)
+            .ok_or(crate::effects::ExecutionError::InvalidTarget)?
+            .counters
+            .clone();
+        let counters = after
+            .iter()
+            .filter_map(|(kind, count)| {
+                let previous = before.get(kind).copied().unwrap_or(0);
+                (*count > previous).then(|| (*kind, *count - previous))
+            })
+            .collect();
+        self.object_mut(source)
+            .ok_or(crate::effects::ExecutionError::InvalidTarget)?
+            .counters = before;
         Ok(Some(PreparedEtbChoices {
             as_enters_counters: counters,
             as_enters_tagged_objects: execution.tagged_objects,
@@ -519,21 +560,23 @@ impl GameState {
                     break;
                 };
                 applied.insert(identity);
-                let execution = self
-                    .execute_immediate_effect_programs(
-                        source,
-                        controller,
-                        vec![program],
-                        !for_turn_face_up,
-                        None,
-                        &std::collections::HashSet::new(),
-                        decision_maker,
-                    )?;
+                let execution = self.execute_immediate_effect_programs(
+                    source,
+                    controller,
+                    vec![program],
+                    !for_turn_face_up,
+                    None,
+                    &std::collections::HashSet::new(),
+                    decision_maker,
+                )?;
                 combined.ran |= execution.ran;
                 combined
                     .continuous_effects
                     .extend(execution.continuous_effects.iter().copied());
-                merge_retained_tagged_objects(&mut combined.tagged_objects, &execution.tagged_objects);
+                merge_retained_tagged_objects(
+                    &mut combined.tagged_objects,
+                    &execution.tagged_objects,
+                );
                 if decision_maker.awaiting_choice() {
                     return Ok(combined);
                 }
@@ -564,7 +607,10 @@ impl GameState {
             Ok(combined)
         })();
         if result.is_err() || decision_maker.awaiting_choice() {
-            self.restore_execution_checkpoint(checkpoint, result.is_ok() && decision_maker.awaiting_choice());
+            self.restore_execution_checkpoint(
+                checkpoint,
+                result.is_ok() && decision_maker.awaiting_choice(),
+            );
             return result.map(|_| AsEntersProgramExecution::default());
         }
         result
@@ -584,16 +630,15 @@ impl GameState {
             .iter()
             .filter_map(as_transforms_effect_program_from_ability)
             .collect::<Vec<_>>();
-        let execution = self
-            .execute_immediate_effect_programs(
-                source,
-                controller,
-                programs,
-                false,
-                None,
-                &std::collections::HashSet::new(),
-                decision_maker,
-            )?;
+        let execution = self.execute_immediate_effect_programs(
+            source,
+            controller,
+            programs,
+            false,
+            None,
+            &std::collections::HashSet::new(),
+            decision_maker,
+        )?;
         if let Some(object) = self.object_mut(source) {
             merge_retained_tagged_objects(
                 &mut object.cast_tagged_objects,
@@ -756,9 +801,13 @@ impl GameState {
         let lookback = match lookback {
             Some(lookback) => lookback,
             None => {
-                owned_lookback = if self.may_have_triggered_abilities_for_event_kind(crate::events::EventKind::ZoneChange) {
+                owned_lookback = if self.may_have_triggered_abilities_for_event_kind(
+                    crate::events::EventKind::ZoneChange,
+                ) {
                     self.trigger_source_lookback_snapshots()
-                } else { Vec::new() };
+                } else {
+                    Vec::new()
+                };
                 &owned_lookback
             }
         };
@@ -770,17 +819,36 @@ impl GameState {
                 if let Some(object) = self.object_mut(id) {
                     object.apply_definition_face(&component.original_definition);
                 }
-                if let Some(new_id) = self.move_object_with_snapshot_and_pre_event_lookback_internal(
-                    id, zone, cause.clone(), Some(component.snapshot.clone()), lookback,
-                    entry_prevalidated, None, &[], None,
-                ) { results.push(new_id); }
+                if let Some(new_id) = self
+                    .move_object_with_snapshot_and_pre_event_lookback_internal(
+                        id,
+                        zone,
+                        cause.clone(),
+                        Some(component.snapshot.clone()),
+                        lookback,
+                        entry_prevalidated,
+                        None,
+                        &[],
+                        None,
+                    )
+                {
+                    results.push(new_id);
+                }
             }
             self.close_simultaneous_action(opened);
             self.record_zone_change_results(old_id, results.clone());
             return results.first().copied();
         }
         self.move_object_with_snapshot_and_pre_event_lookback_internal(
-            old_id, zone, cause, snapshot, lookback, entry_prevalidated, entry_definition, physical_components, entry_linked_face_mana_cost,
+            old_id,
+            zone,
+            cause,
+            snapshot,
+            lookback,
+            entry_prevalidated,
+            entry_definition,
+            physical_components,
+            entry_linked_face_mana_cost,
         )
     }
 
@@ -850,7 +918,10 @@ impl GameState {
         {
             return Some(old_id);
         }
-        if self.objects.get(&old_id).is_some_and(|object| object.zone == new_zone)
+        if self
+            .objects
+            .get(&old_id)
+            .is_some_and(|object| object.zone == new_zone)
             && !matches!(new_zone, Zone::Exile | Zone::Command)
         {
             // Preserve identity and all object state. Library positioning is
@@ -946,36 +1017,27 @@ impl GameState {
                 }
                 for tagged_snapshots in entry.tagged_objects.values_mut() {
                     for tagged_snapshot in tagged_snapshots {
-                        if (tagged_snapshot.object_id == old_id
-                            || tagged_snapshot.stable_id == snapshot.stable_id)
+                        // The ability watches this incarnation. An explicit
+                        // movement link may already have updated its object id;
+                        // card identity alone cannot authorize a later blink.
+                        if tagged_snapshot.object_id == old_id
                             && tagged_snapshot.zone == snapshot.zone
                         {
                             *tagged_snapshot = snapshot.clone();
                         }
                     }
                 }
-                if entry.is_ability
-                    && (entry.object_id == old_id
-                        || entry
-                            .source_stable_id
-                            .is_some_and(|id| id == snapshot.stable_id))
-                {
-                    let should_update_source_lki = entry
-                        .source_snapshot
-                        .as_ref()
-                        .is_none_or(|source_snapshot| source_snapshot.zone == snapshot.zone);
-                    if !should_update_source_lki {
-                        continue;
-                    }
-                    entry.source_stable_id = Some(snapshot.stable_id);
-                    entry
-                        .source_name
-                        .get_or_insert_with(|| snapshot.name.to_string());
-                    entry.source_snapshot = Some(snapshot.clone());
-                }
             }
+            self.refresh_pending_ability_source_lki(snapshot);
         }
 
+        if self
+            .object(old_id)
+            .is_some_and(|object| object.zone == Zone::Battlefield)
+            && new_zone != Zone::Battlefield
+        {
+            self.detach_relations_for_leaving_object(old_id);
+        }
         self.object_store.changes.record(old_id);
         self.object_store.render_changes.record(old_id);
         let old_object = ObjectStore::into_owned_object(self.objects.remove(&old_id)?);
@@ -1238,6 +1300,7 @@ impl GameState {
         }
         if !(old_zone == Zone::Stack && new_zone == Zone::Battlefield) {
             new_object.snow_mana_spent_to_cast = crate::player::ManaPool::default();
+            new_object.mana_spent_on_x = Some(crate::mana::XManaAllocation::default());
         }
         if !preserve_cast_tags {
             new_object.cast_tagged_objects.clear();
@@ -1245,11 +1308,36 @@ impl GameState {
         if !preserve_temporary_static_ability_grants {
             new_object.temporary_static_ability_grants.clear();
         }
+        // A selected land permission attaches its rider to the original
+        // entering object before entry counters or any added programs run.
+        // Redirected / independent replacement moves cannot lend this grant
+        // to another permanent or a later incarnation.
+        if let Some(abilities) = self
+            .runtime_cache
+            .pending_land_permission_grants
+            .remove(&old_id)
+        {
+            if new_zone == Zone::Battlefield
+                && cause.cause_type == crate::events::cause::CauseType::SpecialAction
+                && cause.source == Some(old_id)
+            {
+                for ability in abilities {
+                    new_object.temporary_static_ability_grants.push(
+                        crate::object::TemporaryStaticAbilityGrant {
+                            ability: ability.id(),
+                            ability_payload: Some(ability),
+                            expires_end_of_turn: None,
+                        },
+                    );
+                }
+            }
+        }
         if !preserve_optional_costs_paid {
             new_object.optional_costs_paid = crate::cost::OptionalCostsPaid::default();
         }
         new_object.cast_alternative_method = None;
         new_object.cast_play_from_constraints = None;
+        new_object.cast_price = None;
         // A card cast through a granted "it gains suspend" trigger carries a
         // synthetic "Suspend 0—{0}" permission only for that cast; it isn't a
         // printed ability and must not follow the card (CR 400.7, 702.62a).
@@ -1302,7 +1390,9 @@ impl GameState {
             new_object.apply_definition_face_with_shared(&front_def, &handles);
         }
 
-        if new_zone == Zone::Battlefield && let Some(definition) = entry_definition {
+        if new_zone == Zone::Battlefield
+            && let Some(definition) = entry_definition
+        {
             let handles = self.object_store.shared_handles_for_definition(definition);
             new_object.apply_definition_face_with_shared(definition, &handles);
         }
@@ -1316,7 +1406,9 @@ impl GameState {
             // A combined permanent is one new representation of all sources,
             // rather than an extra physical card with a fabricated origin.
             new_object.stable_id = crate::ids::StableId::from(new_id);
-            if let Some(definition) = entry_definition { new_object.card = Some(definition.card.id); }
+            if let Some(definition) = entry_definition {
+                new_object.card = Some(definition.card.id);
+            }
             for component in physical_components {
                 if component.snapshot.object_id != old_id {
                     self.remove_object(component.snapshot.object_id);
@@ -1324,13 +1416,20 @@ impl GameState {
             }
         }
         if new_zone == Zone::Battlefield {
-            new_object.linked_face_mana_cost = entry_linked_face_mana_cost.cloned().map(Into::into)
+            new_object.linked_face_mana_cost = entry_linked_face_mana_cost
+                .cloned()
+                .map(Into::into)
                 .or(new_object.linked_face_mana_cost);
         }
         let sticker_identity = new_object.stable_id;
         self.add_object(new_object);
         if old_zone == Zone::Stack && new_zone == Zone::Battlefield {
-            self.effect_store.continuous_effects.retarget_resolved_permanent_spell(old_id, new_id);
+            self.effect_store
+                .continuous_effects
+                .retarget_resolved_permanent_spell(old_id, new_id);
+            self.effect_store
+                .prevention_effects
+                .link_resolved_permanent_spell(old_id, new_id);
         }
         self.move_stickers_to_new_object(sticker_identity, new_id, new_zone);
         if new_zone == Zone::Battlefield {
@@ -1423,10 +1522,24 @@ impl GameState {
                 new_id
             };
             let event = if physical_components.is_empty() {
-                ZoneChangeEvent::with_cause(event_object_id, old_zone, new_zone, cause, pre_move_snapshot.clone())
+                ZoneChangeEvent::with_cause(
+                    event_object_id,
+                    old_zone,
+                    new_zone,
+                    cause,
+                    pre_move_snapshot.clone(),
+                )
             } else {
-                let mut event = ZoneChangeEvent::batch_with_snapshots(vec![new_id], old_zone, new_zone,
-                    cause, physical_components.iter().map(|component| component.snapshot.clone()).collect());
+                let mut event = ZoneChangeEvent::batch_with_snapshots(
+                    vec![new_id],
+                    old_zone,
+                    new_zone,
+                    cause,
+                    physical_components
+                        .iter()
+                        .map(|component| component.snapshot.clone())
+                        .collect(),
+                );
                 event.result_objects = vec![new_id];
                 event
             };
@@ -1662,6 +1775,29 @@ impl GameState {
         )
     }
 
+    /// Original creation instructions belong to every replacement-added token.
+    pub(crate) fn move_created_token_with_entry_instructions(
+        &mut self,
+        old_id: ObjectId,
+        cause: crate::events::cause::EventCause,
+        decision_maker: &mut dyn crate::decision::DecisionMaker,
+        enters_tapped: bool,
+        choose_aura_attachment: bool,
+        counters: Vec<(crate::object::CounterType, u32)>,
+    ) -> Result<super::EntryCommitResult, crate::effects::ExecutionError> {
+        self.move_object_with_etb_processing_with_dm_and_cause_internal(
+            old_id,
+            Zone::Battlefield,
+            cause,
+            decision_maker,
+            choose_aura_attachment,
+            counters,
+            None,
+            enters_tapped,
+            None,
+        )
+    }
+
     pub(crate) fn move_object_with_etb_processing_with_cause_and_entry_options_and_controller(
         &mut self,
         old_id: ObjectId,
@@ -1798,7 +1934,11 @@ impl GameState {
     ) -> Result<Option<PreparedEtbEntry>, crate::effects::ExecutionError> {
         let checkpoint = self.clone();
         let outcome = self.prepare_etb_entry_after_programs_inner(
-            old_id, result, entering_controller, decision_maker, completed_programs,
+            old_id,
+            result,
+            entering_controller,
+            decision_maker,
+            completed_programs,
         );
         if outcome.is_err() || decision_maker.awaiting_choice() {
             *self = checkpoint;
@@ -1823,11 +1963,21 @@ impl GameState {
                 entry_definition: None,
                 physical_components: Vec::new(),
                 linked_face_mana_cost: None,
-                entry_attachment: None, entry_attachment_requires_aura: false,
+                entry_attachment: None,
+                entry_attachment_requires_aura: false,
             }));
         }
         if let Some(choices) = result.prepared_choices.clone() {
-            return Ok(Some(PreparedEtbEntry { result, choices, zone_entry_lookback: None, entry_definition: None, physical_components: Vec::new(), linked_face_mana_cost: None, entry_attachment: None, entry_attachment_requires_aura: false }));
+            return Ok(Some(PreparedEtbEntry {
+                result,
+                choices,
+                zone_entry_lookback: None,
+                entry_definition: None,
+                physical_components: Vec::new(),
+                linked_face_mana_cost: None,
+                entry_attachment: None,
+                entry_attachment_requires_aura: false,
+            }));
         }
 
         let prospective_source = result
@@ -1839,8 +1989,12 @@ impl GameState {
         let prospective_copiable_values = result.enters_as_copy_of.and_then(|source| {
             let effects = self.all_continuous_effects();
             crate::continuous::copiable_values_with_effects(
-                source, self.objects_map(), &effects, &self.battlefield,
-                self.commander_objects(), self,
+                source,
+                self.objects_map(),
+                &effects,
+                &self.battlefield,
+                self.commander_objects(),
+                self,
             )
         });
         let prospective_controller = result
@@ -1849,7 +2003,8 @@ impl GameState {
             .or_else(|| self.current_controller(old_id))
             .or_else(|| self.object(old_id).map(|object| object.owner))
             .ok_or(crate::effects::ExecutionError::InvalidTarget)?;
-        let mut prospective_card_types = prospective_copiable_values.as_ref()
+        let mut prospective_card_types = prospective_copiable_values
+            .as_ref()
             .map(|values| values.card_types.clone().into())
             .or_else(|| prospective_source.map(|object| object.card_types.clone()))
             .unwrap_or_default();
@@ -1858,13 +2013,16 @@ impl GameState {
                 prospective_card_types.push(*card_type);
             }
         }
-        let mut prospective_subtypes = prospective_copiable_values.as_ref()
+        let mut prospective_subtypes = prospective_copiable_values
+            .as_ref()
             .map(|values| values.subtypes.clone().into())
             .or_else(|| prospective_source.map(|object| object.subtypes.clone()))
             .unwrap_or_default();
         if result.removes_other_card_types {
             crate::continuous::replace_card_types_and_prune_subtypes(
-                &mut prospective_card_types, &mut prospective_subtypes, &result.added_card_types,
+                &mut prospective_card_types,
+                &mut prospective_subtypes,
+                &result.added_card_types,
             );
         }
         for subtype in &result.added_subtypes {
@@ -1872,7 +2030,8 @@ impl GameState {
                 prospective_subtypes.push(*subtype);
             }
         }
-        let mut prospective_abilities = prospective_copiable_values.as_ref()
+        let mut prospective_abilities = prospective_copiable_values
+            .as_ref()
             .map(|values| values.abilities.iter().cloned().collect::<Vec<_>>())
             .or_else(|| prospective_source.map(|object| object.abilities_vec()))
             .unwrap_or_default();
@@ -1896,7 +2055,8 @@ impl GameState {
                 programs,
                 None,
                 decision_maker,
-            )? else {
+            )?
+            else {
                 return Ok(None);
             };
             if !choices.as_enters_continuous_effects.is_empty() {
@@ -2124,8 +2284,8 @@ impl GameState {
                 // offer their placeholders too, every peer asks, and the
                 // chosen cards are opened before the answer replays (see
                 // `game_state::hidden_hand_choices`).
-                let hidden_hand_choice = self
-                    .hand_choice_depends_on_hidden_identity(&spec.filter, hand.iter().copied());
+                let hidden_hand_choice =
+                    self.hand_choice_depends_on_hidden_identity(&spec.filter, hand.iter().copied());
                 let placeholders = if hidden_hand_choice {
                     self.hidden_hand_placeholder_candidates(
                         &spec.filter,
@@ -2413,7 +2573,16 @@ impl GameState {
         }
 
         result.prepared_choices = Some(choices.clone());
-        Ok(Some(PreparedEtbEntry { result, choices, zone_entry_lookback: None, entry_definition: None, physical_components: Vec::new(), linked_face_mana_cost: None, entry_attachment: None, entry_attachment_requires_aura: false }))
+        Ok(Some(PreparedEtbEntry {
+            result,
+            choices,
+            zone_entry_lookback: None,
+            entry_definition: None,
+            physical_components: Vec::new(),
+            linked_face_mana_cost: None,
+            entry_attachment: None,
+            entry_attachment_requires_aura: false,
+        }))
     }
 
     /// Commit an ETB proposal whose replacement choices were already resolved.
@@ -2525,9 +2694,13 @@ impl GameState {
         prepared_entry: Option<PreparedEtbEntry>,
     ) -> Result<super::EntryCommitResult, crate::effects::ExecutionError> {
         if new_zone == Zone::Battlefield && self.card_cannot_enter_battlefield(old_id) {
-            let programs = prepared_entry.map(|mut entry| std::mem::take(&mut entry.result.additional_programs)).unwrap_or_default();
+            let programs = prepared_entry
+                .map(|mut entry| std::mem::take(&mut entry.result.additional_programs))
+                .unwrap_or_default();
             return Ok(super::EntryCommitResult {
-                original: crate::events::processing::EventOutcome::NotApplicable, programs, pending: false,
+                original: crate::events::processing::EventOutcome::NotApplicable,
+                programs,
+                pending: false,
             });
         }
         if new_zone == Zone::Battlefield {
@@ -2553,7 +2726,8 @@ impl GameState {
             // Validate the completed entry before publishing it. Query
             // preparation performs no day/night, ascend or other game rules
             // procedures while this operation's working state is isolated.
-            working = working.continuous_query_snapshot()
+            working = working
+                .continuous_query_snapshot()
                 .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
             *self = working;
             return outcome;
@@ -2591,13 +2765,26 @@ impl GameState {
         let mut programs = Vec::new();
         let mut original_verdict = EventOutcome::NotApplicable;
         let result = self.move_object_with_etb_processing_with_dm_and_cause_body_inner(
-            old_id, new_zone, cause, decision_maker, choose_aura_attachment,
-            initial_enters_with_counters, entering_controller, initial_enters_tapped,
-            prepared_entry, entry_prevalidated, &mut programs, &mut original_verdict,
+            old_id,
+            new_zone,
+            cause,
+            decision_maker,
+            choose_aura_attachment,
+            initial_enters_with_counters,
+            entering_controller,
+            initial_enters_tapped,
+            prepared_entry,
+            entry_prevalidated,
+            &mut programs,
+            &mut original_verdict,
         );
-        if result.is_err() || decision_maker.awaiting_choice() { *self = checkpoint; }
+        if result.is_err() || decision_maker.awaiting_choice() {
+            *self = checkpoint;
+        }
         let entered = result?;
-        if decision_maker.awaiting_choice() { return Ok(super::EntryCommitResult::pending()); }
+        if decision_maker.awaiting_choice() {
+            return Ok(super::EntryCommitResult::pending());
+        }
         let original = match entered {
             Some(entered) => EventOutcome::Proceed(entered),
             None => match original_verdict {
@@ -2606,7 +2793,11 @@ impl GameState {
                 EventOutcome::Prevented | EventOutcome::Proceed(()) => EventOutcome::Prevented,
             },
         };
-        Ok(super::EntryCommitResult { original, programs, pending: false })
+        Ok(super::EntryCommitResult {
+            original,
+            programs,
+            pending: false,
+        })
     }
 
     fn move_object_with_etb_processing_with_dm_and_cause_body_inner(
@@ -2627,16 +2818,24 @@ impl GameState {
         use crate::events::processing::EventOutcome;
         if let Some(entry) = &mut prepared_entry {
             programs.append(&mut entry.result.additional_programs);
-            *original_verdict = if entry.result.replaced { EventOutcome::Replaced } else { EventOutcome::Prevented };
+            *original_verdict = if entry.result.replaced {
+                EventOutcome::Replaced
+            } else {
+                EventOutcome::Prevented
+            };
         }
         // Preparation may have completed an Instead program which moved the
         // original source. There is no source event left to validate or commit.
-        if prepared_entry.as_ref().is_some_and(|entry|
-            entry.result.prevented && entry.result.new_destination.is_none())
+        if prepared_entry
+            .as_ref()
+            .is_some_and(|entry| entry.result.prevented && entry.result.new_destination.is_none())
         {
             return Ok(None);
         }
-        let old_zone = self.object(old_id).ok_or(crate::effects::ExecutionError::ObjectNotFound(old_id))?.zone;
+        let old_zone = self
+            .object(old_id)
+            .ok_or(crate::effects::ExecutionError::ObjectNotFound(old_id))?
+            .zone;
 
         if old_zone == new_zone && !matches!(new_zone, Zone::Exile | Zone::Command) {
             return Ok(None);
@@ -2644,7 +2843,9 @@ impl GameState {
         *original_verdict = EventOutcome::Prevented;
         // Only process ETB replacement for moves TO the battlefield
         if new_zone != Zone::Battlefield {
-            let Some(new_id) = self.move_object(old_id, new_zone, cause.clone()) else { return Ok(None); };
+            let Some(new_id) = self.move_object(old_id, new_zone, cause.clone()) else {
+                return Ok(None);
+            };
             return Ok(Some(EntersResult {
                 new_id,
                 enters_tapped: false,
@@ -2666,7 +2867,9 @@ impl GameState {
                 cause.clone(),
             )?;
             programs.append(&mut result.additional_programs);
-            if result.replaced { *original_verdict = EventOutcome::Replaced; }
+            if result.replaced {
+                *original_verdict = EventOutcome::Replaced;
+            }
             match self.prepare_etb_entry_with_controller_and_dm(
                 old_id,
                 result,
@@ -2677,7 +2880,16 @@ impl GameState {
                 None => return Ok(None),
             }
         };
-        let PreparedEtbEntry { result, choices, zone_entry_lookback, entry_definition, physical_components, linked_face_mana_cost, entry_attachment, entry_attachment_requires_aura } = prepared_entry;
+        let PreparedEtbEntry {
+            result,
+            choices,
+            zone_entry_lookback,
+            entry_definition,
+            physical_components,
+            linked_face_mana_cost,
+            entry_attachment,
+            entry_attachment_requires_aura,
+        } = prepared_entry;
         // A completed Instead payload leaves no entry proposal to commit.
         // Its legitimate movement can invalidate old source IDs without being
         // an execution error; validation remains mandatory for actual commits.
@@ -2685,14 +2897,21 @@ impl GameState {
             return Ok(None);
         }
         for component in &physical_components {
-            if !self.object(component.snapshot.object_id).is_some_and(|object|
-                object.zone == component.snapshot.zone && object.stable_id == component.snapshot.stable_id)
+            if !self
+                .object(component.snapshot.object_id)
+                .is_some_and(|object| {
+                    object.zone == component.snapshot.zone
+                        && object.stable_id == component.snapshot.stable_id
+                })
             {
                 return Err(crate::effects::ExecutionError::InternalError(
-                    "composite entry source changed before commit".into()));
+                    "composite entry source changed before commit".into(),
+                ));
             }
         }
-        let original_zone_snapshot = result.replacement_context.as_ref()
+        let original_zone_snapshot = result
+            .replacement_context
+            .as_ref()
             .and_then(|context| context.zone_change_context.as_ref())
             .and_then(|zone| zone.snapshot.clone());
 
@@ -2701,9 +2920,18 @@ impl GameState {
             if let Some(dest) = result.new_destination {
                 // Move to the alternate destination
                 let Some(new_id) = self.move_prepared_zone_entry_with_lookback(
-                    old_id, dest, cause.clone(), original_zone_snapshot.clone(),
-                    zone_entry_lookback.as_deref(), entry_prevalidated, entry_definition.as_ref(), &physical_components, linked_face_mana_cost.as_ref(),
-                ) else { return Ok(None); };
+                    old_id,
+                    dest,
+                    cause.clone(),
+                    original_zone_snapshot.clone(),
+                    zone_entry_lookback.as_deref(),
+                    entry_prevalidated,
+                    entry_definition.as_ref(),
+                    &physical_components,
+                    linked_face_mana_cost.as_ref(),
+                ) else {
+                    return Ok(None);
+                };
                 return Ok(Some(EntersResult {
                     new_id,
                     enters_tapped: false,
@@ -2724,7 +2952,8 @@ impl GameState {
                 || result.added_subtypes.contains(&Subtype::Aura));
         // CR 303.4g is not a second zone change. If attachment proves
         // impossible, restore this exact pre-entry state.
-        let mut aura_entry_checkpoint = (prospective_aura_entry || entry_attachment.is_some()).then(|| self.clone());
+        let mut aura_entry_checkpoint =
+            (prospective_aura_entry || entry_attachment.is_some()).then(|| self.clone());
 
         if choices.discard_hand {
             let controller = result
@@ -2764,29 +2993,48 @@ impl GameState {
                 return Ok(None);
             }
             let cards = hand.into_iter().filter(|id| *id != old_id).collect();
-            let provenance = self.provenance_graph_mut().alloc_root_event(crate::events::EventKind::Discard);
-            let snapshot = self.object(old_id).map(|object|
-                crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, self));
+            let provenance = self
+                .provenance_graph_mut()
+                .alloc_root_event(crate::events::EventKind::Discard);
+            let snapshot = self.object(old_id).map(|object| {
+                crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
+                    object, self,
+                )
+            });
             let mut ctx = crate::effects::ExecutionContext::new(old_id, controller, decision_maker)
-                .with_cause(cause.clone()).with_provenance(provenance);
+                .with_cause(cause.clone())
+                .with_provenance(provenance);
             ctx.source_snapshot = snapshot;
             if let Some(context) = &result.replacement_context {
                 context.apply_to(&mut ctx);
                 ctx.provenance = provenance;
             }
-            let mut outcome = crate::effects::cards::discard_hand_cards(self, &mut ctx, controller, cards)?;
-            if ctx.decision_maker.awaiting_choice() { return Ok(None); }
+            let mut outcome =
+                crate::effects::cards::discard_hand_cards(self, &mut ctx, controller, cards)?;
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(None);
+            }
             crate::effects::retain_unmatched_outcome_events(self, &mut outcome.events);
-            for event in outcome.events { self.queue_trigger_event(event.provenance(), event); }
-
+            for event in outcome.events {
+                self.queue_trigger_event(event.provenance(), event);
+            }
         }
 
         // Preserve a simultaneous exchange's entry-legality result through
         // the final zone mutation, not just the outer ETB preparation layer.
         let Some(new_id) = self.move_prepared_zone_entry_with_lookback(
-            old_id, Zone::Battlefield, cause.clone(), original_zone_snapshot,
-            zone_entry_lookback.as_deref(), entry_prevalidated, entry_definition.as_ref(), &physical_components, linked_face_mana_cost.as_ref(),
-        ) else { return Ok(None); };
+            old_id,
+            Zone::Battlefield,
+            cause.clone(),
+            original_zone_snapshot,
+            zone_entry_lookback.as_deref(),
+            entry_prevalidated,
+            entry_definition.as_ref(),
+            &physical_components,
+            linked_face_mana_cost.as_ref(),
+        ) else {
+            return Ok(None);
+        };
         if let Some(object) = self.object_mut(new_id) {
             merge_retained_tagged_objects(
                 &mut object.cast_tagged_objects,
@@ -2890,7 +3138,9 @@ impl GameState {
                     self,
                 );
                 if let Some(mut copiable_values) = copiable_values {
-                    let controller = self.current_controller(new_id).ok_or(crate::effects::ExecutionError::ObjectNotFound(new_id))?;
+                    let controller = self
+                        .current_controller(new_id)
+                        .ok_or(crate::effects::ExecutionError::ObjectNotFound(new_id))?;
                     if let Some(name) = &result.copy_name_override {
                         copiable_values.name = name.clone();
                     }
@@ -2906,7 +3156,9 @@ impl GameState {
                         let mut types = std::mem::take(&mut copiable_values.card_types).into();
                         let mut subtypes = std::mem::take(&mut copiable_values.subtypes).into();
                         crate::continuous::replace_card_types_and_prune_subtypes(
-                            &mut types, &mut subtypes, &result.added_card_types,
+                            &mut types,
+                            &mut subtypes,
+                            &result.added_card_types,
                         );
                         copiable_values.card_types = types.to_vec();
                         copiable_values.subtypes = subtypes.to_vec();
@@ -3003,7 +3255,9 @@ impl GameState {
                 }
                 if result.removes_other_card_types {
                     crate::continuous::replace_card_types_and_prune_subtypes(
-                        &mut new_obj.card_types, &mut new_obj.subtypes, &result.added_card_types,
+                        &mut new_obj.card_types,
+                        &mut new_obj.subtypes,
+                        &result.added_card_types,
                     );
                 }
             }
@@ -3035,7 +3289,9 @@ impl GameState {
             if !result.added_abilities.is_empty()
                 && let Some(new_obj) = self.object_mut(new_id)
             {
-                new_obj.abilities_mut().extend(result.added_abilities.iter().cloned());
+                new_obj
+                    .abilities_mut()
+                    .extend(result.added_abilities.iter().cloned());
             }
             if let Some((power, toughness)) = result.set_base_power_toughness
                 && let Some(new_obj) = self.object_mut(new_id)
@@ -3071,9 +3327,7 @@ impl GameState {
             self.set_chosen_named_option(new_id, option);
         }
         if let Some(life_total) = choices.noted_life_total {
-            self.object_annotations_mut()
-                .noted_life_totals
-                .insert(new_id, life_total);
+            self.set_noted_life_total_for_source(new_id, life_total);
         }
         for (power, toughness, abilities) in &choices.power_toughness_choices {
             if let Some(object) = self.object_mut(new_id) {
@@ -3291,15 +3545,15 @@ impl GameState {
                 if !self.attach_object_to_target(new_id, target) {
                     return false;
                 }
-                self.effect_store
-                    .continuous_effects
-                    .record_attachment(new_id);
                 true
             });
             if !attached && let Some(checkpoint) = aura_entry_checkpoint.take() {
                 *self = checkpoint;
                 if old_zone == Zone::Stack {
-                    let Some(graveyard_id) = self.move_object(old_id, Zone::Graveyard, cause) else { return Ok(None); };
+                    let Some(graveyard_id) = self.move_object(old_id, Zone::Graveyard, cause)
+                    else {
+                        return Ok(None);
+                    };
                     return Ok(Some(EntersResult {
                         new_id: graveyard_id,
                         enters_tapped: false,
@@ -3313,20 +3567,35 @@ impl GameState {
         }
 
         if let Some(target) = entry_attachment
-            && (!entry_attachment_requires_aura || self.calculated_subtypes(new_id).contains(&Subtype::Aura))
+            && (!entry_attachment_requires_aura
+                || self.calculated_subtypes(new_id).contains(&Subtype::Aura))
         {
             // Inspect the resolved entrant: copy/type replacements can make the
             // authored object an Aura or make a requested Aura a non-Aura.
             let is_aura = self.calculated_subtypes(new_id).contains(&Subtype::Aura);
-            let already_attached = self.object(new_id).is_some_and(|object| object.attached_to == Some(target));
-            let attached = already_attached || crate::effects::permanents::attach_battlefield_object_to_target(self, new_id, target);
+            let already_attached = self
+                .object(new_id)
+                .is_some_and(|object| object.attached_to == Some(target));
+            let attached = already_attached
+                || crate::effects::permanents::attach_battlefield_object_to_target(
+                    self, new_id, target,
+                );
             if is_aura && !attached {
-                let checkpoint = aura_entry_checkpoint.take().ok_or_else(|| crate::effects::ExecutionError::InternalError(
-                    "fixed Aura attachment lost its precommit checkpoint".into()))?;
+                let checkpoint = aura_entry_checkpoint.take().ok_or_else(|| {
+                    crate::effects::ExecutionError::InternalError(
+                        "fixed Aura attachment lost its precommit checkpoint".into(),
+                    )
+                })?;
                 *self = checkpoint;
                 if old_zone == Zone::Stack {
-                    let Some(graveyard_id) = self.move_object(old_id, Zone::Graveyard, cause) else { return Ok(None); };
-                    return Ok(Some(EntersResult { new_id: graveyard_id, enters_tapped: false }));
+                    let Some(graveyard_id) = self.move_object(old_id, Zone::Graveyard, cause)
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(EntersResult {
+                        new_id: graveyard_id,
+                        enters_tapped: false,
+                    }));
                 }
                 *original_verdict = EventOutcome::Prevented;
                 return Ok(None);
@@ -3402,7 +3671,16 @@ impl GameState {
         if !self.objects.contains_key(&id) {
             return;
         }
-        self.battlefield_flags_mut().saga_entry_lore_processed.remove(&id);
+        self.object_annotations_mut().noted_life_totals.remove(&id);
+        if self
+            .object(id)
+            .is_some_and(|object| object.zone == Zone::Battlefield)
+        {
+            self.detach_relations_for_leaving_object(id);
+        }
+        self.battlefield_flags_mut()
+            .saga_entry_lore_processed
+            .remove(&id);
         if let Some(stable_id) = self.object(id).map(|object| object.stable_id) {
             self.remove_stickers(stable_id);
         }
@@ -3440,6 +3718,20 @@ impl GameState {
             }
             self.remove_from_zone_index(id, obj.zone, obj.owner);
         }
+    }
+
+    /// Project a spell onto the stack in an isolated payment-analysis clone.
+    /// Retain its identity without producing a physical zone-change event.
+    pub(crate) fn project_spell_for_payment(&mut self, id: ObjectId) {
+        let Some(object) = self.object(id) else {
+            return;
+        };
+        let (zone, owner) = (object.zone, object.owner);
+        if zone == Zone::Stack {
+            return;
+        }
+        self.remove_from_zone_index(id, zone, owner);
+        self.object_mut(id).expect("proposal source exists").zone = Zone::Stack;
     }
 
     /// Removes an object ID from its zone index.
@@ -3803,102 +4095,6 @@ impl GameState {
         }
     }
 
-    pub fn detach_object_from_current_target(&mut self, attachment_id: ObjectId) -> bool {
-        let lookback_source_snapshots = self.trigger_source_lookback_snapshots();
-        let attachment_snapshot = self
-            .object(attachment_id)
-            .map(|object| self.cached_object_snapshot_with_calculated_characteristics(object));
-        self.mark_continuous_state_dirty();
-        let Some(current_target) = self
-            .object(attachment_id)
-            .and_then(|object| object.attached_to)
-        else {
-            return false;
-        };
-
-        match current_target {
-            AttachmentTarget::Object(id) => {
-                if let Some(parent) = self.object_mut(id) {
-                    parent
-                        .attachments
-                        .retain(|existing| *existing != attachment_id);
-                }
-            }
-            AttachmentTarget::Player(id) => {
-                if let Some(player) = self.player_mut(id) {
-                    player
-                        .attachments
-                        .retain(|existing| *existing != attachment_id);
-                }
-            }
-        }
-
-        if let Some(object) = self.object_mut(attachment_id) {
-            object.attached_to = None;
-        }
-
-        if let Some(snapshot) = attachment_snapshot {
-            let provenance = self
-                .provenance_graph_mut()
-                .alloc_root_event(crate::events::EventKind::ObjectBecameUnattached);
-            let event = crate::triggers::TriggerEvent::new_with_provenance(
-                crate::events::ObjectBecameUnattachedEvent::new(
-                    attachment_id,
-                    current_target,
-                    snapshot.controller,
-                    Some(snapshot),
-                ),
-                provenance,
-            )
-            .with_lookback_source_snapshots(lookback_source_snapshots);
-            self.queue_trigger_event(provenance, event);
-        }
-
-        true
-    }
-
-    pub fn attach_object_to_target(
-        &mut self,
-        attachment_id: ObjectId,
-        target: AttachmentTarget,
-    ) -> bool {
-        self.mark_continuous_state_dirty();
-        if !self
-            .object(attachment_id)
-            .is_some_and(|object| object.zone == Zone::Battlefield)
-            || !self.attachment_target_exists(target)
-        {
-            return false;
-        }
-
-        self.detach_object_from_current_target(attachment_id);
-
-        if let Some(object) = self.object_mut(attachment_id) {
-            object.attached_to = Some(target);
-        } else {
-            return false;
-        }
-
-        match target {
-            AttachmentTarget::Object(id) => {
-                if let Some(parent) = self.object_mut(id)
-                    && !parent.attachments.contains(&attachment_id)
-                {
-                    parent.attachments.push(attachment_id);
-                }
-            }
-            AttachmentTarget::Player(id) => {
-                if let Some(player) = self.player_mut(id)
-                    && !player.attachments.contains(&attachment_id)
-                {
-                    player.attachments.push(attachment_id);
-                }
-            }
-        }
-
-        true
-    }
-
     // =========================================================================
     // Counter Management
     // =========================================================================
@@ -4083,7 +4279,14 @@ impl GameState {
         source_controller: Option<PlayerId>,
     ) -> Result<crate::effect::EffectOutcome, crate::effects::ExecutionError> {
         let mut dm = crate::decision::SelectFirstDecisionMaker;
-        self.add_player_counters_with_source_with_dm(player_id, counter_type, amount, source, source_controller, &mut dm)
+        self.add_player_counters_with_source_with_dm(
+            player_id,
+            counter_type,
+            amount,
+            source,
+            source_controller,
+            &mut dm,
+        )
     }
 
     /// Resolve player-counter choices and commit only the resolved event.
@@ -4100,8 +4303,14 @@ impl GameState {
         let mut cause = crate::events::cause::EventCause::effect();
         cause.source = source;
         cause.source_controller = source_controller;
-        let mut ctx = crate::effects::ExecutionContext::new(source.unwrap_or(ObjectId::from_raw(0)), source_controller.unwrap_or(player_id), dm).with_cause(cause.clone());
-        let event = crate::events::Event::put_player_counters(player_id, counter_type, amount, cause);
+        let mut ctx = crate::effects::ExecutionContext::new(
+            source.unwrap_or(ObjectId::from_raw(0)),
+            source_controller.unwrap_or(player_id),
+            dm,
+        )
+        .with_cause(cause.clone());
+        let event =
+            crate::events::Event::put_player_counters(player_id, counter_type, amount, cause);
         crate::effects::counters::execute_player_counter_placement(self, &mut ctx, event)
     }
 
@@ -4134,6 +4343,7 @@ impl GameState {
             return None;
         }
 
+        let count_after = self.player(player_id)?.counter_count(counter_type);
         let event_provenance = self
             .provenance_graph_mut()
             .alloc_root_event(crate::events::EventKind::MarkersChanged);
@@ -4146,7 +4356,8 @@ impl GameState {
                     removed,
                     source,
                     source_controller,
-                ),
+                )
+                .with_count_after(count_after),
                 event_provenance,
             ),
         ))
@@ -4174,18 +4385,28 @@ impl GameState {
     /// sufficient evidence: only checked publication can establish trust.
     pub fn try_all_continuous_effects(
         &self,
-    ) -> Result<Vec<ContinuousEffect>, crate::static_ability_processor::StaticEffectDiscoveryError> {
-        self.try_all_continuous_effects_arc().map(|effects| effects.as_ref().clone())
+    ) -> Result<Vec<ContinuousEffect>, crate::static_ability_processor::StaticEffectDiscoveryError>
+    {
+        self.try_all_continuous_effects_arc()
+            .map(|effects| effects.as_ref().clone())
     }
 
     /// Fallible shared snapshot: the same checked revision/error contract as
     /// the owned query, without cloning every effect merely to validate it.
     pub(crate) fn try_all_continuous_effects_arc(
         &self,
-    ) -> Result<Arc<Vec<ContinuousEffect>>, crate::static_ability_processor::StaticEffectDiscoveryError> {
+    ) -> Result<
+        Arc<Vec<ContinuousEffect>>,
+        crate::static_ability_processor::StaticEffectDiscoveryError,
+    > {
+        crate::static_ability_processor::validate_mana_scalar_domain(self)?;
         let revision = self.effect_store.continuous_effects.revision();
         if self.continuous_state_is_clean()
-            && self.runtime_cache.static_effects_cache.borrow().has_checked_snapshot(revision)
+            && self
+                .runtime_cache
+                .static_effects_cache
+                .borrow()
+                .has_checked_snapshot(revision)
         {
             return Ok(self.cached_continuous_effects_snapshot_arc());
         }
@@ -4314,9 +4535,9 @@ impl GameState {
                 // A nested prewarm can include its enclosing partial source.
                 !crate::continuous::characteristics_calculation_in_progress(self, *id)
                     && !self
-                    .runtime_cache
-                    .characteristics_cache
-                    .contains_valid_entry(*id, effects_revision)
+                        .runtime_cache
+                        .characteristics_cache
+                        .contains_valid_entry(*id, effects_revision)
             })
             .collect();
         if missing.is_empty() {
@@ -4385,9 +4606,9 @@ impl GameState {
                     // this batch. Its current layer view is not a final result.
                     !crate::continuous::characteristics_calculation_in_progress(self, *candidate)
                         && !self
-                        .runtime_cache
-                        .characteristics_cache
-                        .contains_valid_entry(*candidate, effects_revision)
+                            .runtime_cache
+                            .characteristics_cache
+                            .contains_valid_entry(*candidate, effects_revision)
                 })
                 .collect();
             if !missing.is_empty() {
@@ -4470,6 +4691,11 @@ impl GameState {
                     linked_face_mana_value: object.linked_face_mana_value(),
                     compiled_card_text: object.compiled_card_text.clone(),
                     ability_labels: object.ability_labels.clone(),
+                    base_power: object.base_power.as_ref().map(|value| value.base_value()),
+                    base_toughness: object
+                        .base_toughness
+                        .as_ref()
+                        .map(|value| value.base_value()),
                     power: object.power(),
                     toughness: object.toughness(),
                     card_types: object.zone_card_types().to_vec().into(),
@@ -4500,17 +4726,24 @@ impl GameState {
                         )
                         .collect::<Vec<_>>()
                         .into(),
+                    numeric_range_error: None,
                     ability_gain_prohibitions: Vec::new(),
                     aura_attach_filter: object.aura_attach_filter_owned(),
                     controller: self.controller_of(object),
                 });
 
+        if chars.numeric_range_error.is_some() {
+            return None;
+        }
         Self::normalize_current_characteristic_subtypes(object, &mut chars);
 
         Some(chars)
     }
 
-    fn normalize_current_characteristic_subtypes(object: &Object, chars: &mut CalculatedCharacteristics) {
+    fn normalize_current_characteristic_subtypes(
+        object: &Object,
+        chars: &mut CalculatedCharacteristics,
+    ) {
         let has_changeling = chars
             .static_abilities
             .iter()
@@ -4531,7 +4764,6 @@ impl GameState {
                 }
             }
         }
-
     }
 
     /// Missing/phased objects remain absence; unresolved computation is an
@@ -4539,10 +4771,18 @@ impl GameState {
     pub fn try_current_characteristics(
         &self,
         id: ObjectId,
-    ) -> Result<Option<CalculatedCharacteristics>, crate::static_ability_processor::StaticEffectDiscoveryError> {
-        let Some(object) = self.object(id) else { return Ok(None); };
-        if object.zone == Zone::Battlefield && self.is_phased_out(id) { return Ok(None); }
+    ) -> Result<
+        Option<CalculatedCharacteristics>,
+        crate::static_ability_processor::StaticEffectDiscoveryError,
+    > {
+        let Some(object) = self.object(id) else {
+            return Ok(None);
+        };
+        if object.zone == Zone::Battlefield && self.is_phased_out(id) {
+            return Ok(None);
+        }
         if let Some(mut chars) = crate::continuous::in_progress_characteristics(self, id) {
+            chars.validate_numeric_range()?;
             Self::normalize_current_characteristic_subtypes(object, &mut chars);
             return Ok(Some(chars));
         }
@@ -4553,11 +4793,16 @@ impl GameState {
         // separately discards the layer batch already prepared for this state.
         let revision = self.effect_store.continuous_effects.revision();
         if self.continuous_state_is_clean()
-            && self.runtime_cache.static_effects_cache.borrow().has_checked_snapshot(revision)
+            && self
+                .runtime_cache
+                .static_effects_cache
+                .borrow()
+                .has_checked_snapshot(revision)
         {
             let mut chars = self.calculated_characteristics_arc(id)
                 .ok_or(crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object: id })?
                 .as_ref().clone();
+            chars.validate_numeric_range()?;
             Self::normalize_current_characteristic_subtypes(object, &mut chars);
             return Ok(Some(chars));
         }
@@ -4570,26 +4815,47 @@ impl GameState {
     pub(crate) fn try_current_characteristics_batch(
         &self,
         ids: &[ObjectId],
-    ) -> Result<HashMap<ObjectId, CalculatedCharacteristics>, crate::static_ability_processor::StaticEffectDiscoveryError> {
+    ) -> Result<
+        HashMap<ObjectId, CalculatedCharacteristics>,
+        crate::static_ability_processor::StaticEffectDiscoveryError,
+    > {
         let effects = self.try_all_continuous_effects_arc()?;
         let revision = self.effect_store.continuous_effects.revision();
         if self.continuous_state_is_clean()
-            && self.runtime_cache.static_effects_cache.borrow().has_checked_snapshot(revision)
+            && self
+                .runtime_cache
+                .static_effects_cache
+                .borrow()
+                .has_checked_snapshot(revision)
         {
             self.prewarm_calculated_characteristics(ids);
-            return ids.iter().filter_map(|id| match self.try_current_characteristics(*id) {
-                Ok(Some(chars)) => Some(Ok((*id, chars))),
-                Ok(None) => None,
-                Err(error) => Some(Err(error)),
-            }).collect();
+            return ids
+                .iter()
+                .filter_map(|id| match self.try_current_characteristics(*id) {
+                    Ok(Some(chars)) => Some(Ok((*id, chars))),
+                    Ok(None) => None,
+                    Err(error) => Some(Err(error)),
+                })
+                .collect();
         }
-        let present: Vec<_> = ids.iter().copied().filter(|id| self.object(*id).is_some_and(|object|
-            object.zone != Zone::Battlefield || !self.is_phased_out(*id))).collect();
+        let present: Vec<_> = ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.object(*id).is_some_and(|object| {
+                    object.zone != Zone::Battlefield || !self.is_phased_out(*id)
+                })
+            })
+            .collect();
         let mut calculated = self.calculated_characteristics_batch_with_effects(&present, &effects);
         for id in present {
             let chars = calculated.get_mut(&id).ok_or(
                 crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object: id })?;
-            Self::normalize_current_characteristic_subtypes(self.object(id).expect("immutable existing object"), chars);
+            chars.validate_numeric_range()?;
+            Self::normalize_current_characteristic_subtypes(
+                self.object(id).expect("immutable existing object"),
+                chars,
+            );
         }
         Ok(calculated)
     }
@@ -4598,11 +4864,19 @@ impl GameState {
         &self,
         id: ObjectId,
         effects: &[ContinuousEffect],
-    ) -> Result<Option<CalculatedCharacteristics>, crate::static_ability_processor::StaticEffectDiscoveryError> {
-        let Some(object) = self.object(id) else { return Ok(None); };
-        if object.zone == Zone::Battlefield && self.is_phased_out(id) { return Ok(None); }
+    ) -> Result<
+        Option<CalculatedCharacteristics>,
+        crate::static_ability_processor::StaticEffectDiscoveryError,
+    > {
+        let Some(object) = self.object(id) else {
+            return Ok(None);
+        };
+        if object.zone == Zone::Battlefield && self.is_phased_out(id) {
+            return Ok(None);
+        }
         let mut chars = self.calculated_characteristics_with_effects(id, effects)
             .ok_or(crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object: id })?;
+        chars.validate_numeric_range()?;
         Self::normalize_current_characteristic_subtypes(object, &mut chars);
         Ok(Some(chars))
     }
@@ -4672,6 +4946,7 @@ impl GameState {
             if needs_rebuild {
                 let change_effects = Arc::new(self.cached_effects_for_controller_query());
                 *self.runtime_cache.controller_cache.borrow_mut() = Some(ControllerCache {
+                    context_revision: self.continuous_context_revision(),
                     revision: self.effect_store.continuous_effects.revision(),
                     turn_number: self.turn.turn_number,
                     active_player: self.turn.active_player,
@@ -4707,15 +4982,22 @@ impl GameState {
     fn cached_effects_for_controller_query(&self) -> Vec<ContinuousEffect> {
         // Control predicates can inspect copy/type/ability facts. Retain the
         // full known snapshot rather than querying discovery from a filter.
-        self.cached_continuous_effects_snapshot_arc().iter().cloned().collect()
+        self.cached_continuous_effects_snapshot_arc()
+            .iter()
+            .cloned()
+            .collect()
     }
 
     fn effects_for_controller_query(&self) -> Vec<ContinuousEffect> {
         if self.continuous_state_is_clean() {
             self.cached_effects_for_controller_query()
         } else {
-            self.effect_store.continuous_effects.effects_sorted()
-                .into_iter().cloned().collect()
+            self.effect_store
+                .continuous_effects
+                .effects_sorted()
+                .into_iter()
+                .cloned()
+                .collect()
         }
     }
 
@@ -4726,15 +5008,24 @@ impl GameState {
         effects: &[ContinuousEffect],
         skipped_effect: Option<ContinuousEffectId>,
     ) -> Option<PlayerId> {
-        if !effects.iter().any(|effect|
+        if !effects.iter().any(|effect| {
             skipped_effect != Some(effect.id)
-                && matches!(effect.modification, Modification::ChangeController(_) | Modification::ChangeControllerToEffectController))
-        {
+                && matches!(
+                    effect.modification,
+                    Modification::ChangeController(_)
+                        | Modification::ChangeControllerToEffectController
+                )
+        }) {
             return Some(object.initial_controller);
         }
         let query_effects: std::borrow::Cow<'_, [ContinuousEffect]> = match skipped_effect {
-            Some(skipped) => std::borrow::Cow::Owned(effects.iter()
-                .filter(|effect| effect.id != skipped).cloned().collect()),
+            Some(skipped) => std::borrow::Cow::Owned(
+                effects
+                    .iter()
+                    .filter(|effect| effect.id != skipped)
+                    .cloned()
+                    .collect(),
+            ),
             None => std::borrow::Cow::Borrowed(effects),
         };
         // Duration checks that omit one control effect need an independent
@@ -4743,11 +5034,18 @@ impl GameState {
         let query_game = if skipped_effect.is_some() {
             isolated = self.clone();
             &isolated
-        } else { self };
+        } else {
+            self
+        };
         crate::continuous::calculate_characteristics_with_effects(
-            id, query_game.objects_map(), &query_effects, &query_game.battlefield,
-            query_game.commander_objects(), query_game,
-        ).map(|chars| chars.controller)
+            id,
+            query_game.objects_map(),
+            &query_effects,
+            &query_game.battlefield,
+            query_game.commander_objects(),
+            query_game,
+        )
+        .map(|chars| chars.controller)
     }
 
     /// Return the object's current controller, falling back to its owner if the
@@ -4771,9 +5069,13 @@ impl GameState {
         id: ObjectId,
         controller: PlayerId,
     ) -> Result<(), crate::static_ability_processor::StaticEffectDiscoveryError> {
-        if self.object(id).is_none() { return Ok(()); }
+        if self.object(id).is_none() {
+            return Ok(());
+        }
         let mut working = self.continuous_query_snapshot()?;
-        if working.current_controller(id) == Some(controller) { return Ok(()); }
+        if working.current_controller(id) == Some(controller) {
+            return Ok(());
+        }
         working.stage_controller_change_for_assembly(id, controller);
         working.refresh_continuous_state()?;
         *self = working;
@@ -4784,7 +5086,9 @@ impl GameState {
     /// Assembly callers must validate their complete isolated proposal before
     /// publishing it. This changes neither ownership nor effect chronology.
     pub fn stage_initial_controller_for_assembly(&mut self, id: ObjectId, controller: PlayerId) {
-        let Some(object) = self.object_mut(id) else { return; };
+        let Some(object) = self.object_mut(id) else {
+            return;
+        };
         object.initial_controller = controller;
     }
 
@@ -4792,12 +5096,19 @@ impl GameState {
     /// proposal. The caller must validate the complete proposal before publishing
     /// it. This is not an initial/default controller assignment.
     pub fn stage_controller_change_for_assembly(&mut self, id: ObjectId, controller: PlayerId) {
-        if self.object(id).is_none() || self.current_controller(id) == Some(controller) { return; }
+        if self.object(id).is_none() || self.current_controller(id) == Some(controller) {
+            return;
+        }
         self.set_summoning_sick(id);
         let effect = ContinuousEffect::new(
-            id, controller, EffectTarget::Specific(id), Modification::ChangeController(controller),
-        ).until(Until::Forever);
+            id,
+            controller,
+            EffectTarget::Specific(id),
+            Modification::ChangeController(controller),
+        )
+        .until(Until::Forever);
         self.effect_store.continuous_effects.add_effect(effect);
+        self.mark_continuous_state_dirty();
     }
 
     /// Return the object's current card types in its zone.
@@ -4992,7 +5303,6 @@ impl GameState {
             return false;
         }
 
-
         if let Some(chars) = self.calculated_characteristics(id) {
             return chars
                 .static_abilities
@@ -5076,6 +5386,8 @@ impl GameState {
         use crate::ability::AbilityKind;
         use crate::static_abilities::StaticAbility;
 
+        self.expire_condition_ended_prevention_shields();
+
         // A duration ends permanently at its first false transition.
         let expired: std::collections::HashSet<usize> = self
             .effect_store
@@ -5142,6 +5454,11 @@ impl GameState {
                 self.objects
                     .iter()
                     .flat_map(|(&object_id, object)| {
+                        // CR 702.26b: phased-out sources do not supply static
+                        // rule restrictions, even on the printed-only fast path.
+                        if self.is_phased_out(object_id) {
+                            return Vec::new();
+                        }
                         let zone = object.zone;
                         let controller = self.controller_of(object);
                         let mut abilities = object
@@ -5203,6 +5520,11 @@ impl GameState {
                 self.objects
                     .iter()
                     .flat_map(|(&object_id, object)| {
+                        // CR 702.26b: phased-out sources do not supply static
+                        // rule restrictions, even on the printed-only fast path.
+                        if self.is_phased_out(object_id) {
+                            return Vec::new();
+                        }
                         let zone = object.zone;
                         let controller = self.controller_of(object);
                         match zone {
@@ -5433,6 +5755,7 @@ impl GameState {
             | Modification::RemoveStaticAbilityFamily(_)
             | Modification::RemoveAbilityGeneric { .. }
             | Modification::RemoveAllAbilities
+        | Modification::RemoveLandRulesTextAbilities
             | Modification::RemoveAllAbilitiesExceptMana => true,
             Modification::AddAbility(static_ability) => {
                 Self::static_ability_requires_cant_update(static_ability)
@@ -5563,6 +5886,7 @@ impl GameState {
                 | StaticAbilityId::Improvise
                 | StaticAbilityId::BlackManaMayBePaidWithLife
                 | StaticAbilityId::MinimumSpellTotalMana
+                | StaticAbilityId::SpellManaSpendingRestriction
         )
     }
 
@@ -5605,8 +5929,10 @@ mod chosen_option_tests {
                 &mut decisions,
                 true,
                 true,
-            ).expect("replacement operation must execute successfully in this scenario")
-            .assert_completed_without_additions().expect("land should enter the battlefield");
+            )
+            .expect("replacement operation must execute successfully in this scenario")
+            .assert_completed_without_additions()
+            .expect("land should enter the battlefield");
 
         assert!(result.enters_tapped);
         assert!(game.is_tapped(result.new_id));
@@ -5623,11 +5949,22 @@ mod chosen_option_tests {
         game.take_pending_trigger_events();
         let counter = crate::object::CounterType::PlusOnePlusOne;
         assert!(game.add_counters(recipient, counter, 0).is_none());
-        assert!(!game.object(recipient).unwrap().counters.contains_key(&counter));
+        assert!(
+            !game
+                .object(recipient)
+                .unwrap()
+                .counters
+                .contains_key(&counter)
+        );
         assert!(game.take_pending_trigger_events().is_empty());
         let event = game.add_counters(recipient, counter, 1).unwrap();
-        let placed = event.downcast::<crate::events::CounterPlacedEvent>().unwrap();
-        assert_eq!((placed.permanent, placed.counter_type, placed.amount), (recipient, counter, 1));
+        let placed = event
+            .downcast::<crate::events::CounterPlacedEvent>()
+            .unwrap();
+        assert_eq!(
+            (placed.permanent, placed.counter_type, placed.amount),
+            (recipient, counter, 1)
+        );
         assert_eq!(game.counter_count(recipient, counter), 1);
     }
 
@@ -5792,9 +6129,11 @@ impl GameState {
             return None;
         }
         let object = self.object(granting)?;
-        Some(crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-            object, self,
-        ))
+        Some(
+            crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
+                object, self,
+            ),
+        )
     }
 
     /// The tag map entry exposing [`Self::granting_source_snapshot`].
@@ -5819,33 +6158,87 @@ impl GameState {
 #[cfg(test)]
 mod replacement_direct_entry_zone_cause_contract_tests {
     use crate::events::cause::{CauseFilter, CauseType, ControllerFilter, EventCause};
-    use crate::replacement::{ReplacementAction, ReplacementEffect};
     use crate::ids::{CardId, PlayerId};
+    use crate::replacement::{ReplacementAction, ReplacementEffect};
     use crate::target::ObjectFilter;
     use crate::types::CardType;
     use crate::zone::Zone;
     fn check(matching_cause: bool) {
         let mut game = crate::tests::test_helpers::setup_two_player_game();
-        let alice = PlayerId::from_index(0); let bob = PlayerId::from_index(1);
-        let land_definition = crate::CardDefinitionBuilder::new(CardId::new(), "Entry proposal").card_types(vec![CardType::Land]).build();
-        let source_definition = crate::CardDefinitionBuilder::new(CardId::new(), "Entry replacement").card_types(vec![CardType::Artifact]).build();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let land_definition = crate::CardDefinitionBuilder::new(CardId::new(), "Entry proposal")
+            .card_types(vec![CardType::Land])
+            .build();
+        let source_definition =
+            crate::CardDefinitionBuilder::new(CardId::new(), "Entry replacement")
+                .card_types(vec![CardType::Artifact])
+                .build();
         let land = game.create_object_from_definition(&land_definition, alice, Zone::Hand);
         let stable = game.object(land).unwrap().stable_id;
         let source = game.create_object_from_definition(&source_definition, bob, Zone::Battlefield);
-        let filter = CauseFilter::exact(CauseType::SpecialAction).with_source(ObjectFilter::specific(land)).with_controller(ControllerFilter::Player(alice));
-        let shield = game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(source, bob,
-            crate::events::zones::matchers::WouldChangeZoneMatcher::new(ObjectFilter::specific(land), Some(Zone::Hand), Some(Zone::Battlefield)).with_cause_filter(filter), ReplacementAction::EnterTapped));
-        let cause = if matching_cause { EventCause::from_special_action(Some(land), alice) } else { EventCause::from_cost(land, alice) };
+        let filter = CauseFilter::exact(CauseType::SpecialAction)
+            .with_source(ObjectFilter::specific(land))
+            .with_controller(ControllerFilter::Player(alice));
+        let shield = game.effect_store.replacement_effects.add_one_shot_effect(
+            ReplacementEffect::with_matcher(
+                source,
+                bob,
+                crate::events::zones::matchers::WouldChangeZoneMatcher::new(
+                    ObjectFilter::specific(land),
+                    Some(Zone::Hand),
+                    Some(Zone::Battlefield),
+                )
+                .with_cause_filter(filter),
+                ReplacementAction::EnterTapped,
+            ),
+        );
+        let cause = if matching_cause {
+            EventCause::from_special_action(Some(land), alice)
+        } else {
+            EventCause::from_cost(land, alice)
+        };
         let mut dm = crate::decision::SelectFirstDecisionMaker;
-        let result = game.move_object_with_etb_processing_with_cause_and_entry_options_and_controller(land, Zone::Battlefield, cause, &mut dm, Some(alice), false, true);
+        let result = game
+            .move_object_with_etb_processing_with_cause_and_entry_options_and_controller(
+                land,
+                Zone::Battlefield,
+                cause,
+                &mut dm,
+                Some(alice),
+                false,
+                true,
+            );
         assert!(result.is_ok());
-        let arrival = game.objects_in_deterministic_order().into_iter().find(|object| object.stable_id == stable).unwrap();
-        assert_eq!(arrival.zone, Zone::Battlefield); assert_eq!(game.controller_of(arrival), alice);
-        assert_eq!(game.is_tapped(arrival.id), matching_cause, "zone replacement must inspect the originating entry cause");
-        assert_eq!(game.effect_store.replacement_effects.get_effect(shield).is_none(), matching_cause, "only the applicable shield is consumed");
+        let arrival = game
+            .objects_in_deterministic_order()
+            .into_iter()
+            .find(|object| object.stable_id == stable)
+            .unwrap();
+        assert_eq!(arrival.zone, Zone::Battlefield);
+        assert_eq!(game.controller_of(arrival), alice);
+        assert_eq!(
+            game.is_tapped(arrival.id),
+            matching_cause,
+            "zone replacement must inspect the originating entry cause"
+        );
+        assert_eq!(
+            game.effect_store
+                .replacement_effects
+                .get_effect(shield)
+                .is_none(),
+            matching_cause,
+            "only the applicable shield is consumed"
+        );
     }
-    #[test] fn direct_entry_preserves_zone_cause_source_and_controller() { check(true); }
-    #[test] fn direct_entry_rejects_nonmatching_zone_cause() { check(false); }
+    #[test]
+    fn direct_entry_preserves_zone_cause_source_and_controller() {
+        check(true);
+    }
+    #[test]
+    fn direct_entry_rejects_nonmatching_zone_cause() {
+        check(false);
+    }
 }
 
 #[cfg(test)]
@@ -5864,33 +6257,165 @@ mod lingering_departure_snapshot_tests {
         for donor_first in [true, false] {
             let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
             let alice = PlayerId::from_index(0);
-            let definition = CardDefinitionBuilder::new(CardId::new(), "Lingering departure fixture")
-                .supertypes(vec![Supertype::Legendary])
-                .card_types(vec![CardType::Creature])
-                .power_toughness(crate::card::PowerToughness::fixed(2, 2))
-                .build();
+            let definition =
+                CardDefinitionBuilder::new(CardId::new(), "Lingering departure fixture")
+                    .supertypes(vec![Supertype::Legendary])
+                    .card_types(vec![CardType::Creature])
+                    .power_toughness(crate::card::PowerToughness::fixed(2, 2))
+                    .build();
             let donor = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
-            let recipient = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
+            let recipient =
+                game.create_object_from_definition(&definition, alice, Zone::Battlefield);
             let keep = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
             game.object_mut(donor).unwrap().abilities_mut().push(Ability::static_ability(
                 StaticAbility::grant_ability(ObjectFilter::specific(recipient),
                     StaticAbility::static_effects_continue_until_end_of_turn_after_leaving(
                         "If this permanent leaves the battlefield, this effect continues until end of turn."))));
-            game.object_mut(recipient).unwrap().abilities_mut().push(Ability::static_ability(
-                StaticAbility::anthem(ObjectFilter::creature(), 2, 2)));
-            game.refresh_continuous_state().expect("granted continuation completes");
-            assert_eq!(game.current_power(keep).zip(game.current_toughness(keep)), Some((4, 4)));
-            let group = if donor_first { vec![donor, recipient, keep] }
-                else { vec![recipient, donor, keep] };
+            game.object_mut(recipient)
+                .unwrap()
+                .abilities_mut()
+                .push(Ability::static_ability(StaticAbility::anthem(
+                    ObjectFilter::creature(),
+                    2,
+                    2,
+                )));
+            game.refresh_continuous_state()
+                .expect("granted continuation completes");
+            assert_eq!(
+                game.current_power(keep).zip(game.current_toughness(keep)),
+                Some((4, 4))
+            );
+            let group = if donor_first {
+                vec![donor, recipient, keep]
+            } else {
+                vec![recipient, donor, keep]
+            };
             crate::rules::state_based::apply_legend_rule_choice_from_group(&mut game, keep, &group)
                 .expect("simultaneous departure batch completes");
-            game.refresh_continuous_state().expect("lingering effect calculation completes");
+            game.refresh_continuous_state()
+                .expect("lingering effect calculation completes");
             assert_eq!(game.battlefield.to_vec(), vec![keep]);
-            assert_eq!(game.current_power(keep).zip(game.current_toughness(keep)), Some((4, 4)),
-                "saved pre-event abilities must survive donor loss; donor_first={donor_first}");
-            assert!(game.effect_store.continuous_effects.registered_state().effects.iter()
-                .any(|effect| effect.source == recipient && effect.controller == alice
-                    && effect.duration == crate::effect::Until::EndOfTurn));
+            assert_eq!(
+                game.current_power(keep).zip(game.current_toughness(keep)),
+                Some((4, 4)),
+                "saved pre-event abilities must survive donor loss; donor_first={donor_first}"
+            );
+            assert!(game.effect_store.continuous_effects.effects().iter().any(
+                |effect| effect.source == recipient
+                    && effect.controller == alice
+                    && effect.duration == crate::effect::Until::EndOfTurn
+            ));
         }
+    }
+}
+
+#[cfg(test)]
+mod player_removal_notification_public_contract_tests {
+
+    use crate::effects::{
+        EffectContext, EnergyCountersEffect, PayEnergyEffect, PutCountersEffect, execute_effect,
+    };
+    use crate::events::MarkersChangedEvent;
+    use crate::object::CounterType;
+    use crate::target::{ChooseSpec, PlayerFilter};
+    use crate::{CardId, Effect, GameState, PlayerId, Zone};
+    fn setup() -> (GameState, crate::ObjectId, PlayerId) {
+        let alice = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let card = crate::cards::builders::CardDefinitionBuilder::new(
+            CardId::new(),
+            "Removal notification owner",
+        )
+        .card_types(vec![crate::types::CardType::Artifact])
+        .build();
+        let source = game.create_object_from_definition(&card, alice, Zone::Battlefield);
+        (game, source, alice)
+    }
+    #[test]
+    fn object_removal_event_snapshot_control() {
+        let (mut game, source, alice) = setup();
+        let mut ctx = EffectContext::new_default(source, alice);
+        execute_effect(
+            &mut game,
+            &Effect::new(PutCountersEffect::new(
+                CounterType::Charge,
+                7,
+                ChooseSpec::SpecificObject(source),
+            )),
+            &mut ctx,
+        )
+        .unwrap();
+        let (removed, event) = game
+            .remove_counters(source, CounterType::Charge, 3, Some(source), Some(alice))
+            .unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(game.counter_count(source, CounterType::Charge), 4);
+        let marker = event.downcast::<MarkersChangedEvent>().unwrap();
+        assert_eq!(marker.amount, 3);
+        assert_eq!(marker.count_after, Some(4));
+    }
+    #[test]
+    fn player_removal_event_preserves_actual_count_at_event_time() {
+        let (mut game, source, alice) = setup();
+        for kind in [
+            CounterType::Energy,
+            CounterType::Experience,
+            CounterType::Poison,
+            CounterType::Rad,
+            CounterType::Named("ticket".into()),
+        ] {
+            game.add_player_counters_with_source(alice, kind, 7, Some(source), Some(alice))
+                .unwrap();
+            let (removed, event) = game
+                .remove_player_counters_with_source(alice, kind, 3, Some(source), Some(alice))
+                .unwrap();
+            assert_eq!(removed, 3);
+            assert_eq!(game.player(alice).unwrap().counter_count(kind), 4);
+            let marker = event.downcast::<MarkersChangedEvent>().unwrap();
+            assert_eq!(marker.amount, 3);
+            assert_eq!(marker.source, Some(source));
+            assert_eq!(
+                marker.count_after,
+                Some(4),
+                "known player count must be captured before subsequent events"
+            );
+            game.add_player_counters_with_source(alice, kind, 2, Some(source), Some(alice))
+                .unwrap();
+            assert_eq!(game.player(alice).unwrap().counter_count(kind), 6);
+            assert_eq!(marker.count_after, Some(4));
+        }
+    }
+    #[test]
+    fn energy_payment_notification_reports_zero_remaining() {
+        let (mut game, source, alice) = setup();
+        let mut ctx = EffectContext::new_default(source, alice);
+        execute_effect(
+            &mut game,
+            &Effect::new(EnergyCountersEffect::you(u32::MAX)),
+            &mut ctx,
+        )
+        .unwrap();
+        let out = execute_effect(
+            &mut game,
+            &Effect::new(PayEnergyEffect::new(
+                u32::MAX,
+                ChooseSpec::Player(PlayerFilter::You),
+            )),
+            &mut ctx,
+        )
+        .unwrap();
+        assert_eq!(out.as_count(), Some(i64::from(u32::MAX)));
+        assert_eq!(game.player(alice).unwrap().energy_counters, 0);
+        let marker = out
+            .events
+            .iter()
+            .find_map(|e| e.downcast::<MarkersChangedEvent>())
+            .unwrap();
+        assert_eq!(marker.amount, u32::MAX);
+        assert_eq!(
+            marker.count_after,
+            Some(0),
+            "actual removal outcome and notification must agree"
+        );
     }
 }

@@ -48,7 +48,7 @@ use super::tagging_runtime::{
 /// Tag the execution context (and runtime tag state) from an inner effect's
 /// outcome — shared by live execution and batched simultaneous commits.
 /// (Free function because `TaggedEffect` aliases a foreign core type.)
-pub(super) fn apply_outcome_tags(
+pub(crate) fn apply_outcome_tags(
     effect: &TaggedEffect,
     game: &mut GameState,
     ctx: &mut ExecutionContext,
@@ -65,12 +65,6 @@ pub(super) fn apply_outcome_tags(
                 .map(|object| ObjectSnapshot::from_object(object, game))
         })
         .collect::<Vec<_>>();
-    if !drawn_snapshots.is_empty() {
-        ctx.set_tagged_objects(effect.tag.clone(), drawn_snapshots.clone());
-        if effect.tag.as_str() != "__it__" && effect.tag.as_str() != "__copied_stack_object__" {
-            ctx.set_tagged_objects(TagKey::from("__it__"), drawn_snapshots);
-        }
-    }
     for damage in outcome.events_of_type::<DamageEvent>() {
         if damage.amount == 0 {
             continue;
@@ -102,6 +96,12 @@ pub(super) fn apply_outcome_tags(
     apply_tagged_runtime_state(game, ctx, effect.tag.clone(), outcome, runtime.clone());
     if effect.tag.as_str() != "__it__" && effect.tag.as_str() != "__copied_stack_object__" {
         apply_tagged_runtime_state(game, ctx, TagKey::from("__it__"), outcome, runtime);
+    }
+    if !drawn_snapshots.is_empty() {
+        ctx.set_tagged_objects(effect.tag.clone(), drawn_snapshots.clone());
+        if effect.tag.as_str() != "__it__" && effect.tag.as_str() != "__copied_stack_object__" {
+            ctx.set_tagged_objects(TagKey::from("__it__"), drawn_snapshots);
+        }
     }
 }
 
@@ -250,7 +250,8 @@ impl EffectExecutor for TaggedEffect {
         self.effect
             .0
             .visit_child_effects(&mut |_| forwards_child_target = true);
-        if self.effect.0.get_target_spec().is_some() && !forwards_child_target {
+        if !self.outcome_only && self.effect.0.get_target_spec().is_some() && !forwards_child_target
+        {
             TargetReusePolicy::AlwaysDeclareNew
         } else {
             self.effect.0.target_reuse_policy()

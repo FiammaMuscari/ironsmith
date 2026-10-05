@@ -98,9 +98,10 @@ pub trait DecisionMaker {
     /// Returns IDs of selected objects.
     fn decide_objects(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::SelectObjectsContext,
     ) -> Vec<ObjectId> {
+        if ctx.relation_filter.is_some() { return ctx.legal_relation_selection(game, ctx.min).unwrap_or_default(); }
         // Default: select minimum required from legal candidates
         ctx.candidates
             .iter()
@@ -902,9 +903,10 @@ impl DecisionMaker for AutoPassDecisionMaker {
 
     fn decide_objects(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::SelectObjectsContext,
     ) -> Vec<ObjectId> {
+        if ctx.relation_filter.is_some() { return ctx.legal_relation_selection(game, ctx.min).unwrap_or_default(); }
         // Auto-pass: select minimum required, using first legal candidates
         let legal: Vec<ObjectId> = ctx
             .candidates
@@ -994,10 +996,10 @@ impl DecisionMaker for AutoPassDecisionMaker {
             if remaining == 0 {
                 break;
             }
-            let to_remove = (*available).min(remaining);
+            let to_remove = (*available).min(u32::try_from(remaining).unwrap_or(u32::MAX));
             if to_remove > 0 {
                 selections.push((*counter_type, to_remove));
-                remaining -= to_remove;
+                remaining -= u64::from(to_remove);
             }
         }
         selections
@@ -1067,9 +1069,10 @@ impl DecisionMaker for SelectFirstDecisionMaker {
 
     fn decide_objects(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::SelectObjectsContext,
     ) -> Vec<ObjectId> {
+        if ctx.relation_filter.is_some() { return ctx.legal_relation_selection(game, ctx.max.unwrap_or(1).max(ctx.min)).unwrap_or_default(); }
         // Select first: select first legal option (up to max)
         let legal: Vec<ObjectId> = ctx
             .candidates
@@ -1179,10 +1182,10 @@ impl DecisionMaker for SelectFirstDecisionMaker {
             if remaining == 0 {
                 break;
             }
-            let to_remove = (*available).min(remaining);
+            let to_remove = (*available).min(u32::try_from(remaining).unwrap_or(u32::MAX));
             if to_remove > 0 {
                 selections.push((*counter_type, to_remove));
-                remaining -= to_remove;
+                remaining -= u64::from(to_remove);
             }
         }
         selections
@@ -1708,10 +1711,10 @@ impl DecisionMaker for NumericInputDecisionMaker {
                 && idx < ctx.available_counters.len()
             {
                 let (counter_type, available) = ctx.available_counters[idx];
-                let to_remove = count.min(available).min(remaining);
+                let to_remove = count.min(available).min(u32::try_from(remaining).unwrap_or(u32::MAX));
                 if to_remove > 0 {
                     selections.push((counter_type, to_remove));
-                    remaining -= to_remove;
+                    remaining -= u64::from(to_remove);
                 }
             }
         }
@@ -2547,10 +2550,14 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
         } => {
             if let Some(obj) = game.object(*spell_id) {
                 match casting_method {
+                    crate::alternative_cast::CastingMethod::AlternativePrice { price, prototype, .. } => {
+                        let provider = game.object(price.source).map(|source| source.name.to_string()).unwrap_or_else(|| "alternative price".into());
+                        format!("{} [using {}{}]", obj.name, provider, if prototype.is_some() { ", prototyped" } else { "" })
+                    }
                     crate::alternative_cast::CastingMethod::Normal => {
                         format!("{} ({})", obj.name, format_mana_cost(obj))
                     }
-                    crate::alternative_cast::CastingMethod::FaceDown => {
+                    crate::alternative_cast::CastingMethod::FaceDown | crate::alternative_cast::CastingMethod::FaceDownPlayFrom { .. } => {
                         format!("{} [Face down] ({})", obj.name, "{3}")
                     }
                     crate::alternative_cast::CastingMethod::SplitOtherHalf => {
@@ -2575,17 +2582,13 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
                         ..
                     } => {
                         let acting_player = game.turn.priority_player.unwrap_or(obj.owner);
-                        let alt_method = resolve_play_from_alternative_method(
-                            game,
-                            acting_player,
-                            obj,
-                            *zone,
-                            *use_alternative,
-                        );
+                        let alt_method = use_alternative.and_then(|index| resolve_play_from_alternative_method(
+                            game, acting_player, obj, *zone, index,
+                        ));
                         let method_name = alt_method
                             .as_ref()
                             .map(|method| method.name())
-                            .unwrap_or("Alternative");
+                            .unwrap_or("Granted cast");
                         let cost_desc = if let Some(method) = alt_method.as_ref() {
                             let costs = method.non_mana_costs();
                             if !costs.is_empty() {
@@ -2605,7 +2608,8 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
                                 format_mana_cost(obj)
                             }
                         } else {
-                            format_mana_cost(obj)
+                            spell_mana_cost_for_cast(game, acting_player, obj, casting_method, *zone)
+                                .as_ref().map(format_mana_cost_from_cost).unwrap_or_default()
                         };
                         let name = game
                             .linked_face_definition_by_name_or_id(
@@ -3375,7 +3379,7 @@ fn prompt_choose_colors(
 /// Prompt for choosing counters to remove, returning Vec<(CounterType, u32)> directly.
 fn prompt_choose_counters(
     available_counters: &[(CounterType, u32)],
-    max_total: u32,
+    max_total: u64,
 ) -> Vec<(CounterType, u32)> {
     if available_counters.is_empty() {
         return vec![];
@@ -3406,7 +3410,7 @@ fn prompt_choose_counters(
         }
 
         let mut result = vec![];
-        let mut total_removed = 0u32;
+        let mut total_removed = 0u64;
         let mut valid = true;
 
         for part in trimmed.split(',') {
@@ -3450,7 +3454,7 @@ fn prompt_choose_counters(
                 break;
             }
 
-            total_removed += amount;
+            total_removed += u64::from(amount);
             result.push((available_counters[idx].0, amount));
         }
 

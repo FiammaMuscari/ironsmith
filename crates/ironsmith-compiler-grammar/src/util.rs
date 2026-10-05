@@ -671,6 +671,7 @@ enum CompilerActivationCostObjectReference {
 #[derive(Default)]
 struct CompilerActivationCostTagCounters {
     tap: usize,
+    untap: usize,
     discard: usize,
     sacrifice: usize,
     exile: usize,
@@ -693,6 +694,13 @@ fn compiler_activation_cost_component_reference(
         CompilerCost::TapChosen { .. } => {
             let tag = crate::tag::CompilerCostObjectTag::Tap.key(counters.tap);
             counters.tap += 1;
+            Some(CompilerActivationCostObjectReference::Tagged(
+                tag.key.clone(),
+            ))
+        }
+        CompilerCost::UntapChosen { .. } => {
+            let tag = crate::tag::CompilerCostObjectTag::Untap.key(counters.untap);
+            counters.untap += 1;
             Some(CompilerActivationCostObjectReference::Tagged(
                 tag.key.clone(),
             ))
@@ -766,9 +774,11 @@ fn compiler_activation_cost_component_reference(
             }
             reference
         }
-        CompilerCost::ExileTopLibrary { .. } => Some(CompilerActivationCostObjectReference::Tagged(
-            (crate::tag::CompilerReferenceTag::CostExiledTop.bind()).into(),
-        )),
+        CompilerCost::ExileTopLibrary { .. } => {
+            Some(CompilerActivationCostObjectReference::Tagged(
+                (crate::tag::CompilerReferenceTag::CostExiledTop.bind()).into(),
+            ))
+        }
         CompilerCost::ReturnChosenToHand { .. } => {
             let tag = crate::tag::CompilerCostObjectTag::ReturnToHand.key(counters.return_to_hand);
             counters.return_to_hand += 1;
@@ -1131,45 +1141,7 @@ pub fn parser_trace_stack(stage: &str, tokens: &[OwnedLexToken]) {
     eprintln!("{}", std::backtrace::Backtrace::force_capture());
 }
 
-pub fn map_span_to_original(
-    span: TextSpan,
-    normalized_line: &str,
-    original_line: &str,
-    char_map: &[usize],
-) -> TextSpan {
-    fn byte_to_char_index(text: &str, byte_idx: usize) -> usize {
-        if byte_idx == 0 {
-            return 0;
-        }
-        let clamped = byte_idx.min(text.len());
-        text[..clamped].chars().count()
-    }
-
-    let start_char = byte_to_char_index(normalized_line, span.start);
-    let end_char = byte_to_char_index(normalized_line, span.end);
-    if start_char >= char_map.len() {
-        return span;
-    }
-    let start_orig = char_map[start_char];
-    let end_orig = if end_char == 0 || end_char > char_map.len() {
-        start_orig
-    } else {
-        let last_char_idx = end_char - 1;
-        let last_orig = char_map[last_char_idx];
-        let last_len = original_line[last_orig..]
-            .chars()
-            .next()
-            .map(|ch| ch.len_utf8())
-            .unwrap_or(0);
-        last_orig + last_len
-    };
-
-    TextSpan {
-        line: span.line,
-        start: start_orig,
-        end: end_orig,
-    }
-}
+pub use ironsmith_compiler_source::map_span_to_original;
 
 pub fn parse_card_type(word: &str) -> Option<CardType> {
     crate::grammar::primitives::probe_shape(leaf::parse_leaf_card_type_complete(word))
@@ -2358,7 +2330,10 @@ fn release_outer_scope_of_zoned_union(target: &mut TargetAst) {
             if filter.any_of.len() >= 2
                 && filter.zone.is_some()
                 && filter.any_of.iter().all(|branch| branch.zone.is_some())
-                && filter.any_of.iter().any(|branch| branch.zone != filter.zone)
+                && filter
+                    .any_of
+                    .iter()
+                    .any(|branch| branch.zone != filter.zone)
             {
                 filter.zone = None;
                 if let Some(owner) = filter.owner.take() {
@@ -3412,8 +3387,7 @@ pub(crate) fn split_cross_dimension_adjective_disjunction(
 /// "has an <subtype>" arm is an alternative to the listed card types, not an
 /// extra requirement on them.
 fn mark_has_subtype_list_arm_union(filter: &mut ObjectFilter, words: &[&str]) {
-    if filter.type_or_subtype_union || filter.card_types.is_empty() || filter.subtypes.len() != 1
-    {
+    if filter.type_or_subtype_union || filter.card_types.is_empty() || filter.subtypes.len() != 1 {
         return;
     }
     let Some(has_idx) = words.windows(3).position(|window| {
@@ -3438,4 +3412,50 @@ fn mark_has_subtype_list_arm_union(filter: &mut ObjectFilter, words: &[&str]) {
         return;
     }
     filter.type_or_subtype_union = true;
+}
+
+pub(crate) fn restore_authored_damage_source_surface(
+    effects: &mut [crate::cards::builders::EffectAst],
+    surface: &crate::target::SourceReferenceSurface,
+) {
+    use crate::cards::builders::{
+        DamageActionAst, EffectAst, SubjectVerbActionAst, SubjectVerbEffectAst, TargetAst,
+    };
+    use crate::target::ObjectFilter;
+    fn apply(target: &mut TargetAst, surface: &crate::target::SourceReferenceSurface) {
+        match target {
+            TargetAst::Source(span) => {
+                *target = TargetAst::Object(
+                    ObjectFilter::source_with_surface(surface.clone()),
+                    None,
+                    *span,
+                );
+            }
+            TargetAst::Object(filter, _, _) if filter.source => {
+                filter.source_surface = Some(surface.clone());
+            }
+            _ => {}
+        }
+    }
+
+    for effect in effects {
+        if let EffectAst::SubjectVerb(SubjectVerbEffectAst { action, .. }) = effect {
+            match action {
+                SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEqualToPower {
+                    source,
+                    ..
+                })
+                | SubjectVerbActionAst::Damage(DamageActionAst::DealDistributedDamage {
+                    source,
+                    ..
+                }) => {
+                    apply(source, surface);
+                }
+                _ => {}
+            }
+        }
+        crate::model::visit::for_each_nested_effects_mut(effect, true, |nested| {
+            restore_authored_damage_source_surface(nested, surface);
+        });
+    }
 }

@@ -34,7 +34,7 @@ The browser implementation is concentrated in a few places:
 - `crates/ironsmith-wasm/src/wasm_game_impl/ziffle_backend.rs`: the WebAssembly bridge to the ziffle mental-poker primitives.
 - `crates/ironsmith-wasm/src/lib.rs` and `crates/ironsmith-wasm/src/wasm_game_impl/dispatch.rs`: hidden-information tracking, crypto requirement generation, command preview, and public checkpoint export.
 
-The current browser audit protocol is version `14`, supports two to four players, and uses browser-native WebCrypto for the audit signatures and private-view encryption.
+The current browser audit protocol is version `16`, supports two to four players, and uses browser-native WebCrypto for the audit signatures and private-view encryption.
 
 ## Canonical bytes first
 
@@ -155,6 +155,8 @@ This links three facts without trusting the owner:
 - this physical game object came from a particular encrypted shuffled position;
 - that encrypted position opens to a particular original deck slot;
 - that original slot was committed to a particular card before the game started.
+
+Reveal tokens released for an action that has not been applied yet (authorized by previewing its signed intent or signed audit at the next sequence) pin that sequence: each responder records a disclosure lock keyed by match id, sequence, actor, and the local chain head, bound to the exact command. A later cancel does not release it. A different action at that sequence (applied, requested through another reveal, or announced as a new intent) is rejected, so a player can't peek at a card and then choose something else. Only the locked command or a forfeit can take the sequence. Fair-random nonce reveals use the same lock.
 
 No single player can choose the final order after seeing another player's entropy, because every player contributes a shuffle step. No single player can reveal arbitrary card identities, because card identity still has to match the committed slot.
 
@@ -311,11 +313,11 @@ This gives us a cheap consensus check. Peers do not have to expose hands and lib
 
 ## Action quorum
 
-Two-player games are tamper-evident but cannot have an honest third voter. In protocol v14, the action quorum threshold is:
+Two-player games are tamper-evident but cannot have an honest third voter. Since protocol v16 the actor's own vote no longer counts: the threshold is a strict majority of the non-actor players, so any two certificates for the same sequence share at least one honest non-actor voter:
 
 - two players: `0`;
-- three players: `2`;
-- four players: `3`.
+- three players: `2` (both opponents);
+- four players: `2` of the 3 opponents.
 
 For three and four player matches, the acting player collects action quorum votes. A vote signs:
 
@@ -406,28 +408,36 @@ Disconnect forfeits and protocol-response timeouts are separate from normal cloc
 
 Those certificates are also signed. Non-target players vote over the match id, basis sequence, forfeited player, peer id, timeout duration, observation timestamps, request type, request id, and request payload hash. A player cannot sign their own timeout or disconnect forfeit as an eligible voter. Early claims fail because the vote eligibility timestamp must equal the observed timestamp plus the timeout.
 
+While a player waits on another seat's protocol response, its clock pauses only for waits that are substantiated: the signed `protocol_wait_notice` carried a request payload matching its signed hash (and small enough to forward), or the target seat has since broadcast a signed `protocol_wait_answer` for it (which covers requests too large to forward). The credited interval ends at the answer, or at the notice's declared `responseTimeoutMs` (capped at the full-deck reveal-token timeout), whichever comes first. An unsubstantiated or expired wait earns no clock credit and does not shield the requester from an action-intent timeout.
+
 The protocol cannot prevent a malicious player from going offline. It can prevent another player from fabricating an early timeout, and it can produce a verifiable reason why the stalled player was forfeited.
 
 ## Resync and reconnect
 
 Peer-to-peer delivery is unreliable by design. A peer can miss messages, reconnect with a new PeerJS id, or receive action `N + 1` before action `N`.
 
-Resync uses a signed envelope:
+Resync carries the authenticated action transcript in a signed envelope:
 
 ```text
 {
-  domain: "ironsmith-resync-envelope-v1",
+  domain: "ironsmith-resync-envelope-v2",
   matchId,
   signer,
   lastSequence,
   finalStateHash,
-  checkpointHash,
   actionsHash,
+  signatureAlgorithm,
   signature
 }
 ```
 
-The checkpoint hash is domain-separated with `ironsmith-resync-checkpoint-v1`. The action log hash is domain-separated with `ironsmith-resync-actions-v1`. A recipient refuses resync data that is older than its local transcript or does not contain its local prefix exactly. That prevents a peer from "resyncing" someone onto a fork that erases already-applied actions.
+The action log hash is domain-separated with `ironsmith-resync-actions-v1`. A recipient refuses resync data that is older than its local transcript or does not contain its local prefix exactly. That prevents a peer from "resyncing" someone onto a fork that erases already-applied actions. Serialized engine state and legacy checkpoint fields are rejected.
+
+In Verified mode the recipient verifies the signed transcript and attempts recovery from its current runtime, then its recent local native savepoints, then genesis. Each local runtime must match its accepted action's public audit hash before replaying subsequent actions. Every recovery level must reproduce the signed head; a failed level falls back to an older local savepoint or full replay.
+
+Each client retains up to three native savepoints, captured once per turn or every 32 accepted actions. They preserve the live engine, pending choices and executable effects together with the client's transcript cursor, crypto bookkeeping, and match clock. Savepoints are tied to the same engine instance, match, seat, and signed transcript prefix. They remain local and survive a network disconnect while the worker stays alive. Reloading the page or replacing the worker requires replay from genesis.
+
+Replay reuses the accepted random results, shuffle proofs, and authorized card openings. It does not repeat completed cryptographic ceremonies. Missing records may need to be fetched, and new actions can require new material. Public audit projections remain available for hash verification; they are not imported as executable game state.
 
 When closed-list redaction is active, the payload sent to a peer can redact other players' decklists while preserving the signed audit material needed for verification. Current open-decklist matches simply send the full payload.
 

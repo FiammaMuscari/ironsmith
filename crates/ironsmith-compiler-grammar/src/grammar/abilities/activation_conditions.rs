@@ -46,11 +46,26 @@ const STEP_WINDOW_PREFIXES: &[(&[&[&str]], ActivationTiming)] = &[
     (
         &[
             &[
-                "activate", "only", "during", "your", "turn", "before", "attackers", "are",
+                "activate",
+                "only",
+                "during",
+                "your",
+                "turn",
+                "before",
+                "attackers",
+                "are",
                 "declared",
             ],
             &[
-                "activate", "only", "during", "your", "turn", "and", "before", "attackers", "are",
+                "activate",
+                "only",
+                "during",
+                "your",
+                "turn",
+                "and",
+                "before",
+                "attackers",
+                "are",
                 "declared",
             ],
         ],
@@ -66,14 +81,18 @@ const STEP_WINDOW_PREFIXES: &[(&[&[&str]], ActivationTiming)] = &[
     ),
     (
         &[
-            &["activate", "only", "before", "the", "combat", "damage", "step"],
+            &[
+                "activate", "only", "before", "the", "combat", "damage", "step",
+            ],
             &["activate", "only", "before", "combat", "damage"],
         ],
         ActivationTiming::BeforeCombatDamageStep,
     ),
     (
         &[
-            &["activate", "only", "before", "the", "end", "of", "combat", "step"],
+            &[
+                "activate", "only", "before", "the", "end", "of", "combat", "step",
+            ],
             &["activate", "only", "before", "the", "end", "of", "combat"],
             &["activate", "only", "before", "end", "of", "combat"],
         ],
@@ -81,14 +100,24 @@ const STEP_WINDOW_PREFIXES: &[(&[&[&str]], ActivationTiming)] = &[
     ),
     (
         &[
-            &["activate", "only", "during", "the", "declare", "attackers", "step"],
+            &[
+                "activate",
+                "only",
+                "during",
+                "the",
+                "declare",
+                "attackers",
+                "step",
+            ],
             &["activate", "only", "during", "declare", "attackers", "step"],
         ],
         ActivationTiming::DuringDeclareAttackersStep,
     ),
     (
         &[
-            &["activate", "only", "during", "the", "declare", "blockers", "step"],
+            &[
+                "activate", "only", "during", "the", "declare", "blockers", "step",
+            ],
             &["activate", "only", "during", "declare", "blockers", "step"],
         ],
         ActivationTiming::DuringDeclareBlockersStep,
@@ -148,6 +177,38 @@ struct ControlledCreaturePowerShape<'a> {
 }
 
 pub fn parse_activate_only_timing_lexed(tokens: &[OwnedLexToken]) -> Option<ActivationTiming> {
+    if matches_exact_tokens(
+        tokens,
+        &[
+            "only",
+            "the",
+            "controller",
+            "of",
+            "the",
+            "enchanted",
+            "creature",
+            "may",
+            "activate",
+            "this",
+            "ability",
+        ],
+    ) {
+        return Some(ActivationTiming::AnyTimeByEnchantedCreatureController);
+    }
+    if matches_prefix_tokens(
+        tokens,
+        &[
+            "only",
+            "the",
+            "controller",
+            "of",
+            "the",
+            "enchanted",
+            "creature",
+        ],
+    ) {
+        return None;
+    }
     if matches_exact_tokens(tokens, ANY_PLAYER_DURING_THEIR_TURN_BEFORE_END_STEP) {
         return Some(ActivationTiming::AnyPlayerDuringTheirTurnBeforeEndStep);
     }
@@ -339,6 +400,24 @@ fn parse_once_each_turn_and_if_activation_condition(
 ) -> Option<PredicateAst> {
     let view = TokenWordView::new(tokens);
     let words = view.word_refs();
+    // The inverse order has the same conjunction, including a lifetime
+    // limit: "Activate only if this creature is blue and only once."
+    for (suffix, limit) in [
+        (
+            &["and", "only", "once"][..],
+            PredicateAst::MaxActivationsPerObject(1),
+        ),
+        (
+            &["and", "only", "once", "each", "turn"][..],
+            PredicateAst::MaxActivationsPerTurn(1),
+        ),
+    ] {
+        if words.ends_with(suffix) && words.starts_with(&["activate", "only", "if"]) {
+            let left = token_slice_for_words(tokens, &view, 0, words.len() - suffix.len())?;
+            let condition = parse_activation_condition_lexed(left)?;
+            return Some(PredicateAst::And(Box::new(condition), Box::new(limit)));
+        }
+    }
     let split = phrase_offset_words(&words, &["and", "only", "if"])?;
     if split == 0 || split + 3 >= words.len() {
         return None;
@@ -348,9 +427,15 @@ fn parse_once_each_turn_and_if_activation_condition(
     // lifetime limit for this object (CR 602.5b), not a per-turn limit.
     let limit = match left {
         ["activate", "only", "once", "each", "turn"]
-        | ["activate", "this", "ability", "only", "once", "each", "turn"] => {
-            PredicateAst::MaxActivationsPerTurn(1)
-        }
+        | [
+            "activate",
+            "this",
+            "ability",
+            "only",
+            "once",
+            "each",
+            "turn",
+        ] => PredicateAst::MaxActivationsPerTurn(1),
         ["activate", "only", "once"] | ["activate", "this", "ability", "only", "once"] => {
             PredicateAst::MaxActivationsPerObject(1)
         }
@@ -640,3 +725,22 @@ mod condition_programs;
 use condition_programs::{
     parse_activate_count_each_turn_condition, parse_activate_only_count_per_turn_condition,
 };
+
+#[cfg(test)]
+mod enchanted_controller_activation_tests {
+    use super::*;
+    #[test]
+    fn only_the_live_enchanted_creature_controller_receives_activation_permission() {
+        let tokens = crate::lexer::lex_line(
+            "Only the controller of the enchanted creature may activate this ability",
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_activate_only_timing_lexed(&tokens),
+            Some(ActivationTiming::AnyTimeByEnchantedCreatureController)
+        );
+        let tokens = crate::lexer::lex_line("Only the controller of the enchanted creature may activate this ability during combat banana", 0).unwrap();
+        assert!(parse_activate_only_timing_lexed(&tokens).is_none());
+    }
+}

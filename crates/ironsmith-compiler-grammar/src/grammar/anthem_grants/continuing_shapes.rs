@@ -19,7 +19,14 @@ pub struct PersistentAnthemTailHead {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContinuingSegmentShape<'a> {
     CantBlock,
+    CantAttack,
+    CantAttackYou { covers_planeswalkers: bool },
+    MustBeBlocked,
+    AllMustBlock,
+    AssignUsingToughness,
+    Goaded,
     CantAttackAlone,
+    CantBeSacrificed,
     MustAttack,
     CantBeBlockedByMoreThan(usize),
     SetColor { color_word: &'a str },
@@ -90,6 +97,87 @@ pub fn parse_continuing_segment_shape(tokens: &[OwnedLexToken]) -> ContinuingSeg
     // first that reads the input names it.
     let alternation = None::<ContinuingSegmentShape<'_>>
         .or_else(|| {
+            let (_, tail) = primitives::parse_prefix(
+                tokens,
+                primitives::any_phrase(&[
+                    &["cant", "attack", "you"],
+                    &["can't", "attack", "you"],
+                    &["cannot", "attack", "you"],
+                    &["can", "t", "attack", "you"],
+                ]),
+            )?;
+            if tail.is_empty() {
+                return Some(ContinuingSegmentShape::CantAttackYou {
+                    covers_planeswalkers: false,
+                });
+            }
+            parse_complete_any_phrase(tail, &[&["or", "planeswalkers", "you", "control"]])
+                .then_some(ContinuingSegmentShape::CantAttackYou {
+                    covers_planeswalkers: true,
+                })
+        })
+        .or_else(|| {
+            for (phrases, shape) in [
+                (
+                    &[
+                        &["cant", "attack"][..],
+                        &["can't", "attack"],
+                        &["cannot", "attack"],
+                        &["can", "t", "attack"],
+                    ][..],
+                    ContinuingSegmentShape::CantAttack,
+                ),
+                (
+                    &[&["must", "be", "blocked", "if", "able"][..]][..],
+                    ContinuingSegmentShape::MustBeBlocked,
+                ),
+                (
+                    &[&["all", "creatures", "able", "to", "block", "it", "do", "so"][..]][..],
+                    ContinuingSegmentShape::AllMustBlock,
+                ),
+                (
+                    &[
+                        &[
+                            "assigns",
+                            "combat",
+                            "damage",
+                            "equal",
+                            "to",
+                            "its",
+                            "toughness",
+                            "rather",
+                            "than",
+                            "its",
+                            "power",
+                        ][..],
+                        &[
+                            "assign",
+                            "combat",
+                            "damage",
+                            "equal",
+                            "to",
+                            "their",
+                            "toughness",
+                            "rather",
+                            "than",
+                            "their",
+                            "power",
+                        ],
+                    ][..],
+                    ContinuingSegmentShape::AssignUsingToughness,
+                ),
+                (
+                    &[&["is", "goaded"][..], &["are", "goaded"]][..],
+                    ContinuingSegmentShape::Goaded,
+                ),
+            ] {
+                if parse_complete_any_phrase(tokens, phrases) {
+                    return Some(shape);
+                }
+            }
+            None
+        })
+        .or_else(|| {
             if parse_complete_any_phrase(
                 tokens,
                 &[
@@ -100,6 +188,20 @@ pub fn parse_continuing_segment_shape(tokens: &[OwnedLexToken]) -> ContinuingSeg
                 ],
             ) {
                 return Some(ContinuingSegmentShape::CantBlock);
+            }
+            None
+        })
+        .or_else(|| {
+            if parse_complete_any_phrase(
+                tokens,
+                &[
+                    &["cant", "be", "sacrificed"],
+                    &["can't", "be", "sacrificed"],
+                    &["cannot", "be", "sacrificed"],
+                    &["can", "t", "be", "sacrificed"],
+                ],
+            ) {
+                return Some(ContinuingSegmentShape::CantBeSacrificed);
             }
             None
         })

@@ -45,6 +45,16 @@ pub enum RuntimeModification {
     RemoveThisAbility,
     /// Set the Aura attachment restriction while this effect applies.
     SetAuraAttachmentFilter(crate::object::AuraAttachmentFilter),
+    /// Abilities added as copiable exceptions, applied in layer 1 rather than ordinary grants.
+    CopyOfWithAbilities {
+        source: ChooseSpec,
+        preserve_source_abilities: bool,
+        name_override: Option<String>,
+        name_override_surface: Option<SourceReferenceSurface>,
+        add_supertypes: Vec<Supertype>,
+        copy_exception_surface: Option<String>,
+        abilities: Vec<crate::ability::Ability>,
+    },
 }
 
 /// Effect that registers a continuous effect with the game state.
@@ -269,6 +279,14 @@ fn resolve_runtime_modification(
             name_override_surface,
             add_supertypes,
             copy_exception_surface: _,
+        }
+        | RuntimeModification::CopyOfWithAbilities {
+            source,
+            preserve_source_abilities,
+            name_override,
+            name_override_surface,
+            add_supertypes,
+            ..
         } => {
             let sacrificed_snapshot = source
                 .sacrificed_object_kind()
@@ -286,9 +304,6 @@ fn resolve_runtime_modification(
                     let ChooseSpec::Object(filter) = source.base() else {
                         return None;
                     };
-                    if filter.zone != Some(crate::zone::Zone::Battlefield) {
-                        return None;
-                    }
                     let [constraint] = filter.tagged_constraints.as_slice() else {
                         return None;
                     };
@@ -301,27 +316,46 @@ fn resolve_runtime_modification(
                     if game
                         .object(snapshot.object_id)
                         .is_some_and(|object| object.zone == snapshot.zone)
-                        || !filter.matches_snapshot(snapshot, &ctx.filter_context(game), game)
                     {
                         return None;
                     }
-                    Some(snapshot.clone())
+                    let departure =
+                        crate::effects::helpers::latest_zone_change_snapshot_for_object(
+                            game,
+                            snapshot.object_id,
+                        )
+                        .filter(|departure| departure.zone == snapshot.zone)
+                        .unwrap_or_else(|| snapshot.clone());
+                    filter
+                        .matches_snapshot(&departure, &ctx.filter_context(game), game)
+                        .then_some(departure)
                 })
                 .or_else(|| {
-                    // "Return target creature to its owner's hand. ... become
-                    // copies of that creature": a tagged permanent that has
-                    // left the battlefield is copied from its last known
-                    // copiable values, not from the card it became
-                    // (CR 707.2, 608.2h).
+                    // A non-targeted named incarnation can be copied from
+                    // its departure copiable values in any zone. In particular,
+                    // a paid exile tag points at the exiled incarnation; if it
+                    // leaves exile before resolution, a later return is not it.
+                    if source.is_target() {
+                        return None;
+                    }
                     let ChooseSpec::Tagged(tag) = source.base() else {
                         return None;
                     };
                     let snapshot = ctx.get_tagged(tag.as_str())?;
-                    (snapshot.zone == crate::zone::Zone::Battlefield
-                        && game
-                            .object(snapshot.object_id)
-                            .is_none_or(|object| object.zone != snapshot.zone))
-                    .then(|| snapshot.clone())
+                    if game
+                        .object(snapshot.object_id)
+                        .is_some_and(|object| object.zone == snapshot.zone)
+                    {
+                        return None;
+                    }
+                    Some(
+                        crate::effects::helpers::latest_zone_change_snapshot_for_object(
+                            game,
+                            snapshot.object_id,
+                        )
+                        .filter(|departure| departure.zone == snapshot.zone)
+                        .unwrap_or_else(|| snapshot.clone()),
+                    )
                 });
             let source_id = if let Some(snapshot) = sacrificed_snapshot.as_ref() {
                 snapshot.object_id
@@ -345,6 +379,17 @@ fn resolve_runtime_modification(
                 )
                 .ok_or(ExecutionError::InvalidTarget)?
             };
+            if let RuntimeModification::CopyOfWithAbilities { abilities, .. } = modification {
+                let old_len = copiable_values.abilities.len();
+                copiable_values
+                    .ability_labels
+                    .resize(old_len, String::new());
+                std::sync::Arc::make_mut(&mut copiable_values.abilities)
+                    .extend(abilities.iter().cloned());
+                copiable_values
+                    .ability_labels
+                    .resize(old_len + abilities.len(), String::new());
+            }
             let mut preserve_all = *preserve_source_abilities;
             if *preserve_source_abilities {
                 // "This ability" refers to the resolving ability, not every
@@ -459,14 +504,20 @@ fn control_change_target_object_ids(
 }
 
 fn is_controller_change_cost(effect: &ApplyContinuousEffect) -> bool {
-    let base_is_controller_change = effect
-        .modification
-        .as_ref()
-        .is_none_or(|modification| matches!(modification, Modification::ChangeController(_) | Modification::ChangeControllerToEffectController));
-    let additional_are_controller_changes = effect
-        .additional_modifications
-        .iter()
-        .all(|modification| matches!(modification, Modification::ChangeController(_) | Modification::ChangeControllerToEffectController));
+    let base_is_controller_change = effect.modification.as_ref().is_none_or(|modification| {
+        matches!(
+            modification,
+            Modification::ChangeController(_) | Modification::ChangeControllerToEffectController
+        )
+    });
+    let additional_are_controller_changes =
+        effect.additional_modifications.iter().all(|modification| {
+            matches!(
+                modification,
+                Modification::ChangeController(_)
+                    | Modification::ChangeControllerToEffectController
+            )
+        });
     let runtime_are_controller_changes = effect.runtime_modifications.iter().all(|modification| {
         matches!(
             modification,
@@ -474,21 +525,23 @@ fn is_controller_change_cost(effect: &ApplyContinuousEffect) -> bool {
                 | RuntimeModification::ChangeControllerToPlayer(_)
         )
     });
-    let has_controller_change = effect
-        .modification
-        .as_ref()
-        .is_some_and(|modification| matches!(modification, Modification::ChangeController(_) | Modification::ChangeControllerToEffectController))
-        || effect
-            .additional_modifications
-            .iter()
-            .any(|modification| matches!(modification, Modification::ChangeController(_) | Modification::ChangeControllerToEffectController))
-        || effect.runtime_modifications.iter().any(|modification| {
-            matches!(
-                modification,
-                RuntimeModification::ChangeControllerToEffectController
-                    | RuntimeModification::ChangeControllerToPlayer(_)
-            )
-        });
+    let has_controller_change = effect.modification.as_ref().is_some_and(|modification| {
+        matches!(
+            modification,
+            Modification::ChangeController(_) | Modification::ChangeControllerToEffectController
+        )
+    }) || effect.additional_modifications.iter().any(|modification| {
+        matches!(
+            modification,
+            Modification::ChangeController(_) | Modification::ChangeControllerToEffectController
+        )
+    }) || effect.runtime_modifications.iter().any(|modification| {
+        matches!(
+            modification,
+            RuntimeModification::ChangeControllerToEffectController
+                | RuntimeModification::ChangeControllerToPlayer(_)
+        )
+    });
 
     has_controller_change
         && base_is_controller_change
@@ -866,6 +919,13 @@ impl EffectExecutor for ApplyContinuousEffect {
         {
             modification.visit_owned_effects(visitor);
         }
+        for modification in &self.runtime_modifications {
+            if let RuntimeModification::CopyOfWithAbilities { abilities, .. } = modification {
+                for ability in abilities {
+                    crate::ability::visit_owned_effects(ability, visitor);
+                }
+            }
+        }
     }
 
     fn supports_simultaneous_player_action(&self) -> bool {
@@ -905,6 +965,8 @@ impl EffectExecutor for ApplyContinuousEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
+        game.establish_control_transition_boundary()
+            .map_err(ExecutionError::ContinuousDiscovery)?;
         // A tagged reference names the objects selected by an earlier action.
         // An empty selection has no characteristics to change.
         if let Some(spec) = &self.target_spec
@@ -924,9 +986,10 @@ impl EffectExecutor for ApplyContinuousEffect {
         if source_type.is_none()
             && let EffectTarget::Specific(object) = &target
         {
-            source_type = Some(EffectSourceType::Resolution { locked_targets: vec![*object] });
+            source_type = Some(EffectSourceType::Resolution {
+                locked_targets: vec![*object],
+            });
         }
-
 
         let filter_locked_targets = if let EffectTarget::Filter(filter) = &target {
             // Tagged filters depend on spell-resolution context and cannot be evaluated
@@ -947,6 +1010,27 @@ impl EffectExecutor for ApplyContinuousEffect {
         }
 
         let materialized_until = match &self.until {
+            Until::ObjectIsCast { object, from_zone } => {
+                let object = materialize_duration_object(object, &target, &source_type, ctx)
+                    .ok_or_else(|| match object {
+                        ironsmith_core::ContinuousDurationObject::Tagged(tag) => {
+                            ExecutionError::TagNotFound(tag.as_str().to_string())
+                        }
+                        _ => ExecutionError::UnresolvableValue(
+                            "cast-event duration must identify one object".into(),
+                        ),
+                    })?;
+                let ironsmith_core::ContinuousDurationObject::Specific(id) = object else {
+                    unreachable!()
+                };
+                if game.object_completed_cast_from(id, *from_zone) {
+                    return Ok(EffectOutcome::resolved());
+                }
+                Until::ObjectIsCast {
+                    object: ironsmith_core::ContinuousDurationObject::Specific(id),
+                    from_zone: *from_zone,
+                }
+            }
             Until::ForAsLongAs(predicate) => {
                 let Some(predicate) =
                     materialize_duration_predicate(predicate, &target, &source_type, game, ctx)
@@ -998,15 +1082,19 @@ impl EffectExecutor for ApplyContinuousEffect {
             };
             let lowest_tied = tied(lives.iter().copied().min());
             let most_tied = tied(lives.iter().copied().max());
-            if self.runtime_modifications.iter().any(|modification| match modification {
-                RuntimeModification::ChangeControllerToPlayer(PlayerFilter::LowestLifeTied) => {
-                    lowest_tied
-                }
-                RuntimeModification::ChangeControllerToPlayer(PlayerFilter::MostLifeTied) => {
-                    most_tied
-                }
-                _ => false,
-            }) {
+            if self
+                .runtime_modifications
+                .iter()
+                .any(|modification| match modification {
+                    RuntimeModification::ChangeControllerToPlayer(PlayerFilter::LowestLifeTied) => {
+                        lowest_tied
+                    }
+                    RuntimeModification::ChangeControllerToPlayer(PlayerFilter::MostLifeTied) => {
+                        most_tied
+                    }
+                    _ => false,
+                })
+            {
                 return Ok(EffectOutcome::resolved());
             }
         }
@@ -1065,12 +1153,9 @@ impl EffectExecutor for ApplyContinuousEffect {
                 {
                     continue;
                 }
-                for id in control_change_target_object_ids(&target, &source_type, game, ctx) {
-                    if game.current_controller(id) != Some(*new_controller) {
-                        game.clear_soulbond_pair(id);
-                        game.set_summoning_sick(id);
-                    }
-                }
+                // Reconciliation after applying the complete layer result
+                // owns sickness/soulbond changes. A false duration or condition
+                // must not manufacture a controller transition here.
             }
             let expires_end_of_turn = match self.until {
                 Until::EndOfTurn
@@ -1118,7 +1203,8 @@ impl EffectExecutor for ApplyContinuousEffect {
             ctx.created_continuous_effects.push(id);
         }
 
-        game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
+        game.refresh_continuous_state()
+            .map_err(ExecutionError::ContinuousDiscovery)?;
 
         Ok(if registered_active_modification {
             EffectOutcome::resolved().with_affected_objects_from_game(game, affected_objects)
@@ -1585,8 +1671,8 @@ mod tests {
         game.next_turn();
         assert_eq!(game.current_controller(target), Some(bob));
         assert!(
-            game.is_summoning_sick(target),
-            "expiration of a control effect is also a controller change"
+            !game.is_summoning_sick(target),
+            "the returning controller controls it from the beginning of their new turn"
         );
     }
 
@@ -1935,7 +2021,9 @@ mod tests {
         let mut monarch_game = setup_game();
         let source = create_creature(&mut monarch_game, "Monarch Source", alice);
         let target = create_creature(&mut monarch_game, "Monarch Target", bob);
-        monarch_game.set_monarch(Some(bob));
+        monarch_game
+            .set_monarch(Some(bob))
+            .expect("checked designation/departure fixture");
         execute_latched_control(
             &mut monarch_game,
             source,
@@ -1944,9 +2032,13 @@ mod tests {
             Predicate::PlayerIsMonarch(PlayerRef::ControllerOf(ObjectRef::AffectedObject)),
         );
         assert_eq!(monarch_game.current_controller(target), Some(alice));
-        monarch_game.set_monarch(Some(alice));
+        monarch_game
+            .set_monarch(Some(alice))
+            .expect("checked designation/departure fixture");
         assert_eq!(monarch_game.current_controller(target), Some(bob));
-        monarch_game.set_monarch(Some(bob));
+        monarch_game
+            .set_monarch(Some(bob))
+            .expect("checked designation/departure fixture");
         assert_eq!(monarch_game.current_controller(target), Some(bob));
     }
 
