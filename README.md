@@ -5,7 +5,21 @@ browser. It reads a card's Oracle text, compiles it into executable rules, and
 plays full games with those rules, including multiplayer games of up to four
 players. No game server is involved at any point.
 
-**Play the official hosted version at <https://chiplis.com/ironsmith>.**
+**Play this fork: [FiammaMuscari's Ironsmith](https://fiammamuscari.github.io/ironsmith/).**
+
+This repository is FiammaMuscari's fork of
+[Chiplis/ironsmith](https://github.com/Chiplis/ironsmith). It follows the
+upstream rules engine and adds interface work for the battlefield, card
+counters, zone icons, and compact gameplay controls. Credit for the original
+project belongs to Chiplis and its contributors.
+
+- [Original hosted version](https://chiplis.com/ironsmith)
+- [Fork source](https://github.com/FiammaMuscari/ironsmith)
+- [Build and deployment status](https://github.com/FiammaMuscari/ironsmith/actions/workflows/deploy-ui-pages.yml)
+
+The hosted fork reflects the latest **successful deployment**, not necessarily
+every local experiment or commit. The guide below describes the shared game
+features; control placement can differ between the fork and upstream.
 
 ### How it works
 
@@ -67,7 +81,7 @@ guarantee (see [Honest limits](#honest-limits)). The full explanation is in
 
 ## Getting started
 
-1. Open <https://chiplis.com/ironsmith>. A progress bar appears while the
+1. Open <https://fiammamuscari.github.io/ironsmith/>. A progress bar appears while the
    engine downloads and loads the card catalogue.
 2. You start at a table with a **randomly generated four-player board**:
    Alice, Bob, Charlie and Diana, each with a random mix of cards in play.
@@ -627,11 +641,16 @@ settings and quick shortcuts.
 ## Running Ironsmith locally
 
 You need a Rust toolchain installed through `rustup`, Python 3, Node, and
-`pnpm`.
+`pnpm`. The fork's deployment uses Node 22.14.0 and pnpm 11.1.1. On Windows,
+run the shell build script in Git Bash or WSL.
+
+For the first setup, run from the repository root:
 
 ```sh
 ./rebuild-wasm.sh
-cd web/ui && pnpm install && pnpm dev
+cd web/ui
+pnpm install
+pnpm dev
 ```
 
 The first `./rebuild-wasm.sh` run does all of the following, so expect it to
@@ -646,6 +665,12 @@ take a while:
 
 Later runs only compile cards the registry doesn't have yet.
 `./rebuild-wasm.sh --release` also runs the optimiser over the WASM.
+
+For subsequent UI-only work, start Vite from `web/ui` with `pnpm dev` and open
+the URL printed in the terminal (normally <http://localhost:5173/>). Existing
+generated WASM assets can be reused: changing JSX, CSS, SVGs, or the background
+does not require rebuilding the Rust engine. Rebuild WASM when engine code or
+its generated bindings change. Vite is the UI server, not a Rust compiler.
 
 The engine bundles the whole card catalogue as indexed, Brotli-compressed
 chunks: compiled definitions, source text, aliases, and metadata. Add Card,
@@ -720,6 +745,24 @@ Useful options:
   profiles, and art cards for decks already downloaded.
 
 ### Deploying
+
+#### This fork: GitHub Pages
+
+The [Deploy IronSmith UI to GitHub Pages workflow](https://github.com/FiammaMuscari/ironsmith/actions/workflows/deploy-ui-pages.yml)
+builds the engine and UI, then publishes to
+<https://fiammamuscari.github.io/ironsmith/>. It runs when relevant source or
+workflow files change on `main`. README-only changes do not trigger it.
+
+To publish manually, open that workflow in **Actions**, select **Run workflow**,
+and leave the deployment ref as `main`. Confirm both the **build** and
+**deploy** jobs succeed before checking the hosted game. A failed build does
+not publish the new version.
+
+Generated engine and card assets are cached separately from the UI build.
+A cold engine build can take substantially longer than a UI-only build;
+changing the cache's engine inputs may require compiling it again.
+
+#### Other hosts
 
 `pnpm build` copies `catalog/` into the build (leaving out the synchronizer's
 own `catalog/state/`). Whatever publishes `dist/` publishes the decks along
