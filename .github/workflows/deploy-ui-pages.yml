@@ -72,6 +72,8 @@ jobs:
             web/ui/public/cards
             web/ui/public/ironsmith_semantic_scores.json
           key: ironsmith-pages-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rebuild-wasm.sh', 'scripts/generate_baked_registry.py', 'scripts/stream_scryfall_blocks.py', 'crates/**') }}
+          restore-keys: |
+            ironsmith-pages-${{ runner.os }}-
 
       - name: Restore the deck catalog cache
         uses: actions/cache@v4
@@ -91,6 +93,22 @@ jobs:
           test -s web/wasm_demo/pkg/engine_bg.wasm
           test -s web/wasm_demo/pkg/compiler_bg.wasm
           test -s web/wasm_demo/pkg/verifier_bg.wasm
+
+      - name: Save generated engine and card assets
+        if: steps.generated-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/registry
+            ~/.cargo/git
+            cards.json
+            cards.json.scryfall-bulk-data.json
+            reports/engine-status.sqlite3
+            web/wasm_demo/pkg
+            web/ui/public/cards
+            web/ui/public/ironsmith_semantic_scores.json
+          key: ${{ steps.generated-cache.outputs.cache-primary-key }}
 
       - name: Sync the bounded Modern deck catalog
         working-directory: tools/deck-catalog

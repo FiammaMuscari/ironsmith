@@ -1,8 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sealExactSnapshot, validateExactSnapshot, snapshotDataBytes, exactSnapshotMatches } from '../src/lib/exact-build-snapshot.js';
+import { sealExactSnapshot, validateExactSnapshot, snapshotDataBytes, exactSnapshotMatches, createAvailableExactBuildSnapshotRuntime } from '../src/lib/exact-build-snapshot.js';
 import { recoverVerifiedRuntime } from '../src/lib/local-runtime-recovery.js';
 const fixture = () => ({ version:1, buildId:'build', pointer:8, memory:new Uint8Array(65536), globals:[42], references:[[undefined,{value:1n}]], recovery:{secret:new Map([['key','private']])} });
+
+test('standard packages leave exact images unavailable while complete bindings retain support', () => {
+ assert.equal(createAvailableExactBuildSnapshotRuntime({exports:{},bindings:{WasmGame:class {}}}),null);
+ const bindings={exactSnapshotBuildId:'build',exactSnapshotLayout:{globals:[],tables:[]},
+  replaceEngineInstance:()=>({}),attachExactBuildGame:()=>({})};
+ for(const key of Object.keys(bindings)) {
+  const partial={...bindings}; delete partial[key];
+  assert.equal(createAvailableExactBuildSnapshotRuntime({exports:{},bindings:partial}),null);
+ }
+ const runtime=createAvailableExactBuildSnapshotRuntime({exports:{},bindings});
+ assert.equal(runtime.buildId,'build');
+ assert.equal(typeof runtime.capture,'function');
+ assert.equal(typeof runtime.restore,'function');
+});
 
 test('integrity covers memory, globals, reference data and matching JS recovery state',async () => {
  const image=await sealExactSnapshot(fixture());
