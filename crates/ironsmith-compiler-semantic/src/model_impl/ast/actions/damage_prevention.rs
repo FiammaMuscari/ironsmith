@@ -69,6 +69,7 @@ pub enum DamagePreventionActionAst {
         amount: Value,
         target: TargetAst,
         duration: Until,
+        combat_only: bool,
         source_of_your_choice: bool,
         protect_you_and_permanents_you_control: bool,
         follow_up_effects: Vec<EffectAst>,
@@ -83,11 +84,16 @@ pub enum DamagePreventionActionAst {
         /// The same declared source is also protected against incoming damage.
         protect_source_target: bool,
         follow_up_effects: Vec<EffectAst>,
+        /// Authored "<source> would deal" rather than "that would be dealt by
+        /// <source>"; presentation only.
+        source_would_deal_surface: bool,
     },
     PreventAllDamageToTargetFromSourceFilter {
         target: TargetAst,
         duration: Until,
         source_filter: ObjectFilter,
+        source_would_deal_surface: bool,
+        of_chosen_color: bool,
     },
     PreventAllDamageFromSourceFilter {
         duration: Until,
@@ -95,6 +101,11 @@ pub enum DamagePreventionActionAst {
         /// "sources of the color of your choice": the color is chosen as the
         /// effect resolves and narrows `source_filter`.
         of_chosen_color: bool,
+        source_would_deal_surface: bool,
+        /// "You gain life equal to the damage prevented this way." (Chant of
+        /// Vitu-Ghazi): run as each damage event is prevented, reading the
+        /// prevented amount.
+        follow_up_effects: Vec<EffectAst>,
     },
     PreventDamageToTargetPutCounters {
         amount: Option<Value>,
@@ -115,7 +126,9 @@ pub enum DamagePreventionActionAst {
     },
     RedirectNextTimeDamageToSource {
         source: PreventNextTimeDamageSourceAst,
-        target: TargetAst,
+        combat_only: bool,
+        /// Absent for damage to any recipient of the next occurrence.
+        target: Option<TargetAst>,
         destination: RedirectNextTimeDamageDestinationAst,
         destination_target: Option<TargetAst>,
         all_this_turn: bool,

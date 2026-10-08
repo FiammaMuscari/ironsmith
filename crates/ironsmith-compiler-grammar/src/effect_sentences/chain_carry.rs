@@ -366,6 +366,9 @@ pub fn parse_reveal_source_exiled_permanents_sentence_lexed(
 }
 
 pub fn parse_effect_chain_lexed(tokens: &[OwnedLexToken]) -> Result<Vec<EffectAst>, CardTextError> {
+    crate::grammar::shared_util::value_expr::validate_result_quantity_bindings(tokens)?;
+    super::pair_procedure::validate_discard_replacements(tokens)?;
+    super::local_self_replacement::validate(tokens)?;
     // Chain parsing recursively re-enters the sentence dispatcher for
     // nested clauses and quoted/conditional payloads.  The public chain
     if let Some(effects) = super::parse_complete_create_statement(tokens)? {
@@ -502,6 +505,7 @@ pub(crate) fn parse_simple_that_creature_owner_library_placement(
         action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
             target: TargetAst::Object(filter, None, None),
             source_top_only: false,
+            tagged_destinations: Vec::new(),
             zone: Zone::Library,
             to_top: shape.placement == LibraryPlacementShape::Top,
             library_order: None,
@@ -620,6 +624,21 @@ fn ensure_explicit_target_player_subject_declarations(
         .filter(|(left, right)| **left == "target" && **right == "player")
         .count();
     if authored_targets == 0 {
+        return;
+    }
+    // "you may have target player mill X cards, where X is ..." (Cloudhoof
+    // Kirin): the optional instruction declares its own target player as it
+    // lowers, exactly as the X-free sentence does. A second, unconditional
+    // declaration ahead of it would ask for another target.
+    if effects.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectAst::Permissions(
+                crate::cards::builders::PermissionEffectAst::May { .. }
+                    | crate::cards::builders::PermissionEffectAst::MayByPlayer { .. }
+            )
+        )
+    }) {
         return;
     }
 
@@ -1557,6 +1576,12 @@ fn parse_effect_chain_inner_lexed_unstacked(
         // been lowered, so keep the action list free of a synthetic
         // subject/verb parse for the binding text itself.
         if is_standalone_where_x_binding_segment(&segment) {
+            continue;
+        }
+        // "destroy that creature and it can't be regenerated" (Consuming
+        // Ferocity): the rider sets the destroy's no-regeneration flag.
+        if bind_no_regeneration_rider(&mut effects, &segment) {
+            previous_segment = Some(segment);
             continue;
         }
         if append_shared_damage_player_operand(&mut effects, &segment) {
@@ -2684,6 +2709,24 @@ pub fn bind_prevention_followup(effects: &mut Vec<EffectAst>, sentence: &[OwnedL
             ));
             true
         }
+        SubjectVerbActionAst::DamagePrevention(
+            DamagePreventionActionAst::PreventAllDamageFromSourceFilter {
+                of_chosen_color: false,
+                follow_up_effects,
+                ..
+            },
+        ) if follow_up_effects.is_empty()
+            && sequence_grammar::parse_prevention_gain_life_followup_shape(sentence) =>
+        {
+            follow_up_effects.push(EffectAst::subject_verb(
+                SubjectVerbRoleAst::AffectedPlayer,
+                PlayerAst::You,
+                SubjectVerbActionAst::LifeResources(LifeResourceActionAst::GainLife {
+                    amount: Value::EventValue(crate::effect::EventValueSpec::Amount),
+                }),
+            ));
+            true
+        }
 
         SubjectVerbActionAst::DamagePrevention(
             DamagePreventionActionAst::PreventNextTimeDamage {
@@ -2775,8 +2818,7 @@ pub fn bind_prevention_followup(effects: &mut Vec<EffectAst>, sentence: &[OwnedL
             amount,
             target,
             duration,
-            source_of_your_choice,
-            protect_you_and_permanents_you_control,
+            combat_only,
             follow_up_effects,
             ..
         }) => {
@@ -2792,7 +2834,7 @@ pub fn bind_prevention_followup(effects: &mut Vec<EffectAst>, sentence: &[OwnedL
                 ));
                 return true;
             }
-            if sequence_grammar::parse_prevention_counter_followup_shape(sentence) {
+            if !*combat_only && sequence_grammar::parse_prevention_counter_followup_shape(sentence) {
                 let replacement = EffectAst::subject_verb_prevent_damage_to_target_put_counters(
                     Some(amount.clone()),
                     target.clone(),
@@ -2807,15 +2849,7 @@ pub fn bind_prevention_followup(effects: &mut Vec<EffectAst>, sentence: &[OwnedL
                     Value::EventValue(crate::effect::EventValueSpec::Amount),
                     TargetAst::AnyTarget(None),
                 );
-                let replacement = EffectAst::subject_verb_prevent_damage_with_options(
-                    amount.clone(),
-                    target.clone(),
-                    duration.clone(),
-                    *source_of_your_choice,
-                    *protect_you_and_permanents_you_control,
-                    vec![follow_up],
-                );
-                *effects.last_mut().expect("checked") = replacement;
+                follow_up_effects.push(follow_up);
                 return true;
             }
             if matches!(target, TargetAst::AnyTarget(Some(_)))

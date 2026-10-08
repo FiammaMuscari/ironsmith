@@ -14,6 +14,44 @@ pub(crate) fn resolve_continuous(value: &Value, layer: LayerValueContext<'_, '_>
         .unwrap_or_else(|error| panic!("unsupported continuous-effect value {value:?}: {error:?}"))
 }
 
+/// A characteristic-setting scalar uses the same checked boundary as later P/T
+/// arithmetic. Its provisional value cannot be published by a checked query
+/// when this records a range error; in particular an aggregate counter total
+/// must not wrap or panic before that boundary can inspect it.
+pub(crate) fn resolve_continuous_characteristic(
+    value: &Value,
+    layer: LayerValueContext<'_, '_>,
+    error: &mut Option<(&'static str, i128)>,
+    evidence_error: &mut Option<&'static str>,
+) -> i32 {
+    let context = EvaluationContext::continuous(layer);
+    match resolve_wide(value, &context) {
+        Ok(exact) => match i32::try_from(exact) {
+            Ok(value) => value,
+            Err(_) => {
+                error.get_or_insert(("characteristic-defining scalar", i128::from(exact)));
+                0
+            }
+        },
+        Err(ExecutionError::ResourceLimitExceeded {
+            resource,
+            requested,
+            ..
+        }) => {
+            error.get_or_insert((resource, i128::try_from(requested).unwrap_or(i128::MAX)));
+            0
+        }
+        Err(_) if crate::source_numbers::contains_value(value) => {
+            evidence_error.get_or_insert("the source numeric pair or acquisition is unrecorded");
+            0
+        }
+        Err(_) => {
+            evidence_error.get_or_insert("the continuous characteristic value is unavailable");
+            0
+        }
+    }
+}
+
 pub(crate) fn resolve(
     value: &Value,
     context: &EvaluationContext<'_, '_>,
@@ -50,6 +88,26 @@ pub(crate) fn resolve_wide(
     context: &EvaluationContext<'_, '_>,
 ) -> Result<i64, ExecutionError> {
     let game = context.game;
+    use ironsmith_core::tag::{SacrificeCostTag, TagKeyWalk};
+    let mut missing_original_sacrifice = false;
+    value.for_each_tag_key(&mut |tag| {
+        if matches!(
+            SacrificeCostTag::parse(tag),
+            Some(SacrificeCostTag::OriginalResult(_))
+        ) && context
+            .execution()
+            .is_none_or(|ctx| !ctx.tagged_objects.contains_key(tag))
+        {
+            missing_original_sacrifice = true;
+        }
+    });
+    if missing_original_sacrifice {
+        let error = ExecutionError::IncompleteEvidence(
+            "sacrifice-result quantity has no completed original-action receipt".into(),
+        );
+        game.record_token_resource_failure(&error);
+        return Err(error);
+    }
     match value {
         Value::SurfaceHinted { value, .. } => resolve_wide(value, context),
         Value::Fixed(n) => Ok(i64::from(*n)),
@@ -313,13 +371,7 @@ pub(crate) fn resolve_wide(
             });
             Ok(i64::from(seen.len() as i64))
         }
-        Value::DistinctNames(filter) => {
-            let mut seen = HashSet::new();
-            context.visit_property_objects(filter, |object| {
-                seen.insert(object.name().to_string());
-            });
-            Ok(i64::from(seen.len() as i64))
-        }
+        Value::DistinctNames(filter) => context.distinct_names(filter),
         Value::DistinctManaValues(filter) => {
             let mut seen = HashSet::new();
             context.visit_property_objects(filter, |object| {
@@ -349,6 +401,13 @@ pub(crate) fn resolve_wide(
                 }
             });
             Ok(i64::from(seen.len() as i64))
+        }
+        Value::TurnHistoryCount(ironsmith_core::TurnHistoryCount::CardsDrawn(player)) => {
+            context.validate_history_player_reference(value, player)?;
+            let filter_ctx = context.filter_context(game);
+            game.turn_store
+                .turn_history
+                .cards_drawn_matching_players_wide(|id| player.matches_player(id, &filter_ctx))
         }
         Value::TurnHistoryCount(query) => {
             Ok(i64::from(crate::turn_history::resolve_turn_history_count(
@@ -433,24 +492,24 @@ pub(crate) fn resolve_wide(
         Value::SourceToughness => context
             .source_number(NumericProperty::Toughness)
             .map(i64::from),
-        Value::PowerOf(target_spec) => context
-            .object_number(target_spec, NumericProperty::Power)
-            .map(i64::from),
+        Value::PowerOf(target_spec) => {
+            context.object_number_wide(target_spec, NumericProperty::Power)
+        }
         Value::BasePowerOf(target_spec) => context
             .object_number(target_spec, NumericProperty::BasePower)
             .map(i64::from),
-        Value::ToughnessOf(target_spec) => context
-            .object_number(target_spec, NumericProperty::Toughness)
-            .map(i64::from),
+        Value::ToughnessOf(target_spec) => {
+            context.object_number_wide(target_spec, NumericProperty::Toughness)
+        }
         Value::KicksPaidOf(target_spec) => context
             .object_number(target_spec, NumericProperty::KickerCount)
             .map(i64::from),
         Value::ManaSpentToCast(target_spec) => context
             .object_number(target_spec, NumericProperty::ManaSpent)
             .map(i64::from),
-        Value::ManaValueOf(target_spec) => context
-            .object_number(target_spec, NumericProperty::ManaValue)
-            .map(i64::from),
+        Value::ManaValueOf(target_spec) => {
+            context.object_number_wide(target_spec, NumericProperty::ManaValue)
+        }
         Value::ColorsOf(target_spec) => context
             .object_number(target_spec, NumericProperty::ColorCount)
             .map(i64::from),
@@ -479,6 +538,19 @@ pub(crate) fn resolve_wide(
                         ));
                     }
 
+                    if matches!(target_spec.base(), ChooseSpec::Source)
+                        && let Some(snapshot) = source_characteristic_lki_for_execution(game, ctx)
+                    {
+                        return snapshot
+                            .mana_cost
+                            .as_ref()
+                            .map(count_symbols)
+                            .ok_or_else(|| {
+                                ExecutionError::UnresolvableValue(
+                                    "Target had no printed mana cost".to_string(),
+                                )
+                            });
+                    }
                     let target_id =
                         resolve_primary_object_from_value_spec(game, target_spec.as_ref(), ctx)?;
                     let tagged_snapshot = if let ChooseSpec::Tagged(tag) = target_spec.base() {
@@ -487,19 +559,7 @@ pub(crate) fn resolve_wide(
                         None
                     };
 
-                    if matches!(target_spec.base(), ChooseSpec::Source)
-                        && let Some(snapshot) = source_lki_for_moved_current_object(game, ctx)
-                    {
-                        snapshot
-                            .mana_cost
-                            .as_ref()
-                            .map(count_symbols)
-                            .ok_or_else(|| {
-                                ExecutionError::UnresolvableValue(
-                                    "Target had no printed mana cost".to_string(),
-                                )
-                            })
-                    } else if let Some(snapshot) = tagged_snapshot
+                    if let Some(snapshot) = tagged_snapshot
                         && game
                             .object(snapshot.object_id)
                             .is_none_or(|object| object.zone != snapshot.zone)
@@ -736,17 +796,14 @@ pub(crate) fn resolve_wide(
             })?))
         }
         Value::MaxCardsDrawnThisTurn(player_spec) => {
-            let player_ids = context.player_ids(value, player_spec)?;
-            if player_ids.is_empty() {
-                return Err(ExecutionError::UnresolvableValue(
-                    "MaxCardsDrawnThisTurn requires a matching player".to_string(),
-                ));
+            let player_ids = context.aggregate_player_ids(value, player_spec)?;
+            for player in &player_ids {
+                game.player(*player)
+                    .ok_or(ExecutionError::PlayerNotFound(*player))?;
             }
-            Ok(i64::from(
-                game.turn_store
-                    .turn_history
-                    .max_cards_drawn_for_players(&player_ids) as i64,
-            ))
+            game.turn_store
+                .turn_history
+                .max_cards_drawn_for_players_wide(&player_ids)
         }
         Value::MaxDiceRolledThisTurn(player_spec) => {
             let player_ids = context.player_ids(value, player_spec)?;
@@ -821,13 +878,11 @@ pub(crate) fn resolve_wide(
             let player_ids = context.player_ids(value, player)?;
             let filter_ctx = context.filter_context(game);
             let mut count: i64 = 0;
-            for snapshot in game.turn_store.turn_history.spell_cast_snapshot_history() {
-                if *exclude_source && snapshot.object_id == context.source {
-                    continue;
-                }
-                if !player_ids.contains(&snapshot.controller) {
-                    continue;
-                }
+            for (_, snapshot) in game
+                .turn_store
+                .turn_history
+                .checked_spell_cast_history(&player_ids, exclude_source.then_some(context.source))?
+            {
                 if filter.matches_snapshot(&snapshot, &filter_ctx, game) {
                     count = context.add_spell_metric(count, 1)?;
                 }
@@ -842,13 +897,11 @@ pub(crate) fn resolve_wide(
             let player_ids = context.player_ids(value, player)?;
             let filter_ctx = context.filter_context(game);
             let mut total: i64 = 0;
-            for snapshot in game.turn_store.turn_history.spell_cast_snapshot_history() {
-                if *exclude_source && snapshot.object_id == context.source {
-                    continue;
-                }
-                if !player_ids.contains(&snapshot.controller) {
-                    continue;
-                }
+            for (_, snapshot) in game
+                .turn_store
+                .turn_history
+                .checked_spell_cast_history(&player_ids, exclude_source.then_some(context.source))?
+            {
                 if filter.matches_snapshot(&snapshot, &filter_ctx, game) {
                     total = context.add_spell_metric(total, snapshot.mana_value() as i64)?;
                 }
@@ -1105,6 +1158,24 @@ pub(crate) fn resolve_wide(
                 .try_into()
                 .unwrap_or(i32::MAX),
         )),
+        Value::SourceChosenNumber { if_unset, pair } => {
+            let retained = context
+                .execution()
+                .and_then(|ctx| ctx.source_snapshot.as_ref());
+            let continuous_owner = context.numeric_origin().and_then(|origin| {
+                crate::source_numbers::capture(context.source, *pair, Some(origin))
+            });
+            let explicit = context
+                .execution()
+                .and_then(|ctx| ctx.source_number_owner.as_ref())
+                .or(continuous_owner.as_ref());
+            crate::source_numbers::read(game, context.source, *pair, explicit, retained)?
+                .map(i64::from)
+                .or_else(|| if_unset.map(i64::from))
+                .ok_or_else(|| {
+                    ExecutionError::UnresolvableValue("source has never chosen a number".into())
+                })
+        }
         Value::LastNotedLifeTotal => game
             .noted_life_total_for_source(context.source)
             .or_else(|| {
@@ -1116,9 +1187,7 @@ pub(crate) fn resolve_wide(
                     return None;
                 }
                 let ctx = context.execution()?;
-                game.turn_store
-                    .turn_history
-                    .source_departure_snapshot(context.source)
+                game.source_departure_snapshot(context.source)
                     .cloned()
                     .or_else(|| {
                         ctx.source_snapshot
@@ -1138,6 +1207,13 @@ pub(crate) fn resolve_wide(
             }),
         Value::EffectValue(effect_id) => {
             let ctx = context.require_execution(value, RESOLUTION_ONLY);
+            if *effect_id == crate::effect::EffectId::ACTIVATION_COUNTER_COST
+                && ctx.get_outcome(*effect_id).is_none()
+            {
+                return Err(ExecutionError::IncompleteEvidence(
+                    "activation counter payment has no completed receipt".into(),
+                ));
+            }
             {
                 // "That many" of an instruction that never ran is zero.
                 Ok(i64::from(ctx.get_outcome(*effect_id).map_or(
@@ -1154,6 +1230,13 @@ pub(crate) fn resolve_wide(
         }
         Value::EffectValueOffset(effect_id, offset) => {
             let ctx = context.require_execution(value, RESOLUTION_ONLY);
+            if *effect_id == crate::effect::EffectId::ACTIVATION_COUNTER_COST
+                && ctx.get_outcome(*effect_id).is_none()
+            {
+                return Err(ExecutionError::IncompleteEvidence(
+                    "activation counter payment has no completed receipt".into(),
+                ));
+            }
             {
                 Ok(i64::from(
                     ctx.get_outcome(*effect_id).map_or(0, |outcome| {
@@ -1250,11 +1333,29 @@ pub(crate) fn resolve_wide(
         Value::WasPaidLabel(label) => {
             // Check if the optional cost with the given label was paid
             let paid = context.optional_costs_paid(value);
-            Ok(i64::from(if paid.was_paid_label(label.clone()) {
-                1
-            } else {
-                0
-            }))
+            if label.requires_current_turn()
+                && paid.costs.is_empty()
+                && paid.cast_payment_turn.is_none()
+                && context.execution().is_some_and(|ctx| {
+                    game.object(ctx.source).is_none()
+                        && !ctx
+                            .source_snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.object_id == ctx.source)
+                })
+            {
+                return Err(ExecutionError::IncompleteEvidence(
+                    "payment source and receipt are unavailable".into(),
+                ));
+            }
+            Ok(i64::from(
+                crate::condition_eval::evaluate_paid_cost_receipt(
+                    paid,
+                    label,
+                    game.turn.turn_number,
+                    context.controller,
+                )?,
+            ))
         }
         Value::TimesPaid(index) => {
             // Get the number of times the optional cost was paid
@@ -1295,13 +1396,12 @@ pub(crate) fn resolve_wide(
         Value::CountersOnFilterCandidate(_) => Ok(i64::from(0)),
         Value::CountersOnSource(counter_type) => {
             if let Some(ctx) = context.execution() {
-                let amount = if let Some(snapshot) = source_lki_for_moved_current_object(game, ctx)
+                let amount = if let Some(snapshot) =
+                    source_characteristic_lki_for_execution(game, ctx)
                 {
                     snapshot.counters.get(counter_type).copied().unwrap_or(0)
                 } else if let Some(source) = game.object(ctx.source) {
                     source.counters.get(counter_type).copied().unwrap_or(0)
-                } else if let Some(snapshot) = &ctx.source_snapshot {
-                    snapshot.counters.get(counter_type).copied().unwrap_or(0)
                 } else {
                     return Err(ExecutionError::UnresolvableValue(
                         "counter source has neither current nor retained characteristics".into(),
@@ -1351,12 +1451,7 @@ pub(crate) fn resolve_wide(
                     }
 
                     if matches!(spec.base(), ChooseSpec::Source)
-                        && let Some(snapshot) = source_lki_for_moved_current_object(game, ctx)
-                            .or_else(|| {
-                                ctx.source_snapshot
-                                    .as_ref()
-                                    .filter(|_| resolve_source_object_id(game, ctx).is_none())
-                            })
+                        && let Some(snapshot) = source_characteristic_lki_for_execution(game, ctx)
                     {
                         let total = if let Some(counter_type) = counter_type {
                             snapshot.counters.get(counter_type).copied().unwrap_or(0) as i64
@@ -1376,7 +1471,7 @@ pub(crate) fn resolve_wide(
                         .map(|id| {
                             if matches!(spec.base(), ChooseSpec::Source)
                                 && let Some(snapshot) =
-                                    source_lki_for_moved_current_object(game, ctx)
+                                    source_characteristic_lki_for_execution(game, ctx)
                             {
                                 if let Some(counter_type) = counter_type {
                                     snapshot.counters.get(counter_type).copied().unwrap_or(0) as i64
@@ -1414,11 +1509,7 @@ pub(crate) fn resolve_wide(
                     Ok(i64::from(total))
                 }
             } else {
-                Ok(i64::from(context.layer().counters_on(
-                    value,
-                    spec,
-                    counter_type,
-                )))
+                context.layer().counters_on(value, spec, counter_type)
             }
         }
         Value::TaggedCount => {
@@ -1489,6 +1580,16 @@ fn resolve_event_value(
     spec: &EventValueSpec,
 ) -> Result<i64, ExecutionError> {
     match spec {
+        EventValueSpec::CastSpell(quantity) => ctx
+            .triggering_event
+            .as_ref()
+            .and_then(|event| event.downcast::<crate::events::spells::SpellCastEvent>())
+            .ok_or_else(|| {
+                ExecutionError::IncompleteEvidence(
+                    "cast quantity requires its completed spell-cast event".into(),
+                )
+            })?
+            .cast_quantity(*quantity),
         EventValueSpec::LifeChange {
             gained,
             for_controller,
@@ -1604,8 +1705,8 @@ fn resolve_event_value(
                     )
                 });
             }
-            if let Some(markers_event) = triggering_event.downcast::<MarkersChangedEvent>() {
-                return Ok(i64::from(markers_event.amount as i64));
+            if triggering_event.downcast::<MarkersChangedEvent>().is_some() {
+                return triggering_event.counter_trigger_amount();
             }
             if let Some(counter_event) = triggering_event.downcast::<CounterPlacedEvent>() {
                 return Ok(i64::from(counter_event.amount as i64));

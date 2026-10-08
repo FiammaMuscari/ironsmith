@@ -1,6 +1,7 @@
 use crate::effects::ExecutionContext;
 use crate::effects::ExecutionError;
 use crate::effects::helpers::resolve_value;
+#[cfg(test)]
 use crate::events::EnterBattlefieldEvent;
 use crate::filter::ObjectFilterExt as _;
 use crate::game_state::GameState;
@@ -25,6 +26,7 @@ pub(crate) enum BattlefieldEntryController {
 pub(crate) struct BattlefieldEntryReceipt {
     pub outcome: BattlefieldEntryOutcome,
     original_object: ObjectId,
+    published_outputs: Vec<crate::effects::PublishedEffectOutputs>,
     zone_receipt: crate::events::processing::PreparedEventOutcome<super::AppliedZoneChange>,
 }
 
@@ -35,7 +37,25 @@ impl BattlefieldEntryReceipt {
         ObjectId,
         crate::events::processing::PreparedEventOutcome<super::AppliedZoneChange>,
     ) {
-        (self.original_object, self.zone_receipt)
+        self.into_zone_receipt_with_outputs().0
+    }
+
+    /// The original movement and already-published programme results belong to
+    /// the same retained entry. Receipt-only compatibility may discard views;
+    /// rich owners must retain these genuine producer references.
+    pub(crate) fn into_zone_receipt_with_outputs(
+        self,
+    ) -> (
+        (
+            ObjectId,
+            crate::events::processing::PreparedEventOutcome<super::AppliedZoneChange>,
+        ),
+        Vec<crate::effects::PublishedEffectOutputs>,
+    ) {
+        (
+            (self.original_object, self.zone_receipt),
+            self.published_outputs,
+        )
     }
 }
 
@@ -45,15 +65,28 @@ pub(crate) fn finish_battlefield_entry_receipts(
     original: crate::effect::EffectOutcome,
     receipts: Vec<BattlefieldEntryReceipt>,
 ) -> Result<crate::effect::EffectOutcome, ExecutionError> {
-    super::finish_zone_change_receipts(
-        game,
-        ctx,
-        original,
-        receipts
-            .into_iter()
-            .map(BattlefieldEntryReceipt::into_zone_receipt)
-            .collect(),
-    )
+    finish_battlefield_entry_receipts_with_outputs(game, ctx, original, receipts)
+        .map(crate::effects::CompletedEffectOutputs::into_outcome)
+}
+
+pub(crate) fn finish_battlefield_entry_receipts_with_outputs<
+    O: crate::effects::OriginalEffectOutput,
+>(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    original: O,
+    receipts: Vec<BattlefieldEntryReceipt>,
+) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+    let mut published = Vec::new();
+    let mut zone_receipts = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let (movement, packets) = receipt.into_zone_receipt_with_outputs();
+        zone_receipts.push(movement);
+        crate::effects::PublishedEffectOutputs::append_distinct(&mut published, packets);
+    }
+    let mut original = original.into_outputs();
+    original.retain_published_references(published);
+    super::finish_zone_change_receipts_with_outputs(game, ctx, original, zone_receipts)
 }
 
 /// Config for moving an object to the battlefield through ETB processing.
@@ -62,6 +95,7 @@ pub(crate) struct BattlefieldEntryOptions {
     pub controller: BattlefieldEntryController,
     pub tapped: bool,
     pub transformed: bool,
+    pub face_down: bool,
     /// Authored prospective characteristics, independent of the physical cards.
     pub entry_definition: Option<crate::cards::CardDefinition>,
     pub linked_face_mana_cost: Option<crate::mana::ManaCost>,
@@ -84,6 +118,7 @@ impl BattlefieldEntryOptions {
             controller: BattlefieldEntryController::Preserve,
             tapped,
             transformed: false,
+            face_down: false,
             entry_definition: None,
             linked_face_mana_cost: None,
             physical_components: Vec::new(),
@@ -99,6 +134,7 @@ impl BattlefieldEntryOptions {
             controller: BattlefieldEntryController::Owner,
             tapped,
             transformed: false,
+            face_down: false,
             entry_definition: None,
             linked_face_mana_cost: None,
             physical_components: Vec::new(),
@@ -114,6 +150,7 @@ impl BattlefieldEntryOptions {
             controller: BattlefieldEntryController::Specific(controller),
             tapped,
             transformed: false,
+            face_down: false,
             entry_definition: None,
             linked_face_mana_cost: None,
             physical_components: Vec::new(),
@@ -169,6 +206,11 @@ impl BattlefieldEntryOptions {
     ) -> Self {
         self.entry_definition = Some(definition);
         self.physical_components = components;
+        self
+    }
+
+    pub(crate) fn face_down(mut self, face_down: bool) -> Self {
+        self.face_down = face_down;
         self
     }
 
@@ -358,20 +400,14 @@ fn finish_battlefield_entry(
     game.add_battlefield_put_with_source_link(ctx.source, new_id);
     let enters_tapped = result.enters_tapped;
 
-    // "This creature enters prepared." The permanent is on the battlefield by
-    // now, which is what the prepare spell copy's existence is tied to.
-    let event = if enters_tapped {
-        TriggerEvent::new_with_provenance(
-            EnterBattlefieldEvent::tapped(new_id, old_zone),
-            ProvNodeId::default(),
-        )
-    } else {
-        TriggerEvent::new_with_provenance(
-            EnterBattlefieldEvent::new(new_id, old_zone),
-            ProvNodeId::default(),
-        )
-    };
-    notifications.push(event);
+    notifications.push(super::battlefield_entry_observation(
+        game,
+        new_id,
+        old_zone,
+        enters_tapped,
+        ProvNodeId::default(),
+        Vec::new(),
+    )?);
     Ok(BattlefieldEntryOutcome::Moved(new_id))
 }
 
@@ -388,15 +424,132 @@ pub(crate) fn move_to_battlefield_batch_with_options(
     ctx: &mut ExecutionContext,
     requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
 ) -> Result<Vec<BattlefieldEntryReceipt>, ExecutionError> {
-    move_to_battlefield_batch_with_options_and_zone_proposals(
+    move_to_battlefield_batch_with_companions(
         game,
         ctx,
         requests,
         std::collections::HashMap::new(),
+        |_, _| Ok(()),
+    )
+    .map(|completed| completed.map(|(receipts, ())| receipts).unwrap_or_default())
+}
+
+/// Prepare every entry before companion originals commit, retaining prospective
+/// entry views and reservations in the staged world. Commit both groups there;
+/// no preparation clone can overwrite an independently committed sibling.
+/// The enclosing movement adapter completes authored arrival work and additions.
+pub(crate) fn move_to_battlefield_batch_with_companions<'a, T>(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext<'a>,
+    requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
+    zone_proposals: std::collections::HashMap<
+        ObjectId,
+        crate::events::processing::PreparedBattlefieldZoneChange,
+    >,
+    companions: impl FnOnce(&mut GameState, &mut ExecutionContext<'a>) -> Result<T, ExecutionError>,
+) -> Result<Option<(Vec<BattlefieldEntryReceipt>, T)>, ExecutionError> {
+    crate::effects::composition::execute_transaction(
+        game,
+        ctx,
+        || None,
+        |game, ctx| {
+            move_to_battlefield_batch_with_options_inner(
+                game,
+                ctx,
+                requests,
+                zone_proposals,
+                companions,
+            )
+        },
     )
 }
 
-pub(crate) fn move_to_battlefield_batch_with_options_and_zone_proposals(
+fn move_to_battlefield_batch_with_options_inner<'a, T>(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext<'a>,
+    requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
+    zone_proposals: std::collections::HashMap<
+        ObjectId,
+        crate::events::processing::PreparedBattlefieldZoneChange,
+    >,
+    companions: impl FnOnce(&mut GameState, &mut ExecutionContext<'a>) -> Result<T, ExecutionError>,
+) -> Result<Option<(Vec<BattlefieldEntryReceipt>, T)>, ExecutionError> {
+    if requests.is_empty() {
+        return companions(game, ctx).map(|other| Some((Vec::new(), other)));
+    }
+    let Some(prepared) =
+        prepare_battlefield_entry_batch(game, ctx, requests, zone_proposals, None)?
+    else {
+        return Ok(None);
+    };
+    prepared.commit_with_companions(game, ctx, companions)
+}
+
+#[derive(Debug)]
+struct EntryProjection {
+    original: crate::object::Object,
+    projected: crate::object::Object,
+    ids: Vec<crate::continuous::ContinuousEffectId>,
+    suspended: Option<crate::continuous::SuspendedEntryEffects>,
+}
+impl EntryProjection {
+    fn activate(&mut self, game: &mut GameState) -> Result<(), ExecutionError> {
+        let effects = self.suspended.take().ok_or_else(|| {
+            ExecutionError::InternalError("entry projection is already active".into())
+        })?;
+        if let Some(current) = game.object_mut(self.projected.id)
+            && current.zone == self.original.zone
+            && current.stable_id == self.original.stable_id
+        {
+            current.restore_entry_presentation_from(&self.projected);
+        }
+        game.effect_store
+            .continuous_effects
+            .restore_entry_effects(effects)?;
+        game.refresh_continuous_state()
+            .map_err(ExecutionError::ContinuousDiscovery)
+    }
+    fn detach(&mut self, game: &mut GameState) -> Result<(), ExecutionError> {
+        if self.suspended.is_some() {
+            return Err(ExecutionError::InternalError(
+                "entry projection is already detached".into(),
+            ));
+        }
+        if let Some(current) = game.object_mut(self.original.id)
+            && current.zone == self.original.zone
+            && current.stable_id == self.original.stable_id
+        {
+            current.restore_entry_presentation_from(&self.original);
+        }
+        self.suspended = Some(
+            game.effect_store
+                .continuous_effects
+                .suspend_entry_effects(&self.ids),
+        );
+        game.refresh_continuous_state()
+            .map_err(ExecutionError::ContinuousDiscovery)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedBattlefieldEntryBatch {
+    requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
+    prepared_entries: Vec<Option<(Zone, crate::game_state::PreparedEtbEntry)>>,
+    published_outputs: Vec<Vec<crate::effects::PublishedEffectOutputs>>,
+    controllers: Vec<Option<PlayerId>>,
+    deferred_programs: Vec<Vec<crate::events::processing::PreparedReplacementProgram>>,
+    replaced_entries: std::collections::HashSet<usize>,
+    provisional_effects: Vec<crate::continuous::ContinuousEffectId>,
+    provisional_entry_effects:
+        std::collections::HashMap<ObjectId, Vec<crate::continuous::ContinuousEffectId>>,
+    transformed_entry_states:
+        std::collections::HashMap<usize, (crate::object::Object, crate::cards::CardDefinition)>,
+    projections: std::collections::HashMap<ObjectId, EntryProjection>,
+}
+
+/// Prepare complete entry choices/costs against the original world. Projections
+/// are detached before returning; only their typed receipts survive to commit.
+pub(crate) fn prepare_battlefield_entry_batch(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
@@ -404,18 +557,33 @@ pub(crate) fn move_to_battlefield_batch_with_options_and_zone_proposals(
         ObjectId,
         crate::events::processing::PreparedBattlefieldZoneChange,
     >,
-) -> Result<Vec<BattlefieldEntryReceipt>, ExecutionError> {
-    let checkpoint = game.clone();
-    let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-    let result = move_to_battlefield_batch_with_options_inner(game, ctx, requests, zone_proposals);
+    mut draws: Option<&mut super::ZoneInstructionDraws>,
+) -> Result<Option<PreparedBattlefieldEntryBatch>, ExecutionError> {
+    // The caller owns this collector independently of the Game/context
+    // checkpoint. Retain its existing futures; only new preparation outputs
+    // and immutable range metadata belong to this attempt.
+    let draw_checkpoint = draws
+        .as_ref()
+        .map(|draws| (draws.draws.checkpoint(), draws.ranges.clone()));
+    let result = crate::effects::composition::execute_result_transaction(game, ctx, |game, ctx| {
+        prepare_battlefield_entry_batch_inner(
+            game,
+            ctx,
+            requests,
+            zone_proposals,
+            draws.as_deref_mut(),
+        )
+    });
     if result.is_err() || ctx.decision_maker.awaiting_choice() {
-        *game = checkpoint;
-        context_checkpoint.restore(ctx);
+        if let (Some(draws), Some((outputs, ranges))) = (draws, draw_checkpoint) {
+            draws.draws.restore_checkpoint(outputs);
+            draws.ranges = ranges;
+        }
     }
     result
 }
 
-fn move_to_battlefield_batch_with_options_inner(
+fn prepare_battlefield_entry_batch_inner(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     requests: Vec<(ObjectId, BattlefieldEntryOptions)>,
@@ -423,27 +591,26 @@ fn move_to_battlefield_batch_with_options_inner(
         ObjectId,
         crate::events::processing::PreparedBattlefieldZoneChange,
     >,
-) -> Result<Vec<BattlefieldEntryReceipt>, ExecutionError> {
+    mut draws: Option<&mut super::ZoneInstructionDraws>,
+) -> Result<Option<PreparedBattlefieldEntryBatch>, ExecutionError> {
     if requests.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     // Original zone snapshots and observer lookback precede provisional faces,
     // continuous modifications and every entry program in this batch.
-    let pre_event_lookback = game.trigger_source_lookback_snapshots();
+    let pre_event_lookback = game.try_trigger_source_lookback_snapshots()?;
     let original_snapshots = requests
         .iter()
         .filter_map(|(id, _)| {
             game.object(*id).map(|object| {
-                (
-                    *id,
-                    crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-                        object, game,
-                    ),
+                crate::snapshot::ObjectSnapshot::try_from_object_with_calculated_characteristics(
+                    object, game,
                 )
+                .map(|snapshot| (*id, snapshot))
             })
         })
-        .collect::<std::collections::HashMap<_, _>>();
+        .collect::<Result<std::collections::HashMap<_, _>, ExecutionError>>()?;
     let mut physical_entries = std::collections::HashMap::new();
     for (index, (primary, options)) in requests.iter().enumerate() {
         if options.physical_components.is_empty() {
@@ -484,9 +651,9 @@ fn move_to_battlefield_batch_with_options_inner(
                 })?;
             components.push(crate::game_state::PreparedEntryComponent {
                 snapshot:
-                    crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
+                    crate::snapshot::ObjectSnapshot::try_from_object_with_calculated_characteristics(
                         object, game,
-                    ),
+                    )?,
                 original_definition: definition,
             });
         }
@@ -495,68 +662,74 @@ fn move_to_battlefield_batch_with_options_inner(
     let additional_effects = ctx.additional_replacement_effects_snapshot();
     let mut working = game.clone();
     let mut transformed_entry_states = std::collections::HashMap::new();
-    for (index, (object_id, options)) in requests.iter().enumerate() {
-        if working
-            .object(*object_id)
-            .is_some_and(|object| object.zone == Zone::Battlefield)
-            || (!options.transformed && options.entry_definition.is_none())
-        {
-            continue;
-        }
-        let Some(original) = working.object(*object_id).cloned() else {
-            continue;
-        };
-        let Some(definition) = options
-            .entry_definition
-            .clone()
-            .or_else(|| transformed_entry_definition(&working, *object_id))
-        else {
-            continue;
-        };
-        if apply_entry_definition(&mut working, *object_id, &definition) {
-            transformed_entry_states.insert(index, (original, definition));
-        }
-    }
-    // The replacement proposal must see the characteristics the returning
-    // effect gives the entering object, before any entry replacements match.
     let mut provisional_effects = Vec::new();
     let mut provisional_entry_effects = std::collections::HashMap::new();
-    for (object, options) in &requests {
-        if working
-            .object(*object)
-            .is_some_and(|object| object.zone == Zone::Battlefield)
-        {
+    let mut projections = std::collections::HashMap::new();
+    // Build each prospective presentation in isolation, then detach it. A
+    // later entrant's conditions must see every other original in its source
+    // zone with its real face and characteristics, not another projection.
+    for (index, (object, options)) in requests.iter().enumerate() {
+        let Some(original) = working.object(*object).cloned() else {
+            continue;
+        };
+        if original.zone == Zone::Battlefield {
             continue;
         }
-        let effects = apply_entry_modifications(&mut working, ctx, *object, options)?;
-        provisional_effects.extend(effects.iter().copied());
-        provisional_entry_effects.insert(*object, effects);
-    }
-    let eligible_indices = requests
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (object, options))| {
-            if working
-                .object(*object)
-                .is_some_and(|object| object.zone == Zone::Battlefield)
+        if options.face_down {
+            working
+                .object_mut(*object)
+                .expect("original")
+                .apply_face_down_cast_overlay();
+        }
+        if options.transformed || options.entry_definition.is_some() {
+            if let Some(definition) = options
+                .entry_definition
+                .clone()
+                .or_else(|| transformed_entry_definition(&working, *object))
             {
-                return None;
+                if apply_entry_definition(&mut working, *object, &definition) {
+                    transformed_entry_states.insert(index, (original.clone(), definition));
+                }
             }
-            if options.transformed && !transformed_entry_states.contains_key(&index) {
-                return None;
-            }
-            if working.card_cannot_enter_battlefield(*object) {
-                return None;
-            }
-            battlefield_entry_controller(&working, *object, options)
-                .filter(|controller| {
-                    working
-                        .player(*controller)
-                        .is_some_and(|player| player.is_in_game())
-                })
-                .map(|_| index)
-        })
-        .collect::<std::collections::HashSet<_>>();
+        }
+        let ids = apply_entry_modifications(&mut working, ctx, *object, options)?;
+        provisional_effects.extend(ids.iter().copied());
+        provisional_entry_effects.insert(*object, ids.clone());
+        let projected = working
+            .object(*object)
+            .cloned()
+            .ok_or(ExecutionError::ObjectNotFound(*object))?;
+        let mut projection = EntryProjection {
+            original,
+            projected,
+            ids,
+            suspended: None,
+        };
+        projection.detach(&mut working)?;
+        projections.insert(*object, projection);
+    }
+    let mut eligible_indices = std::collections::HashSet::new();
+    for (index, (object, options)) in requests.iter().enumerate() {
+        if let Some(projection) = projections.get_mut(object) {
+            projection.activate(&mut working)?;
+        }
+        let eligible = !working
+            .object(*object)
+            .is_some_and(|object| object.zone == Zone::Battlefield)
+            && (!options.transformed || transformed_entry_states.contains_key(&index))
+            && !working.card_cannot_enter_battlefield(*object)
+            && battlefield_entry_controller(&working, *object, options).is_some_and(|controller| {
+                working
+                    .player(controller)
+                    .is_some_and(|player| player.is_in_game())
+            });
+        if let Some(projection) = projections.get_mut(object) {
+            projection.detach(&mut working)?;
+        }
+        if eligible {
+            eligible_indices.insert(index);
+        }
+    }
     let mut reserved_objects = requests
         .iter()
         .enumerate()
@@ -597,9 +770,16 @@ fn move_to_battlefield_batch_with_options_inner(
         })
         .collect::<Vec<_>>();
     let mut replaced_entries = std::collections::HashSet::new();
+    let mut published_outputs = vec![Vec::new(); requests.len()];
     for index in proposal_order {
         let (object, options) = &requests[index];
+        if let Some(projection) = projections.get_mut(object) {
+            projection.activate(&mut working)?;
+        }
         let Some(old_zone) = working.object(*object).map(|object| object.zone) else {
+            if let Some(projection) = projections.get_mut(object) {
+                projection.detach(&mut working)?;
+            }
             continue;
         };
         let entering_controller = match options.controller {
@@ -656,42 +836,59 @@ fn move_to_battlefield_batch_with_options_inner(
                 .filter_map(|component| game.object(component.snapshot.object_id).cloned())
                 .collect::<Vec<_>>()
         } else {
-            transformed_entry_states
-                .get(&index)
-                .map(|(original, _)| vec![original.clone()])
-                .unwrap_or_default()
+            projections
+                .get(object)
+                .map(|projection| projection.original.clone())
+                .into_iter()
+                .collect()
         };
-        let mut result = crate::events::processing::process_etb_batch_proposal_with_scope(
-            &mut working,
-            *object,
-            old_zone,
-            &mut ctx.decision_maker,
-            options.initial_counters.clone(),
-            options.tapped,
-            entering_controller,
-            &reserved_objects,
-            scope,
-            &scoped_additional,
-            &original_source_faces,
-        )?;
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(Vec::new());
+        let draw_start = draws.as_ref().map_or(0, |draws| draws.draws.0.len());
+        let mut result =
+            crate::events::processing::process_etb_batch_proposal_with_scope_and_draws(
+                &mut working,
+                *object,
+                old_zone,
+                &mut ctx.decision_maker,
+                options.initial_counters.clone(),
+                options.tapped,
+                entering_controller,
+                &reserved_objects,
+                scope,
+                &scoped_additional,
+                &original_source_faces,
+                draws.as_deref_mut().map(|draws| &mut draws.draws),
+            )?;
+        if let Some(draws) = draws.as_deref_mut() {
+            draws.record(*object, draw_start);
         }
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(None);
+        }
+        crate::effects::PublishedEffectOutputs::append_distinct(
+            &mut published_outputs[index],
+            result.completed_program_outputs.iter().cloned(),
+        );
         deferred_programs[index].append(&mut result.additional_programs);
         if result.replaced {
             replaced_entries.insert(index);
         }
         reserved_objects.extend(result.linked_exile_with_entering.iter().copied());
         proposals[index] = Some((old_zone, result));
+        if let Some(projection) = projections.get_mut(object) {
+            projection.detach(&mut working)?;
+        }
     }
 
-    let mut notifications = Vec::new();
     let mut prepared_entries = vec![None; requests.len()];
+    let mut controllers = vec![None; requests.len()];
     for index in preparation_order {
         let Some((old_zone, proposal)) = proposals[index].take() else {
             continue;
         };
         let (object, options) = &requests[index];
+        if let Some(projection) = projections.get_mut(object) {
+            projection.activate(&mut working)?;
+        }
         let entering_controller = match options.controller {
             BattlefieldEntryController::Specific(controller) => Some(controller),
             BattlefieldEntryController::Owner => working.object(*object).map(|object| object.owner),
@@ -704,11 +901,19 @@ fn move_to_battlefield_batch_with_options_inner(
             &mut ctx.decision_maker,
         )?
         else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         if ctx.decision_maker.awaiting_choice() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
+        crate::effects::PublishedEffectOutputs::append_distinct(
+            &mut published_outputs[index],
+            prepared.choices.as_enters_outputs.iter().cloned(),
+        );
+        crate::effects::PublishedEffectOutputs::append_distinct(
+            &mut published_outputs[index],
+            prepared.result.completed_program_outputs.iter().cloned(),
+        );
         prepared.zone_entry_lookback = Some(
             proposal_lookbacks
                 .remove(&index)
@@ -729,157 +934,237 @@ fn move_to_battlefield_batch_with_options_inner(
         }
         prepared.entry_attachment = options.entry_attachment;
         prepared.entry_attachment_requires_aura = options.entry_attachment_requires_aura;
+        controllers[index] = entering_controller.or_else(|| working.current_controller(*object));
         prepared_entries[index] = Some((old_zone, prepared));
+        if let Some(projection) = projections.get_mut(object) {
+            projection.detach(&mut working)?;
+        }
     }
 
-    // Every proposal in this simultaneous event has now been prepared against
-    // the same batch-scoped one-shot replacements. Consume the replacements
-    // that matched at least one member before committing the prepared entries,
-    // so a later independent ETB event cannot reuse them.
-    working
-        .effect_store
-        .replacement_effects
-        .consume_pending_batch_one_shot_effects();
+    *game = working;
+    Ok(Some(PreparedBattlefieldEntryBatch {
+        requests,
+        prepared_entries,
+        published_outputs,
+        controllers,
+        deferred_programs,
+        replaced_entries,
+        provisional_effects,
+        provisional_entry_effects,
+        transformed_entry_states,
+        projections,
+    }))
+}
 
-    // CR 603.2c: the entries are one simultaneous event, so "whenever one or
-    // more creatures enter" sees them together.
-    let opened_batch = working.open_simultaneous_action();
-    let mut outcomes = vec![BattlefieldEntryOutcome::Prevented; requests.len()];
-    for (index, (object, options)) in requests.iter().enumerate() {
-        let Some((old_zone, prepared_entry)) = prepared_entries[index].take() else {
-            continue;
-        };
-        let entering_controller = match options.controller {
-            BattlefieldEntryController::Specific(controller) => Some(controller),
-            BattlefieldEntryController::Owner => working.object(*object).map(|object| object.owner),
-            BattlefieldEntryController::Preserve => None,
-        };
-        let committed = working.commit_prepared_etb_with_cause_and_options_and_dm(
-            *object,
-            prepared_entry,
-            entering_controller,
-            ctx.cause.clone(),
-            options.entry_attachment.is_none(),
-            &mut ctx.decision_maker,
-        );
-        let mut committed = committed?;
-        if committed.pending || ctx.decision_maker.awaiting_choice() {
-            return Ok(Vec::new());
+impl PreparedBattlefieldEntryBatch {
+    pub(crate) fn commit(
+        self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Vec<BattlefieldEntryReceipt>, ExecutionError> {
+        crate::effects::composition::execute_result_transaction(game, ctx, |game, ctx| {
+            self.commit_with_companions(game, ctx, |_, _| Ok(()))
+                .map(|value| value.map(|(receipts, ())| receipts).unwrap_or_default())
+        })
+    }
+    pub(crate) fn commit_with_companions<'a, T>(
+        self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext<'a>,
+        companions: impl FnOnce(&mut GameState, &mut ExecutionContext<'a>) -> Result<T, ExecutionError>,
+    ) -> Result<Option<(Vec<BattlefieldEntryReceipt>, T)>, ExecutionError> {
+        let Self {
+            requests,
+            mut prepared_entries,
+            mut published_outputs,
+            controllers,
+            mut deferred_programs,
+            mut replaced_entries,
+            mut provisional_effects,
+            provisional_entry_effects,
+            transformed_entry_states,
+            mut projections,
+        } = self;
+        let mut working = game.clone();
+        // The containing simultaneous owner prepares every participant before
+        // any commit. Keep batch one-shots alive through all those proposals.
+        working
+            .effect_store
+            .replacement_effects
+            .consume_pending_batch_one_shot_effects();
+        let mut notifications = Vec::new();
+        // CR 603.2c: the entries are one simultaneous event, so "whenever one or
+        // more creatures enter" sees them together.
+        let opened_batch = working.open_simultaneous_action();
+        let other = companions(&mut working, ctx)?;
+        if ctx.decision_maker.awaiting_choice() {
+            game.retain_pending_decision_controllers_from(&mut working);
+            return Ok(None);
         }
-        deferred_programs[index].append(&mut committed.programs);
-        let result = match committed.original {
-            crate::events::processing::EventOutcome::Proceed(result) => result,
-            crate::events::processing::EventOutcome::Replaced => {
-                replaced_entries.insert(index);
+        let mut outcomes = vec![BattlefieldEntryOutcome::Prevented; requests.len()];
+        for (index, (object, options)) in requests.iter().enumerate() {
+            let Some((old_zone, prepared_entry)) = prepared_entries[index].take() else {
+                continue;
+            };
+            if !working
+                .object(*object)
+                .is_some_and(|current| current.zone == old_zone)
+            {
                 continue;
             }
-            crate::events::processing::EventOutcome::Prevented
-            | crate::events::processing::EventOutcome::NotApplicable => continue,
-        };
-        // Provisional modifications participate in replacement matching above;
-        // lasting entry effects belong only to an actual battlefield entrant.
-        if working
-            .object(result.new_id)
-            .is_some_and(|object| object.zone == Zone::Battlefield)
-        {
-            // These effects now describe the committed entrant. Keep them;
-            // redirected and prevented proposals still lose provisional effects.
-            if let Some(effects) = provisional_entry_effects.get(object) {
-                provisional_effects.retain(|id| !effects.contains(id));
+            if let Some(projection) = projections.get_mut(object) {
+                projection.activate(&mut working)?;
             }
-        }
-        outcomes[index] = finish_battlefield_entry(
-            &mut working,
-            ctx,
-            *object,
-            old_zone,
-            result,
-            &mut notifications,
-        )?;
-    }
-
-    // CR 613.7j: objects that receive timestamps simultaneously get them in an
-    // order the active player chooses. Only entrants whose static abilities
-    // generate continuous effects can make that order observable, so the
-    // choice is offered for those; everything else keeps commit order.
-    let relevant_entrants: Vec<ObjectId> = outcomes
-        .iter()
-        .filter_map(|outcome| match outcome {
-            BattlefieldEntryOutcome::Moved(id) => Some(*id),
-            BattlefieldEntryOutcome::Redirected(_) | BattlefieldEntryOutcome::Prevented => None,
-        })
-        .filter(|id| entrant_generates_continuous_effects(&working, *id))
-        .collect();
-    if relevant_entrants.len() >= 2 {
-        let Some(ordered) =
-            choose_simultaneous_timestamp_order(&working, ctx.decision_maker, &relevant_entrants)
-        else {
-            return Ok(Vec::new());
-        };
-        for id in ordered {
-            working.effect_store.continuous_effects.record_entry(id);
-        }
-        // Timestamp choices change layer ordering before entry receipts freeze.
-        working.mark_continuous_state_dirty();
-    }
-
-    for (index, (object_id, _)) in requests.iter().enumerate() {
-        if outcomes[index] != BattlefieldEntryOutcome::Prevented {
-            continue;
-        }
-        let Some((original, _)) = transformed_entry_states.get(&index) else {
-            continue;
-        };
-        if let Some(object) = working.object_mut(*object_id) {
-            *object = original.clone();
-        }
-    }
-
-    for id in provisional_effects {
-        working.effect_store.continuous_effects.remove_effect(id);
-    }
-    working
-        .refresh_continuous_state()
-        .map_err(ExecutionError::ContinuousDiscovery)?;
-    // The complete original batch and its simultaneous timestamps are now
-    // fixed. Freeze every entry before any deferred replacement program runs.
-    working.close_simultaneous_action(opened_batch);
-    working.freeze_completed_entry_events(notifications.iter_mut())?;
-    for event in notifications {
-        working.queue_trigger_event(ctx.provenance, event);
-    }
-    *game = working;
-    Ok(outcomes
-        .into_iter()
-        .enumerate()
-        .map(|(index, outcome)| {
-            use crate::events::processing::{EventOutcome, PreparedEventOutcome};
-            let original = match &outcome {
-                BattlefieldEntryOutcome::Moved(id) => {
-                    EventOutcome::Proceed(super::AppliedZoneChange {
-                        final_zone: Zone::Battlefield,
-                        new_object_id: Some(*id),
-                        new_object_ids: vec![*id],
-                    })
+            let entering_controller = controllers[index];
+            let committed = working.commit_prepared_etb_with_cause_and_options_and_dm(
+                *object,
+                prepared_entry,
+                entering_controller,
+                ctx.cause.clone(),
+                options.entry_attachment.is_none(),
+                &mut ctx.decision_maker,
+            );
+            let mut committed = committed?;
+            if committed.pending || ctx.decision_maker.awaiting_choice() {
+                game.retain_pending_decision_controllers_from(&mut working);
+                return Ok(None);
+            }
+            deferred_programs[index].append(&mut committed.programs);
+            let result = match committed.original {
+                crate::events::processing::EventOutcome::Proceed(result) => result,
+                crate::events::processing::EventOutcome::Replaced => {
+                    replaced_entries.insert(index);
+                    continue;
                 }
-                BattlefieldEntryOutcome::Redirected(change) => {
-                    EventOutcome::Proceed(change.clone())
-                }
-                BattlefieldEntryOutcome::Prevented if replaced_entries.contains(&index) => {
-                    EventOutcome::Replaced
-                }
-                BattlefieldEntryOutcome::Prevented => EventOutcome::Prevented,
+                crate::events::processing::EventOutcome::Prevented
+                | crate::events::processing::EventOutcome::NotApplicable => continue,
             };
-            BattlefieldEntryReceipt {
-                outcome,
-                original_object: requests[index].0,
-                zone_receipt: PreparedEventOutcome {
-                    original,
-                    programs: std::mem::take(&mut deferred_programs[index]),
-                },
+            // Provisional modifications participate in replacement matching above;
+            // lasting entry effects belong only to an actual battlefield entrant.
+            if working
+                .object(result.new_id)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
+            {
+                // These effects now describe the committed entrant. Keep them;
+                // redirected and prevented proposals still lose provisional effects.
+                if let Some(effects) = provisional_entry_effects.get(object) {
+                    provisional_effects.retain(|id| !effects.contains(id));
+                }
             }
-        })
-        .collect())
+            outcomes[index] = finish_battlefield_entry(
+                &mut working,
+                ctx,
+                *object,
+                old_zone,
+                result,
+                &mut notifications,
+            )?;
+        }
+
+        // CR 613.7j: objects that receive timestamps simultaneously get them in an
+        // order the active player chooses. Only entrants whose static abilities
+        // generate continuous effects can make that order observable, so the
+        // choice is offered for those; everything else keeps commit order.
+        let relevant_entrants: Vec<ObjectId> = outcomes
+            .iter()
+            .filter_map(|outcome| match outcome {
+                BattlefieldEntryOutcome::Moved(id) => Some(*id),
+                BattlefieldEntryOutcome::Redirected(_) | BattlefieldEntryOutcome::Prevented => None,
+            })
+            .filter(|id| entrant_generates_continuous_effects(&working, *id))
+            .collect();
+        if relevant_entrants.len() >= 2 {
+            let Some(ordered) = choose_simultaneous_timestamp_order(
+                &working,
+                ctx.decision_maker,
+                &relevant_entrants,
+            ) else {
+                game.retain_pending_decision_controllers_from(&mut working);
+                return Ok(None);
+            };
+            for id in ordered {
+                working.effect_store.continuous_effects.record_entry(id);
+            }
+            // Timestamp choices change layer ordering before entry receipts freeze.
+            working.mark_continuous_state_dirty();
+        }
+
+        for (index, (object_id, _)) in requests.iter().enumerate() {
+            if outcomes[index] != BattlefieldEntryOutcome::Prevented {
+                continue;
+            }
+            let Some((original, _)) = transformed_entry_states.get(&index) else {
+                continue;
+            };
+            if let Some(object) = working.object_mut(*object_id) {
+                object.restore_entry_presentation_from(original);
+            }
+        }
+
+        for (index, (object, _)) in requests.iter().enumerate() {
+            if outcomes[index] == BattlefieldEntryOutcome::Prevented {
+                if let Some(original) = projections
+                    .get(object)
+                    .map(|projection| &projection.original)
+                {
+                    if let Some(current) = working.object_mut(*object)
+                        && current.zone == original.zone
+                        && current.stable_id == original.stable_id
+                    {
+                        current.restore_entry_presentation_from(original);
+                    }
+                }
+            }
+        }
+
+        for id in provisional_effects {
+            working.effect_store.continuous_effects.remove_effect(id);
+        }
+        working
+            .refresh_continuous_state()
+            .map_err(ExecutionError::ContinuousDiscovery)?;
+        // The complete original batch and its simultaneous timestamps are now
+        // fixed. Freeze every entry before any deferred replacement program runs.
+        working.close_simultaneous_action(opened_batch);
+        working.freeze_completed_entry_events(notifications.iter_mut())?;
+        for event in notifications {
+            working.queue_trigger_event(ctx.provenance, event);
+        }
+        *game = working;
+        let receipts = outcomes
+            .into_iter()
+            .enumerate()
+            .map(|(index, outcome)| {
+                use crate::events::processing::{EventOutcome, PreparedEventOutcome};
+                let original = match &outcome {
+                    BattlefieldEntryOutcome::Moved(id) => {
+                        EventOutcome::Proceed(super::AppliedZoneChange {
+                            final_zone: Zone::Battlefield,
+                            new_object_id: Some(*id),
+                            new_object_ids: vec![*id],
+                        })
+                    }
+                    BattlefieldEntryOutcome::Redirected(change) => {
+                        EventOutcome::Proceed(change.clone())
+                    }
+                    BattlefieldEntryOutcome::Prevented if replaced_entries.contains(&index) => {
+                        EventOutcome::Replaced
+                    }
+                    BattlefieldEntryOutcome::Prevented => EventOutcome::Prevented,
+                };
+                BattlefieldEntryReceipt {
+                    outcome,
+                    original_object: requests[index].0,
+                    published_outputs: std::mem::take(&mut published_outputs[index]),
+                    zone_receipt: PreparedEventOutcome {
+                        original,
+                        programs: std::mem::take(&mut deferred_programs[index]),
+                    },
+                }
+            })
+            .collect();
+        Ok(Some((receipts, other)))
+    }
 }
 
 /// True when a permanent's own static abilities generate continuous effects,
@@ -979,7 +1264,6 @@ impl BattlefieldEntryReceipt {
         &self.outcome
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2113,3 +2397,7 @@ mod replacement_invalid_entry_answer_contract_tests {
         invalid(vec![0, 1]);
     }
 }
+
+#[cfg(test)]
+#[path = "battlefield_entry_preparation_tests.rs"]
+mod preparation_tests;

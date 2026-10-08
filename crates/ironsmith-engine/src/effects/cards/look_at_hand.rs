@@ -1,5 +1,6 @@
 //! Look at hand effect implementation.
 
+#[cfg(test)]
 use crate::decisions::context::ViewCardsContext;
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
@@ -10,6 +11,10 @@ use crate::target::ChooseSpec;
 pub type LookAtHandEffect = ironsmith_core::LookAtHandEffect;
 
 impl EffectExecutor for LookAtHandEffect {
+    fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
+        self.reveal
+            .then_some(crate::effect::PriorEffectAction::Revealed)
+    }
     /// "Reveal your hand" can be paid as a cost (Land Grant's alternative
     /// cost); an empty hand can still be revealed.
     fn as_cost_executable(&self) -> Option<&dyn crate::effects::CostExecutableEffect> {
@@ -39,11 +44,10 @@ impl EffectExecutor for LookAtHandEffect {
         _game: &GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, ExecutionError> {
-        // Revealing/looking at a hand involves no player choices; defer to
-        // commit so each opponent's reveal lands in one batch.
-        Ok(Box::new(crate::effects::DeferredPlayerActionProposal {
-            effect: crate::effect::Effect::new(self.clone()),
+        Ok(Box::new(PreparedHandDisclosure {
+            effect: self.clone(),
             iterated_player: ctx.iteration.iterated_player,
+            selected: None,
         }))
     }
 
@@ -52,74 +56,28 @@ impl EffectExecutor for LookAtHandEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let players = resolve_players_from_spec(game, &self.target, ctx)?;
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-        if players.is_empty() {
-            return if self.target.is_target() {
-                Ok(EffectOutcome::target_invalid())
-            } else {
-                Ok(EffectOutcome::count(0))
-            };
-        }
-
-        let mut total_cards = 0;
-        for player_id in players {
-            let cards = game
-                .player(player_id)
-                .map(|p| p.hand.clone())
-                .unwrap_or_default();
-            total_cards += cards.len() as i32;
-
-            if self.reveal {
-                // Record the revealed cards so a later "... revealed this
-                // way" reference (e.g. a card-name choice) can validate
-                // against exactly this set.
-                let mut revealed: Vec<crate::snapshot::ObjectSnapshot> = ctx
-                    .get_tagged_all(crate::effects::REVEALED_THIS_WAY_TAG)
-                    .cloned()
-                    .unwrap_or_default();
-                for card_id in cards.iter().copied() {
-                    if let Some(object) = game.object(card_id)
-                        && revealed
-                            .iter()
-                            .all(|snapshot| snapshot.object_id != card_id)
-                    {
-                        revealed.push(crate::snapshot::ObjectSnapshot::from_object(object, game));
-                    }
-                }
-                ctx.set_tagged_objects(
-                    crate::tag::TagKey::from(crate::effects::REVEALED_THIS_WAY_TAG),
-                    revealed,
-                );
-                view_hidden_candidate_objects(
-                    game,
-                    ctx,
-                    ctx.controller,
-                    &cards,
-                    "Reveal that player's hand",
-                    true,
-                );
-            } else {
-                // Record exactly the looked-at cards so a following "exile
-                // those cards" acts on this set. The set lives only in this
-                // resolution's context: it is shown to the looking player
-                // alone and never marked publicly revealed.
-                for card_id in cards.iter().copied() {
-                    if let Some(object) = game.object(card_id) {
-                        ctx.tag_object(
-                            crate::tag::LOOKED_AT_HAND_TAG,
-                            crate::snapshot::ObjectSnapshot::from_object(object, game),
-                        );
-                    }
-                }
-                let view_ctx =
-                    ViewCardsContext::look_at_hand(ctx.controller, player_id, Some(ctx.source));
-                ctx.decision_maker
-                    .view_cards(game, ctx.controller, &cards, &view_ctx);
-            }
-        }
-
-        Ok(EffectOutcome::count(total_cards))
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        crate::effects::composition::execute_transaction(
+            game,
+            ctx,
+            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+            |game, ctx| {
+                let Some(selected) = select_hand_disclosure(self, game, ctx)? else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                };
+                selected.disclose(game, ctx)
+            },
+        )
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -136,6 +94,221 @@ impl EffectExecutor for LookAtHandEffect {
         } else {
             "player to look at"
         }
+    }
+}
+
+/// Identities and the private viewer belong to selection, before any sibling
+/// original commits. Authentication and disclosure remain with their child owners.
+#[derive(Debug)]
+struct SelectedHand {
+    player: crate::ids::PlayerId,
+    cards: Vec<crate::ids::ObjectId>,
+    snapshots: Vec<crate::snapshot::ObjectSnapshot>,
+}
+
+#[derive(Debug)]
+enum SelectedHandDisclosure {
+    Finished(EffectOutcome),
+    Hands {
+        reveal: bool,
+        viewer: crate::ids::PlayerId,
+        hands: Vec<SelectedHand>,
+    },
+}
+
+fn select_hand_disclosure(
+    effect: &LookAtHandEffect,
+    game: &GameState,
+    ctx: &mut ExecutionContext,
+) -> Result<Option<SelectedHandDisclosure>, ExecutionError> {
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(None);
+    }
+    let players = resolve_players_from_spec(game, &effect.target, ctx)?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(None);
+    }
+    if players.is_empty() {
+        return Ok(Some(SelectedHandDisclosure::Finished(
+            if effect.target.is_target() {
+                EffectOutcome::target_invalid()
+            } else {
+                EffectOutcome::count(0)
+            },
+        )));
+    }
+    let hands = players
+        .into_iter()
+        .map(|player| {
+            let cards = game
+                .player(player)
+                .map(|p| p.hand.to_vec())
+                .unwrap_or_default();
+            let snapshots = cards
+                .iter()
+                .filter_map(|id| crate::snapshot::ObjectSnapshot::from_object_id(game, *id))
+                .collect();
+            SelectedHand {
+                player,
+                cards,
+                snapshots,
+            }
+        })
+        .collect();
+    Ok(Some(SelectedHandDisclosure::Hands {
+        reveal: effect.reveal,
+        viewer: ctx.controller,
+        hands,
+    }))
+}
+
+impl SelectedHandDisclosure {
+    fn disclose(
+        self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        let Self::Hands {
+            reveal,
+            viewer,
+            hands,
+        } = self
+        else {
+            let Self::Finished(outcome) = self else {
+                unreachable!()
+            };
+            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                outcome,
+            ));
+        };
+        let mut total_cards = 0;
+        let mut outcome = EffectOutcome::count(0);
+        let mut all_snapshots = Vec::new();
+        let mut children = Vec::new();
+        for hand in hands {
+            total_cards += hand.cards.len() as i32;
+            all_snapshots.extend(hand.snapshots.iter().cloned());
+            let child = if reveal {
+                let child = super::reveal_objects_with_outputs(
+                    game,
+                    ctx,
+                    hand.snapshots,
+                    Some(hand.player),
+                    "Reveal that player's hand",
+                    None,
+                )?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
+                for snapshot in child
+                    .outcome
+                    .chosen_object_memory()
+                    .unwrap_or_default()
+                    .iter()
+                    .cloned()
+                {
+                    ctx.tag_object(crate::effects::REVEALED_THIS_WAY_TAG, snapshot);
+                }
+                child
+            } else {
+                // Private tags retain the selected identities, before observation.
+                for snapshot in hand.snapshots {
+                    ctx.tag_object(crate::tag::LOOKED_AT_HAND_TAG, snapshot);
+                }
+                super::look_at_cards_with_outputs(
+                    game,
+                    ctx,
+                    viewer,
+                    hand.player,
+                    crate::zone::Zone::Hand,
+                    &hand.cards,
+                    "Look at that player's hand",
+                )?
+            };
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                    EffectOutcome::count(0),
+                ));
+            }
+            outcome = EffectOutcome::aggregate([outcome, child.outcome.clone()]);
+            children.push(child);
+        }
+        outcome.set_value(crate::effect::OutcomeValue::Count(i64::from(total_cards)));
+        if !reveal {
+            outcome = outcome
+                .with_chosen_object_memory(all_snapshots.clone())
+                .with_affected_object_memory(all_snapshots);
+        }
+        Ok(crate::effects::CompletedEffectOutputs::from_children(
+            children,
+            |_| outcome,
+        ))
+    }
+}
+
+#[derive(Debug)]
+struct PreparedHandDisclosure {
+    effect: LookAtHandEffect,
+    iterated_player: Option<crate::ids::PlayerId>,
+    selected: Option<SelectedHandDisclosure>,
+}
+
+impl crate::effects::SimultaneousEffectProposal for PreparedHandDisclosure {
+    fn prepare_selection(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        if self.selected.is_some() || ctx.decision_maker.awaiting_choice() {
+            return Ok(());
+        }
+        self.selected = ctx.with_temp_iterated_player(self.iterated_player, |ctx| {
+            select_hand_disclosure(&self.effect, game, ctx)
+        })?;
+        Ok(())
+    }
+
+    fn prepare_original(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        self.prepare_selection(game, ctx)
+    }
+
+    fn commit_original_with_outputs(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<
+        crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
+        ExecutionError,
+    > {
+        let selected = self.selected.ok_or_else(|| {
+            ExecutionError::InternalError(
+                "hand disclosure committed before selection completed".into(),
+            )
+        })?;
+        ctx.with_temp_iterated_player(self.iterated_player, |ctx| {
+            crate::effects::composition::execute_transaction(
+                game,
+                ctx,
+                || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+                |game, ctx| selected.disclose(game, ctx),
+            )
+            .map(crate::effects::SimultaneousEffectCommit::finished)
+        })
+    }
+
+    fn commit(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        self.commit_original_with_outputs(game, ctx)
+            .map(|receipt| receipt.outcome.into_outcome())
     }
 }
 

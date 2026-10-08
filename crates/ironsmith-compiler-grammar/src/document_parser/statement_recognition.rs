@@ -44,7 +44,9 @@ fn parse_source_gain_ability_committing_loss_on_success(
 }
 
 fn is_die_roll_result_adjustment_statement(tokens: &[OwnedLexToken]) -> bool {
-    statement_shapes::is_extra_die_ignore_lowest(tokens)
+    statement_shapes::is_extra_coin_ignore_one(tokens)
+        || statement_shapes::is_first_coin_batch_heads_win(tokens)
+        || statement_shapes::is_extra_die_ignore_lowest(tokens)
         || statement_shapes::parse_die_roll_adjustment_tokens(tokens).is_some()
 }
 
@@ -288,6 +290,15 @@ const WHOLE_LINE_STATEMENT_RECOGNIZERS: &[(
     (
         |line, _authored_words| {
             crate::grammar::semantic_lowering::parse_villainous_choice_statement_tokens(
+                &line.info.source_tokens,
+            )
+            .is_some()
+        },
+        |line, _| line.info.raw_line.clone(),
+    ),
+    (
+        |line, _authored_words| {
+            crate::grammar::semantic_lowering::parse_villainous_choice_preceding_clause_tokens(
                 &line.info.source_tokens,
             )
             .is_some()
@@ -677,9 +688,64 @@ fn is_plural_tagged_result_followup_tokens(tokens: &[OwnedLexToken]) -> bool {
         })
 }
 
-fn is_trigger_result_followup_line(line: &PreprocessedLine) -> bool {
+fn has_local_die_result_owner(tokens: &[OwnedLexToken]) -> bool {
+    fn last_non_row(effects: &[EffectAst]) -> Option<&EffectAst> {
+        for effect in effects.iter().rev() {
+            match effect {
+                EffectAst::Sequence { effects }
+                | EffectAst::SourceSentence { effects, .. }
+                | EffectAst::CommaThen { effects }
+                | EffectAst::Coordinated { effects, .. } => {
+                    if let Some(last) = last_non_row(effects) { return Some(last); }
+                }
+                EffectAst::Coordination(coordination)
+                    if coordination.kind != crate::model::CoordinationKindAst::Disjunction
+                        && coordination.boundaries.iter().all(|boundary|
+                            boundary.ordering == crate::model::EffectOrderingAst::Ordered) =>
+                {
+                    for member in coordination.members.iter().rev() {
+                        if let Some(last) = last_non_row(&member.effects) { return Some(last); }
+                    }
+                }
+                EffectAst::Conditionals(crate::model::ast::ConditionalEffectAst::IfResult {
+                    predicate: crate::IfResultPredicate::DieValue(_), ..
+                }) => {}
+                other => return Some(other),
+            }
+        }
+        None
+    }
+    // Optional, conditional, iterated, or quoted rolls do not export one
+    // unconditional immediate result for a following table.
+    probe_effect_sentences_lexed(tokens).is_ok_and(|effects| matches!(
+        last_non_row(&effects),
+        Some(EffectAst::SubjectVerb(crate::model::ast::SubjectVerbEffectAst {
+            action: crate::model::ast::SubjectVerbActionAst::Random(
+                crate::model::ast::RandomActionAst::RollDie { .. }
+                | crate::model::ast::RandomActionAst::RollDiceChooseResult { .. },
+            ),
+            ..
+        }))
+    ))
+}
+
+fn is_station_result_boundary(items: &[PreprocessedItem], idx: usize, line: &PreprocessedLine) -> bool {
+    // Station owns its N+ striations even when the preceding ability rolls.
+    // If the body is also a plausible die consequence, leave it to Station
+    // dispatch to reject rather than guessing which owner the author meant.
+    line_family_grammar::parse_station_threshold_line(&line.tokens).is_some()
+        && items[..idx].iter().any(|item| {
+            let PreprocessedItem::Line(prior) = item else { return false; };
+            line_family_grammar::parse_station_keyword_line(&prior.tokens, &prior.info.source_tokens).is_some()
+        })
+}
+
+fn is_trigger_result_followup_line(line: &PreprocessedLine, owner_tokens: &[OwnedLexToken]) -> bool {
     if super::document_grammar::parse_numeric_result_prefix_tokens(&line.tokens).is_some() {
-        return true;
+        // N+ is also the printed Station striation syntax. A resolving
+        // ability may consume a numeric row only when it owns a local roll;
+        // unrelated activations and triggers must leave striations alone.
+        return has_local_die_result_owner(owner_tokens);
     }
     if structure::split_leading_result_prefix_lexed(&line.tokens).is_some() {
         return true;
@@ -714,6 +780,14 @@ pub(super) fn extend_triggered_line_with_result_followups(
     let mut next_idx = idx + 1;
 
     while let Some(PreprocessedItem::Line(line)) = items.get(next_idx) {
+        if is_station_result_boundary(items, next_idx, line) {
+            break;
+        }
+        if super::document_grammar::parse_numeric_result_prefix_tokens(&line.tokens).is_some()
+            && !has_local_die_result_owner(&triggered.effect_parse_tokens)
+        {
+            break;
+        }
         // A complete replacement ability has its own affected subject.
         // Its trailing "instead" does not replace the preceding trigger.
         if crate::keyword_static::parse_scoped_damage_redirection_line(&line.tokens)
@@ -734,7 +808,7 @@ pub(super) fn extend_triggered_line_with_result_followups(
         if !instead_replacement && super::is_nonkeyword_choice_labeled_line(line) {
             break;
         }
-        if !instead_replacement && !is_trigger_result_followup_line(line) {
+        if !instead_replacement && !is_trigger_result_followup_line(line, &triggered.effect_parse_tokens) {
             break;
         }
 
@@ -752,6 +826,21 @@ pub(super) fn extend_triggered_line_with_result_followups(
     (triggered, next_idx)
 }
 
+// Restrictions belong to the activation envelope, not its resolving program.
+// Probe the same sentence partition used by activation lowering, without
+// discarding any authored tokens from the real ability (or examining its cost).
+fn activated_result_owner_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut resolving = Vec::new();
+    for sentence in split_lexed_sentences(tokens) {
+        if crate::grammar::restriction_facts::parse_activation_restriction_tokens(sentence)
+            .is_none()
+        {
+            append_joined_line_tokens(&mut resolving, sentence);
+        }
+    }
+    resolving
+}
+
 pub(super) fn extend_activated_line_with_result_followups(
     items: &[PreprocessedItem],
     idx: usize,
@@ -760,10 +849,14 @@ pub(super) fn extend_activated_line_with_result_followups(
     let mut next_idx = idx + 1;
 
     while let Some(PreprocessedItem::Line(line)) = items.get(next_idx) {
+        if is_station_result_boundary(items, next_idx, line) {
+            break;
+        }
         if super::is_nonkeyword_choice_labeled_line(line) {
             break;
         }
-        if !is_trigger_result_followup_line(line) {
+        let owner_tokens = activated_result_owner_tokens(&activated.effect_parse_tokens);
+        if !is_trigger_result_followup_line(line, &owner_tokens) {
             break;
         }
 
@@ -792,10 +885,13 @@ pub(super) fn extend_statement_line_with_result_followups_in_place(
     let mut next_idx = idx + 1;
 
     while let Some(PreprocessedItem::Line(line)) = items.get(next_idx) {
+        if is_station_result_boundary(items, next_idx, line) {
+            break;
+        }
         if super::is_nonkeyword_choice_labeled_line(line) {
             break;
         }
-        if !is_trigger_result_followup_line(line) {
+        if !is_trigger_result_followup_line(line, &statement.parse_tokens) {
             break;
         }
 
@@ -1209,3 +1305,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "statement_recognition_numeric_owner_tests.rs"]
+mod numeric_owner_tests;

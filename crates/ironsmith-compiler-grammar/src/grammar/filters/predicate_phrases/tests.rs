@@ -6,6 +6,78 @@ use crate::lexer::lex_line;
 
 const IF_WORD: &str = "if";
 
+#[test]
+fn graveyard_contractions_match_word_view_without_weakening_token_consumption() {
+    for head in ["there's", "there’s", "theres"] {
+        let tokens = lex_line(&format!("{head} a Lesson card in your graveyard"), 0).unwrap();
+        assert_eq!(LexedClause::new(&tokens).word_refs()[0], "theres");
+        let expected = ObjectFilter::default().with_subtype(crate::types::Subtype::Lesson)
+            .in_zone(Zone::Graveyard).owned_by(PlayerFilter::You);
+        assert_eq!(parse_predicate(&tokens).unwrap(),
+            PredicateAst::Player(PlayerPredicateAst::PlayerControls {
+                player: PlayerAst::You, filter: expected,
+            }));
+        for suffix in [" {2}", " +", " with an unknown qualification", " and a missing predicate",
+            " or a missing predicate", " in exile"] {
+            let invalid = format!("{head} a Lesson card in your graveyard{suffix}");
+            assert!(parse_predicate(&lex_line(&invalid, 0).unwrap()).is_err(), "{invalid}");
+        }
+        let conjoined = format!("{head} an instant card and a sorcery card in your graveyard");
+        assert!(matches!(parse_predicate(&lex_line(&conjoined, 0).unwrap()).unwrap(), PredicateAst::And(_, _)));
+        assert!(parse_predicate(&lex_line(&format!("{conjoined} {{2}}"), 0).unwrap()).is_err());
+    }
+}
+
+#[test]
+fn contracted_graveyard_existence_keeps_owner_zone_and_subtype() {
+    for text in ["there's a Lesson card in your graveyard", "there is a Lesson card in your graveyard"] {
+        let tokens = lex_line(text, 0).unwrap();
+        let PredicateAst::Player(PlayerPredicateAst::PlayerControls { player, filter }) =
+            parse_predicate(&tokens).unwrap() else { panic!("{text}") };
+        assert_eq!(player, PlayerAst::You);
+        assert_eq!(filter.zone, Some(Zone::Graveyard));
+        assert_eq!(filter.owner, Some(PlayerFilter::You));
+        assert_eq!(filter.subtypes, vec![crate::types::Subtype::Lesson]);
+        assert!(filter.card_types.is_empty());
+    }
+    let tokens = lex_line("there's an instant card and a sorcery card in your graveyard", 0).unwrap();
+    assert!(matches!(parse_predicate(&tokens).unwrap(), PredicateAst::And(_, _)));
+    for text in [
+        "there's a Lesson card in your opponent's graveyard",
+        "there's a Lesson card in your graveyard with an unknown qualification",
+        "there's a Lesson card in your graveyard and a missing predicate",
+        "there's a Lesson card in your graveyard {2}",
+    ] {
+        assert!(parse_predicate(&lex_line(text, 0).unwrap()).is_err(), "{text}");
+    }
+}
+
+#[test]
+fn team_other_subtype_existence_is_a_scoped_count_not_one_players_control() {
+    let tokens = lex_line("your team controls another Warrior", 0).unwrap();
+    let expected = ObjectFilter::default()
+        .with_subtype(crate::types::Subtype::Warrior)
+        .in_zone(Zone::Battlefield)
+        .controlled_by(PlayerFilter::your_team());
+    let mut source = expected.clone();
+    source.source = true;
+    assert_eq!(parse_predicate(&tokens).unwrap(), PredicateAst::ValueComparison {
+        left: Value::Count(expected),
+        operator: ValueComparisonOperator::GreaterThan,
+        right: Value::Count(source),
+    });
+    for text in [
+        "your team controls another unknownsubtype",
+        "your team controls exactly another Warrior",
+        "your team controls another Warrior with an unknown qualification",
+        "your team controls another Warrior or a missing predicate",
+        "your team controls another Warrior and a missing predicate",
+        "your team controls another Warrior {2}",
+    ] {
+        assert!(parse_predicate(&lex_line(text, 0).unwrap()).is_err(), "{text}");
+    }
+}
+
 fn predicate_tokens_after_if(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
     tokens
         .iter()
@@ -188,7 +260,7 @@ fn parse_predicate_paid_cost_labels_use_capture_parser() -> Result<(), CardTextE
             PredicateAst::ThisSpellPaidLabel("Surge".into()),
         ),
         (
-            "If this creature's spectacle cost was paid instead discard your hand",
+            "If this creature's spectacle cost was paid",
             PredicateAst::ThisSpellPaidLabel("Spectacle".into()),
         ),
         (
@@ -2380,6 +2452,10 @@ fn parse_predicate_combat_turn_uses_shared_capture_parser() -> Result<(), CardTe
             "If this creature attacked or blocked this turn",
             PredicateAst::Source(SourcePredicateAst::SourceAttackedOrBlockedThisTurn),
         ),
+        (
+            "If this creature attacked or blocked this combat",
+            PredicateAst::Source(SourcePredicateAst::SourceAttackedOrBlockedThisCombat),
+        ),
     ] {
         let tokens = lex_line(text, 0)?;
         let predicate_tokens = predicate_tokens_after_if(&tokens);
@@ -3937,7 +4013,7 @@ fn explicit_additional_cost_object_predicates_use_stable_alias() -> Result<(), C
         ),
     ] {
         let tokens = lex_line(text, 0)?;
-        let PredicateAst::TaggedMatches(tag, filter) = parse_predicate(&tokens)? else {
+        let PredicateAst::TaggedMatchedLastKnown(tag, filter) = parse_predicate(&tokens)? else {
             panic!("expected tagged cost-object predicate for {text}");
         };
         assert_eq!(
@@ -4400,4 +4476,83 @@ fn monarch_at_turn_begin_is_a_historical_predicate_not_current_designation() {
     );
     let tokens = crate::lexer::lex_line("you were the monarch during an unknown time", 0).unwrap();
     assert!(parse_predicate(&tokens).is_err());
+}
+
+#[test]
+fn foretold_spell_predicate_is_distinct_from_exile_and_payment() -> Result<(), CardTextError> {
+    let tokens = lex_line("If this spell was foretold", 0)?;
+    assert_eq!(parse_predicate(&predicate_tokens_after_if(&tokens))?, PredicateAst::ThisSpellWasForetold);
+    for text in ["If this spell was cast from exile", "If this spell was kicked"] {
+        let tokens = lex_line(text, 0)?;
+        assert!(!matches!(parse_predicate(&predicate_tokens_after_if(&tokens))?, PredicateAst::ThisSpellWasForetold));
+    }
+    Ok(())
+}
+
+#[test]
+fn suspected_predicates_distinguish_source_pronoun_and_paid_history() {
+    for text in ["it's suspected", "it is suspected", "any of them are suspected"] {
+        let predicate = parse_predicate(&lex_line(text, 0).unwrap()).unwrap();
+        assert!(matches!(predicate, PredicateAst::ItMatches(filter) if filter.suspected), "{text}");
+    }
+    assert!(matches!(parse_predicate(&lex_line("this creature is suspected", 0).unwrap()).unwrap(), PredicateAst::Source(SourcePredicateAst::SourceSuspected)));
+    let predicate = parse_predicate(&lex_line("the sacrificed creature was suspected", 0).unwrap()).unwrap();
+    assert!(matches!(predicate, PredicateAst::TaggedMatchedLastKnown(tag, filter) if filter.suspected && tag.as_str() == crate::tag::CompilerReferenceTag::AdditionalCostObject.as_str()));
+}
+
+#[test]
+fn alternative_payment_tails_consume_and_preserve_the_temporal_bound() -> Result<(), CardTextError> {
+    for text in ["her sneak cost was paid this turn", "this creature's sneak cost was paid this turn"] {
+        assert_eq!(parse_predicate(&lex_line(text, 0)?)?, PredicateAst::ThisSpellPaidLabel(
+            crate::cost::OptionalCostRef::from("Sneak").this_turn()));
+    }
+    for text in ["her sneak cost was paid last turn", "her sneak cost was paid this turn or last turn",
+        "her sneak cost was paid instead discard your hand"] {
+        assert!(advanced::parse_paid_cost_label_predicate(&lex_line(text, 0)?).is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn public_paid_predicate_reader_rejects_tokens_hidden_by_word_projection() -> Result<(), CardTextError> {
+    for text in [
+        "her sneak cost was paid {R} this turn",
+        "her sneak cost was paid this turn {R}",
+        "her sneak cost was paid (this turn)",
+        "her sneak cost was paid: this turn",
+        "her sneak cost was paid this; turn",
+        "her sneak cost was paid this turn;",
+        "her sneak: cost was paid this turn",
+        "her sneak cost was paid this turn)",
+    ] {
+        assert!(parse_predicate(&lex_line(text, 0)?).is_err(), "{text}");
+    }
+    for text in ["her sneak cost was paid this turn.", "her sneak cost was paid this turn,"] {
+        assert_eq!(parse_predicate(&lex_line(text, 0)?)?, PredicateAst::ThisSpellPaidLabel(
+            crate::cost::OptionalCostRef::from("Sneak").this_turn()));
+    }
+    for text in ["her sneak cost wasn't paid this turn", "her sneak cost was not paid this turn"] {
+        assert_eq!(parse_predicate(&lex_line(text, 0)?)?, PredicateAst::Not(Box::new(PredicateAst::ThisSpellPaidLabel(
+            crate::cost::OptionalCostRef::from("Sneak").this_turn()))));
+    }
+    Ok(())
+}
+
+#[test]
+fn activation_threshold_requires_the_exact_ability_current_turn_and_complete_predicate() {
+    for (word, count) in [("four", 4), ("7", 7)] {
+        let tokens = lex_line(&format!("this ability has been activated {word} or more times this turn"), 0).unwrap();
+        assert_eq!(super::parse_this_ability_activation_count_predicate(&tokens),
+            Some(PredicateAst::TurnEvents(TurnEventPredicateAst::ThisAbilityActivatedThisTurnAtLeast(count))));
+        assert_eq!(parse_predicate(&tokens).unwrap(),
+            PredicateAst::TurnEvents(TurnEventPredicateAst::ThisAbilityActivatedThisTurnAtLeast(count)));
+    }
+    for text in [
+        "this ability has resolved four or more times this turn",
+        "an ability has been activated four or more times this turn",
+        "this ability has been activated four or more times last turn",
+        "this ability has been activated four or more times this turn or was copied",
+    ] {
+        assert!(super::parse_this_ability_activation_count_predicate(&lex_line(text, 0).unwrap()).is_none(), "{text}");
+    }
 }

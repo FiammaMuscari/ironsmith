@@ -22,7 +22,10 @@ use crate::zone::Zone;
 
 /// How a grant was created, determining when it expires.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum GrantSource {
     /// From a one-shot effect with a duration.
     /// The grant expires at end of turn (or other specified time).
@@ -55,17 +58,26 @@ pub enum GrantSource {
         source_id: ObjectId,
         duration_player: PlayerId,
         /// The turn whose end step ends the grant, once known.
-        #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_permission_reference"))]
+        #[cfg_attr(
+            feature = "serialization",
+            serde(deserialize_with = "deserialize_present_permission_reference")
+        )]
         final_turn: Option<u32>,
         /// CR 800.4m boundary if the duration player left the game.
-        #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_permission_reference"))]
+        #[cfg_attr(
+            feature = "serialization",
+            serde(deserialize_with = "deserialize_present_permission_reference")
+        )]
         departure_boundary: Option<u32>,
     },
     EffectUntilPlayerNextTurnStart {
         source_id: ObjectId,
         duration_player: PlayerId,
         created_turn: u32,
-        #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_permission_reference"))]
+        #[cfg_attr(
+            feature = "serialization",
+            serde(deserialize_with = "deserialize_present_permission_reference")
+        )]
         departure_boundary: Option<u32>,
     },
     /// From a resolving effect that lasts until the same source object next
@@ -100,6 +112,9 @@ pub enum GrantSource {
         /// The permanent providing this grant.
         source_id: ObjectId,
     },
+    /// Appended: an effect-owned permission; control and ability loss do not
+    /// change its beneficiary. Phasing permanently expires it (CR 702.26f).
+    EffectWhileSourceOnBattlefield { source_id: ObjectId },
 }
 
 impl GrantSource {
@@ -176,7 +191,8 @@ impl GrantSource {
             GrantSource::EffectWhileControlled { source_id, .. } => *source_id,
             GrantSource::EffectWhileStableCardOnTopOfLibrary { source_id, .. } => *source_id,
             GrantSource::EffectDuringTurnsCounterPutOnSource { source_id, .. } => *source_id,
-            GrantSource::StaticAbility { source_id } => *source_id,
+            GrantSource::StaticAbility { source_id }
+            | GrantSource::EffectWhileSourceOnBattlefield { source_id } => *source_id,
         }
     }
 
@@ -230,6 +246,11 @@ impl GrantSource {
             GrantSource::StaticAbility { source_id } => {
                 // Valid only while source is on battlefield
                 game.battlefield.contains(source_id)
+            }
+            GrantSource::EffectWhileSourceOnBattlefield { source_id } => {
+                game.object(*source_id)
+                    .is_some_and(|source| source.zone == Zone::Battlefield)
+                    && !game.is_phased_out(*source_id)
             }
             GrantSource::EffectWhileControlled {
                 source_id,
@@ -303,7 +324,10 @@ impl GrantSource {
                 // Valid only while source is on battlefield
                 battlefield.contains(source_id)
             }
-            GrantSource::EffectWhileControlled { source_id, .. } => battlefield.contains(source_id),
+            GrantSource::EffectWhileSourceOnBattlefield { source_id }
+            | GrantSource::EffectWhileControlled { source_id, .. } => {
+                battlefield.contains(source_id)
+            }
             GrantSource::EffectWhileStableCardOnTopOfLibrary {
                 expires_end_of_turn,
                 ..
@@ -409,7 +433,8 @@ impl GrantSource {
                 source_id: *source_id,
                 exile_revision: *exile_revision,
             },
-            GrantSource::StaticAbility { source_id } => {
+            GrantSource::StaticAbility { source_id }
+            | GrantSource::EffectWhileSourceOnBattlefield { source_id } => {
                 GrantLifetime::WhileSourceOnBattlefield(*source_id)
             }
             GrantSource::EffectWhileControlled {
@@ -489,9 +514,16 @@ pub(crate) fn grant_usage_limit_allows(
     limit: Option<GrantUsageLimit>,
 ) -> bool {
     match limit {
-        Some(GrantUsageLimit::OnceEachTurn | GrantUsageLimit::OnceDuringEachOfYourTurns) =>
-            (limit != Some(GrantUsageLimit::OnceDuringEachOfYourTurns) || game.is_active_player(player))
-                && identity.is_some_and(|key| !game.turn_store.grant_cast_uses_this_turn.contains(&(player, key.clone()))),
+        Some(GrantUsageLimit::OnceEachTurn | GrantUsageLimit::OnceDuringEachOfYourTurns) => {
+            (limit != Some(GrantUsageLimit::OnceDuringEachOfYourTurns)
+                || game.is_active_player(player))
+                && identity.is_some_and(|key| {
+                    !game
+                        .turn_store
+                        .grant_cast_uses_this_turn
+                        .contains(&(player, key.clone()))
+                })
+        }
         Some(GrantUsageLimit::DuringYourTurns) => game.is_active_player(player),
         None => true,
     }
@@ -500,31 +532,59 @@ pub(crate) fn grant_usage_limit_allows(
 /// A top-only permission is checked before the physical card leaves its
 /// library. A completed announcement retains the exact selected permission;
 /// revealing a different top card during payment cannot invalidate that receipt.
-pub(crate) fn grant_top_card_matches(game: &crate::game_state::GameState, grant: &Grant, card_id: ObjectId) -> bool {
-    if !grant.play_from_constraints.top_card_only { return true; }
-    if grant.zone != Zone::Library { return false; }
-    let Some(card) = game.object(card_id) else { return false; };
-    if card.zone == Zone::Stack {
-        return card.cast_play_from_constraints.as_ref().is_some_and(|captured| {
-            captured.0 == grant.source.source_id() && captured.1 == Zone::Library
-                && captured.2.top_card_only
-                && card.cast_grant_usage_identity.as_deref() == grant.permission_identity.as_ref()
-        }) && game.cast_origin_snapshot(card_id).is_some_and(|snapshot| snapshot.zone == Zone::Library);
+pub(crate) fn grant_top_card_matches(
+    game: &crate::game_state::GameState,
+    grant: &Grant,
+    card_id: ObjectId,
+) -> bool {
+    if !grant.play_from_constraints.top_card_only {
+        return true;
     }
-    card.zone == Zone::Library && card.owner == grant.player
-        && game.player(grant.player).is_some_and(|player| player.library.last() == Some(&card_id))
+    if grant.zone != Zone::Library {
+        return false;
+    }
+    let Some(card) = game.object(card_id) else {
+        return false;
+    };
+    if card.zone == Zone::Stack {
+        return card
+            .cast_play_from_constraints
+            .as_ref()
+            .is_some_and(|captured| {
+                captured.0 == grant.source.source_id()
+                    && captured.1 == Zone::Library
+                    && captured.2.top_card_only
+                    && card.cast_grant_usage_identity.as_deref()
+                        == grant.permission_identity.as_ref()
+            })
+            && game
+                .cast_origin_snapshot(card_id)
+                .is_some_and(|snapshot| snapshot.zone == Zone::Library);
+    }
+    card.zone == Zone::Library
+        && card.owner == grant.player
+        && game
+            .player(grant.player)
+            .is_some_and(|player| player.library.last() == Some(&card_id))
 }
 
 /// Query a chosen spell face with that face installed under its real object
 /// identity. Filter characteristic lookups must not silently read the front
 /// face through ObjectId while testing a separately cloned Object.
 pub(crate) fn proposed_card_face_query(
-    game: &crate::GameState, card: &crate::object::Object,
+    game: &crate::GameState,
+    card: &crate::object::Object,
 ) -> Result<crate::GameState, crate::effects::ExecutionError> {
     let mut query = game.clone();
-    *query.object_mut(card.id).ok_or(crate::effects::ExecutionError::ObjectNotFound(card.id))? = card.clone();
-    if card.face_down_cast_state.is_some() { query.set_face_down(card.id); }
-    query.continuous_query_snapshot().map_err(crate::effects::ExecutionError::ContinuousDiscovery)
+    *query
+        .object_mut(card.id)
+        .ok_or(crate::effects::ExecutionError::ObjectNotFound(card.id))? = card.clone();
+    if card.face_down_cast_state.is_some() {
+        query.set_face_down(card.id);
+    }
+    query
+        .continuous_query_snapshot()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)
 }
 
 /// Identity of a permission independent of its position among available methods.
@@ -535,7 +595,11 @@ pub enum GrantPermissionIdentity {
         origin: crate::continuous::AbilityOrigin,
         printed_face: Option<crate::ids::CardId>,
     },
-    LinkedFace { source: ObjectId, face: crate::ids::CardId, slot: usize },
+    LinkedFace {
+        source: ObjectId,
+        face: crate::ids::CardId,
+        slot: usize,
+    },
     Stored(u64),
 }
 
@@ -549,20 +613,54 @@ pub(crate) struct GrantUseCompletion {
     source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
 }
 impl GrantUseCompletion {
-    pub(crate) fn capture(game: &crate::GameState, source: ObjectId, controller: PlayerId, effects: Vec<crate::effect::Effect>) -> Option<Self> {
-        if effects.is_empty() { return None; }
-        Some(Self {source, controller, effects, source_snapshot: game.object(source).map(|object|
-            crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, game))})
+    pub(crate) fn capture(
+        game: &crate::GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        effects: Vec<crate::effect::Effect>,
+    ) -> Option<Self> {
+        if effects.is_empty() {
+            return None;
+        }
+        Some(Self {
+            source,
+            controller,
+            effects,
+            source_snapshot: game.object(source).map(|object| {
+                crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
+                    object, game,
+                )
+            }),
+        })
     }
     /// A completed checked discovery owner may supply its already frozen
     /// snapshot rather than entering legacy characteristic discovery again.
-    pub(crate) fn capture_with_snapshot(source: ObjectId, controller: PlayerId, effects: Vec<crate::effect::Effect>, source_snapshot: Option<crate::snapshot::ObjectSnapshot>) -> Option<Self> {
-        (!effects.is_empty()).then_some(Self {source, controller, effects, source_snapshot})
+    pub(crate) fn capture_with_snapshot(
+        source: ObjectId,
+        controller: PlayerId,
+        effects: Vec<crate::effect::Effect>,
+        source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    ) -> Option<Self> {
+        (!effects.is_empty()).then_some(Self {
+            source,
+            controller,
+            effects,
+            source_snapshot,
+        })
     }
     pub(crate) fn complete(self, game: &mut crate::GameState) {
-        let snapshot = game.turn_store.turn_history.source_last_known_snapshot(self.source).cloned().or(self.source_snapshot);
+        let snapshot = game
+            .source_last_known_snapshot(self.source)
+            .cloned()
+            .or(self.source_snapshot);
         crate::effects::composition::queue_reflexive_trigger_with_source_snapshot(
-            game, self.source, self.controller, self.effects, Default::default(), snapshot);
+            game,
+            self.source,
+            self.controller,
+            self.effects,
+            Default::default(),
+            snapshot,
+        );
     }
 }
 
@@ -598,11 +696,20 @@ pub struct GrantedPlayFrom {
 /// ordinary granted ability, because they apply only when that exact
 /// permission is used.
 #[derive(Debug, Clone, Default, PartialEq)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct PlayFromConstraints {
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_permission_reference"))]
+    #[cfg_attr(
+        feature = "serialization",
+        serde(deserialize_with = "deserialize_present_permission_reference")
+    )]
     pub spell_cost_increase: Option<crate::mana::ManaCost>,
-    #[cfg_attr(feature = "serialization", serde(deserialize_with = "deserialize_present_permission_reference"))]
+    #[cfg_attr(
+        feature = "serialization",
+        serde(deserialize_with = "deserialize_present_permission_reference")
+    )]
     pub spell_cost_reduction: Option<crate::mana::ManaCost>,
     pub lands_enter_tapped: bool,
     /// Required in retained native permission carriers; omission cannot widen a library permission.
@@ -610,6 +717,15 @@ pub struct PlayFromConstraints {
     pub instant_timing: bool,
     /// Retained private current-top view permission, independent of the source remaining in play.
     pub may_look_at_top: bool,
+    /// Conversion applies only to mana spent for this selected cast.
+    #[cfg_attr(
+        feature = "serialization",
+        serde(
+            default,
+            skip_serializing_if = "ironsmith_core::value_model::ManaSpendMode::is_normal"
+        )
+    )]
+    pub cast_mana_spend_mode: ironsmith_core::value_model::ManaSpendMode,
 }
 
 /// Identity of one shared deferred-use budget across multiple card grants.
@@ -617,7 +733,10 @@ pub struct PlayFromConstraints {
 /// A single resolution of "play one of those cards" grants every card in the
 /// collection the same id, so using any one card exhausts the whole pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialization", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct SharedGrantUsageId(u64);
 
 /// A unified grant that can represent either an ability or alternative casting method.
@@ -691,7 +810,9 @@ impl GrantRegistry {
     pub fn add_grant(&mut self, mut grant: Grant) {
         if grant.permission_identity.is_none() {
             let id = self.next_permission_identity;
-            self.next_permission_identity = id.checked_add(1).expect("grant permission identity exhausted");
+            self.next_permission_identity = id
+                .checked_add(1)
+                .expect("grant permission identity exhausted");
             grant.permission_identity = Some(GrantPermissionIdentity::Stored(id));
         }
         self.grants.push(grant);
@@ -1166,8 +1287,12 @@ impl GrantRegistry {
     }
 
     pub(crate) fn get_grants_for_card_view(
-        &self, game: &crate::game_state::GameState, card_id: ObjectId,
-        card: Option<&crate::object::Object>, card_zone: Zone, player: PlayerId,
+        &self,
+        game: &crate::game_state::GameState,
+        card_id: ObjectId,
+        card: Option<&crate::object::Object>,
+        card_zone: Zone,
+        player: PlayerId,
     ) -> Vec<Grant> {
         let mut result = Vec::new();
 
@@ -1203,7 +1328,9 @@ impl GrantRegistry {
             }
 
             // Check zone matches
-            if !grant_origin_matches(grant, card_zone) || !grant_top_card_matches(game, grant, card_id) {
+            if !grant_origin_matches(grant, card_zone)
+                || !grant_top_card_matches(game, grant, card_id)
+            {
                 continue;
             }
 
@@ -1259,7 +1386,10 @@ impl GrantRegistry {
             {
                 continue;
             }
-            if grant.player != player || !grant_origin_matches(&grant, card_zone) || !grant_top_card_matches(game, &grant, card_id) {
+            if grant.player != player
+                || !grant_origin_matches(&grant, card_zone)
+                || !grant_top_card_matches(game, &grant, card_id)
+            {
                 continue;
             }
 
@@ -1281,6 +1411,82 @@ impl GrantRegistry {
         }
 
         result
+    }
+
+    /// An unqualified permission can authorize opening a face-down exiled card
+    /// without consulting its hidden characteristics. Exact target IDs and the
+    /// zone are public authority; a face-name or characteristic filter is not.
+    pub(crate) fn unqualified_exile_play_grants(
+        &self,
+        game: &crate::GameState,
+        card_id: ObjectId,
+        player: PlayerId,
+    ) -> Vec<Grant> {
+        let Some(card) = game.object(card_id).filter(|card| card.zone == Zone::Exile) else {
+            return Vec::new();
+        };
+        self.grants
+            .iter()
+            .filter(|grant| !matches!(grant.source, GrantSource::StaticAbility { .. }))
+            .cloned()
+            .chain(self.static_grants(game))
+            .filter(|grant| {
+                if !matches!(grant.grantable, Grantable::PlayFrom)
+                    || grant.player != player
+                    || grant.zone != Zone::Exile
+                    || !grant.source.is_valid(game)
+                    || !self.shared_usage_is_available(grant.shared_usage_id)
+                    || grant
+                        .available_starting_turn
+                        .is_some_and(|turn| game.turn.turn_number < turn)
+                    || grant.required_face_name.is_some()
+                    || grant.play_from_constraints.top_card_only
+                    || !grant_usage_limit_allows(
+                        game,
+                        player,
+                        grant.permission_identity.as_ref(),
+                        grant.usage_limit,
+                    )
+                {
+                    return false;
+                }
+                if let Some(filter) = &grant.filter {
+                    let mut unqualified = filter.clone();
+                    if unqualified
+                        .zone
+                        .take()
+                        .is_some_and(|zone| zone != Zone::Exile)
+                    {
+                        return false;
+                    }
+                    // The existing unmarked source pool is an object-history
+                    // relation, not a hidden card quality. Preserve that prior
+                    // route without granting it a new definition/acquisition pair.
+                    if !unqualified.tagged_constraints.is_empty() {
+                        if !unqualified.tagged_constraints.iter().all(|constraint| {
+                            constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+                                && constraint.relation
+                                    == crate::target::TaggedOpbjectRelation::IsTaggedObject
+                        }) || !game
+                            .get_exiled_with_source_links(grant.source.source_id())
+                            .contains(&card_id)
+                        {
+                            return false;
+                        }
+                        unqualified.tagged_constraints.clear();
+                    }
+                    if unqualified != ObjectFilter::default() {
+                        return false;
+                    }
+                }
+                match grant.target_id {
+                    Some(target) => {
+                        target == card_id || grant.target_stable_id == Some(card.stable_id)
+                    }
+                    None => grant.filter.is_some(),
+                }
+            })
+            .collect()
     }
 
     /// Check if a card has a specific granted ability.
@@ -1356,22 +1562,56 @@ impl GrantRegistry {
     /// gives an unlimited matching permission precedence. Capture this record
     /// before movement, so constraints, riders and usage refer to the same grant.
     pub(crate) fn selected_play_from_grant_for_card(
-        &self, game: &crate::game_state::GameState, card_id: ObjectId,
-        zone: Zone, player: PlayerId, source_id: ObjectId,
+        &self,
+        game: &crate::game_state::GameState,
+        card_id: ObjectId,
+        zone: Zone,
+        player: PlayerId,
+        source_id: ObjectId,
     ) -> Option<Grant> {
-        self.selected_play_from_grant_for_card_view(game, card_id, game.object(card_id), zone, player, source_id)
+        self.selected_play_from_grant_for_card_view(
+            game,
+            card_id,
+            game.object(card_id),
+            zone,
+            player,
+            source_id,
+        )
     }
 
     pub(crate) fn selected_play_from_grant_for_card_view(
-        &self, game: &crate::game_state::GameState, card_id: ObjectId,
-        card: Option<&crate::object::Object>, zone: Zone, player: PlayerId, source_id: ObjectId,
+        &self,
+        game: &crate::game_state::GameState,
+        card_id: ObjectId,
+        card: Option<&crate::object::Object>,
+        zone: Zone,
+        player: PlayerId,
+        source_id: ObjectId,
     ) -> Option<Grant> {
-        let grants = self.get_grants_for_card_view(game, card_id, card, zone, player).into_iter()
-            .filter(|grant| grant.source.source_id() == source_id && matches!(grant.grantable, Grantable::PlayFrom))
-            .filter(|grant| grant_usage_limit_allows(game, player, grant.permission_identity.as_ref(), grant.usage_limit))
+        let grants = self
+            .get_grants_for_card_view(game, card_id, card, zone, player)
+            .into_iter()
+            .filter(|grant| {
+                grant.source.source_id() == source_id
+                    && matches!(grant.grantable, Grantable::PlayFrom)
+            })
+            // New permission-local mana readers need an exact selection.
+            // Source-only actions retain their existing unmarked alternatives.
+            .filter(|grant| grant.play_from_constraints.cast_mana_spend_mode.is_normal())
+            .filter(|grant| {
+                grant_usage_limit_allows(
+                    game,
+                    player,
+                    grant.permission_identity.as_ref(),
+                    grant.usage_limit,
+                )
+            })
             .collect::<Vec<_>>();
-        grants.iter().find(|grant| grant.shared_usage_id.is_none() && grant.usage_limit.is_none())
-            .cloned().or_else(|| grants.into_iter().next())
+        grants
+            .iter()
+            .find(|grant| grant.shared_usage_id.is_none() && grant.usage_limit.is_none())
+            .cloned()
+            .or_else(|| grants.into_iter().next())
     }
 
     /// Extra rules for the precise play-from grant selected by a spell action.
@@ -1388,6 +1628,7 @@ impl GrantRegistry {
             .find(|grant| {
                 grant.source.source_id() == source_id
                     && matches!(grant.grantable, Grantable::PlayFrom)
+                    && grant.play_from_constraints.cast_mana_spend_mode.is_normal()
             })
             .map(|grant| grant.play_from_constraints)
             .unwrap_or_default()
@@ -1426,6 +1667,7 @@ impl GrantRegistry {
                 GrantSource::EffectWhileControlled { source_id: sid, .. } |
                 GrantSource::EffectWhileStableCardOnTopOfLibrary { source_id: sid, .. } |
                 GrantSource::EffectDuringTurnsCounterPutOnSource { source_id: sid, .. } |
+                GrantSource::EffectWhileSourceOnBattlefield { source_id: sid } |
                 GrantSource::StaticAbility { source_id: sid }
                 if *sid == source_id
             )
@@ -1550,12 +1792,21 @@ impl GrantRegistry {
                 ..
             } => *expires_end_of_turn > turn_number,
             GrantSource::StaticAbility { source_id }
+            | GrantSource::EffectWhileSourceOnBattlefield { source_id }
             | GrantSource::EffectWhileControlled { source_id, .. } => {
                 battlefield.contains(source_id)
             }
             GrantSource::EffectUntilSourceExilesAnother { .. }
             | GrantSource::EffectDuringTurnsCounterPutOnSource { .. } => true,
         });
+        self.cleanup_orphaned_shared_usage();
+    }
+
+    /// A for-as-long-as presence duration cannot resume after phase-in, even
+    /// if no permission query happened while the source was phased out.
+    pub(crate) fn expire_source_presence_for_phasing(&mut self, sources: &[ObjectId]) {
+        self.grants.retain(|grant| !matches!(&grant.source,
+            GrantSource::EffectWhileSourceOnBattlefield { source_id } if sources.contains(source_id)));
         self.cleanup_orphaned_shared_usage();
     }
 
@@ -1572,12 +1823,22 @@ impl GrantRegistry {
     /// Continuous private inspection attached to a resolving top permission.
     /// This is independent of whether a particular top currently matches the
     /// play filter. The beneficiary and duration were fixed at resolution.
-    pub fn grants_private_library_top_view(&self, game: &crate::game_state::GameState, player: PlayerId) -> bool {
-        game.player(player).is_some_and(|player| player.is_in_game()) && self.grants.iter().any(|grant|
-            grant.player == player && grant.zone == Zone::Library
-                && grant.play_from_constraints.may_look_at_top
-                && grant.source.is_valid(game)
-                && grant.available_starting_turn.is_none_or(|turn| game.turn.turn_number >= turn))
+    pub fn grants_private_library_top_view(
+        &self,
+        game: &crate::game_state::GameState,
+        player: PlayerId,
+    ) -> bool {
+        game.player(player)
+            .is_some_and(|player| player.is_in_game())
+            && self.grants.iter().any(|grant| {
+                grant.player == player
+                    && grant.zone == Zone::Library
+                    && grant.play_from_constraints.may_look_at_top
+                    && grant.source.is_valid(game)
+                    && grant
+                        .available_starting_turn
+                        .is_none_or(|turn| game.turn.turn_number >= turn)
+            })
     }
 
     /// Snapshot currently active grants, including static grants computed on demand.
@@ -1628,7 +1889,8 @@ impl GrantRegistry {
             } else {
                 false
             };
-            if !applies || !grant_top_card_matches(game, grant, card_id)
+            if !applies
+                || !grant_top_card_matches(game, grant, card_id)
                 || grant.filter.as_ref().is_some_and(|filter| {
                     card.is_none_or(|card| {
                         !filter.matches(card, &grant_filter_context(&ctx, grant, game), game)
@@ -1652,13 +1914,32 @@ impl GrantRegistry {
     }
 
     fn static_grants(&self, game: &crate::game_state::GameState) -> Vec<Grant> {
+        self.collect_static_grants(game).0
+    }
+
+    /// Current entitlement, before CR 406.3 turns it into durable per-card
+    /// viewer knowledge. It is never a play authority after this scope ends.
+    pub(crate) fn linked_exile_inspection_entitlements(
+        &self,
+        game: &crate::GameState,
+    ) -> Vec<(ObjectId, PlayerId)> {
+        self.collect_static_grants(game).1
+    }
+
+    fn collect_static_grants(
+        &self,
+        game: &crate::game_state::GameState,
+    ) -> (Vec<Grant>, Vec<(ObjectId, PlayerId)>) {
         use crate::ability::AbilityKind;
         use crate::game_loop::player_matches_filter_with_combat;
 
         let mut grants = Vec::new();
+        let mut inspection = Vec::new();
 
         let mut collect_from_source = |source_id: ObjectId, source_is_battlefield: bool| {
-            if source_is_battlefield && game.is_phased_out(source_id) { return; }
+            if source_is_battlefield && game.is_phased_out(source_id) {
+                return;
+            }
             let Some(source) = game.object(source_id) else {
                 return;
             };
@@ -1680,17 +1961,41 @@ impl GrantRegistry {
                     )
                 })
                 .flatten();
-            let Some(characteristics) = game.current_characteristics(source_id) else { return; };
+            let Some(characteristics) = game.current_characteristics(source_id) else {
+                return;
+            };
             let linked_half_abilities = linked_half
                 .as_ref()
                 .map(|def| {
-                    def.abilities.iter().enumerate().map(|(slot, ability)| (
-                        ability, Some(def.card.name.to_string()),
-                        GrantPermissionIdentity::LinkedFace {source: source_id, face: def.card.id, slot},
-                    )).collect::<Vec<_>>()
-                }).unwrap_or_default();
+                    def.abilities
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, ability)| {
+                            (
+                                ability,
+                                Some(def.card.name.to_string()),
+                                GrantPermissionIdentity::LinkedFace {
+                                    source: source_id,
+                                    face: def.card.id,
+                                    slot,
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             let printed = characteristics.abilities.iter().enumerate().filter_map(|(slot, ability)| {
-                let origin = characteristics.abilities.origin(slot)?.clone();
+                let Some(origin) = characteristics.abilities.origin(slot).cloned() else {
+                    if source_is_battlefield && ability.functions_in(&source.zone)
+                        && let AbilityKind::Static(ability) = &ability.kind
+                        && (ability.source_exiled_inspection_pair().is_some()
+                            || ability.grant_spec().is_some_and(|spec| spec.requires_linked_exile_pair || spec.may_look_at_linked_exile || spec.linked_exile_pair.is_some() || spec.linked_exile_class_level.is_some() || !spec.cast_mana_spend_mode.is_normal()))
+                    {
+                        game.record_token_resource_failure(&crate::effects::ExecutionError::IncompleteEvidence(
+                            "linked static permission omitted its rules-text acquisition; native recovery or replay required".into()));
+                    }
+                    return None;
+                };
                 let printed_face = matches!(&origin, crate::continuous::AbilityOrigin::Printed(_)).then_some(source.card).flatten();
                 Some((ability, None, GrantPermissionIdentity::Static { source: source_id, origin, printed_face }))
             });
@@ -1701,10 +2006,33 @@ impl GrantRegistry {
                 if !s.is_active(game, source_id) {
                     continue;
                 }
+                if let Some(pair) = s.source_exiled_inspection_pair() {
+                    if !source_is_battlefield || !ability.functions_in(&source.zone) {
+                        continue;
+                    }
+                    match linked_exile_targets_for_identity(game, pair, &permission_identity) {
+                        Ok(members) => inspection
+                            .extend(members.into_iter().map(|member| (member, controller))),
+                        Err(error) => game.record_token_resource_failure(&error),
+                    }
+                    continue;
+                }
                 let Some(spec) = s.grant_spec() else {
                     continue;
                 };
-                if matches!(spec.grantable, Grantable::AlternativePrice { .. }) && !ability.functions_in(&source.zone) {
+                if !spec.cast_mana_spend_mode.is_normal()
+                    && !matches!(spec.grantable, Grantable::PlayFrom)
+                {
+                    game.record_token_resource_failure(
+                        &crate::effects::ExecutionError::IncompleteEvidence(
+                            "permission-local mana requires a plain play permission".into(),
+                        ),
+                    );
+                    continue;
+                }
+                if matches!(spec.grantable, Grantable::AlternativePrice { .. })
+                    && !ability.functions_in(&source.zone)
+                {
                     continue;
                 }
                 if half_name.is_some() && !(spec.filter.source && spec.zone == source.zone) {
@@ -1719,7 +2047,37 @@ impl GrantRegistry {
                     continue;
                 }
 
-                for spec in spec.zone_specs() {
+                if (spec.requires_linked_exile_pair
+                    || spec.may_look_at_linked_exile
+                    || spec.linked_exile_pair.is_some()
+                    || spec.linked_exile_class_level.is_some()
+                    || !spec.cast_mana_spend_mode.is_normal())
+                    && !ability.functions_in(&source.zone)
+                {
+                    continue;
+                }
+                let linked_targets =
+                    match static_linked_exile_targets(game, &spec, &permission_identity) {
+                        Ok(targets) => targets,
+                        Err(error) => {
+                            game.record_token_resource_failure(&error);
+                            continue;
+                        }
+                    };
+                for mut spec in spec.zone_specs() {
+                    if linked_targets.is_some() {
+                        // The exact member ObjectId becomes a conjunctive target.
+                        // Never resolve this relation again against source-wide links.
+                        spec.filter.tagged_constraints.retain(|constraint| {
+                            !(constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+                                && constraint.relation
+                                    == crate::target::TaggedOpbjectRelation::IsTaggedObject)
+                        });
+                    }
+                    let targets = linked_targets
+                        .as_ref()
+                        .map(|members| members.iter().copied().map(Some).collect::<Vec<_>>())
+                        .unwrap_or_else(|| vec![is_source_self_grant.then_some(source_id)]);
                     let combat = game.combat.as_ref();
                     for player in game.players.iter().filter(|player| {
                         player.is_in_game()
@@ -1731,33 +2089,45 @@ impl GrantRegistry {
                                 combat,
                             )
                     }) {
-                        grants.push(Grant {
-                            permission_identity: Some(permission_identity.clone()),
-                            target_id: is_source_self_grant.then_some(source_id),
-                            target_stable_id: None,
-                            filter: (spec.filter != ObjectFilter::source())
-                                .then(|| normalize_grant_filter(spec.filter.clone())),
-                            zone: spec.zone,
-                            player: player.id,
-                            grantable: spec.grantable.clone(),
-                            usage_limit: spec.usage_limit,
-                            available_starting_turn: None,
-                            required_face_name: (is_source_self_grant
-                                && source.linked_face_layout == crate::card::LinkedFaceLayout::Split)
-                                .then(|| half_name.clone().unwrap_or_else(|| source.name.to_string())),
-                            play_from_constraints: PlayFromConstraints {
-                                top_card_only: spec.top_card_only, instant_timing: spec.instant_timing,
-                                may_look_at_top: spec.may_look_at_top,
-                                ..Default::default()
-                            },
-                            cast_this_way_grants: spec.cast_this_way_grants.clone(),
-                            permanent_this_way_grants: spec.permanent_this_way_grants.clone(),
-                            on_use_effects: spec.on_use_effects.clone(),
-                            cast_this_way_filter: spec.cast_this_way_filter.clone(),
-                            shared_usage_id: None,
-                            ends_on_next_matching_cast: false,
-                            source: GrantSource::StaticAbility { source_id },
-                        });
+                        for &target_id in &targets {
+                            if spec.may_look_at_linked_exile
+                                && let Some(member) = target_id
+                            {
+                                inspection.push((member, player.id));
+                            }
+                            grants.push(Grant {
+                                permission_identity: Some(permission_identity.clone()),
+                                target_id,
+                                target_stable_id: None,
+                                filter: (spec.filter != ObjectFilter::source())
+                                    .then(|| normalize_grant_filter(spec.filter.clone())),
+                                zone: spec.zone,
+                                player: player.id,
+                                grantable: spec.grantable.clone(),
+                                usage_limit: spec.usage_limit,
+                                available_starting_turn: None,
+                                required_face_name: (is_source_self_grant
+                                    && source.linked_face_layout
+                                        == crate::card::LinkedFaceLayout::Split)
+                                    .then(|| {
+                                        half_name.clone().unwrap_or_else(|| source.name.to_string())
+                                    }),
+                                play_from_constraints: PlayFromConstraints {
+                                    top_card_only: spec.top_card_only,
+                                    instant_timing: spec.instant_timing,
+                                    may_look_at_top: spec.may_look_at_top,
+                                    cast_mana_spend_mode: spec.cast_mana_spend_mode,
+                                    ..Default::default()
+                                },
+                                cast_this_way_grants: spec.cast_this_way_grants.clone(),
+                                permanent_this_way_grants: spec.permanent_this_way_grants.clone(),
+                                on_use_effects: spec.on_use_effects.clone(),
+                                cast_this_way_filter: spec.cast_this_way_filter.clone(),
+                                shared_usage_id: None,
+                                ends_on_next_matching_cast: false,
+                                source: GrantSource::StaticAbility { source_id },
+                            });
+                        }
                     }
                 }
             }
@@ -1779,7 +2149,7 @@ impl GrantRegistry {
             });
         }
 
-        grants
+        (grants, inspection)
     }
 }
 
@@ -1805,7 +2175,9 @@ fn materialize_granted_alternative_cast(
                 usage_limit,
             )
         }
-        Grantable::Ability(_) | Grantable::PlayFrom | Grantable::AlternativePrice { .. } => return None,
+        Grantable::Ability(_) | Grantable::PlayFrom | Grantable::AlternativePrice { .. } => {
+            return None;
+        }
     };
 
     Some(GrantedAlternativeCast {
@@ -1838,6 +2210,91 @@ fn normalize_grant_filter(mut filter: ObjectFilter) -> ObjectFilter {
     dedupe_vec(&mut filter.supertypes);
     dedupe_vec(&mut filter.excluded_supertypes);
     filter
+}
+
+fn has_linked_exile_pool(filter: &ObjectFilter) -> bool {
+    filter.tagged_constraints.iter().any(|constraint| {
+        constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+            && constraint.relation == crate::target::TaggedOpbjectRelation::IsTaggedObject
+    })
+}
+
+/// Expand a static linked reader into exact live exile incarnations. Missing
+/// pairing/acquisition/recovery state is an error, never a source-wide fallback.
+fn static_linked_exile_targets(
+    game: &crate::GameState,
+    spec: &crate::grant::GrantSpec,
+    identity: &GrantPermissionIdentity,
+) -> Result<Option<Vec<ObjectId>>, crate::effects::ExecutionError> {
+    if !spec.requires_linked_exile_pair
+        && !spec.may_look_at_linked_exile
+        && spec.linked_exile_pair.is_none()
+        && spec.linked_exile_class_level.is_none()
+    {
+        return Ok(None);
+    }
+    if spec.zone != Zone::Exile
+        || !spec.additional_zones.is_empty()
+        || !has_linked_exile_pool(&spec.filter)
+        || spec
+            .filter
+            .tagged_constraints
+            .iter()
+            .filter(|constraint| constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG)
+            .count()
+            != 1
+    {
+        return Err(crate::effects::ExecutionError::IncompleteEvidence(
+            "linked static permission omitted its typed pool relation".into(),
+        ));
+    }
+    if spec.may_look_at_linked_exile {
+        let mut pool = spec.filter.clone();
+        pool.zone = None;
+        pool.tagged_constraints
+            .retain(|constraint| constraint.tag.as_str() != crate::tag::SOURCE_EXILED_TAG);
+        if pool != ObjectFilter::default() {
+            return Err(crate::effects::ExecutionError::IncompleteEvidence(
+                "linked private inspection requires a proven complete paired-card pool".into(),
+            ));
+        }
+    }
+    if let Some(level) = spec.linked_exile_class_level {
+        let bridged = match (spec.linked_exile_pair, identity) {
+            (Some(pair), GrantPermissionIdentity::Static { source, origin, .. }) => {
+                crate::linked_exile::has_class_linked_exile_bridge(*source, pair, level, origin)
+            }
+            _ => false,
+        };
+        if !bridged {
+            return Err(crate::effects::ExecutionError::IncompleteEvidence(
+                "linked Class permission omitted its exact level acquisition".into(),
+            ));
+        }
+    }
+    linked_exile_targets_for_identity(game, spec.linked_exile_pair, identity).map(Some)
+}
+
+fn linked_exile_targets_for_identity(
+    game: &crate::GameState,
+    pair: Option<ironsmith_core::LinkedExilePair>,
+    identity: &GrantPermissionIdentity,
+) -> Result<Vec<ObjectId>, crate::effects::ExecutionError> {
+    let owner = match identity {
+        GrantPermissionIdentity::Static { source, origin, .. } =>
+            crate::linked_exile::LinkedExileOwner::capture(*source, pair, Some(origin)),
+        _ => None,
+    }.ok_or_else(|| crate::effects::ExecutionError::IncompleteEvidence(
+        "linked static permission has no proven definition/acquisition pair; native recovery or replay required".into()))?;
+    Ok(game
+        .linked_exile_pair_members(&owner)?
+        .iter()
+        .copied()
+        .filter(|member| {
+            game.object(*member)
+                .is_some_and(|object| object.zone == Zone::Exile)
+        })
+        .collect())
 }
 
 fn grant_filter_context(

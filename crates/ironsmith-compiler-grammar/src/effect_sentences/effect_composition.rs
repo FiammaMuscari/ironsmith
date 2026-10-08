@@ -423,7 +423,7 @@ fn parse_exile_top_library_then_play_bundle(
             let EffectAst::SubjectVerb(SubjectVerbEffectAst {
                 subject,
                 action:
-                    SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects { filter }),
+                    SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects { filter, .. }),
             }) = look
             else {
                 return Ok(None);
@@ -618,6 +618,13 @@ fn parse_exile_top_library_then_play_bundle(
     leading_effects.push(permission_effect);
     Ok(Some(leading_effects))
 }
+
+#[path = "effect_composition/private_exile_permission.rs"]
+mod private_exile_permission;
+use private_exile_permission::parse_optional_private_exile_play_bundle;
+#[path = "effect_composition/exile_hand_draw_play.rs"]
+mod exile_hand_draw_play;
+use exile_hand_draw_play::parse_exile_hand_draw_play_bundle;
 
 fn parse_optional_result_exile_choice_play_bundle(
     sentences: &[&[OwnedLexToken]],
@@ -1445,11 +1452,24 @@ fn parse_selected_hand_double_choice_discard_bundle(
     else {
         return Ok(None);
     };
-    let Some((second_chooser, second_filter, second_count, second_count_value)) =
+    let Some((second_chooser, mut second_filter, second_count, second_count_value)) =
         parse_choice(shape.second_choice)?
     else {
         return Ok(None);
     };
+    // "You choose from it A and B": the shared "from it" names the revealed
+    // hand for both selections. Read after the first choice, the second
+    // copy of the pronoun would name that choice instead, so bind it to the
+    // revealed cards explicitly.
+    let it_tag = crate::tag::CompilerReferenceTag::It.key();
+    for constraint in &mut second_filter.tagged_constraints {
+        if constraint.tag == it_tag {
+            constraint.tag = crate::tag::CompilerReferenceTag::RevealedThisWay.key();
+        }
+    }
+    if second_filter.owner.is_none() {
+        second_filter.owner = first_filter.owner.clone();
+    }
     if first_chooser != PlayerAst::You
         || second_chooser != PlayerAst::You
         || !first_count.is_single()

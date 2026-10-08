@@ -89,7 +89,7 @@ pub fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Destroy { target, .. })
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Exile { target, .. })
             | SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtHand { target })
-            | SubjectVerbActionAst::Stack(StackActionAst::Counter { target })
+            | SubjectVerbActionAst::Stack(StackActionAst::Counter { target, .. })
             | SubjectVerbActionAst::Stack(StackActionAst::CounterUnlessPays { target, .. })
             | SubjectVerbActionAst::Stack(StackActionAst::CopySpell { target, .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::PutCounters { target, .. })
@@ -102,6 +102,7 @@ pub fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomePlotted { target })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Prepare { target })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Suspect { target })
+            | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ClearSuspected { target: Some(target) })
             | SubjectVerbActionAst::PermanentState(PermanentStateActionAst::RemoveFromCombat {
                 target,
             })
@@ -168,7 +169,7 @@ pub fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
                 target,
             })
             | SubjectVerbActionAst::DamagePrevention(
-                DamagePreventionActionAst::RedirectNextTimeDamageToSource { target, .. },
+                DamagePreventionActionAst::RedirectNextTimeDamageToSource { target: Some(target), .. },
             )
             | SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::RedirectAllDamageThisTurnBySourceToSourceController {
@@ -181,6 +182,9 @@ pub fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
             })
             | SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::PreventAllDamageToTarget { target, .. },
+            )
+            | SubjectVerbActionAst::DamagePrevention(
+                DamagePreventionActionAst::PreventAllDamageToTargetFromSourceFilter { target, .. },
             )
             | SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::PreventDamageToTargetPutCounters { target, .. },
@@ -388,7 +392,7 @@ pub fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
                         .with_surface_hint(ChooseSpecSurfaceHint::SacrificedObject(surface.kind));
                 }
             }
-            let spec = if filter.source && filter.zone != Some(Zone::Exile) {
+            let spec = if filter.source && filter.zone.is_none() {
                 source_reference_hinted_spec(ChooseSpec::Source, filter.source_surface.clone())
             } else if explicit_target_span.is_some() {
                 ChooseSpec::target(ChooseSpec::Object(filter.clone()))

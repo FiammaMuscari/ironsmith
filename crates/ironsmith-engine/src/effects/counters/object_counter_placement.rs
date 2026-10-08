@@ -1,9 +1,7 @@
 //! Apply permanent counters from the resolved event and retain replacement consequences.
 
 use crate::effect::{EffectOutcome, OutcomeValue};
-use crate::effects::{
-    ExecutionContext, ExecutionContextCheckpoint, ExecutionError, ResolvedTarget,
-};
+use crate::effects::{CompletedEffectOutputs, ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::events::processing::{TraitEventResult, process_trait_event_with_execution_context};
 use crate::events::{Event, PutCountersEvent, downcast_event};
 use crate::game_state::{GameState, Target};
@@ -14,66 +12,127 @@ fn prevented() -> EffectOutcome {
     outcome
 }
 
+/// Both immediate and staged object placements acquire one proposal identity
+/// here. Callers own zero/permission checks, limits and original frame capture.
+pub(super) fn prepare_object_counter_replacement(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    event: Event,
+    object: crate::ids::ObjectId,
+) -> Result<TraitEventResult, ExecutionError> {
+    // Each placement has its own proposal identity, even when an instruction
+    // places multiple counter groups under the same causal parent.
+    let parent = event.provenance();
+    let proposal = if game.provenance_graph().node(parent).is_some() {
+        game.alloc_child_event_provenance(parent, crate::events::EventKind::PutCounters)
+    } else {
+        game.provenance_graph_mut()
+            .alloc_root_event(crate::events::EventKind::PutCounters)
+    };
+    let event = event.with_provenance(proposal);
+    // Entry-counter programs already participate in the enclosing entry
+    // replacement event. Do not apply the same modifiers a second time.
+    let processed = if ctx.replacement.entry_counter_source == Some(object) {
+        TraitEventResult::Proceed(event)
+    } else {
+        process_trait_event_with_execution_context(game, event, ctx)?
+    };
+    Ok(processed)
+}
+
 pub(crate) fn execute_object_counter_placement(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     event: Event,
 ) -> Result<EffectOutcome, ExecutionError> {
-    if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-    game.clear_pending_decision_controllers();
-    let checkpoint = game.clone();
-    let context_checkpoint = ExecutionContextCheckpoint::capture(ctx);
-    let result = (|| {
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-        let proposed = downcast_event::<PutCountersEvent>(event.inner()).ok_or_else(|| {
-            ExecutionError::InternalError(
-                "object counter placement requires a counter event".into(),
-            )
-        })?;
-        let Target::Object(object) = proposed.target else {
-            return Err(ExecutionError::InternalError(
-                "object counter placement requires an object".into(),
-            ));
-        };
-        if proposed.count == 0 {
-            return Ok(EffectOutcome::count(0));
-        }
-        if !game.can_have_counter_type_placed(object, proposed.counter_type) {
-            return Ok(prevented());
-        }
-        // Each placement has its own proposal identity, even when an instruction
-        // places multiple counter groups under the same causal parent.
-        let parent = event.provenance();
-        let proposal = if game.provenance_graph().node(parent).is_some() {
-            game.alloc_child_event_provenance(parent, crate::events::EventKind::PutCounters)
-        } else {
-            game.provenance_graph_mut().alloc_root_event(crate::events::EventKind::PutCounters)
-        };
-        let event = event.with_provenance(proposal);
-        // Entry-counter programs already participate in the enclosing entry
-        // replacement event. Do not apply the same modifiers a second time.
-        let processed = if ctx.replacement.entry_counter_source == Some(object) {
-            TraitEventResult::Proceed(event)
-        } else {
-            process_trait_event_with_execution_context(game, event, ctx)?
-        };
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-        commit_object_counter_placement(game, ctx, processed)
-    })();
-    if result.is_err() || ctx.decision_maker.awaiting_choice() {
-        game.restore_execution_checkpoint(checkpoint, result.is_ok() && ctx.decision_maker.awaiting_choice());
-        context_checkpoint.restore(ctx);
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-    }
-    result
+    execute_object_counter_placement_with_outputs(game, ctx, event)
+        .map(CompletedEffectOutputs::into_outcome)
 }
 
+pub(crate) fn execute_object_counter_placement_with_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    event: Event,
+) -> Result<CompletedEffectOutputs, ExecutionError> {
+    execute_object_counter_placement_with_limit_outputs(game, ctx, event, None)
+}
+
+enum ObjectCounterRequest {
+    Finished(CompletedEffectOutputs),
+    Ready {
+        processed: TraitEventResult,
+        limit: Option<(crate::ids::ObjectId, crate::object::CounterType, u32)>,
+    },
+}
+
+fn prepare_object_counter_request(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    event: Event,
+    maximum_total: Option<u32>,
+) -> Result<ObjectCounterRequest, ExecutionError> {
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(ObjectCounterRequest::Finished(
+            CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+        ));
+    }
+    let proposed = downcast_event::<PutCountersEvent>(event.inner()).ok_or_else(|| {
+        ExecutionError::InternalError("object counter placement requires a counter event".into())
+    })?;
+    let Target::Object(object) = proposed.target else {
+        return Err(ExecutionError::InternalError(
+            "object counter placement requires an object".into(),
+        ));
+    };
+    let limit = maximum_total.map(|maximum| (object, proposed.counter_type, maximum));
+    if proposed.count == 0 {
+        return Ok(ObjectCounterRequest::Finished(
+            CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+        ));
+    }
+    if !game.can_have_counter_type_placed(object, proposed.counter_type) {
+        return Ok(ObjectCounterRequest::Finished(
+            CompletedEffectOutputs::aggregate_only(prevented()),
+        ));
+    }
+    let processed = prepare_object_counter_replacement(game, ctx, event, object)?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(ObjectCounterRequest::Finished(
+            CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+        ));
+    }
+    Ok(ObjectCounterRequest::Ready { processed, limit })
+}
+
+pub(super) fn execute_object_counter_placement_with_limit_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    event: Event,
+    maximum_total: Option<u32>,
+) -> Result<CompletedEffectOutputs, ExecutionError> {
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(CompletedEffectOutputs::aggregate_only(
+            EffectOutcome::count(0),
+        ));
+    }
+    game.clear_pending_decision_controllers();
+    crate::effects::composition::execute_transaction(
+        game,
+        ctx,
+        || CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+        |game, ctx| match prepare_object_counter_request(game, ctx, event, maximum_total) {
+            Ok(ObjectCounterRequest::Finished(outputs)) => Ok(outputs),
+            Ok(ObjectCounterRequest::Ready { processed, limit }) => {
+                commit_object_counter_placement_with_limit_outputs(
+                    game, ctx, processed, None, limit,
+                )
+            }
+            Err(error) => Err(error),
+        },
+    )
+}
+
+#[cfg(test)]
 fn commit_object_counter_placement(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
@@ -83,39 +142,94 @@ fn commit_object_counter_placement(
 }
 
 pub(super) fn commit_object_counter_placement_with_frame(
-    game: &mut GameState, ctx: &mut ExecutionContext, processed: TraitEventResult,
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    processed: TraitEventResult,
     before: Option<&GameState>,
 ) -> Result<EffectOutcome, ExecutionError> {
+    commit_object_counter_placement_with_frame_outputs(game, ctx, processed, before)
+        .map(CompletedEffectOutputs::into_outcome)
+}
+pub(super) fn commit_object_counter_placement_with_frame_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    processed: TraitEventResult,
+    before: Option<&GameState>,
+) -> Result<CompletedEffectOutputs, ExecutionError> {
+    commit_object_counter_placement_with_limit_outputs(game, ctx, processed, before, None)
+}
+
+pub(super) fn commit_object_counter_placement_with_limit_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    processed: TraitEventResult,
+    before: Option<&GameState>,
+    limit: Option<(crate::ids::ObjectId, crate::object::CounterType, u32)>,
+) -> Result<CompletedEffectOutputs, ExecutionError> {
     match processed {
-        expanded @ TraitEventResult::Expanded { .. } =>
-            crate::effects::replacement::execute_event_expansion_with_targets(
-                game, ctx, expanded, |game,ctx,result|commit_object_counter_placement_with_frame(game,ctx,result,before),
+        expanded @ TraitEventResult::Expanded { .. } => {
+            crate::effects::replacement::execute_event_expansion_with_outputs(
+                game,
+                ctx,
+                expanded,
+                |game, ctx, result| {
+                    commit_object_counter_placement_with_limit_outputs(
+                        game, ctx, result, before, limit,
+                    )
+                },
                 |_game, context, _original_outcome| {
                     let captured = downcast_event::<PutCountersEvent>(context.event.inner())
-                        .ok_or_else(|| ExecutionError::InternalError("added counter program lost its captured event".into()))?;
+                        .ok_or_else(|| {
+                            ExecutionError::InternalError(
+                                "added counter program lost its captured event".into(),
+                            )
+                        })?;
                     let Target::Object(recipient) = captured.target else {
-                        return Err(ExecutionError::InternalError("added counter program has an incompatible recipient".into()));
+                        return Err(ExecutionError::InternalError(
+                            "added counter program has an incompatible recipient".into(),
+                        ));
                     };
-                    Ok(Some(vec![ResolvedTarget::Object(recipient)]))
+                    Ok(crate::effects::replacement::ReplacementProgramBindings {
+                        targets: Some(vec![ResolvedTarget::Object(recipient)]),
+                        object_tags: Vec::new(),
+                    })
                 },
-            ),
+            )
+        }
         TraitEventResult::Proceed(event) | TraitEventResult::Modified(event) => {
-            let resolved =
-                downcast_event::<PutCountersEvent>(event.inner()).ok_or_else(|| {
-                    ExecutionError::InternalError(
-                        "object counter replacement returned an incompatible event".into(),
-                    )
-                })?;
+            let resolved = downcast_event::<PutCountersEvent>(event.inner()).ok_or_else(|| {
+                ExecutionError::InternalError(
+                    "object counter replacement returned an incompatible event".into(),
+                )
+            })?;
             let Target::Object(object) = resolved.target else {
                 return Err(ExecutionError::InternalError(
                     "object counter replacement returned an incompatible recipient".into(),
                 ));
             };
-            if !before.unwrap_or(game).can_have_counter_type_placed(object, resolved.counter_type) {
-                return Ok(prevented());
+            if !before
+                .unwrap_or(game)
+                .can_have_counter_type_placed(object, resolved.counter_type)
+            {
+                return Ok(CompletedEffectOutputs::aggregate_only(prevented()));
             }
             let before = game.counter_count(object, resolved.counter_type);
-            before.checked_add(resolved.count).ok_or_else(|| {
+            // Only this original recipient/kind is bounded by the authored
+            // ceiling. Redirected placements and added programs keep theirs.
+            let count = match limit {
+                Some((recipient, kind, maximum))
+                    if recipient == object && kind == resolved.counter_type =>
+                {
+                    resolved.count.min(maximum.saturating_sub(before))
+                }
+                _ => resolved.count,
+            };
+            if count == 0 && resolved.count > 0 {
+                return Ok(CompletedEffectOutputs::aggregate_only(
+                    EffectOutcome::count(0),
+                ));
+            }
+            before.checked_add(count).ok_or_else(|| {
                 ExecutionError::InternalError(
                     "object counter placement exceeds the supported counter range".into(),
                 )
@@ -123,31 +237,37 @@ pub(super) fn commit_object_counter_placement_with_frame(
             let Some(mut notification) = game.add_counters_with_source(
                 object,
                 resolved.counter_type,
-                resolved.count,
+                count,
                 resolved.cause.source,
                 resolved.cause.source_controller,
             ) else {
-                return Ok(if resolved.count == 0 {
-                    prevented()
-                } else {
-                    EffectOutcome::target_invalid()
-                });
+                return Ok(CompletedEffectOutputs::aggregate_only(
+                    if resolved.count == 0 {
+                        prevented()
+                    } else {
+                        EffectOutcome::target_invalid()
+                    },
+                ));
             };
             let actual = game
                 .counter_count(object, resolved.counter_type)
                 .saturating_sub(before);
             let count = i64::from(actual);
             let observation = game.alloc_child_event_provenance(
-                event.provenance(), crate::events::EventKind::MarkersChanged);
+                event.provenance(),
+                crate::events::EventKind::MarkersChanged,
+            );
             notification = notification.with_provenance(observation);
             if game.object(ctx.source).is_none()
                 && let Some(snapshot) = &ctx.source_snapshot
             {
                 notification = notification.with_source_snapshot(snapshot.clone());
             }
-            Ok(EffectOutcome::count(count)
-                .with_event(notification)
-                .with_affected_objects_from_game(game, vec![object]))
+            Ok(CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(count)
+                    .with_event(notification)
+                    .with_affected_objects_from_game(game, vec![object]),
+            ))
         }
         TraitEventResult::Replaced {
             effects,
@@ -156,8 +276,8 @@ pub(super) fn commit_object_counter_placement_with_frame(
             context,
             ..
         } => {
-            let resolved = downcast_event::<PutCountersEvent>(context.event.inner())
-                .ok_or_else(|| {
+            let resolved =
+                downcast_event::<PutCountersEvent>(context.event.inner()).ok_or_else(|| {
                     ExecutionError::InternalError(
                         "object counter replacement lost its counter event".into(),
                     )
@@ -167,7 +287,7 @@ pub(super) fn commit_object_counter_placement_with_frame(
                     "object counter replacement lost its object recipient".into(),
                 ));
             };
-            let payload = crate::effects::replacement::execute_replacement_payload(
+            super::prepared_placement::execute_counter_replacement_original_with_outputs(
                 game,
                 ctx,
                 &effects,
@@ -175,12 +295,10 @@ pub(super) fn commit_object_counter_placement_with_frame(
                 controller,
                 &context,
                 Some(vec![ResolvedTarget::Object(object)]),
-            )?;
-            let mut original = EffectOutcome::replaced();
-            original.set_value(OutcomeValue::Count(0));
-            Ok(EffectOutcome::aggregate_replacement_outcomes(original, [payload]))
+                None,
+            )
         }
-        TraitEventResult::Prevented => Ok(prevented()),
+        TraitEventResult::Prevented => Ok(CompletedEffectOutputs::aggregate_only(prevented())),
         TraitEventResult::NeedsChoice { .. } | TraitEventResult::NeedsInteraction { .. } => {
             Err(ExecutionError::InternalError(
                 "object counter replacement suspended without a captured decision".into(),

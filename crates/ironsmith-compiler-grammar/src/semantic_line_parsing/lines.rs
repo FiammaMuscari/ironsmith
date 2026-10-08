@@ -1369,6 +1369,11 @@ fn parse_statement_to_chunks_impl(
     parse_tokens: &[OwnedLexToken],
     parse_groups: &[Vec<OwnedLexToken>],
 ) -> Result<Vec<LineAst>, CardTextError> {
+    // This complete counter program must survive statement/static partitioning
+    // intact. Prefer prepared tokens, where legitimate reminder text is gone.
+    if let Some(effects) = crate::effect_sentences::counter_exile_permission::parse(parse_tokens)? {
+        return Ok(vec![LineAst::Statement { effects }]);
+    }
     if let Some(assertion) =
         crate::grammar::effects::characteristic_assertions::parse(&line.info.source_tokens)
         && !assertion
@@ -1759,6 +1764,40 @@ fn render_statement_source_tokens(
 fn parse_villainous_choice_statement_chunk(
     line: &RewriteStatementLine,
 ) -> Result<Option<LineAst>, CardTextError> {
+    if let Some(shape) =
+        semantic_grammar::parse_villainous_choice_preceding_clause_tokens(&line.info.source_tokens)
+    {
+        let mut effects = parse_effect_sentences_lexed(shape.clause_tokens)?;
+        let first_mode_effects = parse_villainous_choice_mode_program(shape.first_mode_program)?;
+        let second_mode_effects = parse_villainous_choice_mode_program(shape.second_mode_program)?;
+        let player = if shape.target_owner {
+            PlayerFilter::OwnerOf(crate::filter::ObjectRef::Target)
+        } else {
+            PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target)
+        };
+        // The clause's subject faces the choice; the shared subject is
+        // elided as printed ("..., then faces a villainous choice").
+        effects.push(EffectAst::ObjectChoices(
+            ObjectChoiceEffectAst::VillainousChoice {
+                player,
+                player_surface: Some(String::new()),
+                modes: vec![
+                    ChooseOneModeAst {
+                        description: render_statement_source_tokens(line, shape.first_mode_tokens),
+                        effects: first_mode_effects,
+                    },
+                    ChooseOneModeAst {
+                        description: render_statement_source_tokens(
+                            line,
+                            shape.second_mode_tokens,
+                        ),
+                        effects: second_mode_effects,
+                    },
+                ],
+            },
+        ));
+        return Ok(Some(LineAst::Statement { effects }));
+    }
     let source_sentences = split_lexed_sentences(&line.info.source_tokens);
     let player_statement = source_sentences
         .iter()
@@ -1923,6 +1962,20 @@ fn parse_villainous_choice_statement_chunk(
 
 fn parse_die_roll_result_adjustment_static_chunk(tokens: &[OwnedLexToken]) -> Option<LineAst> {
     let rendered = render_token_slice(tokens);
+    if crate::grammar::statement_shapes::is_extra_coin_ignore_one(tokens) {
+        return Some(LineAst::StaticAbilities(vec![
+            crate::cards::builders::StaticAbilityAst::Static(
+                StaticAbility::extra_coin_ignore_one(PlayerFilter::You, rendered),
+            ),
+        ]));
+    }
+    if crate::grammar::statement_shapes::is_first_coin_batch_heads_win(tokens) {
+        return Some(LineAst::StaticAbilities(vec![
+            crate::cards::builders::StaticAbilityAst::Static(
+                StaticAbility::first_coin_batch_heads_win(PlayerFilter::You, rendered),
+            ),
+        ]));
+    }
     if crate::grammar::statement_shapes::is_extra_die_ignore_lowest(tokens) {
         return Some(LineAst::StaticAbilities(vec![
             crate::cards::builders::StaticAbilityAst::Static(
@@ -2082,6 +2135,8 @@ fn sentences_form_anaphoric_damage_self_replacement(sentences: &[Vec<OwnedLexTok
         return false;
     };
     if !effect_grammar::followup_shapes::is_anaphoric_damage_self_replacement(replacement.as_ref())
+        && effect_grammar::followup_shapes::parse_damage_amount_replacement(replacement.as_ref())
+            .is_none()
     {
         return false;
     }
@@ -2226,7 +2281,7 @@ fn returned_object_static_followup_effects<S: AsRef<[OwnedLexToken]>>(
 }
 
 fn sentence_is_conditional_self_replacement_effect(sentence: &[OwnedLexToken]) -> bool {
-    if crate::effect_sentences::recognizes_life_gain_replacement_sentence(sentence) {
+    if crate::effect_sentences::recognizes_scalar_self_replacement_sentence(sentence) {
         return true;
     }
     let instead_semantics =
@@ -2558,7 +2613,7 @@ use lines_counter_programs::{
     exiled_last_counter_qualifier_stays_on_the_trigger_side_of_the_comma,
 };
 use lines_counter_programs::{
-    lower_spell_cast_snow_mana_enter_counter_static_chunk, parse_exiled_last_counter_triggered_line,
+    lower_spell_cast_snow_mana_enter_counter_static_chunk, parse_exiled_counter_removed_triggered_line,
 };
 #[path = "lines/lines_library.rs"]
 mod lines_library_programs;

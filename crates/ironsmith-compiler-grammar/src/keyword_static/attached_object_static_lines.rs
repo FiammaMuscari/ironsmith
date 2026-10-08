@@ -630,16 +630,15 @@ pub fn parse_attached_conditional_keyword_otherwise_line(
         return Ok(None);
     };
     let prevention_tokens = trim_edge_punctuation(&second[prevention_start..]);
-    let Some(mut prevention) =
+    let Some(prevention) =
         parse_attached_prevent_all_damage_dealt_by_attached_line(&prevention_tokens)?
     else {
         return Ok(None);
     };
-    let StaticAbilityAst::AttachedStaticAbilityGrant { condition, .. } = &mut prevention else {
-        return Ok(None);
-    };
-    *condition = Some(otherwise_condition);
-    grants.push(prevention);
+    grants.push(StaticAbilityAst::ConditionalStaticAbility {
+        ability: Box::new(prevention),
+        condition: otherwise_condition,
+    });
     Ok(Some(grants))
 }
 
@@ -778,7 +777,7 @@ pub fn display_text_for_tokens_in_mode(
     let mut capitalize_next_cost_action = true;
     let mut last_rendered_as_mana_symbol = false;
 
-    for token in tokens {
+    for (token_idx, token) in tokens.iter().enumerate() {
         if let Some(word) = token.as_word() {
             if needs_space && !text.is_empty() {
                 text.push(' ');
@@ -786,10 +785,14 @@ pub fn display_text_for_tokens_in_mode(
             let numeric_like = word
                 .chars()
                 .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+            // "Pay 2 life" counts life, not generic mana.
+            let counts_life = tokens
+                .get(token_idx + 1)
+                .is_some_and(|next| next.is_word("life"));
             let (mut rendered, rendered_as_mana_symbol) = match word {
                 "t" => ("{T}".to_string(), true),
                 "q" => ("{Q}".to_string(), true),
-                _ if in_loyalty_cost || (in_effect_text && numeric_like) => {
+                _ if in_loyalty_cost || ((in_effect_text || counts_life) && numeric_like) => {
                     (word.to_string(), false)
                 }
                 _ => match crate::util::parse_mana_symbol(word) {
@@ -984,6 +987,7 @@ pub(crate) fn parse_nonstatic_keyword_action_as_object_ability(
                 ability: Ability {
                     kind: AbilityKind::Activated(
                         crate::model::compiler_semantic::CompilerActivatedAbilityCore {
+                            keyword: None,
                             mana_cost: cost,
                             effects: ironsmith_core::ResolutionProgram::from_effects(vec![animate]),
                             choices: Vec::new(),
@@ -1178,6 +1182,7 @@ fn parse_attached_quoted_ability_grant(
 pub fn parse_enchanted_creature_has_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    crate::clause_support::validate_protection_static_line(tokens)?;
     let tokens = super::grammar::line_families::parse_visible_line_tokens(tokens);
     let Some(has) = attached_grammar::parse_enchanted_has_tokens(tokens) else {
         return Ok(None);

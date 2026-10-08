@@ -19,6 +19,7 @@ pub enum ClauseActorHeadAst {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClauseHeadFormAst {
     Action(ClauseVerbAst),
+    Restriction,
     Conditional,
     Iteration,
     Permission,
@@ -59,6 +60,41 @@ pub fn classify_typed_clause_head<'a>(
     let second_word = words.get(1).copied();
     let span = clause_span(tokens);
     let actor = classify_actor(first_word, second_word);
+
+    // A verb after clause-level negation names the prohibited action, not an
+    // imperative. The first `untap` in "those creatures don't untap during
+    // ..." must never lend its duration to affirmative target parsing.
+    // The existing quote-aware negation owner excludes relative control
+    // qualifiers and result conditions. Earlier affirmative actions and outer
+    // conditions keep ownership of their complete, possibly nested clauses.
+    let restriction_head = !matches!(
+        first_word,
+        "if" | "unless" | "when" | "whenever" | "at" | "repeat"
+    ) && !(first_word == "for" && second_word == Some("each"))
+        && crate::grammar::activation_restrictions::parse_activation_negation_span_tokens(tokens)
+        .is_some_and(|negation| {
+            !TokenWordView::new(&tokens[..negation.first])
+                .to_word_refs()
+                .iter()
+                .any(|word| {
+                    classify_action(word)
+                        .is_some_and(|action| action != ClauseVerbAst::Control)
+                        || is_structural_action(word)
+                        || matches!(*word, "may" | "can" | "could")
+                })
+        });
+    if restriction_head {
+        return ParseOutcome::matched(
+            TypedClauseHeadAst {
+                first_word,
+                second_word,
+                actor,
+                form: ClauseHeadFormAst::Restriction,
+                span,
+            },
+            span,
+        );
+    }
 
     if let Some(action) = words.iter().find_map(|word| classify_action(word)) {
         return ParseOutcome::matched(
@@ -276,6 +312,8 @@ fn is_structural_action(word: &str) -> bool {
             | "surveils"
             | "suspect"
             | "suspects"
+            | "take"
+            | "takes"
             | "venture"
             | "ventures"
     )
@@ -289,4 +327,24 @@ fn clause_span(tokens: &[OwnedLexToken]) -> Option<TextSpan> {
         start: first.span.start,
         end: last.span.end,
     })
+}
+
+#[cfg(test)]
+mod extra_turn_head_tests {
+    use super::*;
+
+    #[test]
+    fn take_and_takes_allow_the_shared_action_dispatch() {
+        for text in [
+            "Take two extra turns after this one.",
+            "You take an extra turn after this one.",
+            "Target player takes an extra turn after this one.",
+        ] {
+            let tokens = crate::lexer::lex_line(text, 0).unwrap();
+            let ParseOutcome::Match(matched) = classify_typed_clause_head(&tokens) else {
+                panic!("extra-turn head did not match: {text}");
+            };
+            assert!(matched.value.permits_action_fallback());
+        }
+    }
 }

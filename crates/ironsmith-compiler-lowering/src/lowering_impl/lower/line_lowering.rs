@@ -272,6 +272,30 @@ fn materialize_static_abilities(
                     );
                     turn_surface_recorded = true;
                 }
+                // A lone static under an authored flavor/ability word ("Would
+                // You Like A...? — Once each turn, you may play ...") keeps
+                // the word as its presentation label; grouped members carry
+                // it on the group marker instead.
+                if member_count == 1
+                    && !case_solved
+                    && !turn_surface_recorded
+                    && let Some(crate::ability::PresentationLabel::AbilityWord(word)) =
+                        semantic_facts.static_ability.presentation_label.as_ref()
+                    && !word.trim().is_empty()
+                    && !ability.label.starts_with(
+                        ironsmith_core::static_ability_model::EXPLICIT_STATIC_PRESENTATION_LABEL_PREFIX,
+                    )
+                    && matches!(
+                        ability.payload,
+                        ironsmith_core::StaticAbilityPayload::Grants(_)
+                    )
+                {
+                    ability.label = format!(
+                        "{}{}",
+                        ironsmith_core::static_ability_model::EXPLICIT_STATIC_PRESENTATION_LABEL_PREFIX,
+                        word.trim()
+                    );
+                }
                 if case_solved {
                     // Solved is executable designation scope, not a named
                     // choice and not a level-counter threshold. Preserve an
@@ -788,6 +812,7 @@ fn fuse_repeatable_mana_payment_prevention_until_end_of_turn(
     };
     if !matches!(initial_prevention.target.unhinted(), ChooseSpec::AnyTarget)
         || initial_prevention.until != crate::effect::Until::EndOfTurn
+        || initial_prevention.damage_filter != ironsmith_core::DamageFilter::all()
         || !initial_prevention.follow_up_effects.is_empty()
         || initial_prevention.source_of_your_choice
         || initial_prevention.protect_you_and_permanents_you_control
@@ -867,6 +892,7 @@ fn fuse_repeatable_mana_payment_prevention_until_end_of_turn(
             matches!(prevention.target.base(), ChooseSpec::Tagged(tag) if tag == &initial.tag)
         }))
         || !prevention.follow_up_effects.is_empty()
+        || prevention.damage_filter != ironsmith_core::DamageFilter::all()
         || prevention.source_of_your_choice
         || prevention.protect_you_and_permanents_you_control
     {

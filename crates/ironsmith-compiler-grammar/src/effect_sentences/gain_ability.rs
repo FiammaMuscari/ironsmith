@@ -135,7 +135,7 @@ fn display_text_for_tokens(tokens: &[OwnedLexToken]) -> String {
                 || gain_shapes::gain_word_is_trigger_intro(token.parser_text()))
     });
 
-    for token in tokens {
+    for (token_idx, token) in tokens.iter().enumerate() {
         if let Some(word) = token.as_word() {
             if needs_space && !text.is_empty() {
                 text.push(' ');
@@ -143,10 +143,14 @@ fn display_text_for_tokens(tokens: &[OwnedLexToken]) -> String {
             let numeric_like = word
                 .chars()
                 .all(|ch| ch.is_ascii_digit() || matches!(ch, 'x' | 'X' | '+' | '-' | '/'));
+            // "Pay 2 life" counts life, not generic mana.
+            let counts_life = tokens
+                .get(token_idx + 1)
+                .is_some_and(|next| next.is_word("life"));
             let rendered = match word {
                 "t" => "{T}".to_string(),
                 "q" => "{Q}".to_string(),
-                _ if in_effect_text && numeric_like => word.to_string(),
+                _ if (in_effect_text || counts_life) && numeric_like => word.to_string(),
                 _ => parse_mana_symbol(word)
                     .map(|symbol| ManaCost::from_symbols(vec![symbol]).to_oracle())
                     .unwrap_or_else(|_| word.to_ascii_lowercase()),
@@ -523,9 +527,9 @@ fn player_gain_effects_for_abilities(
         match action.as_ref() {
             KeywordAction::Hexproof => {
                 effects.push(EffectAst::subject_verb_cant(
-                    crate::effect::Restriction::be_targeted_player_from(
+                    crate::effect::Restriction::player_hexproof_from(
                         player_filter.clone(),
-                        ObjectFilter::default().controlled_by(PlayerFilter::Opponent),
+                        ObjectFilter::default(),
                     ),
                     duration.clone(),
                     None,
@@ -533,9 +537,9 @@ fn player_gain_effects_for_abilities(
             }
             KeywordAction::HexproofFrom(filter) => {
                 effects.push(EffectAst::subject_verb_cant(
-                    crate::effect::Restriction::be_targeted_player_from(
+                    crate::effect::Restriction::player_hexproof_from(
                         player_filter.clone(),
-                        filter.clone().controlled_by(PlayerFilter::Opponent),
+                        filter.clone(),
                     ),
                     duration.clone(),
                     None,
@@ -1166,8 +1170,24 @@ fn named_token_trigger_subject_as_this_token(
 
 fn token_definition_source_identity(
     definition: &TokenDefinitionSpec,
-) -> (String, Vec<CardType>, Vec<crate::types::Subtype>) {
-    match definition {
+) -> Result<(String, Vec<CardType>, Vec<crate::types::Subtype>), CardTextError> {
+    let derived_name = |subtypes: &[crate::types::Subtype]| ironsmith_core::subtype_derived_token_name(subtypes)
+        .ok_or_else(|| CardTextError::ParseError("token subtype has no canonical rules spelling".into()));
+    Ok(match definition {
+        TokenDefinitionSpec::Builtin(template) => (
+            match template.fixed_name() { Some(name) => name.into(), None => derived_name(&template.subtypes())? },
+            template.card_types(), template.subtypes(),
+        ),
+        TokenDefinitionSpec::ModifiedBuiltin(shape) => {
+            let mut card_types = shape.template.card_types();
+            let mut subtypes = shape.template.subtypes();
+            for value in &shape.additional_card_types { if !card_types.contains(value) { card_types.push(*value); } }
+            for value in &shape.additional_subtypes { if !subtypes.contains(value) { subtypes.push(*value); } }
+            let name = match shape.name.as_deref().or_else(|| shape.template.fixed_name()) {
+                Some(name) => name.into(), None => derived_name(&subtypes)?,
+            };
+            (name, card_types, subtypes)
+        }
         TokenDefinitionSpec::Creature(creature) => (
             creature.name.clone(),
             creature.card_types.clone(),
@@ -1192,7 +1212,7 @@ fn token_definition_source_identity(
             Vec::new(),
         ),
         _ => ("Token".to_string(), vec![CardType::Creature], Vec::new()),
-    }
+    })
 }
 
 fn token_rule_is_already_lowered_by_specialized_shape(
@@ -1204,13 +1224,22 @@ fn token_rule_is_already_lowered_by_specialized_shape(
     let has = |word: &str| crate::word_primitives::sequence_occurs(&words, &[word]);
     let all = |expected: &[&str]| expected.iter().all(|word| has(word));
 
-    if super::super::grammar::token_definitions::parse_embedded_token_rule_tokens(
+    if let Some(rule) = super::super::grammar::token_definitions::parse_embedded_token_rule_tokens(
         ability_tokens,
         Some(token_name),
-    )
-    .is_some()
-    {
-        return true;
+    ) {
+        // Recognizing a rule does not prove that this blueprint retained it.
+        // Only these shapes have an embedded-rule owner; predefined templates
+        // and their authored modifiers must keep the ordinary grant route.
+        let installed = match definition {
+            TokenDefinitionSpec::Creature(creature) => Some(&creature.rules.token_rules),
+            TokenDefinitionSpec::Artifact(artifact) => Some(&artifact.token_rules),
+            TokenDefinitionSpec::Enchantment(enchantment) => Some(&enchantment.token_rules),
+            _ => None,
+        };
+        if installed.is_some_and(|rules| rules.embedded_rules.contains(&rule)) {
+            return true;
+        }
     }
 
     if matches!(
@@ -1278,7 +1307,7 @@ pub fn parse_granted_abilities_for_token_definition(
     definition: &TokenDefinitionSpec,
     ability_tokens: &[OwnedLexToken],
 ) -> Result<Vec<GrantedAbilityAst>, CardTextError> {
-    let (name, _, _) = token_definition_source_identity(definition);
+    let (name, _, _) = token_definition_source_identity(definition)?;
     // A quoted token ability may carry its normal rules-text label (for
     // example, `Landfall — Whenever ...`). The label is presentation, while
     // the trigger body is the executable ability that the nested parser must
@@ -1334,7 +1363,8 @@ pub fn parse_granted_abilities_for_token_definition(
                             .is_some_and(|next| next.parser_text() == THE_WORD))
             })
         });
-        if (starts_triggered_rule || contains_token_kind(ability_tokens, TokenKind::Colon))
+        if !mixed_pronoun_list
+            && (starts_triggered_rule || contains_token_kind(ability_tokens, TokenKind::Colon))
             && let Some(ability) = parse_granted_activated_or_triggered_ability_for_gain(
                 ability_tokens,
                 &clause_words,

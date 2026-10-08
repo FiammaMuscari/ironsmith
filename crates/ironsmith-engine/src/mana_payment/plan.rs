@@ -136,6 +136,10 @@ pub struct ManaPaymentRequest {
     /// obligation payable. A continuation cannot itself contain Assist.
     #[cfg_attr(feature = "serialization", serde(default, skip_serializing_if = "Option::is_none"))]
     pub assist_completion: Option<Box<ManaPaymentRequest>>,
+    /// Ancestor mana activations cannot fund themselves. This does not
+    /// forbid tapping their permanents for a distinct Waterbend obligation.
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub activation_excluded_sources: Vec<ObjectId>,
 }
 
 impl ManaPaymentRequest {
@@ -156,7 +160,24 @@ impl ManaPaymentRequest {
             obligation: PaymentObligation::Required,
             preferences: ManaPaymentPreferences::default(),
             assist_completion: None,
+            activation_excluded_sources: if reason.is_mana_ability() { vec![source] } else { Vec::new() },
         }
+    }
+
+    pub(crate) fn reserving_alternatives(&self, allocations: &[PlannedPipAllocation]) -> Self {
+        let mut request = self.clone();
+        for allocation in allocations {
+            match allocation.payment {
+                PlannedPipPayment::Convoke(id) | PlannedPipPayment::Improvise(id) | PlannedPipPayment::Waterbend(id) => {
+                    if !request.reserved_tap_sources.contains(&id) { request.reserved_tap_sources.push(id); }
+                },
+                PlannedPipPayment::Delve(id) => {
+                    if !request.reserved_graveyard_sources.contains(&id) { request.reserved_graveyard_sources.push(id); }
+                },
+                _ => {},
+            }
+        }
+        request
     }
 
     pub fn with_x(mut self, x_value: u32) -> Self {
@@ -198,6 +219,7 @@ pub enum ManaPaymentSourceKind {
     Convoke,
     Improvise,
     Delve,
+    Waterbend,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +249,7 @@ pub enum PlannedPipPayment {
     Convoke(ObjectId),
     Improvise(ObjectId),
     Delve(ObjectId),
+    Waterbend(ObjectId),
     Assist {
         player: PlayerId,
         symbol: ManaSymbol,
@@ -260,6 +283,17 @@ pub struct ManaPaymentScore {
     pub excess_mana: u32,
     pub flexible_sources_used: u32,
     pub source_count: u32,
+}
+
+impl ManaPaymentScore {
+    /// No ranked alternative can beat this score, so ranking may stop here.
+    pub fn reaches_search_floor(self) -> bool {
+        self.irreversible_cost == 0
+            && self.life_paid == 0
+            && self.preserved_sources_used == 0
+            && self.excess_mana == 0
+            && self.flexible_sources_used == 0
+    }
 }
 
 /// An engine-produced proposal for paying a mana cost, or an unfunded payment window.
@@ -353,11 +387,13 @@ impl PendingManaPayment {
     }
 
     pub fn provisional(request: ManaPaymentRequest, plan: ManaPaymentPlan) -> Self {
+        // A funded first plan at the ranking floor is already the best answer.
+        let planning_complete = plan.payable && plan.score.reaches_search_floor();
         Self {
             request,
             plan,
             next_activation: 0,
-            planning_complete: false,
+            planning_complete,
         }
     }
 }

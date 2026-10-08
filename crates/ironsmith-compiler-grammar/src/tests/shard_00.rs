@@ -1248,7 +1248,7 @@ pub(super) fn rewrite_structure_leading_result_prefix_parser_splits_numeric_rang
     );
     assert_eq!(
         prefix.predicate,
-        crate::cards::builders::IfResultPredicate::Value(
+        crate::cards::builders::IfResultPredicate::DieValue(
             crate::effect::Comparison::BetweenInclusive(1, 9)
         )
     );
@@ -1264,7 +1264,7 @@ pub(super) fn rewrite_structure_leading_result_prefix_parser_splits_numeric_rang
             .expect("structure helper should detect compact ASCII numeric result prefix");
     assert_eq!(
         compact_ascii_prefix.predicate,
-        crate::cards::builders::IfResultPredicate::Value(
+        crate::cards::builders::IfResultPredicate::DieValue(
             crate::effect::Comparison::BetweenInclusive(10, 19)
         )
     );
@@ -3667,6 +3667,29 @@ pub(super) fn rewrite_spell_mana_restriction_wraps_preceding_mana_effect() {
         debug.contains("Creature"),
         "expected creature spell usage restriction, got {debug}"
     );
+}
+
+#[test]
+pub(super) fn niko_chapter_two_keeps_foretell_action_or_cast_spell_with_current_capability() {
+    use crate::ability::{ManaPaymentPredicate, ManaPaymentPurpose};
+    let tokens = lex_line(
+        "Spend this mana only to foretell cards or cast spells that have foretell.", 0,
+    ).unwrap();
+    let Some(ironsmith_core::ManaUsageRestriction::PaymentTransaction {
+        restriction: Some(ManaPaymentPredicate::AnyOf(arms)), on_spend,
+    }) = parse_mana_usage_restriction_sentence_lexed(&tokens) else {
+        panic!("Niko's exact sentence requires a typed disjunction");
+    };
+    assert!(on_spend.is_empty());
+    assert_eq!(arms.len(), 2);
+    assert_eq!(arms[0], ManaPaymentPredicate::Purpose(ManaPaymentPurpose::Foretell));
+    let ManaPaymentPredicate::All(cast) = &arms[1] else { panic!("{arms:?}"); };
+    assert_eq!(cast.len(), 2);
+    assert_eq!(cast[0], ManaPaymentPredicate::Purpose(ManaPaymentPurpose::CastSpell));
+    let ManaPaymentPredicate::SourceMatches(filter) = &cast[1] else { panic!("{cast:?}"); };
+    assert_eq!(filter.alternative_cast, Some(crate::filter::AlternativeCastKind::Foretell));
+    assert_eq!(filter.zone, None, "ordinary casts with Foretell qualify too");
+    assert!(!filter.foretold, "keyword capability is distinct from prior designation");
 }
 
 #[test]

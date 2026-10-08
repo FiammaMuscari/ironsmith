@@ -1093,16 +1093,34 @@ pub fn effect_predicate_from_if_result(predicate: IfResultPredicate) -> EffectPr
         IfResultPredicate::PriorEffectResult(surface) => {
             EffectPredicate::PriorEffectResult(surface)
         }
+        IfResultPredicate::AffectedObjectsShare { required_count, characteristic } => {
+            EffectPredicate::AffectedObjectsShare { required_count, characteristic }
+        }
+        IfResultPredicate::ConditionMatched => EffectPredicate::Value(crate::effect::Comparison::GreaterThan(0)),
         IfResultPredicate::WasDeclined => EffectPredicate::WasDeclined,
-        IfResultPredicate::Value(cmp) => EffectPredicate::Value(cmp),
+        IfResultPredicate::Value(cmp) | IfResultPredicate::DieValue(cmp) => EffectPredicate::Value(cmp),
     }
 }
 
 pub fn compile_repeat_process_body(
     effects: &[EffectAst],
     continue_effect_index: usize,
+    capture_condition_result: bool,
     ctx: &mut EffectLoweringContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>, EffectId), CardTextError> {
+    // A result-correlated followup is a separate instruction. Its side effects
+    // (including prevention/replacement) must not replace the antecedent's
+    // continuation receipt. Reuse the exact ID created by the shared pair owner.
+    if continue_effect_index == 0 && effects.len() == 2
+        && let Some((compiled, choices)) = compile_if_do_with_player_did(&effects[0], &effects[1], ctx)?
+    {
+        let condition = compiled.last().and_then(|effect| effect.as_if_effect())
+            .map(|effect| effect.condition).ok_or_else(|| CardTextError::InvariantViolation(
+                "a repeated correlated pair must export its antecedent result".into(),
+            ))?;
+        ctx.last_effect_id = Some(condition);
+        return Ok((compiled, choices, condition));
+    }
     fn defines_effect_result_id(effect: &Effect, id: EffectId) -> bool {
         if effect
             .downcast_ref::<crate::effects::WithIdEffect>()
@@ -1149,6 +1167,28 @@ pub fn compile_repeat_process_body(
                 break candidate;
             }
         };
+        if capture_condition_result {
+            fn capture_gate(effect: &mut Effect) -> bool {
+                if let Some(gate) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
+                    *effect = Effect::new(gate.clone().with_condition_result(true));
+                    return true;
+                }
+                if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+                    let mut inner = (*with_id.effect).clone();
+                    let id = with_id.id;
+                    if capture_gate(&mut inner) {
+                        *effect = Effect::with_id(id.0, inner);
+                        return true;
+                    }
+                }
+                false
+            }
+            if !compiled.last_mut().is_some_and(capture_gate) {
+                return Err(CardTextError::InvariantViolation(
+                    "live repeat continuation requires its final conditional gate".into(),
+                ));
+            }
+        }
         assign_effect_result_id_for_ast(
             &mut compiled,
             &effects[continue_effect_index],
@@ -1759,14 +1799,14 @@ pub fn compile_vote_sequence(
         return Ok(Some((compiled, choices, consumed)));
     }
 
-    let mut vote_options = named_options
+    let vote_options = named_options
         .as_ref()
         .expect("named vote start should exist")
         .iter()
         .map(|option| VoteOption::new(option.clone(), Vec::new()))
         .collect::<Vec<_>>();
     let mut choices = Vec::new();
-    let mut post_vote_effects = Vec::new();
+    let mut payloads = Vec::new();
     for annotated in effects.iter().take(consumed).skip(1) {
         apply_local_reference_env(ctx, &annotated.in_env);
         ctx.auto_tag_object_targets =
@@ -1785,18 +1825,10 @@ pub fn compile_vote_sequence(
                     let (mut per_vote_effects, per_vote_choices) =
                         compile_effects_in_iterated_player_context(&option_effects_ast, ctx, None)?;
                     preserve_annotated_effect_result_id(annotated, &mut per_vote_effects)?;
-                    let mut matching_vote_option = None;
-                    for (index, vote_option) in vote_options.iter().enumerate() {
-                        if vote_option.name.eq_ignore_ascii_case(option) {
-                            matching_vote_option = Some(index);
-                            break;
-                        }
-                    }
-                    if let Some(vote_option_idx) = matching_vote_option {
-                        vote_options[vote_option_idx]
-                            .effects_per_vote
-                            .extend(per_vote_effects);
-                    }
+                    payloads.push(ironsmith_core::VotePayload::ForEachVote {
+                        option: option.clone(),
+                        effects: per_vote_effects,
+                    });
                     for choice in per_vote_choices {
                         push_choice(&mut choices, choice);
                     }
@@ -1806,7 +1838,7 @@ pub fn compile_vote_sequence(
                         repeat_effects,
                     )];
                     preserve_annotated_effect_result_id(annotated, &mut repeated)?;
-                    post_vote_effects.extend(repeated);
+                    payloads.push(ironsmith_core::VotePayload::Effects(repeated));
                     for choice in repeat_choices {
                         push_choice(&mut choices, choice);
                     }
@@ -1815,7 +1847,7 @@ pub fn compile_vote_sequence(
             _ => {
                 let (mut followups, followup_choices) = compile_effect(&annotated.effect, ctx)?;
                 preserve_annotated_effect_result_id(annotated, &mut followups)?;
-                post_vote_effects.extend(followups);
+                payloads.push(ironsmith_core::VotePayload::Effects(followups));
                 for choice in followup_choices {
                     push_choice(&mut choices, choice);
                 }
@@ -1829,12 +1861,12 @@ pub fn compile_vote_sequence(
     } else {
         crate::effects::VoteEffect::new(vote_options, extra_mandatory)
     }
+    .with_payloads(payloads)
     .with_secret(secret)
     .starting_with_controller(starting_with_controller);
     let effect = Effect::new(vote);
     let mut compiled = vec![effect];
     preserve_annotated_effect_result_id(first, &mut compiled)?;
-    compiled.extend(post_vote_effects);
 
     Ok(Some((compiled, choices, consumed)))
 }

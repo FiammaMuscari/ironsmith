@@ -12,7 +12,10 @@ pub fn parse_conditional_anthem_replacement_line(
             PredicateAst::AttachedToSourceMatches(filter)
         }
         anthem_grant_grammar::AnthemReplacementCondition::Predicate(tokens) => {
-            parse_static_condition_clause(tokens)?
+            match parse_attached_subject_controller_condition(&subject, tokens)? {
+                Some(predicate) => predicate,
+                None => parse_static_condition_clause(tokens)?,
+            }
         }
     };
     let base = fixed_anthem_clause(
@@ -35,6 +38,54 @@ pub fn parse_conditional_anthem_replacement_line(
         )
         .into(),
     ]))
+}
+
+/// "Enchanted creature gets -2/-0. It gets -6/-0 instead as long as its
+/// controller has seven or more cards in their graveyard" (So Tiny): "its
+/// controller" is the controller of the attached subject, which static
+/// conditions name through the source's `enchanted`/`equipped` tag.
+fn parse_attached_subject_controller_condition(
+    subject: &AnthemSubjectAst,
+    tokens: &[OwnedLexToken],
+) -> Result<Option<PredicateAst>, CardTextError> {
+    let AnthemSubjectAst::Filter(filter) = subject else {
+        return Ok(None);
+    };
+    let Some(tag) = filter.tagged_constraints.iter().find_map(|constraint| {
+        matches!(constraint.tag.as_str(), "enchanted" | "equipped").then(|| constraint.tag.clone())
+    }) else {
+        return Ok(None);
+    };
+    let words = crate::lexer::token_word_refs(tokens);
+    if !matches!(words.as_slice(), ["its", "controller", "has", ..]) {
+        return Ok(None);
+    }
+    let Some(controller_idx) = tokens.iter().position(|token| token.is_word("controller")) else {
+        return Ok(None);
+    };
+    let mut rewritten = crate::lexer::synthetic_word_tokens(&["that", "player"]);
+    rewritten.extend_from_slice(&tokens[controller_idx + 1..]);
+    let predicate = parse_static_condition_clause(&rewritten)?;
+    let controller = PlayerFilter::ControllerOf(crate::filter::ObjectRef::Tagged(tag));
+    let PredicateAst::ValueComparison {
+        left,
+        operator,
+        right,
+    } = predicate
+    else {
+        return Ok(None);
+    };
+    let left = match left {
+        Value::CardsInGraveyard(PlayerFilter::IteratedPlayer) => Value::CardsInGraveyard(controller),
+        Value::CardsInHand(PlayerFilter::IteratedPlayer) => Value::CardsInHand(controller),
+        Value::LifeTotal(PlayerFilter::IteratedPlayer) => Value::LifeTotal(controller),
+        _ => return Ok(None),
+    };
+    Ok(Some(PredicateAst::ValueComparison {
+        left,
+        operator,
+        right,
+    }))
 }
 
 pub fn parse_conditional_anthem_otherwise_line(
@@ -110,6 +161,20 @@ pub fn parse_carried_conditional_anthem_grant_line(
 pub fn parse_anthem_and_keyword_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if self::combat_requirements::owns_combat_requirement_line(tokens) {
+        return self::combat_requirements::parse_combat_requirement_static_line(tokens);
+    }
+
+    // Comma-separated omitted-subject predicates are separate clauses, each
+    // with its own condition. The composed owner parses every segment.
+    if has_omitted_subject_anthem_predicates(tokens) {
+        return Ok(None);
+    }
+    // `have` inside the counterfactual defender comparison is not a grant.
+    // The complete permission production preserves both the pump and permission.
+    if anthem_grant_grammar::parse_anthem_no_defender_grant_tokens(tokens).is_some() {
+        return Ok(None);
+    }
     let clause_words = crate::lexer::token_word_refs(tokens);
     let Some(line_shape) = anthem_grant_grammar::parse_anthem_keyword_head(tokens) else {
         return Ok(None);
@@ -1265,6 +1330,7 @@ pub fn parse_equipment_you_control_have_equip_line(
         ability: Ability {
             kind: AbilityKind::Activated(
                 crate::model::compiler_semantic::CompilerActivatedAbilityCore {
+                    keyword: Some(ironsmith_core::ActivatedAbilityKeyword::Equip),
                     mana_cost: total_cost,
                     effects: ironsmith_core::ResolutionProgram::from_effects(vec![
                         EffectAst::subject_verb_attach(TargetAst::Source(None), target),
@@ -2283,11 +2349,38 @@ fn goad_for_anthem_subject(clause: &ParsedAnthemClause) -> StaticAbilityAst {
     ability.into()
 }
 
+fn maximum_blockers_rule_for_subject(
+    clause: &ParsedAnthemClause,
+    maximum: usize,
+) -> StaticAbilityAst {
+    let mut filter = anthem_subject_filter(&clause.subject);
+    if attached_goaded_display_subject(&clause.subject).is_some() {
+        filter.with_attached_object = Some(Box::new(ObjectFilter::source()));
+    }
+    let mut ability = StaticAbility::restriction(
+        crate::effect::Restriction::MaximumBlockers { filter, maximum },
+        format!("{} can't be blocked by more than {} {}",
+            anthem_subject_filter(&clause.subject).description(), maximum,
+            if maximum == 1 { "creature" } else { "creatures" }),
+    );
+    if let Some(condition) = &clause.condition {
+        ability = ability.with_condition(condition.clone());
+    }
+    ability.into()
+}
+
 fn lower_atomic_anthem_predicate(
     clause: &ParsedAnthemClause,
     tokens: &[OwnedLexToken],
     quoted: bool,
 ) -> Option<StaticAbilityAst> {
+    if !quoted
+        && let Some(crate::grammar::activation_costs::cant_shapes::BlockingCantFact::MaximumBlockers {
+            maximum_blockers, ..
+        }) = crate::grammar::activation_costs::cant_shapes::parse_blocking_cant_fact_tokens(tokens)
+    {
+        return Some(maximum_blockers_rule_for_subject(clause, maximum_blockers));
+    }
     if let Some(ability) =
         crate::activation_and_restrictions::activation_costs::blocking_cant_static_ability(tokens)
     {
@@ -2334,14 +2427,43 @@ fn lower_atomic_anthem_predicate(
         S::CantBeSacrificed => {
             let filter = if quoted { ObjectFilter::source() }
                 else { anthem_subject_filter(&clause.subject) };
+            // "Creatures you control but don't own get +2/+2 and can't be
+            // sacrificed" (Garland): the shared plural anthem subject stays
+            // plural in the restriction's display.
+            let description = filter.description();
+            let subject = match (quoted, clause.set_quantifier_surface) {
+                (false, None) => description
+                    .strip_prefix("a ")
+                    .or_else(|| description.strip_prefix("an "))
+                    .and_then(|rest| {
+                        let (noun, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+                        (!noun.ends_with('s') && noun.chars().all(|ch| ch.is_ascii_lowercase()))
+                            .then(|| format!("{noun}s {tail}").trim_end().to_string())
+                    })
+                    .unwrap_or_else(|| description.clone()),
+                _ => description.clone(),
+            };
             let mut ability = StaticAbility::restriction(
                 crate::effect::Restriction::be_sacrificed(filter.clone()),
-                format!("{} can't be sacrificed", filter.description()),
+                format!("{subject} can't be sacrificed"),
             );
             if quoted { return Some(grant_for_anthem_subject(clause, ability)); }
             if let Some(condition) = &clause.condition {
                 ability = ability.with_condition(condition.clone());
             }
+            return Some(ability.into());
+        }
+        S::CantBecomeSuspected => {
+            if quoted { return None; }
+            let mut filter = anthem_subject_filter(&clause.subject);
+            if attached_goaded_display_subject(&clause.subject).is_some() {
+                filter.with_attached_object = Some(Box::new(ObjectFilter::source()));
+            }
+            let mut ability = StaticAbility::restriction(
+                crate::effect::Restriction::BecomeSuspected(filter),
+                format!("{} can't become suspected", anthem_subject_filter(&clause.subject).description()),
+            );
+            if let Some(condition) = &clause.condition { ability = ability.with_condition(condition.clone()); }
             return Some(ability.into());
         }
         S::CantAttack => StaticAbility::cant_attack(),
@@ -2368,6 +2490,10 @@ fn lower_atomic_anthem_predicate(
 pub fn parse_anthem_with_trailing_segments_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if self::combat_requirements::owns_combat_requirement_line(tokens) {
+        return self::combat_requirements::parse_combat_requirement_static_line(tokens);
+    }
+
     // Only a successful complete production can own a competing line;
     // a prefix-tolerant keyword leaf is not proof that no later predicate exists.
     if matches!(parse_anthem_and_keyword_line(tokens), Ok(Some(_))) {
@@ -2686,10 +2812,12 @@ pub fn parse_anthem_with_trailing_segments_line(
             };
 
             if let Some(triggered) = parse_triggered_granted_ability(&ability_tokens)? {
-                let display = format!(
-                    "{} has {}",
-                    clause_words.join(" "),
-                    crate::lexer::token_word_refs(&ability_tokens).join(" ")
+                // The grant renderer prints the subject and the `has` verb;
+                // the display is only the granted ability's own surface.
+                let display = display_text_for_tokens_in_mode(
+                    trim_outer_quotes(&trim_edge_punctuation(&ability_tokens)),
+                    false,
+                    true,
                 );
                 extras.push(grant_object_ability_for_anthem_subject(
                     &clause, triggered, display,
@@ -2738,10 +2866,10 @@ pub fn parse_anthem_with_trailing_segments_line(
         }
 
         if let Some(triggered) = parse_triggered_granted_ability(&segment)? {
-            let display = format!(
-                "{} has {}",
-                clause_words.join(" "),
-                crate::lexer::token_word_refs(&segment).join(" ")
+            let display = display_text_for_tokens_in_mode(
+                trim_outer_quotes(&trim_edge_punctuation(&segment)),
+                false,
+                true,
             );
             extras.push(grant_object_ability_for_anthem_subject(
                 &clause, triggered, display,
@@ -3039,6 +3167,10 @@ pub fn parse_as_long_as_condition_can_attack_as_though_no_defender_line(
 pub fn parse_gets_and_attacks_each_combat_if_able_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if self::combat_requirements::owns_combat_requirement_line(tokens) {
+        return self::combat_requirements::parse_combat_requirement_static_line(tokens);
+    }
+
     let clause_words = crate::lexer::token_word_refs(tokens);
     let Some(shape) = anthem_grant_grammar::parse_gets_attacks_shape(tokens) else {
         return Ok(None);
@@ -3138,7 +3270,37 @@ pub fn parse_subject_is_every_subtype_family_line(
     )))
 }
 
+fn complete_composed_anthem_owns_line(tokens: &[OwnedLexToken]) -> bool {
+    let (result, loss) = crate::parse_loss::capture(|| parse_composed_anthem_effects_line(tokens));
+    matches!(result, Ok(Some(_))) && !loss.is_lossy()
+}
+
+fn has_omitted_subject_anthem_predicates(tokens: &[OwnedLexToken]) -> bool {
+    anthem_grant_grammar::split_trailing_grant_segments(tokens)
+        .iter()
+        .skip(1)
+        .any(|segment| {
+            keyword_static_lines::parse_composed_anthem_segment_tokens(segment)
+                .is_some_and(|shape| shape.omitted_subject)
+        })
+}
+
 pub fn parse_anthem_line(tokens: &[OwnedLexToken]) -> Result<Option<StaticAbility>, CardTextError> {
+    if self::combat_requirements::owns_combat_requirement_line(tokens) {
+        return Ok(None);
+    }
+
+    // A type addition is a sibling predicate, never part of the dynamic count
+    // filter. Require the complete specialized reading before yielding.
+    if matches!(parse_anthem_and_type_color_addition_line(tokens), Ok(Some(_))) {
+        return Ok(None);
+    }
+    // Each omitted-subject clause owns its own condition. In particular the
+    // first `as long as` cannot consume later comma-separated stat/keyword
+    // predicates as though they were part of a land or permanent filter.
+    if has_omitted_subject_anthem_predicates(tokens) {
+        return Ok(None);
+    }
     let keyword_head = anthem_grant_grammar::parse_anthem_keyword_head(tokens);
     let trailing_condition_start =
         match anthem_grant_grammar::split_anthem_keyword_trailing_condition(tokens) {
@@ -3169,6 +3331,18 @@ pub fn parse_anthem_line(tokens: &[OwnedLexToken]) -> Result<Option<StaticAbilit
         )
         .is_none()
     {
+        return Ok(None);
+    }
+    let (_, subject_start) = parse_anthem_prefix_condition(tokens, head.get_token)?;
+    let subject_tokens = trim_commas(&tokens[subject_start..head.get_token]);
+    if anthem_grant_grammar::parse_multi_subject_segments(&subject_tokens).is_some()
+        && !matches!(
+            anthem_grant_grammar::parse_exact_anthem_subject_grammar(&subject_tokens),
+            Some(anthem_grant_grammar::AnthemSubjectGrammarMatch::Filter(_))
+        )
+    {
+        // Distributive subjects are independent recipients, not a tolerant
+        // suffix filter that can silently drop the source or attachment.
         return Ok(None);
     }
     let clause = parse_anthem_clause(tokens, head.get_token, tokens.len())?;
@@ -3665,6 +3839,19 @@ fn parse_conditional_source_prevention_and_grant(
 pub fn parse_filter_has_granted_ability_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    crate::clause_support::validate_protection_static_line(tokens)?;
+    if let Some(abilities) = parse_complete_miracle_cost_grant_line(tokens)? { return Ok(Some(abilities)); }
+
+    // A complete comma-separated predicate list owns every clause and every
+    // local condition; this family cannot suffix-match one of its `has` verbs.
+    if complete_composed_anthem_owns_line(tokens) {
+        return Ok(None);
+    }
+    if matches!(parse_base_pt_and_blocker_restriction_line(tokens), Ok(Some(_)))
+        || matches!(parse_conditional_no_defender_and_unblockable_line(tokens), Ok(Some(_)))
+    {
+        return Ok(None);
+    }
     // A complete attack-permission effect owns its hypothetical `have`.
     // In particular, `this turn` belongs to the duration, not to a subject
     // that may be recovered as the suffix `it didn't`. Do not let either
@@ -5143,27 +5330,16 @@ fn keyword_and_maximum_blocker_tail_share_the_attached_subject() {
         .expect("parser should not error")
         .expect("line should parse");
 
-    assert!(matches!(
-        parsed.as_slice(),
-        [
-            StaticAbilityAst::GrantKeywordAction {
-                action: KeywordAction::Trample,
-                filter: keyword_filter,
-                ..
-            },
-            StaticAbilityAst::GrantStaticAbility {
-                filter: restriction_filter,
-                ability,
-                ..
-            },
-        ] if keyword_filter == restriction_filter
-            && matches!(
-                ability.as_ref(),
-                StaticAbilityAst::Static(static_ability)
-                    if static_ability.id()
-                        == crate::static_abilities::StaticAbilityId::CantBeBlockedByMoreThan
-            )
-    ));
+    let [StaticAbilityAst::GrantKeywordAction { action: KeywordAction::Trample, filter: keyword_filter, .. },
+        StaticAbilityAst::Static(rule)] = parsed.as_slice() else {
+        panic!("keyword grant and source-owned rule: {parsed:#?}");
+    };
+    let ironsmith_core::StaticAbilityPayload::RuleRestriction {
+        restriction: crate::effect::Restriction::MaximumBlockers { filter, maximum }, ..
+    } = &rule.payload else { panic!("typed maximum-blocker rule: {rule:#?}"); };
+    assert_eq!(*maximum, 1);
+    assert_eq!(filter.tagged_constraints, keyword_filter.tagged_constraints);
+    assert!(filter.with_attached_object.is_some());
 }
 
 #[test]
@@ -5493,4 +5669,72 @@ mod quoted_anthem_attack_rule_ownership_tests {
             }
         }
     }
+}
+
+/// Base characteristics and a blocking rule share one live recipient and
+/// source-controlled condition. The rule is not an ability granted to the
+/// recipient, so removing that creature's abilities cannot erase it.
+pub fn parse_base_pt_and_blocker_restriction_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    let Some((base, blockers, blocker_tokens)) =
+        anthem_grant_grammar::parse_base_pt_and_blocker_restriction_tokens(tokens)
+    else {
+        return Ok(None);
+    };
+    let condition = match base.condition {
+        anthem_grant_grammar::BasePowerToughnessConditionShape::None => None,
+        anthem_grant_grammar::BasePowerToughnessConditionShape::Tokens(tokens) => {
+            Some(parse_static_condition_clause(tokens)?)
+        }
+        anthem_grant_grammar::BasePowerToughnessConditionShape::YourTurn => Some(PredicateAst::YourTurn),
+    };
+    let attached = match base.condition {
+        anthem_grant_grammar::BasePowerToughnessConditionShape::Tokens(tokens) => {
+            infer_attached_subject_filter_from_condition_tokens(tokens)
+        }
+        _ => None,
+    };
+    let subject = parse_anthem_subject_with_attached_fallback(base.subject_tokens, attached.as_ref())?;
+    let condition = condition.map(|condition| bind_attachment_condition_to_subject(condition, &subject));
+    let clause = fixed_anthem_clause(subject, 0, 0, condition.clone());
+    let filter = anthem_subject_filter(&clause.subject);
+    let set_base = StaticAbility::set_base_power_toughness(filter.clone(), base.power, base.toughness);
+    let mut attacker = filter;
+    if attached_goaded_display_subject(&clause.subject).is_some() {
+        attacker.with_attached_object = Some(Box::new(ObjectFilter::source()));
+    }
+    let restriction = StaticAbility::restriction(
+        crate::effect::Restriction::block_specific_attacker(blockers, attacker),
+        format!("{} can't be blocked by {}", display_text_for_tokens(base.subject_tokens, false),
+            // A blocker filter is effect text: "power 2 or less", never {2}.
+            display_text_for_tokens_in_mode(
+                blocker_tokens, false, true)),
+    );
+    Ok(Some([set_base, restriction].into_iter().map(|ability| {
+        let ast = StaticAbilityAst::Static(ability);
+        match &condition {
+            Some(condition) => StaticAbilityAst::ConditionalStaticAbility {
+                ability: Box::new(ast), condition: condition.clone(),
+            },
+            None => ast,
+        }
+    }).collect()))
+}
+
+pub fn parse_conditional_no_defender_and_unblockable_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    let Some(shape) = anthem_grant_grammar::parse_conditional_no_defender_and_unblockable_tokens(tokens)
+    else {
+        return Ok(None);
+    };
+    let condition = parse_static_condition_clause(shape.condition_tokens)?;
+    let attached = infer_attached_subject_filter_from_condition_tokens(shape.condition_tokens);
+    let subject = parse_anthem_subject_with_attached_fallback(shape.subject_tokens, attached.as_ref())?;
+    let clause = fixed_anthem_clause(subject, 0, 0, Some(condition));
+    Ok(Some(vec![
+        grant_for_anthem_subject(&clause, StaticAbility::can_attack_as_though_no_defender()),
+        grant_for_anthem_subject(&clause, StaticAbility::unblockable()),
+    ]))
 }

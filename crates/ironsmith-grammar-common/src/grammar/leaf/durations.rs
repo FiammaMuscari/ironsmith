@@ -22,6 +22,9 @@ pub enum LeafDurationPhrase {
     ControllersNextUntapStep,
     UntilNextEndStep,
     Forever,
+    YourNextUntapStep,
+    UntilControllersNextUntapStep,
+    PlayersNextUntapStep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +63,10 @@ pub enum LeafConditionalDurationKind {
 }
 
 const LEAF_DURATION_PHRASE_VALUES: &[(&[&str], LeafDurationPhrase)] = &[
+    (&["until", "its", "controllers", "next", "untap", "step"], LeafDurationPhrase::UntilControllersNextUntapStep),
+    (&["until", "its", "controller's", "next", "untap", "step"], LeafDurationPhrase::UntilControllersNextUntapStep),
+    (&["during", "that", "players", "next", "untap", "step"], LeafDurationPhrase::PlayersNextUntapStep),
+    (&["during", "that", "player's", "next", "untap", "step"], LeafDurationPhrase::PlayersNextUntapStep),
     (
         &["until", "the", "end", "of", "your", "next", "turn"],
         LeafDurationPhrase::UntilYourNextTurnEnd,
@@ -108,7 +115,7 @@ const LEAF_DURATION_PHRASE_VALUES: &[(&[&str], LeafDurationPhrase)] = &[
     (&["this", "turn"], LeafDurationPhrase::ThisTurn),
     (
         &["during", "your", "next", "untap", "step"],
-        LeafDurationPhrase::ControllersNextUntapStep,
+        LeafDurationPhrase::YourNextUntapStep,
     ),
     (
         &["during", "its", "controller", "next", "untap", "step"],
@@ -132,6 +139,14 @@ const LEAF_DURATION_PHRASE_VALUES: &[(&[&str], LeafDurationPhrase)] = &[
     ),
     (
         &["during", "their", "controllers", "next", "untap", "step"],
+        LeafDurationPhrase::ControllersNextUntapStep,
+    ),
+    (
+        &["during", "their", "controllers", "next", "untap", "steps"],
+        LeafDurationPhrase::ControllersNextUntapStep,
+    ),
+    (
+        &["during", "their", "controllers'", "next", "untap", "steps"],
         LeafDurationPhrase::ControllersNextUntapStep,
     ),
     (
@@ -353,6 +368,9 @@ fn leaf_turn_duration_from_duration(
         LeafDurationPhrase::UntilEndOfCombat
         | LeafDurationPhrase::UntilYourNextUpkeep
         | LeafDurationPhrase::ControllersNextUntapStep
+        | LeafDurationPhrase::YourNextUntapStep
+        | LeafDurationPhrase::UntilControllersNextUntapStep
+        | LeafDurationPhrase::PlayersNextUntapStep
         | LeafDurationPhrase::UntilNextEndStep
         | LeafDurationPhrase::Forever => None,
     }
@@ -471,5 +489,45 @@ mod tests {
             crate::lexer::TokenWordView::new(parsed.rest).word_refs(),
             ["gain", "control", "of", "it"]
         );
+    }
+    #[test]
+    fn plural_controller_untap_steps_are_one_complete_duration() {
+        let tokens = crate::lexer::lex_line("during their controllers' next untap steps", 0).unwrap();
+        let parsed = parse_leaf_restriction_duration_prefix_tokens(&tokens).unwrap();
+        assert_eq!(parsed.duration, LeafDurationPhrase::ControllersNextUntapStep);
+        assert!(parsed.rest.is_empty());
+        let words = ["during", "their", "controllers", "next", "untap", "steps"];
+        assert_eq!(parse_leaf_duration_prefix_words(&words).unwrap().end, words.len());
+        // The duration leaf consumes only its own complete span; outer readers
+        // retain and validate unrelated suffixes rather than discarding them.
+        let tokens = crate::lexer::lex_line("during their controllers' next untap steps instead", 0).unwrap();
+        let parsed = parse_leaf_restriction_duration_prefix_tokens(&tokens).unwrap();
+        assert_eq!(crate::lexer::TokenWordView::new(parsed.rest).word_refs(), ["instead"]);
+        assert!(parse_duration_phrase_complete("during their controllers next untap steps instead").is_err());
+        assert!(parse_duration_phrase_complete("during their controllers next two untap steps").is_err());
+        let tokens = crate::lexer::lex_line("during your next untap step", 0).unwrap();
+        assert_eq!(parse_leaf_restriction_duration_prefix_tokens(&tokens).unwrap().duration,
+            LeafDurationPhrase::YourNextUntapStep);
+
+    }
+
+}
+
+#[cfg(test)]
+mod exact_next_step_duration_tests {
+    use super::*;
+    #[test]
+    fn until_beginning_and_during_step_keep_distinct_complete_owners() {
+        for (text, expected) in [
+            ("until its controller's next untap step", LeafDurationPhrase::UntilControllersNextUntapStep),
+            ("during that player's next untap step", LeafDurationPhrase::PlayersNextUntapStep),
+            ("during its controller's next untap step", LeafDurationPhrase::ControllersNextUntapStep),
+            ("during your next untap step", LeafDurationPhrase::YourNextUntapStep),
+        ] {
+            assert_eq!(parse_duration_phrase_complete(text).unwrap(), expected);
+        }
+        for text in ["until its controller's next untap", "during that player's next upkeep step", "during that player's next untap step forever", "until its controller's next untap step or turn"] {
+            assert!(parse_duration_phrase_complete(text).is_err(), "{text}");
+        }
     }
 }

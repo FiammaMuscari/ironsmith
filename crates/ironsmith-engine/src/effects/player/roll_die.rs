@@ -1,11 +1,12 @@
 use crate::effect::{EffectOutcome, ExecutionFact};
 use crate::effects::{EffectExecutor, helpers::resolve_player_filter};
 use crate::effects::{ExecutionContext, ExecutionError};
+#[cfg(test)]
 use crate::events::other::DieRolledEvent;
 use crate::game_state::GameState;
 use crate::target::PlayerFilter;
 
-use super::die_roll_transaction::roll_dice_with_modifiers;
+use super::die_roll_transaction::roll_dice_with_authored_modifier;
 
 /// Roll a die for a player using the game's deterministic RNG.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +14,7 @@ pub struct RollDieEffect {
     pub player: PlayerFilter,
     pub sides: u32,
     pub die_text: Option<String>,
+    pub result_modifier: Option<ironsmith_core::effect::DieResultModifier>,
 }
 
 impl RollDieEffect {
@@ -21,6 +23,7 @@ impl RollDieEffect {
             player,
             sides,
             die_text: None,
+            result_modifier: None,
         }
     }
 
@@ -29,6 +32,7 @@ impl RollDieEffect {
             player,
             sides,
             die_text,
+            result_modifier: None,
         }
     }
 }
@@ -39,59 +43,52 @@ impl EffectExecutor for RollDieEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let result = (|| {
-            let player = resolve_player_filter(game, &self.player, ctx)?;
-            if self.sides == 0 {
-                return Ok(EffectOutcome::count(0));
-            }
-            let Some(mut rolls) = roll_dice_with_modifiers(game, ctx, player, 1, self.sides)?
-            else {
-                return Ok(EffectOutcome::count(0));
-            };
-            let roll = rolls.remove(0);
-            let ordinal = game.turn_store.turn_history.record_completed_die_rolls(
-                player,
-                &[roll.result],
-                false,
-            )?;
-            // Die-roll history can end continuous effects (for example, "until
-            // any player rolls a 1") and can change other history-dependent
-            // characteristics. Make those derived characteristics observable
-            // immediately after the roll.
-            game.mark_continuous_state_dirty();
-            game.record_ui_effect_event(
-                "die_roll",
-                Some(player),
-                None,
-                Vec::new(),
-                Some(i64::from(roll.result)),
-                Some(format!("d{}", self.sides)),
-            );
-            Ok(EffectOutcome::count(i64::from(roll.result))
-                .with_event(crate::triggers::TriggerEvent::new_with_provenance(
-                    DieRolledEvent::new_with_natural_result(
-                        player,
-                        ctx.source,
-                        roll.natural_result,
-                        roll.result,
-                        self.sides,
-                    )
-                    .with_turn_ordinal(ordinal),
-                    ctx.provenance,
-                ))
-                .with_execution_fact(ExecutionFact::ChosenNumber(roll.result)))
-        })();
-        let pending = ctx.decision_maker.awaiting_choice();
-        if pending || result.is_err() {
-            game.restore_execution_checkpoint(checkpoint, pending && result.is_ok());
-            context_checkpoint.restore(ctx);
-        }
-        if pending && result.is_ok() {
-            return Ok(EffectOutcome::count(0));
-        }
-        result
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
+
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        crate::effects::composition::execute_transaction_from_body(
+            game,
+            ctx,
+            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+            |game, ctx| {
+                let player = resolve_player_filter(game, &self.player, ctx)?;
+                if self.sides == 0 {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
+                let Some(transaction) = roll_dice_with_authored_modifier(
+                    game,
+                    ctx,
+                    player,
+                    1,
+                    self.sides,
+                    self.result_modifier.as_ref(),
+                )?
+                else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                };
+                let roll = transaction.rolls[0];
+                transaction.complete_with_outputs(
+                    game,
+                    ctx,
+                    player,
+                    self.sides,
+                    roll.result,
+                    super::die_roll_transaction::DieRollCompletion::Single,
+                    EffectOutcome::count(i64::from(roll.result))
+                        .with_execution_fact(ExecutionFact::ChosenNumber(roll.result)),
+                )
+            },
+        )
     }
 }
 
@@ -471,4 +468,33 @@ mod wide_die_result_receipt_tests {
     #[test] fn chosen_die_receipt_and_following_effect_keep_unsigned_quantity() { check(i32::MAX as u32,0,i32::MAX as u32+5,true); }
     #[test] fn increasing_by_unsigned_amount_preserves_selected_direction() { check(i32::MAX as u32+1,0,i32::MAX as u32+6,false); }
     #[test] fn decreasing_by_unsigned_amount_preserves_selected_direction() { check(i32::MAX as u32+1,1,0,false); }
+}
+
+#[cfg(test)]
+mod prepared_roll_receipt_tests {
+    use super::*;
+    use crate::effect::Value;
+    use crate::ids::PlayerId;
+
+    #[test]
+    fn authored_arithmetic_keeps_natural_results_and_distinct_completed_identities() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut effect = RollDieEffect::new(PlayerFilter::You, 6);
+        effect.result_modifier = Some(ironsmith_core::effect::DieResultModifier::Add(Value::Fixed(2)));
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        game.force_next_die_roll(3);
+        let first = effect.execute(&mut game, &mut ctx).unwrap();
+        game.force_next_die_roll(4);
+        let second = effect.execute(&mut game, &mut ctx).unwrap();
+        assert_eq!(first.count_or_zero(), 5);
+        assert_eq!(second.count_or_zero(), 6);
+        assert_eq!(game.turn_store.turn_history.completed_die_roll_count(alice), 2);
+        let first_event = first.events.iter().find(|event| event.downcast::<DieRolledEvent>().is_some()).unwrap();
+        let second_event = second.events.iter().find(|event| event.downcast::<DieRolledEvent>().is_some()).unwrap();
+        assert_ne!(first_event.provenance(), second_event.provenance());
+        assert_eq!(first_event.downcast::<DieRolledEvent>().unwrap().natural_result, 3);
+        assert_eq!(second_event.downcast::<DieRolledEvent>().unwrap().natural_result, 4);
+    }
 }

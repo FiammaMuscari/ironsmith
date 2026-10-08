@@ -1,3 +1,4 @@
+import { isOpaqueExilePlayCommand } from "../lib/sync-object-identity.js";
 import { assertMatchNotDisputed, isMatchDisputed } from "./peer-lobby/match-lifecycle.js";
 import { createValueStore } from "../lib/value-store.js";
 import { openingPreparationProgress } from "../lib/opening-preparation-progress.js";
@@ -47,7 +48,6 @@ import {
   isProtocolResponseTimeoutForfeitCommand,
   isWitnessForfeitCommand,
   isSelfForfeitCommand,
-  isSorcerySpeedForfeitState,
   isTrustedMultiplayerSecurityMode,
   mergeAuditOpenings,
   mergePrivateViewProofs,
@@ -780,7 +780,7 @@ export function usePeerLobby({
           }
           const hasHiddenRef = command.object_hidden_ref != null || command.objectHiddenRef != null;
           if (Number.isSafeInteger(objectId) && objectId > 0 && !hasHiddenRef) {
-            const hiddenRef = await currentHiddenRefForObjectId(objectId);
+            const hiddenRef = await currentHiddenRefForObjectId(objectId, { opaqueExile: isOpaqueExilePlayCommand(command) });
             if (hiddenRef) {
               priorityObjectMetadata.object_hidden_ref = hiddenRef;
             }
@@ -826,9 +826,6 @@ export function usePeerLobby({
         const isProtocolTimeoutForfeit = isProtocolResponseTimeoutForfeitCommand(command);
         const isWitnessForfeit = isWitnessForfeitCommand(command);
         const isSelfForfeit = isSelfForfeitCommand(command, session.localPlayerIndex);
-        if (isSelfForfeit && !isSorcerySpeedForfeitState(preSubmitState, session.localPlayerIndex)) {
-          throw new Error("Surrender is only available at sorcery speed");
-        }
         if (
           isForfeitCommand(command)
           && !isTimeoutForfeit
@@ -898,7 +895,8 @@ export function usePeerLobby({
             actorIndex: session.localPlayerIndex,
           });
         } else if (
-          expectedActor !== null
+          !isSelfForfeit
+          && expectedActor !== null
           && expectedActor !== undefined
           && Number(expectedActor) !== Number(session.localPlayerIndex)
         ) {
@@ -1155,6 +1153,7 @@ export function usePeerLobby({
           cryptoRequirements.length > 0
           || commandMayProducePostApplyOpenings(command, preSubmitState, cryptoRequirements);
         await ensureSignedActionIntent();
+        await servicesRef.current.pinBlindExileOpeningIntent(signedActionIntent);
         const initialActionProgress = {
           kind: "local_payload",
           title: "Preparing action payload",
@@ -1400,6 +1399,11 @@ export function usePeerLobby({
         if (reuseEmptyPreview) {
           recordPeerSyncPerf("submit_action:reuse_empty_preview", submitPerf);
         }
+        updateLocalActionProgress({
+          kind: "engine_work",
+          operation: "Validating action requirements",
+          detail: label || summarizePeerCommand(command)?.type || String(command?.type || "action"),
+        }, "engine_work", PROTOCOL_RESPONSE_TIMEOUT_MS);
         for (let pass = 0; pass < 256; pass++) {
           assertSubmissionActive();
           const refreshed = pass === 0 && reuseEmptyPreview
@@ -1476,7 +1480,8 @@ export function usePeerLobby({
         }
         const expectedActorBeforeApply = liveStateBeforeApply?.decision?.player;
         if (
-          expectedActorBeforeApply !== null
+          !isSelfForfeit
+          && expectedActorBeforeApply !== null
           && expectedActorBeforeApply !== undefined
           && Number(expectedActorBeforeApply) !== Number(session.localPlayerIndex)
         ) {

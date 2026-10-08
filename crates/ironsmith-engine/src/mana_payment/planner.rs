@@ -24,6 +24,8 @@ const MAX_RANKING_SEARCH_NODES: usize = 4_096;
 const MAX_EXTRA_ACTIVATIONS: usize = 8;
 const MAX_PLANS_PER_SELECTION: usize = 16;
 const MAX_TOTAL_PLANS: usize = 32;
+/// Search units a deferred prompt may spend before opening unfunded.
+const PROMPT_FIRST_PLAN_BUDGET: usize = 64;
 
 /// Diagnostic counters for the most recent `plan_mana_payment` call.
 ///
@@ -135,6 +137,40 @@ pub fn plan_first_mana_payment(
     .first_plan(game, request)
 }
 
+/// Browser announcements open the manual window immediately; optional planning
+/// continues in a disposable worker. Explicit edits and confirmations use the
+/// ordinary planner so the displayed proposal remains executable by peers.
+pub fn plan_prompt_mana_payment(
+    game: &GameState,
+    request: &ManaPaymentRequest,
+    initial: bool,
+) -> Result<ManaPaymentPlan, ManaPaymentFailure> {
+    if initial && crate::game_loop::priority_analysis_deferred() {
+        // Simple boards finish the ordinary first-plan search in a handful of
+        // nodes. Only a search that exceeds this deterministic budget opens
+        // unfunded and leaves the funded proposal to the background worker.
+        match ManaPaymentAnalysis::new(game, request.clone()).step(PROMPT_FIRST_PLAN_BUDGET) {
+            Some(Ok(plan)) => return Ok(plan),
+            Some(Err(ManaPaymentFailure::NoLegalPlan
+                | ManaPaymentFailure::SearchLimitReached
+                | ManaPaymentFailure::ConflictingPreferences)) | None => {}
+            // An incomplete calculation is not an unpaid offer. Preserve the
+            // same typed failure boundary as the ordinary foreground planner.
+            Some(Err(error)) => return Err(error),
+        }
+        return Ok(unfunded_mana_payment_plan(game, request));
+    }
+    let result = plan_first_mana_payment(game, request);
+    match result {
+        Err(
+            ManaPaymentFailure::NoLegalPlan
+            | ManaPaymentFailure::SearchLimitReached
+            | ManaPaymentFailure::ConflictingPreferences,
+        ) => Ok(unfunded_mana_payment_plan(game, request)),
+        other => other,
+    }
+}
+
 /// Check for one valid payment without ranking plans for display or execution.
 /// Existence checks first try projected sources without simulating siblings,
 /// then follow one lazy search line. Both stop at the first legal completion.
@@ -219,6 +255,12 @@ pub fn mana_payment_source_inventory(
                 }
             }
         }
+    }
+    for source in super::waterbend_sources(game, request) {
+        by_source
+            .entry(source)
+            .or_default()
+            .push(ManaPaymentSourceKind::Waterbend);
     }
     by_source
         .into_iter()
@@ -339,7 +381,7 @@ fn ready_and_manual_inventory_inner<D: crate::decision::DecisionMaker>(
             }
         });
     let manual = if request.allow_mana_abilities {
-        useful_manual_mana_abilities_with_resolved(game, request, true, &resolved)
+        useful_manual_mana_abilities_with_resolved(game, request, true, true, &resolved)
     } else {
         Vec::new()
     };
@@ -370,46 +412,45 @@ fn activation_inventory_observing<D: crate::decision::DecisionMaker>(
     collect_raw_activation_choices_with_view(game, &unconstrained, false, &analysis.view)
         .into_iter()
         .filter_map(|choice| {
-            let (expected_mana, max_activations) = if let Some(projected) =
-                analysis.project(&choice)
-            {
-                if ready_only && projected.needs_choice {
-                    return None;
-                }
-                (projected.output, 1)
-            } else {
-                let mut staged = game.clone();
-                let before = staged.player(unconstrained.payer)?.mana_pool.clone();
-                let mut decision_maker = chooser();
-                activate_with_mana_triggers(
-                    &mut staged,
-                    unconstrained.payer,
-                    choice.source,
-                    choice.ability_index,
-                    choice.color_restriction.clone(),
-                    &mut decision_maker,
-                )
-                .ok()?;
-                if decision_maker.awaiting_choice() {
-                    return None;
-                }
-                let after = staged.player(unconstrained.payer)?.mana_pool.clone();
-                resolved(&choice, &staged);
-                // Probe the ordinary legality/cost path, including per-turn
-                // limits, life, counters, sacrifices and state-based actions.
-                // A successful second activation does not imply unlimited uses.
-                let probe_limit = expanded_pip_count(request)
-                    .saturating_add(MAX_EXTRA_ACTIVATIONS)
-                    .max(request.preferences.required_activations.len())
-                    .max(2);
-                let mut max_activations = 1;
-                while max_activations < probe_limit {
-                    let legal = {
-                        let view = DerivedGameView::new(&staged);
-                        view.abilities_rc(choice.source)
+            let (expected_mana, max_activations) =
+                if let Some(projected) = analysis.project(&choice) {
+                    if ready_only && projected.needs_choice {
+                        return None;
+                    }
+                    (projected.output, 1)
+                } else {
+                    let mut staged = game.clone();
+                    let before = staged.player(unconstrained.payer)?.mana_pool.clone();
+                    let mut decision_maker = chooser();
+                    activate_with_mana_triggers(
+                        &mut staged,
+                        &unconstrained,
+                        choice.source,
+                        choice.ability_index,
+                        choice.color_restriction.clone(),
+                        &mut decision_maker,
+                    )
+                    .ok()?;
+                    if decision_maker.awaiting_choice() {
+                        return None;
+                    }
+                    let after = staged.player(unconstrained.payer)?.mana_pool.clone();
+                    resolved(&choice, &staged);
+                    // Probe the ordinary legality/cost path, including per-turn
+                    // limits, life, counters, sacrifices and state-based actions.
+                    // A successful second activation does not imply unlimited uses.
+                    let probe_limit = expanded_pip_count(request)
+                        .saturating_add(MAX_EXTRA_ACTIVATIONS)
+                        .max(request.preferences.required_activations.len())
+                        .max(2);
+                    let mut max_activations = 1;
+                    while max_activations < probe_limit {
+                        let legal = {
+                            let view = DerivedGameView::new(&staged);
+                            view.abilities_rc(choice.source)
                             .and_then(|abilities| abilities.get(choice.ability_index).cloned())
                             .is_some_and(|ability| {
-                                crate::special_actions::can_activate_mana_ability_check_with_view(
+                                crate::special_actions::can_activate_mana_ability_check_for_payment_with_view(
                                     &staged,
                                     unconstrained.payer,
                                     choice.source,
@@ -417,35 +458,36 @@ fn activation_inventory_observing<D: crate::decision::DecisionMaker>(
                                     &ability,
                                     &view,
                                     None,
+                                    Some(&unconstrained),
                                 )
                                 .is_ok()
                             })
-                    };
-                    if !legal {
-                        break;
+                        };
+                        if !legal {
+                            break;
+                        }
+                        let previous_pool = staged.player(unconstrained.payer)?.mana_pool.clone();
+                        let mut repeat_decision_maker = chooser();
+                        if activate_with_mana_triggers(
+                            &mut staged,
+                            &unconstrained,
+                            choice.source,
+                            choice.ability_index,
+                            choice.color_restriction.clone(),
+                            &mut repeat_decision_maker,
+                        )
+                        .is_err()
+                            || repeat_decision_maker.awaiting_choice()
+                            || staged
+                                .player(unconstrained.payer)
+                                .is_none_or(|player| player.mana_pool == previous_pool)
+                        {
+                            break;
+                        }
+                        max_activations += 1;
                     }
-                    let previous_pool = staged.player(unconstrained.payer)?.mana_pool.clone();
-                    let mut repeat_decision_maker = chooser();
-                    if activate_with_mana_triggers(
-                        &mut staged,
-                        unconstrained.payer,
-                        choice.source,
-                        choice.ability_index,
-                        choice.color_restriction.clone(),
-                        &mut repeat_decision_maker,
-                    )
-                    .is_err()
-                        || repeat_decision_maker.awaiting_choice()
-                        || staged
-                            .player(unconstrained.payer)
-                            .is_none_or(|player| player.mana_pool == previous_pool)
-                    {
-                        break;
-                    }
-                    max_activations += 1;
-                }
-                (positive_pool_delta(&before, &after), max_activations)
-            };
+                    (positive_pool_delta(&before, &after), max_activations)
+                };
             (expected_mana.total() > 0).then(|| ManaPaymentActivationOption {
                 source: choice.source,
                 ability_index: choice.ability_index,
@@ -468,18 +510,34 @@ pub(super) fn useful_manual_mana_abilities(
     useful_manual_mana_abilities_inner(game, request, true)
 }
 
+/// Foreground source clicks must survive unavailable background analysis.
+/// Only reviewed projections are considered here; unknown effects and costs
+/// keep their authoritative simulation in the deferred inventory.
+pub fn immediate_manual_mana_abilities_checked(
+    game: &GameState,
+    request: &ManaPaymentRequest,
+) -> Result<Vec<(ObjectId, usize)>, crate::effects::ExecutionError> {
+    if !request.allow_mana_abilities {
+        return Ok(Vec::new());
+    }
+    with_inventory_query(game, |query| {
+        useful_manual_mana_abilities_with_resolved(query, request, true, false, &[])
+    })
+}
+
 fn useful_manual_mana_abilities_inner(
     game: &GameState,
     request: &ManaPaymentRequest,
     allow_projection: bool,
 ) -> Vec<(ObjectId, usize)> {
-    useful_manual_mana_abilities_with_resolved(game, request, allow_projection, &[])
+    useful_manual_mana_abilities_with_resolved(game, request, allow_projection, true, &[])
 }
 
 fn useful_manual_mana_abilities_with_resolved(
     game: &GameState,
     request: &ManaPaymentRequest,
     allow_projection: bool,
+    simulate_unknown: bool,
     resolved: &[ResolvedManualActivation],
 ) -> Vec<(ObjectId, usize)> {
     if game
@@ -501,12 +559,16 @@ fn useful_manual_mana_abilities_with_resolved(
     let before = game.covered_mana_payment_pips(request);
     let mut result = Vec::new();
     let mut unconstrained = request.clone();
-    if request.reason != crate::costs::PaymentReason::ActivateManaAbility {
+    if !request.reason.is_mana_ability() {
         unconstrained.preferences.excluded_sources.clear();
     }
     let analysis = super::sources::ManaSourceAnalysis::new(game);
-    for choice in collect_activation_choices_with_view(game, &unconstrained, false, &analysis.view)
-    {
+    let choices = if simulate_unknown {
+        collect_activation_choices_with_view(game, &unconstrained, false, &analysis.view)
+    } else {
+        collect_raw_activation_choices_with_view(game, &unconstrained, false, &analysis.view)
+    };
+    for choice in choices {
         let key = (choice.source, choice.ability_index);
         if result.contains(&key) {
             continue;
@@ -541,24 +603,21 @@ fn useful_manual_mana_abilities_with_resolved(
                 continue;
             }
         }
+        if !simulate_unknown {
+            continue;
+        }
         let mut staged = game.clone();
-        let mut exclusions = unconstrained.preferences.excluded_sources.clone();
+        let mut exclusions = unconstrained.activation_excluded_sources.clone();
         exclusions.push(choice.source);
-        let snapshot = game.object(choice.source).map(|object| {
-            crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-                object, game,
-            )
-        });
-        let has_tap = game.current_ability(choice.source, choice.ability_index).is_some_and(|ability|
-            matches!(&ability.kind, AbilityKind::Activated(activated) if activated.has_tap_cost()));
         let mut decision_maker = SelectFirstDecisionMaker;
-        let Ok(events) = crate::special_actions::perform_mana_ability_with_payment_mode(
+        let Ok(completed) = crate::special_actions::perform_mana_ability_with_payment_outputs(
             &mut staged,
             request.payer,
             choice.source,
             choice.ability_index,
             choice.color_restriction,
             Some(exclusions),
+            request.reserved_tap_sources.clone(),
             &mut decision_maker,
         ) else {
             continue;
@@ -566,18 +625,13 @@ fn useful_manual_mana_abilities_with_resolved(
         if decision_maker.awaiting_choice() {
             continue;
         }
-        for event in events {
+        let Some(activation) = completed.activation_notification else {
+            continue;
+        };
+        for event in completed.events {
             staged.queue_trigger_event(event.provenance(), event);
         }
-        if finish_mana_activation(
-            &mut staged,
-            request.payer,
-            choice.source,
-            has_tap,
-            snapshot,
-            &mut decision_maker,
-        )
-        .is_ok()
+        if finish_mana_activation_with_outputs(&mut staged, activation, &mut decision_maker).is_ok()
             && !decision_maker.awaiting_choice()
             && staged.covered_mana_payment_pips(request) > before
         {
@@ -605,6 +659,80 @@ pub(crate) fn execute_mana_payment_plan_in_context(
     decision_maker: &mut dyn crate::decision::DecisionMaker,
     execution: Option<&crate::effects::ExecutionContextCheckpoint>,
 ) -> Result<super::ManaPaymentExecution, ManaPaymentFailure> {
+    execute_mana_payment_plan_in_context_with_outputs(
+        game,
+        request,
+        expected_plan,
+        decision_maker,
+        execution,
+    )
+    .map(|completed| completed.status)
+}
+
+pub(crate) fn execute_mana_payment_plan_in_context_with_outputs(
+    game: &mut GameState,
+    request: &ManaPaymentRequest,
+    expected_plan: &ManaPaymentPlan,
+    decision_maker: &mut dyn crate::decision::DecisionMaker,
+    execution: Option<&crate::effects::ExecutionContextCheckpoint>,
+) -> Result<super::CompletedManaPayment, ManaPaymentFailure> {
+    let (root, meter) = game.begin_token_resource_scope();
+    let checkpoint = game.clone();
+    let mut result = execute_mana_payment_plan_inner_with_outputs(
+        game,
+        request,
+        expected_plan,
+        decision_maker,
+        execution,
+    );
+    if let Err(ManaPaymentFailure::EffectExecutionFailed(error)) = &result {
+        game.record_token_resource_failure(error);
+    }
+    if let Some(error) = game.token_resource_failure() {
+        result = Err(ManaPaymentFailure::EffectExecutionFailed(error));
+    }
+    if !matches!(&result, Ok(completed) if matches!(completed.status, super::ManaPaymentExecution::Paid))
+        || decision_maker.awaiting_choice()
+    {
+        game.restore_execution_checkpoint(
+            checkpoint,
+            result.is_ok() && decision_maker.awaiting_choice(),
+        );
+    }
+    if decision_maker.awaiting_choice() {
+        if let Ok(completed) = &mut result {
+            completed.outputs.clear();
+        }
+    }
+    game.end_token_resource_scope(root, &meter);
+    result
+}
+
+#[allow(dead_code)]
+fn execute_mana_payment_plan_inner(
+    game: &mut GameState,
+    request: &ManaPaymentRequest,
+    expected_plan: &ManaPaymentPlan,
+    decision_maker: &mut dyn crate::decision::DecisionMaker,
+    execution: Option<&crate::effects::ExecutionContextCheckpoint>,
+) -> Result<super::ManaPaymentExecution, ManaPaymentFailure> {
+    execute_mana_payment_plan_inner_with_outputs(
+        game,
+        request,
+        expected_plan,
+        decision_maker,
+        execution,
+    )
+    .map(|completed| completed.status)
+}
+
+fn execute_mana_payment_plan_inner_with_outputs(
+    game: &mut GameState,
+    request: &ManaPaymentRequest,
+    expected_plan: &ManaPaymentPlan,
+    decision_maker: &mut dyn crate::decision::DecisionMaker,
+    execution: Option<&crate::effects::ExecutionContextCheckpoint>,
+) -> Result<super::CompletedManaPayment, ManaPaymentFailure> {
     let matches = |plan: &ManaPaymentPlan| {
         plan.id == expected_plan.id && plan.request_hash == expected_plan.request_hash
     };
@@ -616,87 +744,108 @@ pub(crate) fn execute_mana_payment_plan_in_context(
             .ok_or(ManaPaymentFailure::StalePlan)?,
     };
     let checkpoint = game.clone();
+    let mut outputs = Vec::new();
+    let execution_request = request.reserving_alternatives(&current.allocations);
     for step in &current.mana_ability_steps {
         let mut replay = super::witness::WitnessDecisionMaker::for_activation(
             step.replacement_witnesses.as_deref(),
             step.production_witnesses.as_deref(),
             decision_maker,
         );
-        if let Err(error) = activate_with_mana_triggers_retaining_state(
+        let activation = activate_with_mana_triggers_retaining_state_with_outputs(
             game,
-            request.payer,
+            &execution_request,
             step.source,
             step.ability_index,
             step.color_restriction.clone(),
             &mut replay,
             false,
-        ) {
-            *game = checkpoint;
-            return Err(ManaPaymentFailure::from_execution(error));
+        );
+        match activation {
+            Ok(children) => outputs.extend(children),
+            Err(error) => {
+                *game = checkpoint;
+                return Err(ManaPaymentFailure::from_execution(error));
+            }
         }
         if replay.awaiting_choice() {
             *game = checkpoint;
-            return Ok(super::ManaPaymentExecution::PendingDecision);
+            return Ok(super::CompletedManaPayment::pending());
         }
         if !replay.complete() {
             *game = checkpoint;
             return Err(ManaPaymentFailure::ExecutionFailed);
         }
     }
-    let before = crate::events::other::before_tap_state_snapshots(game);
-    let mut tapped_events = Vec::new();
-    for allocation in &current.allocations {
-        let success = match allocation.payment {
-            super::PlannedPipPayment::Convoke(source)
-            | super::PlannedPipPayment::Improvise(source) => {
-                if game.object(source).is_none() || game.is_tapped(source) {
-                    false
-                } else {
-                    game.tap(source);
-                    tapped_events.push(crate::triggers::TriggerEvent::new(
-                        crate::events::PermanentTappedEvent::capture(
-                            game,
-                            source,
-                            Some(request.payer),
-                        ),
-                        crate::provenance::ProvNodeId::default(),
-                    ));
-                    true
-                }
-            }
-            super::PlannedPipPayment::Delve(source) => {
-                if !delve_cards(game, request).contains(&source) {
-                    false
-                } else {
-                    let mut context = crate::costs::CostContext::new(
-                        request.source,
-                        request.payer,
-                        decision_maker,
-                    )
-                    .with_reason(request.reason)
-                    .with_pre_chosen_cards(vec![source]);
-                    match crate::costs::Cost::exile_from_graveyard(1, None).pay(game, &mut context)
-                    {
-                        Ok(crate::costs::CostPaymentResult::Paid) => true,
-                        Err(crate::cost::CostPaymentError::ExecutionFailed(error)) => {
-                            *game = checkpoint;
-                            return Err(ManaPaymentFailure::EffectExecutionFailed(error));
+    if !super::validate_waterbend_taps(game, request, &current.allocations) {
+        *game = checkpoint;
+        return Err(ManaPaymentFailure::ExecutionFailed);
+    }
+    let (tap_receipt, payment_execution) = {
+        let mut allocation_execution =
+            crate::effects::ExecutionContext::new(request.source, request.payer, decision_maker);
+        if let Some(execution) = execution {
+            execution.restore_ref(&mut allocation_execution);
+        }
+        let mut cost_context = crate::costs::CostContext::from_execution_context(
+            request.source,
+            request.payer,
+            request.reason,
+            &mut allocation_execution,
+        );
+        let mut taps = crate::effects::permanents::TapAction::new(
+            game,
+            request.payer,
+            cost_context.provenance,
+        );
+        for allocation in &current.allocations {
+            let success = match allocation.payment {
+                super::PlannedPipPayment::Convoke(source)
+                | super::PlannedPipPayment::Waterbend(source)
+                | super::PlannedPipPayment::Improvise(source) => taps.tap(game, source),
+                super::PlannedPipPayment::Delve(source) => {
+                    if !delve_cards(game, request).contains(&source) {
+                        false
+                    } else {
+                        cost_context.pre_chosen_cards = vec![source];
+                        match crate::costs::Cost::exile_from_graveyard(1, None)
+                            .pay_with_outputs(game, &mut cost_context)
+                        {
+                            Ok(receipt)
+                                if matches!(
+                                    receipt.result,
+                                    crate::costs::CostPaymentResult::Paid
+                                ) =>
+                            {
+                                outputs.extend(receipt.outputs);
+                                true
+                            }
+                            Err(crate::cost::CostPaymentError::ExecutionFailed(error)) => {
+                                *game = checkpoint;
+                                return Err(ManaPaymentFailure::EffectExecutionFailed(error));
+                            }
+                            _ => false,
                         }
-                        _ => false,
                     }
                 }
+                _ => true,
+            };
+            if cost_context.decision_maker.awaiting_choice() {
+                game.restore_execution_checkpoint(checkpoint, true);
+                return Ok(super::CompletedManaPayment::pending());
             }
-            _ => true,
-        };
-        if !success {
-            *game = checkpoint;
-            return Err(ManaPaymentFailure::ExecutionFailed);
+            if !success {
+                *game = checkpoint;
+                return Err(ManaPaymentFailure::ExecutionFailed);
+            }
         }
-    }
-    crate::events::other::bind_before_tap_state_snapshots(&mut tapped_events, &before);
-    crate::events::other::group_tap_state_events(game, &mut tapped_events, Default::default());
+        (
+            taps.finish_with_outputs(game),
+            cost_context.capture_execution_context(),
+        )
+    };
     let paid = game
-        .try_pay_mana_cost_with_payment_options_in_context(
+        .try_pay_mana_cost_with_payment_options_and_outputs(
             request.payer,
             Some(request.source),
             &current.mana_cost_after_alternatives,
@@ -707,7 +856,7 @@ pub(crate) fn execute_mana_payment_plan_in_context(
             request.allow_black_life,
             request.preferences.prefer_life,
             decision_maker,
-            execution,
+            Some(&payment_execution),
         )
         .map_err(|error| {
             *game = checkpoint.clone();
@@ -715,15 +864,17 @@ pub(crate) fn execute_mana_payment_plan_in_context(
         })?;
     if decision_maker.awaiting_choice() {
         game.restore_execution_checkpoint(checkpoint, true);
-        return Ok(super::ManaPaymentExecution::PendingDecision);
+        return Ok(super::CompletedManaPayment::pending());
     }
-    if !paid {
+    let Some(spending) = paid else {
         *game = checkpoint;
         return Err(ManaPaymentFailure::ExecutionFailed);
+    };
+    outputs.extend(spending);
+    for event in &tap_receipt.outcome.events {
+        game.queue_trigger_event(event.provenance(), event.clone());
     }
-    for event in tapped_events {
-        game.queue_trigger_event(event.provenance(), event);
-    }
+    outputs.push(tap_receipt);
     for allocation in &current.allocations {
         let (permanent_id, effect, action) = match allocation.payment {
             super::PlannedPipPayment::Convoke(id) => (
@@ -755,15 +906,57 @@ pub(crate) fn execute_mana_payment_plan_in_context(
         let provenance = game
             .provenance_graph_mut()
             .alloc_root_event(crate::events::EventKind::KeywordAction);
-        game.queue_trigger_event(
-            provenance,
-            crate::triggers::TriggerEvent::new_with_provenance(
-                crate::events::KeywordActionEvent::new(action, request.payer, request.source, 1),
-                provenance,
-            ),
-        );
+        let completion =
+            crate::effects::composition::observe_keyword_action_completion_with_outputs(
+                game,
+                crate::triggers::TriggerEvent::new_with_provenance(
+                    crate::events::KeywordActionEvent::new(
+                        action,
+                        request.payer,
+                        request.source,
+                        1,
+                    ),
+                    provenance,
+                ),
+            );
+        let completion = retain_keyword_payment_completion_result(game, &checkpoint, completion)?;
+        for event in &completion.outcome.events {
+            game.queue_trigger_event(event.provenance(), event.clone());
+        }
+        outputs.push(completion);
     }
-    Ok(super::ManaPaymentExecution::Paid)
+    outputs.extend(
+        super::record_waterbend_payment_with_outputs(game, request).map_err(|error| {
+            game.restore_execution_checkpoint(checkpoint, false);
+            ManaPaymentFailure::EffectExecutionFailed(error)
+        })?,
+    );
+    Ok(super::CompletedManaPayment {
+        status: super::ManaPaymentExecution::Paid,
+        outputs,
+    })
+}
+
+/// A failed completion belongs to the entire payment transaction. Retain its
+/// exact engine error while undoing taps, spending and contribution receipts.
+#[allow(dead_code)]
+fn retain_keyword_payment_completion(
+    game: &mut GameState,
+    checkpoint: &GameState,
+    completion: Result<crate::effect::EffectOutcome, crate::effects::ExecutionError>,
+) -> Result<crate::effect::EffectOutcome, ManaPaymentFailure> {
+    retain_keyword_payment_completion_result(game, checkpoint, completion)
+}
+
+fn retain_keyword_payment_completion_result<T>(
+    game: &mut GameState,
+    checkpoint: &GameState,
+    completion: Result<T, crate::effects::ExecutionError>,
+) -> Result<T, ManaPaymentFailure> {
+    completion.map_err(|error| {
+        *game = checkpoint.clone();
+        ManaPaymentFailure::EffectExecutionFailed(error)
+    })
 }
 
 /// Whether every mana ability the solver counted can be used at most once
@@ -855,7 +1048,7 @@ fn remaining_mana_is_unpayable(game: &GameState, request: &ManaPaymentRequest) -
     // query. Calling that query here would re-enter the same payment search.
     // Keep the preceding conservative bounds, then let the current search
     // validate producer provenance and the X allocation itself.
-    if !request.cost.spending_restrictions().is_empty() {
+    if !request.cost.spending_restrictions().is_empty() || request.cost.has_waterbend_obligation() {
         return false;
     }
     !crate::decision::can_pay_mana_cost_with_available_sources(
@@ -1128,6 +1321,9 @@ fn affordability_solver_sees_every_resource(
     game: &GameState,
     request: &ManaPaymentRequest,
 ) -> bool {
+    if request.cost.has_waterbend_obligation() {
+        return false;
+    }
     // Reserved graveyard cards and announced sacrifices are spendable by the
     // planner and invisible to the solver.
     if !request.reserved_graveyard_sources.is_empty()
@@ -1195,7 +1391,13 @@ impl ManaPaymentPlanner {
         let meter = scope.meter();
         let mut staged = game.clone();
         staged.bind_token_query_meter(meter.clone());
-        let mut result = self.plan_internal_with_resources(&staged, request, stop_after_first);
+        let mut result = match super::validate_waterbend_scope(request) {
+            Ok(()) => self.plan_internal_with_resources(&staged, request, stop_after_first),
+            Err(error) => {
+                staged.record_token_resource_failure(&error);
+                Err(ManaPaymentFailure::EffectExecutionFailed(error))
+            }
+        };
         if let Some(error) = crate::effects::tokens::resources::failure(&meter) {
             // A nested query owns its own work budget, but its enclosing
             // execution must still learn that a branch could not be computed.
@@ -1252,6 +1454,19 @@ impl ManaPaymentPlanner {
             return Err(ManaPaymentFailure::ConflictingPreferences);
         }
 
+        if request
+            .preferences
+            .required_activations
+            .iter()
+            .any(|activation| {
+                request
+                    .activation_excluded_sources
+                    .contains(&activation.source)
+            })
+        {
+            return Err(ManaPaymentFailure::ConflictingPreferences);
+        }
+
         // Only on a fresh search: a resumed slice has already paid for this.
         if self.outer.is_none()
             && !self.skip_affordability_gate
@@ -1299,19 +1514,7 @@ impl ManaPaymentPlanner {
                 // CR 601.2g precedes keyword payments in 601.2h. Reserve
                 // resources while searching, but do not tap/exile them early.
                 let staged = game.clone();
-                let mut payment_request = request.clone();
-                for allocation in &selection.allocations {
-                    match allocation.payment {
-                        super::PlannedPipPayment::Convoke(source)
-                        | super::PlannedPipPayment::Improvise(source) => {
-                            payment_request.reserved_tap_sources.push(source);
-                        }
-                        super::PlannedPipPayment::Delve(source) => {
-                            payment_request.reserved_graveyard_sources.push(source);
-                        }
-                        _ => {}
-                    }
-                }
+                let mut payment_request = request.reserving_alternatives(&selection.allocations);
                 payment_request.cost = request
                     .cost
                     .clone()
@@ -1327,6 +1530,7 @@ impl ManaPaymentPlanner {
                 for allocation in &selection.allocations {
                     let source = match allocation.payment {
                         super::PlannedPipPayment::Convoke(source)
+                        | super::PlannedPipPayment::Waterbend(source)
                         | super::PlannedPipPayment::Improvise(source)
                         | super::PlannedPipPayment::Delve(source) => source,
                         _ => continue,
@@ -1901,7 +2105,7 @@ impl CandidateSearch {
                 }
                 let score = search_candidate_score(&game, request, &activations);
                 self.out.push((score, game.clone(), activations));
-                if self.first || score_reaches_search_floor(score) {
+                if self.first || score.reaches_search_floor() {
                     return self.finish();
                 }
                 self.out.sort_by_key(|candidate| candidate.0);
@@ -2072,7 +2276,7 @@ impl ProposalCleanup {
 /// activation. Callers own the transaction checkpoint (or a disposable branch).
 fn activate_with_mana_triggers(
     game: &mut GameState,
-    payer: crate::ids::PlayerId,
+    request: &ManaPaymentRequest,
     source: ObjectId,
     ability_index: usize,
     colors: Option<Vec<Color>>,
@@ -2080,7 +2284,7 @@ fn activate_with_mana_triggers(
 ) -> Result<(), crate::game_loop::GameLoopError> {
     activate_with_mana_triggers_retaining_state(
         game,
-        payer,
+        request,
         source,
         ability_index,
         colors,
@@ -2091,7 +2295,7 @@ fn activate_with_mana_triggers(
 
 fn activate_with_mana_witnesses(
     game: &mut GameState,
-    payer: crate::ids::PlayerId,
+    request: &ManaPaymentRequest,
     source: ObjectId,
     ability_index: usize,
     colors: Option<Vec<Color>>,
@@ -2102,7 +2306,7 @@ fn activate_with_mana_witnesses(
     let Some(witnesses) = witnesses else {
         return activate_with_mana_triggers_retaining_state(
             game,
-            payer,
+            request,
             source,
             ability_index,
             colors,
@@ -2113,7 +2317,7 @@ fn activate_with_mana_witnesses(
     let mut replay = super::witness::WitnessDecisionMaker::new(witnesses, decision_maker);
     activate_with_mana_triggers_retaining_state(
         game,
-        payer,
+        request,
         source,
         ability_index,
         colors,
@@ -2130,27 +2334,50 @@ fn activate_with_mana_witnesses(
 
 fn activate_with_mana_triggers_retaining_state(
     game: &mut GameState,
-    payer: crate::ids::PlayerId,
+    request: &ManaPaymentRequest,
     source: ObjectId,
     ability_index: usize,
     colors: Option<Vec<Color>>,
     decision_maker: &mut dyn crate::decision::DecisionMaker,
     retain_continuous: bool,
 ) -> Result<(), crate::game_loop::GameLoopError> {
-    let snapshot = game.object(source).map(|object| {
-        crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
-    });
-    let has_tap = game.current_ability(source, ability_index).is_some_and(|ability| {
-        matches!(&ability.kind, AbilityKind::Activated(activated) if activated.has_tap_cost())
-    });
-    crate::special_actions::perform_activate_mana_ability_restricted_colors(
+    activate_with_mana_triggers_retaining_state_with_outputs(
         game,
-        payer,
+        request,
         source,
         ability_index,
         colors,
         decision_maker,
+        retain_continuous,
+    )
+    .map(|_| ())
+}
+
+fn activate_with_mana_triggers_retaining_state_with_outputs(
+    game: &mut GameState,
+    request: &ManaPaymentRequest,
+    source: ObjectId,
+    ability_index: usize,
+    colors: Option<Vec<Color>>,
+    decision_maker: &mut dyn crate::decision::DecisionMaker,
+    retain_continuous: bool,
+) -> Result<Vec<crate::effects::CompletedEffectOutputs>, crate::game_loop::GameLoopError> {
+    let mut exclusions = request.activation_excluded_sources.clone();
+    exclusions.push(source);
+    let completed = crate::special_actions::perform_mana_ability_with_payment_outputs(
+        game,
+        request.payer,
+        source,
+        ability_index,
+        colors,
+        Some(exclusions),
+        request.reserved_tap_sources.clone(),
+        decision_maker,
     )?;
+    let mut outputs = completed.outputs;
+    for event in completed.events {
+        game.queue_trigger_event(event.provenance(), event);
+    }
     if !decision_maker.awaiting_choice() {
         // Trigger queuing queries characteristics and refreshes dirty state.
         // Retain before that boundary, while the proven tap/mana-only
@@ -2158,32 +2385,37 @@ fn activate_with_mana_triggers_retaining_state(
         if retain_continuous {
             game.retain_continuous_state_after_mana_activation();
         }
-        finish_mana_activation(game, payer, source, has_tap, snapshot, decision_maker)?;
+        let activation = completed.activation_notification.ok_or_else(|| {
+            crate::game_loop::GameLoopError::ExecutionFailed(
+                crate::effects::ExecutionError::IncompleteEvidence(
+                    "completed mana activation has no prepared notification".into(),
+                ),
+            )
+        })?;
+        outputs.extend(finish_mana_activation_with_outputs(
+            game,
+            activation,
+            decision_maker,
+        )?);
     }
-    Ok(())
+    if decision_maker.awaiting_choice() {
+        outputs.clear();
+    }
+    Ok(outputs)
 }
 
-fn finish_mana_activation(
+fn finish_mana_activation_with_outputs(
     game: &mut GameState,
-    payer: crate::ids::PlayerId,
-    source: ObjectId,
-    has_tap: bool,
-    snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    activation: crate::events::AbilityActivatedEvent,
     decision_maker: &mut dyn crate::decision::DecisionMaker,
-) -> Result<(), crate::game_loop::GameLoopError> {
-    let provenance = game
-        .provenance_graph_mut()
-        .alloc_root_event(crate::events::EventKind::AbilityActivated);
-    game.queue_trigger_event(
-        provenance,
-        crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::AbilityActivatedEvent::new(source, payer, true)
-                .with_activation_cost_has_tap(has_tap)
-                .with_snapshot(snapshot),
-            provenance,
-        ),
+) -> Result<Vec<crate::effects::CompletedEffectOutputs>, crate::game_loop::GameLoopError> {
+    let mut outputs = vec![super::publish_mana_activation_with_outputs(
+        game, activation,
+    )];
+    outputs.extend(
+        crate::game_loop::resolve_pending_mana_triggers_with_outputs(game, decision_maker)?,
     );
-    crate::game_loop::resolve_pending_mana_triggers(game, decision_maker)
+    Ok(outputs)
 }
 
 pub(super) fn prepare_activation(
@@ -2208,7 +2440,7 @@ pub(super) fn prepare_owned_activation(
         let view = DerivedGameView::new(&staged);
         let abilities = view.abilities_rc(choice.source)?;
         let ability = abilities.get(choice.ability_index)?;
-        crate::special_actions::can_activate_mana_ability_check_with_view(
+        crate::special_actions::can_activate_mana_ability_check_for_payment_with_view(
             &staged,
             request.payer,
             choice.source,
@@ -2216,6 +2448,7 @@ pub(super) fn prepare_owned_activation(
             ability,
             &view,
             None,
+            Some(request),
         )
         .ok()?;
     }
@@ -2252,7 +2485,7 @@ pub(super) fn prepare_owned_activation(
     .with_stored_colors(choice.stored_color_choices.clone());
     if let Err(error) = activate_with_mana_witnesses(
         &mut staged,
-        request.payer,
+        request,
         choice.source,
         choice.ability_index,
         choice.color_restriction.clone(),
@@ -2408,14 +2641,6 @@ impl ManaPaymentAnalysis {
     }
 }
 
-fn score_reaches_search_floor(score: ManaPaymentScore) -> bool {
-    score.irreversible_cost == 0
-        && score.life_paid == 0
-        && score.preserved_sources_used == 0
-        && score.excess_mana == 0
-        && score.flexible_sources_used == 0
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct ActivationChoice {
     pub(super) replacement_witnesses: Option<Vec<super::ManaReplacementWitness>>,
@@ -2436,6 +2661,7 @@ struct PaymentPipSlot {
 
 #[derive(Debug, Clone, Copy)]
 enum AlternativeKind {
+    Waterbend(u32),
     Convoke(crate::color::ColorSet),
     Improvise,
     Delve,
@@ -2642,6 +2868,9 @@ impl Iterator for AlternativeAssignments {
                             AlternativeKind::Delve => {
                                 super::PlannedPipPayment::Delve(source.source)
                             }
+                            AlternativeKind::Waterbend(_) => {
+                                super::PlannedPipPayment::Waterbend(source.source)
+                            }
                         };
                         allocations.push(PlannedPipAllocation {
                             pip: slot.pip,
@@ -2660,6 +2889,9 @@ impl Iterator for AlternativeAssignments {
             }
             let source = self.sources[index];
             self.pending.push((index + 1, selected.clone()));
+            if !waterbend_selection_has_capacity(source.kind, &selected) {
+                continue;
+            }
             if selected
                 .iter()
                 .flatten()
@@ -2743,29 +2975,13 @@ fn alternative_payment_selections(
         }
     }
 
-    if request.reason != crate::costs::PaymentReason::CastSpell
-        || request.assist_completion.is_some()
-    {
-        return AlternativeSelectionStream::only(vec![AlternativeSelection {
-            remaining: pips,
-            allocations: Vec::new(),
-        }]);
-    }
-
-    let Some(source) = game.object(request.source) else {
-        return AlternativeSelectionStream::only(vec![AlternativeSelection {
-            remaining: pips,
-            allocations: Vec::new(),
-        }]);
-    };
-    if game.controller_of(source) != request.payer {
-        return AlternativeSelectionStream::only(vec![AlternativeSelection {
-            remaining: pips,
-            allocations: Vec::new(),
-        }]);
-    }
+    let spell_source = game.object(request.source).filter(|source| {
+        request.reason == crate::costs::PaymentReason::CastSpell
+            && request.assist_completion.is_none()
+            && game.controller_of(source) == request.payer
+    });
     let mut sources = Vec::new();
-    if crate::decision::spell_has_convoke(game, source) {
+    if spell_source.is_some_and(|source| crate::decision::spell_has_convoke(game, source)) {
         sources.extend(
             crate::decision::get_convoke_creatures(game, request.payer)
                 .into_iter()
@@ -2784,7 +3000,7 @@ fn alternative_payment_selections(
                 }),
         );
     }
-    if crate::decision::spell_has_delve(game, source) {
+    if spell_source.is_some_and(|source| crate::decision::spell_has_delve(game, source)) {
         sources.extend(
             delve_cards(game, request)
                 .into_iter()
@@ -2800,7 +3016,7 @@ fn alternative_payment_selections(
                 }),
         );
     }
-    if crate::decision::spell_has_improvise(game, source) {
+    if spell_source.is_some_and(|source| crate::decision::spell_has_improvise(game, source)) {
         for artifact in crate::decision::get_improvise_artifacts(game, request.payer) {
             if request.preferences.excluded_sources.contains(&artifact)
                 || request.reserved_tap_sources.contains(&artifact)
@@ -2817,6 +3033,13 @@ fn alternative_payment_selections(
                 ),
             });
         }
+    }
+    for source in super::waterbend_sources(game, request) {
+        sources.push(AlternativeSource {
+            source,
+            kind: AlternativeKind::Waterbend(request.cost.waterbend_capacity(request.x_value)),
+            required: alternative_is_required(request, source, ManaPaymentSourceKind::Waterbend),
+        });
     }
     sources.sort_by_key(|candidate| {
         (
@@ -2856,6 +3079,7 @@ fn alternative_payment_selections(
             .iter()
             .filter_map(|allocation| match allocation.payment {
                 super::PlannedPipPayment::Convoke(source)
+                | super::PlannedPipPayment::Waterbend(source)
                 | super::PlannedPipPayment::Improvise(source)
                 | super::PlannedPipPayment::Delve(source) => Some(source),
                 _ => None,
@@ -2971,7 +3195,8 @@ fn allocation_matches_required_alternative(
     match (required.kind, &allocation.payment) {
         (ManaPaymentSourceKind::Convoke, super::PlannedPipPayment::Convoke(source))
         | (ManaPaymentSourceKind::Improvise, super::PlannedPipPayment::Improvise(source))
-        | (ManaPaymentSourceKind::Delve, super::PlannedPipPayment::Delve(source)) => {
+        | (ManaPaymentSourceKind::Delve, super::PlannedPipPayment::Delve(source))
+        | (ManaPaymentSourceKind::Waterbend, super::PlannedPipPayment::Waterbend(source)) => {
             *source == required.source
         }
         _ => false,
@@ -3012,6 +3237,9 @@ fn enumerate_alternative_selections(
                         super::PlannedPipPayment::Convoke(alternative.source)
                     }
                     AlternativeKind::Delve => super::PlannedPipPayment::Delve(alternative.source),
+                    AlternativeKind::Waterbend(_) => {
+                        super::PlannedPipPayment::Waterbend(alternative.source)
+                    }
                     AlternativeKind::Improvise => {
                         super::PlannedPipPayment::Improvise(alternative.source)
                     }
@@ -3036,6 +3264,9 @@ fn enumerate_alternative_selections(
     let source = sources[source_index];
     let include_source = |selected: &mut [Option<AlternativeSource>],
                           out: &mut Vec<AlternativeSelection>| {
+        if !waterbend_selection_has_capacity(source.kind, selected) {
+            return;
+        }
         if selected
             .iter()
             .flatten()
@@ -3085,6 +3316,23 @@ fn enumerate_alternative_selections(
     }
 }
 
+fn waterbend_selection_has_capacity(
+    kind: AlternativeKind,
+    selected: &[Option<AlternativeSource>],
+) -> bool {
+    match kind {
+        AlternativeKind::Waterbend(maximum) => {
+            selected
+                .iter()
+                .flatten()
+                .filter(|source| matches!(source.kind, AlternativeKind::Waterbend(_)))
+                .count()
+                < maximum as usize
+        }
+        _ => true,
+    }
+}
+
 fn alternative_can_pay(kind: AlternativeKind, pip: &[ManaSymbol]) -> bool {
     // CR 702.51a / 702.66a / 702.126a: each tapped creature, tapped artifact,
     // or exiled card pays for one generic mana. A single resource can't pay the
@@ -3098,7 +3346,10 @@ fn alternative_can_pay(kind: AlternativeKind, pip: &[ManaSymbol]) -> bool {
         (AlternativeKind::Convoke(colors), ManaSymbol::Black) => colors.contains(Color::Black),
         (AlternativeKind::Convoke(colors), ManaSymbol::Red) => colors.contains(Color::Red),
         (AlternativeKind::Convoke(colors), ManaSymbol::Green) => colors.contains(Color::Green),
-        (AlternativeKind::Improvise | AlternativeKind::Delve, ManaSymbol::Generic(_)) => true,
+        (
+            AlternativeKind::Improvise | AlternativeKind::Delve | AlternativeKind::Waterbend(_),
+            ManaSymbol::Generic(_),
+        ) => true,
         _ => false,
     })
 }
@@ -3418,7 +3669,9 @@ fn collect_raw_activation_choices_with_view(
     let mut out = Vec::new();
 
     for &source in analysis.mana_source_ids() {
-        if request.preferences.excluded_sources.contains(&source) {
+        if request.preferences.excluded_sources.contains(&source)
+            || request.activation_excluded_sources.contains(&source)
+        {
             continue;
         }
         let Some(object) = game.object(source) else {
@@ -3436,7 +3689,7 @@ fn collect_raw_activation_choices_with_view(
             };
             if (request.reserved_tap_sources.contains(&source) && mana_ability.has_tap_cost())
                 || !mana_ability.is_runtime_mana_ability(game, source, request.payer)
-                || crate::special_actions::can_activate_mana_ability_check_with_view(
+                || crate::special_actions::can_activate_mana_ability_check_for_payment_with_view(
                     game,
                     request.payer,
                     source,
@@ -3444,6 +3697,7 @@ fn collect_raw_activation_choices_with_view(
                     ability,
                     view,
                     None,
+                    Some(request),
                 )
                 .is_err()
                 || (ability_mana_is_unusable_for_request(game, request, source, mana_ability)
@@ -3872,6 +4126,7 @@ fn build_plan(
         .iter()
         .filter_map(|allocation| match allocation.payment {
             super::PlannedPipPayment::Convoke(source)
+            | super::PlannedPipPayment::Waterbend(source)
             | super::PlannedPipPayment::Improvise(source)
             | super::PlannedPipPayment::Delve(source) => Some(source),
             _ => None,
@@ -3998,6 +4253,9 @@ fn request_hash(request: &ManaPaymentRequest) -> u64 {
         "consumer mana spending constraints".hash(&mut hasher);
         request.cost.spending_restrictions().hash(&mut hasher);
     }
+    if let Some(scope) = request.cost.waterbend_payment_scope() {
+        scope.hash(&mut hasher);
+    }
     if let Some(scope) = request.cost.x_payment_scope() {
         "generic X payment scope".hash(&mut hasher);
         scope.hash(&mut hasher);
@@ -4017,6 +4275,7 @@ fn request_hash(request: &ManaPaymentRequest) -> u64 {
     request.x_value.hash(&mut hasher);
     request.allow_mana_abilities.hash(&mut hasher);
     request.reserved_tap_sources.hash(&mut hasher);
+    request.activation_excluded_sources.hash(&mut hasher);
     request.reserved_graveyard_sources.hash(&mut hasher);
     request.reserved_permanent_sources.hash(&mut hasher);
     request.allow_life_payment.hash(&mut hasher);
@@ -4056,6 +4315,9 @@ fn plan_hash(
     if !payment_cost.spending_restrictions().is_empty() {
         "consumer mana spending constraints".hash(&mut hasher);
         payment_cost.spending_restrictions().hash(&mut hasher);
+    }
+    if let Some(scope) = payment_cost.waterbend_payment_scope() {
+        scope.hash(&mut hasher);
     }
     if let Some(scope) = payment_cost.x_payment_scope() {
         "generic X payment scope".hash(&mut hasher);
@@ -6154,6 +6416,53 @@ mod tests {
     }
 
     #[test]
+    fn deferred_prompt_confirms_floating_mana_without_background_planning() {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                crate::game_loop::set_priority_analysis_deferred(self.0);
+            }
+        }
+        let _restore = Restore(crate::game_loop::priority_analysis_deferred());
+        crate::game_loop::set_priority_analysis_deferred(true);
+        let (mut game, alice) = game();
+        let source = game.new_object_id();
+        let request = request(
+            &game,
+            alice,
+            source,
+            ManaCost::from_symbols(vec![ManaSymbol::Generic(1), ManaSymbol::Red]),
+        );
+        // Total mana alone is insufficient: the colored pip must be payable.
+        game.player_mut(alice).unwrap().mana_pool.blue = 2;
+        assert!(!plan_prompt_mana_payment(&game, &request, true).unwrap().payable);
+        game.player_mut(alice).unwrap().mana_pool.blue = 0;
+        game.player_mut(alice).unwrap().mana_pool.red = 1;
+        assert!(!plan_prompt_mana_payment(&game, &request, true).unwrap().payable);
+        game.player_mut(alice).unwrap().mana_pool.red = 2;
+        // Allocate before planning: a fresh object id changes the planned state.
+        let missing_source = game.new_object_id();
+        let plan = plan_prompt_mana_payment(&game, &request, true).unwrap();
+        assert!(plan.payable);
+        assert!(plan.mana_ability_steps.is_empty());
+        assert_eq!(plan.allocations.len(), 2);
+        assert_eq!(plan.expected_pool_after_payment.total(), 0);
+        assert_eq!(
+            game.player(alice).unwrap().mana_pool.red,
+            2,
+            "preview must not spend mana"
+        );
+        let mut pinned = request.clone();
+        pinned.preferences.required_sources.push(missing_source);
+        assert!(!plan_prompt_mana_payment(&game, &pinned, true).unwrap().payable);
+        assert_eq!(
+            execute_mana_payment_plan(&mut game, &request, &plan, &mut SelectFirstDecisionMaker),
+            Ok(super::super::ManaPaymentExecution::Paid)
+        );
+        assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
+    }
+
+    #[test]
     fn pool_preview_and_commit_use_the_same_allocation() {
         let (mut game, alice) = game();
         let source = game.new_object_id();
@@ -7323,6 +7632,45 @@ mod token_resource_failure_tests {
         }
     }
 
+    // UNRUN: new-main foreground slicing must keep the campaign's typed
+    // resource/evidence failure boundary while leaving the live game intact.
+    #[test]
+    fn deferred_prompt_preserves_resource_and_waterbend_evidence_failures() {
+        struct RestoreDeferred(bool);
+        impl Drop for RestoreDeferred {
+            fn drop(&mut self) {
+                crate::game_loop::set_priority_analysis_deferred(self.0);
+            }
+        }
+        let _restore = RestoreDeferred(crate::game_loop::priority_analysis_deferred());
+        crate::game_loop::set_priority_analysis_deferred(true);
+        let (game, player, source, request) = fixture();
+        let next_id = game.next_object_id_counter();
+        let history = game.turn_store.turn_history.event_records.len();
+        assert!(matches!(
+            plan_prompt_mana_payment(&game, &request, true),
+            Err(ManaPaymentFailure::EffectExecutionFailed(
+                ExecutionError::ResourceLimitExceeded { .. }
+            ))
+        ));
+        let overflowing = ManaPaymentRequest::new(
+            player, source, crate::costs::PaymentReason::Effect,
+            crate::mana::ManaCost::from_symbols(vec![ManaSymbol::X; 2]).with_waterbend(),
+        ).with_x(u32::MAX);
+        assert!(matches!(
+            plan_prompt_mana_payment(&game, &overflowing, true),
+            Err(ManaPaymentFailure::EffectExecutionFailed(
+                ExecutionError::IncompleteEvidence(_)
+            ))
+        ));
+        assert!(!game.is_tapped(source));
+        assert_eq!(game.battlefield.len(), 1);
+        assert_eq!(game.player(player).unwrap().mana_pool.total(), 0);
+        assert_eq!(game.next_object_id_counter(), next_id);
+        assert_eq!(game.turn_store.turn_history.event_records.len(), history);
+        assert!(game.effect_store.pending_trigger_events.is_empty());
+    }
+
     #[test]
     fn actual_manual_mana_activation_keeps_error_and_restores_tap_and_tokens() {
         let (mut game, _, source, request) = fixture();
@@ -7599,5 +7947,111 @@ mod producer_characteristic_failure_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod retained_payment_error_tests {
+    use super::*;
+    use crate::effects::{EffectExecutor, ExecutionContext, ExecutionError};
+    use crate::ids::{CardId, PlayerId};
+    use crate::zone::Zone;
+
+    #[derive(Debug, Clone)]
+    struct PromptThenFinish { fail: bool }
+    impl EffectExecutor for PromptThenFinish {
+        fn execute(&self, game: &mut GameState, ctx: &mut ExecutionContext)
+            -> Result<crate::effect::EffectOutcome, ExecutionError>
+        {
+            ctx.decision_maker.decide_boolean(game, &crate::decisions::context::BooleanContext::new(
+                ctx.controller, Some(ctx.source), "Replacement input",
+            ));
+            if self.fail {
+                Err(ExecutionError::InternalError("Delve replacement failed after opening input".into()))
+            } else { Ok(crate::effect::EffectOutcome::count(0)) }
+        }
+    }
+    struct PendingInput { pending: bool }
+    impl crate::decision::DecisionMaker for PendingInput {
+        fn decide_boolean(&mut self, _: &GameState, _: &crate::decisions::context::BooleanContext) -> bool {
+            self.pending = true;
+            false
+        }
+        fn awaiting_choice(&self) -> bool { self.pending }
+    }
+
+    #[test]
+    fn delve_execution_error_wins_over_pending_but_input_alone_stays_pending() {
+        for fail in [false, true] {
+            let player = PlayerId::from_index(0);
+            let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+            let card = crate::card::CardBuilder::new(CardId::new(), "Delve error resource").build();
+            let resource = game.create_object_from_card(&card, player, Zone::Graveyard);
+            let spell = game.create_object_from_card(&card, player, Zone::Stack);
+            game.object_mut(spell).unwrap().abilities_mut().push(crate::ability::Ability::static_ability(
+                crate::static_abilities::StaticAbility::delve(),
+            ));
+            game.effect_store.replacement_effects.add_resolution_effect(
+                crate::replacement::ReplacementEffect::with_matcher(spell, player,
+                    crate::events::zones::matchers::WouldChangeZoneMatcher::new(
+                        crate::target::ObjectFilter::specific(resource), Some(Zone::Graveyard), Some(Zone::Exile),
+                    ),
+                    crate::replacement::ReplacementAction::Additionally(vec![
+                        crate::effect::Effect::new(PromptThenFinish { fail }),
+                    ]),
+                ),
+            );
+            let mut request = ManaPaymentRequest::new(player, spell, crate::costs::PaymentReason::CastSpell,
+                crate::mana::ManaCost::new().add_generic(1));
+            request.preferences.required_alternatives.push(super::super::RequiredAlternativePayment {
+                source: resource, kind: ManaPaymentSourceKind::Delve,
+            });
+            let plan = plan_first_mana_payment(&game, &request).expect("the retained alternative is payable before its replacement runs");
+            game.take_pending_trigger_events();
+            let before_id = game.next_object_id_counter();
+            let mut dm = PendingInput { pending: false };
+            let result = execute_mana_payment_plan_inner(&mut game, &request, &plan, &mut dm, None);
+            assert!(dm.pending, "replacement actually surfaced its input");
+            if fail {
+                assert_eq!(result, Err(ManaPaymentFailure::EffectExecutionFailed(
+                    ExecutionError::InternalError("Delve replacement failed after opening input".into()),
+                )));
+            } else {
+                assert_eq!(result, Ok(super::super::ManaPaymentExecution::PendingDecision));
+            }
+            assert_eq!(game.object(resource).unwrap().zone, Zone::Graveyard);
+            assert!(game.exile.is_empty());
+            assert_eq!(game.next_object_id_counter(), before_id);
+            assert_eq!(game.player(player).unwrap().mana_pool.total(), 0);
+            assert!(game.take_pending_trigger_events().is_empty());
+        }
+    }
+
+    #[test]
+    fn failed_keyword_observation_preserves_error_and_rolls_back_complete_payment() {
+        let player = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let card = crate::card::CardBuilder::new(CardId::new(), "Keyword payment resource")
+            .card_types(vec![crate::types::CardType::Artifact]).build();
+        let resource = game.create_object_from_card(&card, player, Zone::Battlefield);
+        let spell = game.create_object_from_card(&card, player, Zone::Stack);
+        let checkpoint = game.clone();
+        game.tap(resource);
+        game.player_mut(player).unwrap().mana_pool.add(ManaSymbol::Red, 1);
+        game.object_mut(spell).unwrap().keyword_payment_contributions_to_cast.push(
+            crate::decision::KeywordPaymentContribution {
+                permanent_id: resource, effect: crate::decision::AlternativePaymentEffect::Improvise,
+            },
+        );
+        let error = ExecutionError::ResourceLimitExceeded {
+            resource: "keyword completion observation", requested: 2, maximum: 1,
+        };
+        // Inject failure at the real observation adapter after its payment
+        // prefix, rather than relying on a resource-query latch to repair it.
+        let result = retain_keyword_payment_completion(&mut game, &checkpoint, Err(error.clone()));
+        assert_eq!(result, Err(ManaPaymentFailure::EffectExecutionFailed(error)));
+        assert!(!game.is_tapped(resource));
+        assert_eq!(game.player(player).unwrap().mana_pool.total(), 0);
+        assert!(game.object(spell).unwrap().keyword_payment_contributions_to_cast.is_empty());
     }
 }

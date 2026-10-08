@@ -686,6 +686,12 @@ fn read_regenerate_then_gain_control(
 fn read_consult_then_put_matches_battlefield_rest_bottom(
     input: &Bundle<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    // The general consult-disposition reading covers the untapped
+    // "put those cards onto the battlefield and the rest ..." shape with the
+    // same meaning; defer to it so the two never compete for one input.
+    if parse_consult_disposition_bundle(input.tokens).is_some() {
+        return Ok(None);
+    }
     let sentences = &input.sentences;
     if sentences.len() == 2
         && let Ok(Some(effects)) = parse_consult_then_put_matches_battlefield_rest_bottom_bundle(
@@ -725,6 +731,10 @@ fn read_optional_result_exile_choice_play(
     input: &Bundle<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let sentences = &input.sentences;
+    if let Some(effects) = parse_exile_hand_draw_play_bundle(sentences)? { return Ok(Some(effects)); }
+    if sentences.len() == 4
+        && let Some(effects) = parse_optional_private_exile_play_bundle(sentences)?
+    { return Ok(Some(effects)); }
     if sentences.len() == 3
         && let Ok(Some(effects)) = parse_optional_result_exile_choice_play_bundle(&sentences)
     {

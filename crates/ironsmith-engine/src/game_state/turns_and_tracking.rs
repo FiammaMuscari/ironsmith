@@ -541,10 +541,9 @@ impl GameState {
         player: PlayerId,
     ) -> impl Iterator<Item = &TurnEventRecord> {
         self.turn_store
-            .action_history_by_player
-            .get(&player)
-            .into_iter()
-            .flat_map(|records| records.iter().map(Arc::as_ref))
+            .action_history
+            .iter()
+            .filter(move |record| record.involves_player(player))
     }
 
     /// Actions from a player's most recent turn.
@@ -1027,14 +1026,19 @@ impl GameState {
             .restriction_effects
             .iter_mut()
             .filter(|effect| {
-                effect.controller == player
+                matches!(&effect.duration,
+                    Until::PlayersNextUntapStep { player: crate::target::PlayerFilter::Specific(bound) }
+                        if *bound == player)
+                || (effect.controller == player
+                    && effect.untap_step_object.is_none()
                     && matches!(
                         effect.duration,
                         Until::YourNextTurn
                             | Until::YourNextTurnEnd
                             | Until::YourNextUpkeep
                             | Until::ControllersNextUntapStep
-                    )
+                            | Until::YourNextUntapStep
+                    ))
             })
         {
             effect.duration = Until::YourNextTurnEnd;
@@ -1113,6 +1117,7 @@ impl GameState {
             choices
                 .chosen_named_options
                 .retain(|source, _| !removed_ids.contains(source));
+            choices.numeric_acquisitions.retain(|owner,_|!removed_ids.contains(&owner.host));
         }
 
         {
@@ -1602,6 +1607,8 @@ impl GameState {
         self.turn_store.spells_cast_last_turn_total =
             self.turn_store.turn_history.total_spells_cast_this_turn();
         let completed_turn_history = std::mem::take(&mut self.turn_store.turn_history);
+        self.turn_store.turn_history.ability_activation_counts = Some(HashMap::new());
+        self.turn_store.turn_history.draw_occurrences = Some(Default::default());
         for player in completed_turn_players {
             self.turn_store
                 .last_turn_history_by_player
@@ -1802,6 +1809,9 @@ impl GameState {
     }
 
     pub fn mark_combat_phase_started(&mut self) {
+        if let Some(combat) = self.combat.as_mut() {
+            combat.last_attack_declaration_step_players = None;
+        }
         self.turn_store.combat_phases_started_this_turn = self
             .turn_store
             .combat_phases_started_this_turn
@@ -2644,6 +2654,10 @@ impl GameState {
         let origin = self
             .current_characteristics(source)
             .and_then(|chars| chars.abilities.origin(ability_index).cloned());
+        let definition = self.current_ability(source, ability_index).and_then(|ability| match &ability.kind {
+            crate::ability::AbilityKind::Activated(ability) => ability.effects.activation_definition,
+            _ => None,
+        });
         let origin_before = origin.as_ref().and_then(|origin| {
             self.turn_store
                 .ability_activations_per_object
@@ -2715,6 +2729,7 @@ impl GameState {
             source,
             ability_index,
             origin,
+            definition,
             counters,
             was_activated,
             was_exhausted,
@@ -2730,6 +2745,7 @@ impl GameState {
             source,
             ability_index,
             origin,
+            definition,
             counters,
             was_activated,
             was_exhausted,
@@ -2737,6 +2753,13 @@ impl GameState {
         } = announcement;
         if let Some((origin, before, added)) = origin {
             let key = (source, origin);
+            let turn_key = (source, key.1.clone(), definition);
+            if let Some(counts) = self.turn_store.turn_history.ability_activation_counts.as_mut()
+                && let Some(current) = counts.get_mut(&turn_key)
+            {
+                *current = current.saturating_sub(added);
+                if *current == 0 { counts.remove(&turn_key); }
+            }
             if let Some(current) = self
                 .turn_store
                 .ability_activations_per_object
@@ -2807,7 +2830,11 @@ impl GameState {
         let origin = self
             .current_characteristics(source)
             .and_then(|chars| chars.abilities.origin(ability_index).cloned());
-        self.record_ability_activation_with_origin(source, ability_index, origin);
+        let definition = self.current_ability(source, ability_index).and_then(|ability| match &ability.kind {
+            crate::ability::AbilityKind::Activated(ability) => ability.effects.activation_definition,
+            _ => None,
+        });
+        self.record_ability_activation_with_origin(source, ability_index, origin, definition);
     }
 
     pub(crate) fn record_ability_activation_with_origin(
@@ -2815,6 +2842,7 @@ impl GameState {
         source: ObjectId,
         ability_index: usize,
         origin: Option<crate::continuous::AbilityOrigin>,
+        definition: Option<ironsmith_core::LinkedExileDefinition>,
     ) {
         if self
             .turn_store
@@ -2824,12 +2852,19 @@ impl GameState {
             return;
         }
         if let Some(origin) = origin {
+            if let Some(counts) = self.turn_store.turn_history.ability_activation_counts.as_mut() {
+                let turn_total = counts.entry((source, origin.clone(), definition)).or_default();
+                *turn_total = turn_total.saturating_add(1);
+            }
             let total = self
                 .turn_store
                 .ability_activations_per_object
                 .entry((source, origin))
                 .or_default();
             *total = total.saturating_add(1);
+        } else {
+            // A legacy admission without an acquisition is not a known zero.
+            self.turn_store.turn_history.ability_activation_counts = None;
         }
         let exhaust_controller = self
             .current_ability(source, ability_index)
@@ -3069,10 +3104,9 @@ impl GameState {
         if entry.source_snapshot.is_none()
             && let Some(source) = self.object(entry.object_id)
         {
-            let snapshot =
-                crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-                    source, self,
-                );
+            let Some(snapshot) = crate::snapshot::ObjectSnapshot::capture_for_execution(source, self) else {
+                return;
+            };
             entry.source_stable_id.get_or_insert(snapshot.stable_id);
             entry
                 .source_name
@@ -3088,7 +3122,9 @@ impl GameState {
         // makes a new object the resolution can't follow (CR 400.7).
         if entry.triggering_event.is_none() {
             for (tag, snapshots) in entry.tagged_objects.iter_mut() {
-                if tag.as_str().starts_with("__paid_departure__")
+                if tag.as_str() == crate::tag::SOURCE_COST_PUBLIC_ARRIVAL_TAG
+                    || matches!(ironsmith_core::tag::SacrificeCostTag::parse(tag), Some(ironsmith_core::tag::SacrificeCostTag::OriginalResult(_)))
+                    || tag.as_str().starts_with("__paid_departure__")
                     || tag.as_str().starts_with("__pre_move_history__")
                 {
                     continue;
@@ -3443,41 +3479,30 @@ impl GameState {
                     vec![chosen.clone()],
                 );
             }
-            let source_is_aura = source_obj.subtypes.contains(&crate::types::Subtype::Aura)
-                || (source_obj
-                    .card_types
-                    .contains(&crate::types::CardType::Enchantment)
-                    && source_obj.aura_attach_filter.is_some());
-            let source_is_equipment = source_obj
-                .subtypes
-                .contains(&crate::types::Subtype::Equipment);
             if let Some(attached_target) = source_obj.attached_to {
                 match attached_target {
                     AttachmentTarget::Object(attached_id) => {
                         if let Some(attached_obj) = self.object(attached_id) {
                             let attached_snapshot =
                                 crate::snapshot::ObjectSnapshot::from_object(attached_obj, self);
-                            if source_is_aura {
+                            // Both authored references name this source's host.
+                            // Copy/type effects can change Aura into Equipment
+                            // without changing the attachment relation or the
+                            // printed fields stored on Object. Read the relation,
+                            // not those fields (or recursively calculated types).
+                            for tag in ["enchanted", "equipped"] {
                                 tagged_objects.insert(
-                                    crate::tag::TagKey::from("enchanted"),
+                                    crate::tag::TagKey::from(tag),
                                     vec![attached_snapshot.clone()],
-                                );
-                            }
-                            if source_is_equipment {
-                                tagged_objects.insert(
-                                    crate::tag::TagKey::from("equipped"),
-                                    vec![attached_snapshot],
                                 );
                             }
                         }
                     }
                     AttachmentTarget::Player(attached_player) => {
-                        if source_is_aura {
-                            tagged_players.insert(
-                                crate::tag::TagKey::from("enchanted"),
-                                vec![attached_player],
-                            );
-                        }
+                        tagged_players.insert(
+                            crate::tag::TagKey::from("enchanted"),
+                            vec![attached_player],
+                        );
                     }
                 }
             }
@@ -3500,7 +3525,7 @@ impl GameState {
                 if let Some(player) =
                     crate::combat_state::defending_player_for_attack_target(self, target)
                 {
-                    let players = if self.shared_team_turns_enabled() {
+                    let players = if source_attack.is_none() && self.shared_team_turns_enabled() {
                         self.team_players_for(player)
                     } else {
                         vec![player]
@@ -3518,6 +3543,7 @@ impl GameState {
             you: Some(controller),
             source,
             source_snapshot: None,
+            source_number_owner: None,
             caster: None,
             prospective_cast: None,
             active_player: self.active_player_id(),
@@ -3526,11 +3552,13 @@ impl GameState {
             players_in_range: self.range_players_for_source(controller, source),
             defending_player,
             defending_players,
+            defending_player_reference: None,
             attacking_player: None,
             attacking_players: Vec::new(),
             your_commanders,
             iterated_player: None,
             x_value: None,
+            counter_removal_declaration: None,
             chosen_player: source.and_then(|source_id| self.chosen_player(source_id)),
             target_players: Vec::new(),
             target_objects: Vec::new(),
@@ -3558,13 +3586,7 @@ impl GameState {
         let mut ctx = self.filter_context_for(controller, source);
         ctx.defending_player = defending_player;
         ctx.attacking_player = attacking_player;
-        ctx.defending_players = if self.shared_team_turns_enabled() {
-            defending_player
-                .map(|player| self.team_players_for(player))
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        ctx.defending_players.clear();
         ctx.attacking_players = if self.shared_team_turns_enabled() {
             attacking_player
                 .map(|player| self.team_players_for(player))

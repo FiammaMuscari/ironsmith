@@ -28,6 +28,9 @@ use subject_verb_middle::compile_subject_verb_middle;
 
 type EffectCompileOutcome = (Vec<Effect>, Vec<ChooseSpec>);
 
+#[path = "effect_dispatch/next_step_duration_owners.rs"]
+mod next_step_duration_owners;
+
 fn with_target_count_preserving_value(spec: ChooseSpec, count: ChoiceCount) -> ChooseSpec {
     if let Some(value) = spec.count_value().cloned() {
         spec.with_count_value(count, value)
@@ -102,7 +105,7 @@ fn collect_nested_result_references(value: &Value, references: &mut Vec<NestedRe
     }
 }
 
-fn visit_direct_nested_effect_values(effect: &Effect, visit: &mut impl FnMut(&Value)) {
+pub(crate) fn visit_direct_nested_effect_values(effect: &Effect, visit: &mut impl FnMut(&Value)) {
     if let Some(with_id) = effect.as_with_id() {
         visit_direct_nested_effect_values(&with_id.effect, visit);
         return;
@@ -133,6 +136,8 @@ fn visit_direct_nested_effect_values(effect: &Effect, visit: &mut impl FnMut(&Va
             }
         };
     }
+    value_field!(crate::effects::ModifyPowerToughnessEffect, power);
+    value_field!(crate::effects::ModifyPowerToughnessEffect, toughness);
     value_field!(crate::effects::DealDamageEffect, amount);
     value_field!(crate::effects::DrawCardsEffect, count);
     value_field!(crate::effects::PutCountersEffect, amount);
@@ -481,7 +486,7 @@ pub(crate) fn link_unproduced_result_references_in_program(
     }
     let mut missing: Vec<EffectId> = Vec::new();
     for id in referenced {
-        if !defined.contains(&id) && !missing.contains(&id) {
+        if id != EffectId::ACTIVATION_COUNTER_COST && !defined.contains(&id) && !missing.contains(&id) {
             missing.push(id);
         }
     }
@@ -545,6 +550,7 @@ fn link_unproduced_result_references_in_children(
     relink_lists!(crate::effects::ConditionalEffect, if_true, if_false);
     relink_lists!(crate::effects::ReflexiveTriggerEffect, effects);
     relink_lists!(crate::effects::MayEffect<Effect>, effects);
+    relink_lists!(crate::effects::CollectManaPaymentsEffect<Effect>, effects);
     relink_lists!(crate::effects::ForPlayersEffect<Effect>, effects);
     relink_lists!(crate::effects::ForEachObject, effects);
     None
@@ -620,14 +626,14 @@ fn link_unproduced_result_references_in_list(
 }
 
 fn nested_effect_contains<T: 'static>(effect: &Effect) -> bool {
-    if effect.downcast_ref::<T>().is_some() {
-        return true;
-    }
+    nested_effect_satisfies(effect, &|candidate| candidate.downcast_ref::<T>().is_some())
+}
+
+fn nested_effect_satisfies(effect: &Effect, predicate: &dyn Fn(&Effect) -> bool) -> bool {
+    if predicate(effect) { return true; }
     let mut found = false;
     effect.visit_child_effects(&mut |child| {
-        if !found && nested_effect_contains::<T>(child) {
-            found = true;
-        }
+        if !found && nested_effect_satisfies(child, predicate) { found = true; }
     });
     found
 }
@@ -649,6 +655,9 @@ fn nested_effect_performs_action(
         Action::Drawn => nested_effect_contains::<crate::effects::DrawCardsEffect>(effect),
         Action::Milled => nested_effect_contains::<crate::effects::MillEffect>(effect),
         Action::CountersPut => nested_effect_contains::<crate::effects::PutCountersEffect>(effect),
+        Action::CountersMoved(kind) => nested_effect_satisfies(effect, &|candidate|
+            candidate.downcast_ref::<crate::effects::MoveCountersEffect>()
+                .is_some_and(|movement| movement.counter_type == kind)),
         Action::Removed => nested_effect_contains::<crate::effects::RemoveCountersEffect>(effect),
         Action::DealtDamage => nested_effect_contains::<crate::effects::DealDamageEffect>(effect),
         Action::Returned => {
@@ -1391,6 +1400,10 @@ fn compile_effect_inner(
             choices,
         ));
     }
+    if let EffectAst::CollectManaPayments { effects } = effect {
+        let (effects, choices) = compile_effects(effects, ctx)?;
+        return Ok((vec![Effect::new(crate::effects::CollectManaPaymentsEffect::new(effects))], choices));
+    }
     if let EffectAst::Sequence { effects } = effect {
         let (mut effects, choices) = compile_effects(effects, ctx)?;
         preserve_nested_result_value_links(&mut effects);
@@ -1824,6 +1837,7 @@ fn compile_effect_inner(
         effect,
         EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess)
             | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)
+            | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessAdditional { .. })
     ) {
         return Err(CardTextError::ParseError(
             "unsupported repeat this process effect tail".to_string(),
@@ -1943,6 +1957,8 @@ fn compile_compiler_control_flow(
                             CharacteristicActionAst::BecomeCreatureTypeChoice { duration, .. },
                         )
                         | SubjectVerbActionAst::Characteristics(
+                            CharacteristicActionAst::ChangeText { duration, .. },
+                        ) | SubjectVerbActionAst::Characteristics(
                             CharacteristicActionAst::BecomeColorChoice { duration, .. },
                         )
                         | SubjectVerbActionAst::Characteristics(
@@ -2294,6 +2310,7 @@ fn compile_subject_verb_action(
     subject_verb: &SubjectVerbEffectAst,
     ctx: &mut EffectLoweringContext,
 ) -> Result<EffectCompileOutcome, CardTextError> {
+    next_step_duration_owners::validate(&subject_verb.action)?;
     if matches!(
         subject_verb.action,
         SubjectVerbActionAst::Library(LibraryActionAst::ExileTopOfLibrary { .. })
@@ -2452,7 +2469,7 @@ fn try_compile_simple_source_sacrifice(
         .unwrap_or(ChooseSpec::Source);
     effects.push(Effect::new(crate::effects::SacrificeTargetEffect::new(
         source,
-    )));
+    ).with_player(PlayerFilter::You)));
     Ok(Some((effects, subject.into_choices())))
 }
 
@@ -2464,6 +2481,7 @@ fn try_compile_plain_all_move_to_nonbattlefield_zone(
         target,
         source_top_only: false,
         zone,
+        tagged_destinations,
         to_top,
         library_order: None,
         library_order_chooser: PlayerAst::Implicit,
@@ -2485,7 +2503,7 @@ fn try_compile_plain_all_move_to_nonbattlefield_zone(
     else {
         return Ok(None);
     };
-    if *zone == Zone::Battlefield {
+    if *zone == Zone::Battlefield || !tagged_destinations.is_empty() {
         return Ok(None);
     }
 
@@ -2763,9 +2781,12 @@ fn compile_plain_fixed_token_creation(
         ),
         _ => (false, false),
     };
-    let token = lower_token_definition_shape(definition.clone())
+    let mut token = lower_token_definition_shape(definition.clone())
         .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
+    let shape_ability_count = token.abilities.len();
+    let text_roles = subject_verb_middle::retain_token_description_roles(definition, &mut token, shape_ability_count)?;
     let mut create = crate::effects::CreateTokenEffect::you(token, count.clone());
+    create.text_roles = text_roles;
     if use_source_chosen_color {
         create = create.with_source_chosen_color();
     }
@@ -3554,4 +3575,25 @@ fn common_choose_one_mode_actor(
         }
     }
     actor
+}
+
+#[cfg(test)]
+mod counter_movement_antecedent_tests {
+    use super::*;
+    #[test]
+    fn nested_movement_antecedents_do_not_borrow_another_counter_kinds_receipt() {
+        use ironsmith_core::{CounterType, PriorEffectAction};
+        let charge = Effect::new(crate::effects::SequenceEffect::new(vec![
+            Effect::new(crate::effects::MoveCountersEffect::new(
+                CounterType::Charge, 1, crate::target::ChooseSpec::Source,
+                crate::target::ChooseSpec::creature())),
+        ]));
+        let plus_one = Effect::new(crate::effects::SequenceEffect::new(vec![
+            Effect::new(crate::effects::MoveCountersEffect::plus_one_counters(1)),
+        ]));
+        assert!(nested_effect_performs_action(&charge, PriorEffectAction::CountersMoved(CounterType::Charge)));
+        assert!(!nested_effect_performs_action(&charge, PriorEffectAction::CountersMoved(CounterType::PlusOnePlusOne)));
+        assert!(nested_effect_performs_action(&plus_one, PriorEffectAction::CountersMoved(CounterType::PlusOnePlusOne)));
+        assert!(!nested_effect_performs_action(&plus_one, PriorEffectAction::CountersMoved(CounterType::Charge)));
+    }
 }

@@ -2677,7 +2677,8 @@ pub(super) fn describe_council_dilemma_named_vote_sequence(effects: &[Effect]) -
     let crate::effects::VoteChoice::NamedOptions(options) = &vote.choice else {
         return None;
     };
-    if vote.secret
+    if !vote.payloads.is_empty()
+        || vote.secret
         || !vote.starting_with_controller
         || vote.controller_extra_votes != 0
         || vote.controller_optional_extra_votes != 0
@@ -2997,7 +2998,8 @@ pub(super) fn describe_named_vote_per_vote_effects(
     let crate::effects::VoteChoice::NamedOptions(options) = &vote.choice else {
         return None;
     };
-    if vote.secret
+    if !vote.payloads.is_empty()
+        || vote.secret
         || !vote.starting_with_controller
         || vote.controller_extra_votes != 0
         || vote.controller_optional_extra_votes != 0
@@ -7359,7 +7361,7 @@ pub(super) fn describe_hand_choose_then_zone_move(effects: &[&Effect]) -> Option
         };
         let order_suffix = match move_to_zone.library_order.as_ref() {
             Some(crate::effects::LibraryPlacementOrder::Random) => " in a random order",
-            Some(crate::effects::LibraryPlacementOrder::ChosenBy(_)) => " in any order",
+            Some(crate::effects::LibraryPlacementOrder::ChosenBy(_)) | Some(crate::effects::LibraryPlacementOrder::Owners) => " in any order",
             None => "",
         };
         return Some(format!(
@@ -7419,7 +7421,7 @@ pub(super) fn describe_target_player_choose_hand_top_library_any_order(
     } else {
         match move_to_zone.library_order.as_ref() {
             Some(crate::effects::LibraryPlacementOrder::Random) => " in a random order",
-            Some(crate::effects::LibraryPlacementOrder::ChosenBy(_)) | None => " in any order",
+            Some(crate::effects::LibraryPlacementOrder::ChosenBy(_)) | Some(crate::effects::LibraryPlacementOrder::Owners) | None => " in any order",
         }
     };
     Some(format!(

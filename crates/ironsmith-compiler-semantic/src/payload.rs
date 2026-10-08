@@ -91,7 +91,7 @@ pub enum KeywordAction {
         cost: ManaCost,
     },
     Suspend {
-        time: u32,
+        time: ironsmith_core::SuspendTime,
         cost: ManaCost,
     },
     Disturb(ManaCost),
@@ -203,6 +203,10 @@ pub enum KeywordAction {
     JobSelect,
     /// Cast-triggered growth based on actual mana paid versus current P/T.
     Increment,
+    BolsterValue { amount: Value, display: String },
+    MobilizeValue { amount: Value, display: String },
+    ProtectionFromOwnColors,
+    ProtectionFromColorsAmong(ObjectFilter),
 }
 
 pub fn describe_soulshift_value(value: &Value) -> String {
@@ -267,6 +271,8 @@ impl KeywordAction {
                 | Self::BattleCry
                 | Self::Melee
                 | Self::Myriad
+                | Self::Mobilize(_)
+                | Self::MobilizeValue { .. }
                 | Self::Afflict(_)
                 | Self::Dethrone
                 | Self::Evolve
@@ -326,6 +332,8 @@ impl KeywordAction {
                 | Self::ProtectionFromEachManaValueAmong(_)
                 | Self::ProtectionFromCardType(_)
                 | Self::ProtectionFromSubtype(_)
+                | Self::ProtectionFromOwnColors
+                | Self::ProtectionFromColorsAmong(_)
                 | Self::Unblockable
                 | Self::CantBeBlockedByMoreThan(_)
                 | Self::Devoid
@@ -440,7 +448,8 @@ impl KeywordAction {
             Self::Plot(cost) => format!("Plot {}", cost.to_oracle()),
             Self::Melee => "Melee".to_string(),
             Self::Mobilize(amount) => format!("Mobilize {amount}"),
-            Self::Suspend { time, cost } => format!("Suspend {time}—{}", cost.to_oracle()),
+            Self::MobilizeValue { display, .. } | Self::BolsterValue { display, .. } => display.clone(),
+            Self::Suspend { time, cost } => time.display_keyword(cost),
             Self::Disturb(cost) => format!("Disturb {}", cost.to_oracle()),
             Self::Overload(cost) => format!("Overload {}", cost.to_oracle()),
             Self::Cleave(cost) => format!("Cleave {}", cost.to_oracle()),
@@ -515,6 +524,9 @@ impl KeywordAction {
             Self::ProtectionFrom(colors) => single_color_name(*colors)
                 .map(|name| format!("Protection from {name}"))
                 .unwrap_or_else(|| "Protection from colors".to_string()),
+            Self::ProtectionFromOwnColors => "Protection from each of its colors".to_string(),
+            Self::ProtectionFromColorsAmong(filter) => format!(
+                "Protection from each color among {}", describe_protection_mana_value_scope(filter)),
             Self::ProtectionFromAllColors => "Protection from all colors".to_string(),
             Self::ProtectionFromColorless => "Protection from colorless".to_string(),
             Self::ProtectionFromEverything => "Protection from everything".to_string(),
@@ -528,8 +540,16 @@ impl KeywordAction {
                 "Protection from each mana value other than the chosen number".to_string()
             }
             Self::ProtectionFromFilter(filter) => {
-                if *filter == ObjectFilter::default().multicolored() {
+                if let Some(quality) = filter.protection_mana_value_parity_quality() {
+                    format!("Protection from {quality}")
+                } else if *filter == ObjectFilter::default().monocolored() {
+                    "Protection from monocolored".to_string()
+                } else if *filter == ObjectFilter::default().with_supertype(crate::types::Supertype::Snow) {
+                    "Protection from snow".to_string()
+                } else if *filter == ObjectFilter::default().multicolored() {
                     "Protection from multicolored".to_string()
+                } else if let Some(chosen) = filter.protection_chosen_card_type_quality() {
+                    format!("Protection from {chosen}")
                 } else {
                     format!("Protection from {}", filter.description())
                 }
@@ -613,6 +633,9 @@ fn describe_protection_mana_value_scope(filter: &ObjectFilter) -> String {
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub enum IfResultPredicate {
     Did,
+    /// Compiler-owned repeat gate. Lowering captures the preceding live
+    /// condition before branch execution, rather than its child outcome.
+    ConditionMatched,
     /// The preceding clash was won by the controller of the resolving spell
     /// or ability. Clash effects return `1` for a win and `0` otherwise, but
     /// this distinct AST surface keeps "if you win" from being flattened into
@@ -646,4 +669,12 @@ pub enum IfResultPredicate {
     PriorEffectResult(ironsmith_core::PriorEffectResultSurface),
     WasDeclined,
     Value(ironsmith_core::Comparison),
+    /// A printed numeric die-result row. Retain its producer family until
+    /// reference resolution; a generic numeric outcome is not a die roll.
+    /// Lowering uses the existing runtime numeric-result predicate.
+    DieValue(ironsmith_core::Comparison),
+    AffectedObjectsShare {
+        required_count: u32,
+        characteristic: ironsmith_core::ObjectCharacteristic,
+    },
 }

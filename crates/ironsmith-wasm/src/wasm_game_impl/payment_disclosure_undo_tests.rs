@@ -19,6 +19,7 @@ fn payment_disclosure_track_hand(wasm: &mut WasmGame, card: ObjectId, slot: u16)
     wasm.game.set_hidden_card_info(
         card,
         ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
             owner: PlayerId(0),
             zone: Zone::Hand,
             slot,
@@ -163,7 +164,7 @@ fn payment_disclosure_exact_discard_cost_cards_disable_completed_action_undo() {
             assert!(matches!(
                 wasm.pending_decision,
                 Some(DecisionContext::Priority(_))
-            ));
+            ), "{name} with {candidate_count} payment cards: {:?}", wasm.pending_decision);
             assert_eq!(wasm.game.stack.len(), before_stack + 1);
             assert_eq!(
                 wasm.game.player(alice).unwrap().library,

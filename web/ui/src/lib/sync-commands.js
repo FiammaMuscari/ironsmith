@@ -1,4 +1,3 @@
-import { WITNESS_FORFEIT_REASON } from "./tournament/witness-protocol.js";
 import { canonicalWireJson } from "./wire-json.js";
 
 export function sameActionRef(left, right) {
@@ -6,13 +5,14 @@ export function sameActionRef(left, right) {
   return canonicalWireJson(left) === canonicalWireJson(right);
 }
 
-// Forfeits that may target any seat, not only the one owing the decision.
-// A witness forfeit is checked against its witness certificate instead.
-const DISCONNECT_TIMEOUT_POLICY_REASONS = new Set([
-  "disconnect_timeout_policy",
-  "peer_claimed_disconnect_timeout",
-  WITNESS_FORFEIT_REASON,
-]);
+// Inspect the public origin without removing any selectors from the actual
+// command. The engine still validates the complete reference and route shape.
+export function castingMethodOrigin(method) {
+  while (["exact_permission", "alternative_price"].includes(String(method?.kind || ""))) {
+    method = method.origin;
+  }
+  return method;
+}
 
 export function findPriorityActionForCommand(decision, command) {
   if (!decision || decision.kind !== "priority" || command?.type !== "priority_action") {
@@ -23,12 +23,12 @@ export function findPriorityActionForCommand(decision, command) {
   if (command.action_ref) {
     const matched = actions.find((action) => sameActionRef(action?.action_ref, command.action_ref));
     if (matched) return matched;
-    // A face-down cast (morph, megamorph, disguise) of a hidden hand card is
+    // A face-down cast (morph, megamorph, disguise) of a hidden card is
     // replayed on peers that hold only a placeholder: the card is never
     // opened, so their priority menu cannot list it. The command's public
     // cast kind lets the engine re-derive and validate the action itself.
     const ref = command.action_ref;
-    const method = ref?.casting_method || null;
+    const method = castingMethodOrigin(ref?.casting_method);
     if (
       String(ref?.kind || "") === "cast_spell"
       && ["face_down", "face_down_play_from"].includes(String(method?.kind || ""))
@@ -88,17 +88,16 @@ export function isDecisionCommandCompatible(decision, command) {
   if (!command) return false;
   if (command.type === "cancel_decision") return true;
   if (command.type === "forfeit_player") {
-    if (DISCONNECT_TIMEOUT_POLICY_REASONS.has(String(command.reason || ""))) {
-      return command.player !== null && command.player !== undefined;
-    }
-    return decision?.player !== null
-      && decision?.player !== undefined
-      && Number(decision.player) === Number(command.player);
+    // Forfeiting a seat is independent of the current engine decision.
+    // The multiplayer receive gates validate the signer and target player.
+    return command.player !== null && command.player !== undefined;
   }
   if (!decision) return false;
 
   switch (decision.kind) {
     case "priority":
+      if (!command.action_ref && ["open_exiled_card_for_play", "cast_exiled_card_face_down"].includes(
+        findPriorityActionForCommand(decision, command)?.action_ref?.kind)) return false;
       // A deferred menu is incomplete, not a list of every legal action.
       // Structured refs are re-derived and checked against the live game by
       // the engine's priority resolver. Index-only commands cannot use this
@@ -106,7 +105,7 @@ export function isDecisionCommandCompatible(decision, command) {
       return command.type === "priority_action" && (
         Boolean(findPriorityActionForCommand(decision, command))
         || (decision.analysis_complete === false && [
-          "play_land", "cast_spell", "activate_ability", "activate_mana_ability",
+          "play_land", "cast_spell", "open_exiled_card_for_play", "cast_exiled_card_face_down", "activate_ability", "activate_mana_ability",
           "turn_face_up", "special_action", "untap_land",
         ].includes(command.action_ref?.kind))
       );
@@ -327,9 +326,11 @@ export function resolveSyncedCommand(command) {
         syncedCommand.object_stable_id = stableId;
       }
     }
-    const hiddenRef = normalizeSelectObjectHiddenRef(
-      command.object_hidden_ref ?? command.objectHiddenRef
-    );
+    const rawHiddenRef = command.object_hidden_ref ?? command.objectHiddenRef;
+    // Opaque commands must reach the paired-identity checker unchanged. The
+    // legacy normalizer may complete partial fields or discard a supplied pair.
+    const hiddenRef = ["open_exiled_card_for_play", "cast_exiled_card_face_down"].includes(command.action_ref?.kind)
+      ? rawHiddenRef : normalizeSelectObjectHiddenRef(rawHiddenRef);
     if (hiddenRef) {
       syncedCommand.object_hidden_ref = hiddenRef;
     }

@@ -605,6 +605,7 @@ fn durational_anaphoric_restriction_grant_to_cant(effect: &mut EffectAst) {
             }
             | Restriction::ActivateLoyaltyAbilitiesOf(filter)
             | Restriction::MustAttack(filter)
+            | Restriction::MustBlock(filter)
             | Restriction::Attack(filter)
             | Restriction::Block(filter)
             | Restriction::Untap(filter)
@@ -612,6 +613,8 @@ fn durational_anaphoric_restriction_grant_to_cant(effect: &mut EffectAst) {
             | Restriction::BeDestroyed(filter)
             | Restriction::BeRegenerated(filter)
             | Restriction::BeSacrificed(filter)
+        | Restriction::BecomeSuspected(filter)
+        | Restriction::MaximumBlockers { filter, .. }
             | Restriction::HaveCountersPlaced(filter)
             | Restriction::BeTargeted(filter)
             | Restriction::TurnFaceUp(filter)
@@ -785,6 +788,58 @@ fn transport_reflexive_damage_followups(effects: &mut Vec<EffectAst>) {
     }
 }
 
+/// A same-name library search consumes the object chosen only by a successful
+/// result branch. Its complete search action (including disposition and shuffle)
+/// therefore belongs to that branch even when authored as a following sentence.
+/// This correlation is established before references are resolved, from the
+/// choice producer and the search filter's typed relation, never from card text.
+fn correlate_result_gated_choice_search_followups(effects: &mut Vec<EffectAst>) {
+    let mut index = 0;
+    while index + 1 < effects.len() {
+        let choice_tag = match sentence_tail(&effects[index]) {
+            EffectAst::Conditionals(ConditionalEffectAst::IfResult {
+                predicate: crate::cards::builders::IfResultPredicate::Did,
+                effects: branch,
+            }) => match branch.as_slice() {
+                [choice] => match sentence_tail(choice) {
+                    EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjects {
+                        tag, count, count_value: None, ..
+                    }) if count.min == 1 && count.max == Some(1) => Some(tag.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        let consumes_choice = choice_tag.is_some_and(|choice_tag| {
+            let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::SearchLibrary {
+                    filter, ..
+                }),
+                ..
+            }) = sentence_tail(&effects[index + 1]) else {
+                return false;
+            };
+            filter.tagged_constraints.iter().any(|constraint| {
+                constraint.relation == crate::filter::TaggedOpbjectRelation::SameNameAsTagged
+                    && (constraint.tag.as_str() == choice_tag
+                        || constraint.tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str()
+                        || constraint.tag.as_str() == crate::tag::CompilerReferenceTag::ChosenObjects.as_str())
+            })
+        });
+        if consumes_choice {
+            let followup = effects.remove(index + 1);
+            let EffectAst::Conditionals(ConditionalEffectAst::IfResult { effects: branch, .. }) =
+                sentence_tail_mut(&mut effects[index])
+            else {
+                unreachable!("checked result branch");
+            };
+            branch.push(followup);
+        }
+        index += 1;
+    }
+}
+
 fn normalize_effects_vec(effects: &mut Vec<EffectAst>) {
     transport_reflexive_damage_followups(effects);
     transport_tap_quantity_reflexive_into_player_loop(effects);
@@ -823,6 +878,7 @@ fn normalize_effects_vec(effects: &mut Vec<EffectAst>) {
     // producer is provably a source-bound counter removal and every following
     // member belongs to the damage fanout.
     bind_removed_counter_damage_fanout(effects);
+    correlate_result_gated_choice_search_followups(effects);
     bind_explicit_chosen_object_followups(effects);
     bind_other_group_to_explicit_target_choice(effects);
     correlate_conditional_quantified_choice_followups(effects);
@@ -2664,7 +2720,71 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
     }
 }
 
+/// Remove only a terminal marker, retaining every executable preceding member.
+fn pop_required_repeat_marker(effects: &mut Vec<EffectAst>) -> bool {
+    let Some(last) = effects.last_mut() else { return false; };
+    if matches!(last, EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess)) {
+        effects.pop();
+        return true;
+    }
+    let removed = match last {
+        EffectAst::Sequence { effects }
+        | EffectAst::SourceSentence { effects, .. }
+        | EffectAst::CommaThen { effects }
+        | EffectAst::Coordinated { effects, .. } => pop_required_repeat_marker(effects),
+        EffectAst::Coordination(coordination) => {
+            let Some(member) = coordination.members.last_mut() else { return false; };
+            if !pop_required_repeat_marker(&mut member.effects) { return false; }
+            if member.effects.is_empty() {
+                coordination.members.pop();
+                coordination.boundaries.pop();
+            }
+            true
+        }
+        _ => false,
+    };
+    if removed {
+        let empty = match effects.last() {
+            Some(EffectAst::Sequence { effects } | EffectAst::SourceSentence { effects, .. }
+                | EffectAst::CommaThen { effects } | EffectAst::Coordinated { effects, .. }) => effects.is_empty(),
+            Some(EffectAst::Coordination(coordination)) => coordination.members.is_empty(),
+            _ => false,
+        };
+        if empty { effects.pop(); }
+    }
+    removed
+}
+
 fn rewrite_repeat_process(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
+    for end in 2..=effects.len() {
+        if let Some(mut rewritten) = rewrite_repeat_process_result(&effects[..end]) {
+            rewritten.extend_from_slice(&effects[end..]);
+            return Some(rewritten);
+        }
+        if let EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            predicate, if_true, if_false,
+        }) = &effects[end - 1]
+            && if_false.is_empty()
+        {
+            let mut branch = if_true.clone();
+            if !pop_required_repeat_marker(&mut branch) { continue; }
+            let mut body = effects[..end - 1].to_vec();
+            body.push(EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                predicate: predicate.clone(), if_true: branch, if_false: Vec::new(),
+            }));
+            let mut rewritten = vec![EffectAst::ForEach(ForEachEffectAst::RepeatProcess {
+                effects: body,
+                continue_effect_index: end - 1,
+                continue_predicate: crate::cards::builders::IfResultPredicate::ConditionMatched,
+            })];
+            rewritten.extend_from_slice(&effects[end..]);
+            return Some(rewritten);
+        }
+    }
+    None
+}
+
+fn rewrite_repeat_process_result(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
     if effects.len() < 2 {
         return None;
     }
@@ -2755,38 +2875,65 @@ fn rewrite_repeat_process(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
 }
 
 fn rewrite_repeat_process_once(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
-    if effects.len() < 2
-        || !matches!(
-            effects.last(),
-            Some(EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce))
-        )
-    {
-        return None;
+    for index in 1..effects.len() {
+        let EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            predicate, if_true, if_false,
+        }) = &effects[index] else { continue; };
+        if !if_false.is_empty() || !matches!(if_true.as_slice(),
+            [EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)]) { continue; }
+        let body = effects[..index].to_vec();
+        let mut process = body.clone();
+        process.push(EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            predicate: predicate.clone(), if_true: body, if_false: Vec::new(),
+        }));
+        // The condition is evaluated after the first complete execution. A
+        // suffix such as "If you searched this way, shuffle" observes the
+        // entire process receipt, including a search only in the first pass.
+        // CommaThen lowers to one real SequenceEffect. Plain Sequence is a
+        // flattening AST container and would attach a later result ID only
+        // to the final conditional, dropping an initial-only search receipt.
+        let mut rewritten = vec![EffectAst::CommaThen { effects: process }];
+        rewritten.extend_from_slice(&effects[index + 1..]);
+        return Some(rewritten);
     }
-
-    let body = effects[..effects.len() - 1].to_vec();
-    Some(vec![EffectAst::ForEach(ForEachEffectAst::RepeatEffects {
-        count: Value::Fixed(2)
-            .with_surface_hint(ironsmith_core::ValueSurfaceHint::RepeatThisProcessOnce),
-        effects: body,
-    })])
+    let marker_index = effects.iter().position(|effect| matches!(effect,
+        EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)
+            | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessAdditional { .. })
+    ))?;
+    if marker_index == 0 { return None; }
+    let count = match &effects[marker_index] {
+        EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce) => Value::Fixed(2)
+            .with_surface_hint(ValueSurfaceHint::RepeatThisProcessOnce),
+        EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessAdditional { count }) =>
+            Value::Add(Box::new(Value::Fixed(1)), Box::new(count.clone())),
+        _ => return None,
+    };
+    // The initial execution belongs to the same program as all additional
+    // executions. In particular X = 0 still executes the complete body once.
+    // Instructions after the marker are a suffix, never part of the loop.
+    let mut rewritten = vec![EffectAst::ForEach(ForEachEffectAst::RepeatEffects {
+        count,
+        effects: effects[..marker_index].to_vec(),
+    })];
+    rewritten.extend_from_slice(&effects[marker_index + 1..]);
+    Some(rewritten)
 }
 
 fn rewrite_repeat_process_may(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
-    if effects.len() < 2
-        || !matches!(
-            effects.last(),
-            Some(EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessMay))
-        )
-    {
-        return None;
-    }
-
-    Some(vec![EffectAst::ForEach(ForEachEffectAst::RepeatProcess {
-        effects: effects.to_vec(),
-        continue_effect_index: effects.len() - 1,
+    let marker_index = effects.iter().position(|effect| match effect {
+        EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessMay) => true,
+        EffectAst::Permissions(PermissionEffectAst::MayByPlayer { effects, .. }) => matches!(
+            effects.as_slice(), [EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessMay)]),
+        _ => false,
+    })?;
+    if marker_index == 0 { return None; }
+    let mut rewritten = vec![EffectAst::ForEach(ForEachEffectAst::RepeatProcess {
+        effects: effects[..=marker_index].to_vec(),
+        continue_effect_index: marker_index,
         continue_predicate: crate::cards::builders::IfResultPredicate::Did,
-    })])
+    })];
+    rewritten.extend_from_slice(&effects[marker_index + 1..]);
+    Some(rewritten)
 }
 
 fn rewrite_return_as_aura(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
@@ -3622,6 +3769,58 @@ mod tests {
     }
 
     #[test]
+    fn finite_additional_repetition_keeps_initial_execution_and_final_suffix() {
+        let body = EffectAst::subject_verb(
+            crate::cards::builders::SubjectVerbRoleAst::AffectedPlayer, PlayerAst::You,
+            crate::cards::builders::SubjectVerbActionAst::LifeResources(
+                LifeResourceActionAst::Draw { count: Value::Fixed(1) }));
+        let suffix = EffectAst::subject_verb(
+            crate::cards::builders::SubjectVerbRoleAst::AffectedPlayer, PlayerAst::You,
+            crate::cards::builders::SubjectVerbActionAst::LifeResources(
+                LifeResourceActionAst::Draw { count: Value::Fixed(2) }));
+        for extra in [Value::Fixed(0), Value::Fixed(6), Value::X] {
+            let normalized = normalize_effects_ast(&[
+                body.clone(),
+                EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessAdditional { count: extra.clone() }),
+                suffix.clone(),
+            ]);
+            assert_eq!(normalized, vec![
+                EffectAst::ForEach(ForEachEffectAst::RepeatEffects {
+                    count: Value::Add(Box::new(Value::Fixed(1)), Box::new(extra)),
+                    effects: vec![body.clone()],
+                }), suffix.clone(),
+            ]);
+            assert_eq!(normalize_effects_ast(&normalized), normalized);
+        }
+    }
+
+    #[test]
+    fn live_condition_repeat_once_observes_initial_body_and_exports_both_search_receipts() {
+        let initial = EffectAst::subject_verb(
+            crate::cards::builders::SubjectVerbRoleAst::AffectedPlayer, PlayerAst::You,
+            crate::cards::builders::SubjectVerbActionAst::LifeResources(
+                LifeResourceActionAst::Draw { count: Value::Fixed(1) }));
+        let gate = PredicateAst::LifeTotalOrLess(20);
+        let suffix = EffectAst::Conditionals(ConditionalEffectAst::IfResult {
+            predicate: IfResultPredicate::SearchedLibrary, effects: vec![initial.clone()],
+        });
+        let normalized = normalize_effects_ast(&[
+            initial.clone(),
+            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                predicate: gate.clone(),
+                if_true: vec![EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)],
+                if_false: Vec::new(),
+            }), suffix.clone(),
+        ]);
+        assert_eq!(normalized, vec![EffectAst::CommaThen { effects: vec![
+            initial.clone(), EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                predicate: gate, if_true: vec![initial], if_false: Vec::new(),
+            }),
+        ] }, suffix]);
+        assert_eq!(normalize_effects_ast(&normalized), normalized);
+    }
+
+    #[test]
     fn normalize_binds_player_choice_remainder_to_the_same_graveyard_domain() {
         let tag = crate::tag::CompilerReferenceTag::It.bind();
         let choice_filter = ObjectFilter::default()
@@ -3809,5 +4008,67 @@ mod tap_reflexive_iteration_tests {
             body[1],
             EffectAst::Conditionals(ConditionalEffectAst::WhenResult { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod result_gated_same_name_search_tests {
+    use super::*;
+    use crate::cards::builders::{IfResultPredicate, PlayerAst};
+    use crate::effect::{ChoiceCount, SearchResultReferenceSurface, SearchSelectionMode};
+    use crate::filter::{ObjectFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
+    use crate::zone::Zone;
+
+    fn sentence(effect: EffectAst, leading_then: bool) -> EffectAst {
+        EffectAst::SourceSentence {
+            effects: vec![effect], leading_then, starting_with_controller: false,
+        }
+    }
+
+    fn program(same_name: bool) -> Vec<EffectAst> {
+        let tag = crate::tag::CompilerReferenceTag::It.bind();
+        let choice = EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjects {
+            filter: ObjectFilter::land(), count: ChoiceCount::exactly(1), count_value: None,
+            player: PlayerAst::You, tag: tag.clone(),
+        });
+        let mut filter = ObjectFilter::land();
+        if same_name {
+            filter.tagged_constraints.push(TaggedObjectConstraint {
+                tag: tag.into(), relation: TaggedOpbjectRelation::SameNameAsTagged,
+            });
+        }
+        let search = EffectAst::subject_verb_search_library(
+            filter, Zone::Battlefield, PlayerAst::You, PlayerAst::You,
+            SearchSelectionMode::Optional, false, None, true, ChoiceCount::up_to(2),
+            None, None, SearchResultReferenceSurface::ThoseCards, false, true, false,
+        );
+        vec![
+            sentence(EffectAst::Conditionals(ConditionalEffectAst::IfResult {
+                predicate: IfResultPredicate::Did, effects: vec![choice],
+            }), false),
+            sentence(search, true),
+        ]
+    }
+
+    #[test]
+    fn dependent_search_keeps_move_shuffle_and_then_inside_success_branch() {
+        let normalized = normalize_effects_ast(&program(true));
+        assert_eq!(normalized.len(), 1);
+        let EffectAst::Conditionals(ConditionalEffectAst::IfResult { effects, .. }) =
+            sentence_tail(&normalized[0]) else { panic!("result branch disappeared"); };
+        assert_eq!(effects.len(), 2);
+        assert!(matches!(&effects[1], EffectAst::SourceSentence { leading_then: true, .. }));
+        assert!(matches!(sentence_tail(&effects[1]),
+            EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::SearchLibrary {
+                    destination: Zone::Battlefield, shuffle: true, tapped: true, ..
+                }), ..
+            })
+        ));
+    }
+
+    #[test]
+    fn unrelated_following_search_keeps_its_independent_sentence() {
+        assert_eq!(normalize_effects_ast(&program(false)).len(), 2);
     }
 }

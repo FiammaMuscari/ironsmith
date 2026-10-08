@@ -9,7 +9,6 @@ use crate::decisions::specs::{MaySpec, ReplacementOption, ReplacementSpec};
 use crate::derived_view::DerivedGameView;
 use crate::effect::ManaSpendPermission;
 use crate::effects::{ExecutionContext, ExecutionError};
-use crate::events::spells::SpellCastEvent;
 use crate::game_state::{ActiveManaSpendPermission, GameState, ManaSpendPermissionSource};
 use crate::grant::Grantable;
 use crate::grant_registry::GrantSource;
@@ -17,8 +16,111 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::resolution::ResolutionProgram;
 use crate::static_abilities::StaticAbilityId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
+
+/// Admission and view policies supplied by a search adapter. Mixed-zone
+/// selection may proceed when its library part cannot be searched.
+pub(crate) struct LibrarySearchRequest {
+    pub chooser: PlayerId,
+    pub library_owner: Option<PlayerId>,
+    pub search_library: bool,
+    pub require_library_access: bool,
+    pub restrict_initial_view: bool,
+    /// Reevaluate admission at each presentation/offer/observation boundary.
+    pub refresh_library_access: bool,
+}
+
+/// Actual search bindings supplied once by the shared admission owner.
+pub(crate) struct LibrarySearchScope {
+    pub chooser: PlayerId,
+    pub library_cards: Vec<ObjectId>,
+    pub found_card_policy: Option<OppositionAgentSearch>,
+    pub event: Option<crate::triggers::TriggerEvent>,
+}
+
+/// One owner for search admission, scoped control, initial library presentation,
+/// in-search casting offers and the search observation's creation boundary.
+/// The caller retains its selection/commit/rollback programme and result shape.
+pub(crate) fn execute_library_search_scope<'a>(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext<'a>,
+    request: LibrarySearchRequest,
+    body: impl FnOnce(
+        &mut GameState,
+        &mut ExecutionContext<'a>,
+        LibrarySearchScope,
+    ) -> Result<crate::effect::EffectOutcome, ExecutionError>,
+) -> Result<crate::effect::EffectOutcome, ExecutionError> {
+    let found_card_policy = request
+        .library_owner
+        .and_then(|owner| opposition_agent_search(game, request.chooser, owner));
+    let can_search = request.library_owner.is_some_and(|owner| {
+        game.can_search_library_from_effect(request.chooser, owner, ctx.controller)
+    });
+    if request.require_library_access && request.library_owner.is_some() && !can_search {
+        return Ok(crate::effect::EffectOutcome::prevented());
+    }
+    let control = begin_opposition_agent_search_control(game, request.chooser, found_card_policy);
+    let result = (|| {
+        let mut library_cards = Vec::new();
+        let access_now = |game: &GameState, ctx: &ExecutionContext| {
+            if request.refresh_library_access {
+                request.library_owner.is_some_and(|owner| {
+                    game.can_search_library_from_effect(request.chooser, owner, ctx.controller)
+                })
+            } else {
+                can_search
+            }
+        };
+        if let Some(owner) = request.library_owner.filter(|_| access_now(game, ctx)) {
+            library_cards = game
+                .player(owner)
+                .map(|player| player.library.to_vec())
+                .unwrap_or_default();
+            if request.restrict_initial_view {
+                game.restrict_library_search_candidates(request.chooser, &mut library_cards);
+            }
+            crate::effects::helpers::view_hidden_candidate_objects(
+                game,
+                ctx,
+                request.chooser,
+                &library_cards,
+                "Search library",
+                false,
+            );
+        }
+        if let Some(owner) = request.library_owner.filter(|_| access_now(game, ctx)) {
+            offer_library_search_casts(game, ctx, owner)?;
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(crate::effect::EffectOutcome::count(0));
+            }
+        }
+        let event = (request.search_library
+            && (request.library_owner.is_none() || access_now(game, ctx)))
+        .then(|| {
+            crate::triggers::TriggerEvent::new_with_provenance(
+                crate::events::SearchLibraryEvent::new(request.chooser, request.library_owner),
+                ctx.provenance,
+            )
+        });
+        body(
+            game,
+            ctx,
+            LibrarySearchScope {
+                chooser: request.chooser,
+                library_cards,
+                found_card_policy,
+                event,
+            },
+        )
+    })();
+    if result.is_ok() && ctx.decision_maker.awaiting_choice() {
+        game.capture_pending_decision_controllers();
+    }
+    // The active control scope always unwinds; only captured pending routing survives.
+    finish_opposition_agent_search_control(game, control);
+    result
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OppositionAgentSearch {
@@ -124,6 +226,7 @@ fn grant_opposition_agent_play_permission(
             .mana_spend_effects
             .permissions
             .push(ActiveManaSpendPermission {
+                play_permission_identities: None,
                 permission: ManaSpendPermission::any_color_for_casting_stable_ids(
                     PlayerFilter::You,
                     vec![stable_id],
@@ -141,34 +244,49 @@ fn grant_opposition_agent_play_permission(
 #[must_use = "finish found-card movements and retain all replacement instructions"]
 pub(crate) struct FoundCardsExileReceipt {
     pub moved_ids: Vec<ObjectId>,
-    pub receipts: Vec<(ObjectId, crate::events::processing::PreparedEventOutcome<crate::effects::zones::AppliedZoneChange>)>,
+    pub receipts: Vec<(
+        ObjectId,
+        crate::events::processing::PreparedEventOutcome<crate::effects::zones::AppliedZoneChange>,
+    )>,
 }
 
-pub(crate) fn move_found_card_for_opposition_agent(
+pub(crate) fn move_found_card_for_opposition_agent_with_outputs(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     card_id: ObjectId,
     search: OppositionAgentSearch,
-) -> Result<crate::events::processing::PreparedEventOutcome<crate::effects::zones::AppliedZoneChange>, ExecutionError> {
+) -> Result<
+    crate::events::processing::CommittedZoneChange<crate::effects::zones::AppliedZoneChange>,
+    ExecutionError,
+> {
     use crate::events::processing::{EventOutcome, PreparedEventOutcome};
     let Some(from) = game.object(card_id).map(|card| card.zone) else {
-        return Ok(PreparedEventOutcome { original: EventOutcome::NotApplicable, programs: Vec::new() });
+        return Ok(
+            crate::events::processing::CommittedZoneChange::from_receipt(PreparedEventOutcome {
+                original: EventOutcome::NotApplicable,
+                programs: Vec::new(),
+            }),
+        );
     };
     let additional = ctx.additional_replacement_effects_snapshot();
-    let receipt = crate::effects::zones::apply_zone_change_with_context_and_additional_effects(
-        game, card_id, from, Zone::Exile, ctx.cause.clone(), ctx, &additional,
-    )?;
-    if ctx.decision_maker.awaiting_choice() { return Ok(receipt); }
-    let permission = OppositionAgentFoundCardPermission { controller: search.controller, source: search.source };
-    let ids = match &receipt.original {
-        EventOutcome::Proceed(change) => change.new_object_ids.clone(),
-        EventOutcome::Replaced => {
-            let ids = game.take_zone_change_results(card_id);
-            if !ids.is_empty() { game.record_zone_change_results(card_id, ids.clone()); }
-            ids
-        }
-        _ => Vec::new(),
+    let receipt =
+        crate::effects::zones::apply_zone_change_with_context_and_additional_effects_with_outputs(
+            game,
+            card_id,
+            from,
+            Zone::Exile,
+            ctx.cause.clone(),
+            ctx,
+            &additional,
+        )?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(receipt);
+    }
+    let permission = OppositionAgentFoundCardPermission {
+        controller: search.controller,
+        source: search.source,
     };
+    let ids = crate::effects::zones::movement_arrivals(game, card_id, &receipt.receipt);
     for id in ids {
         if game.object(id).is_some_and(|card| card.zone == Zone::Exile) {
             game.add_exiled_with_source_link(search.source, id);
@@ -178,44 +296,70 @@ pub(crate) fn move_found_card_for_opposition_agent(
     Ok(receipt)
 }
 
+#[allow(dead_code)]
 pub(crate) fn exile_found_cards_for_opposition_agent(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     cards: &[ObjectId],
     searching_player: PlayerId,
 ) -> Result<FoundCardsExileReceipt, ExecutionError> {
-    if ctx.decision_maker.awaiting_choice() { return Ok(FoundCardsExileReceipt { moved_ids: Vec::new(), receipts: Vec::new() }); }
+    exile_found_cards_for_opposition_agent_with_outputs(game, ctx, cards, searching_player)
+        .map(|(receipt, _)| receipt)
+}
+
+pub(crate) fn exile_found_cards_for_opposition_agent_with_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    cards: &[ObjectId],
+    searching_player: PlayerId,
+) -> Result<
+    (
+        FoundCardsExileReceipt,
+        Vec<crate::effects::PublishedEffectOutputs>,
+    ),
+    ExecutionError,
+> {
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok((
+            FoundCardsExileReceipt {
+                moved_ids: Vec::new(),
+                receipts: Vec::new(),
+            },
+            Vec::new(),
+        ));
+    }
+    let mut published_outputs = Vec::new();
     let checkpoint = game.clone();
     let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
     let result = (|| -> Result<FoundCardsExileReceipt, ExecutionError> {
-    let replacements: Vec<_> = game
-        .battlefield
-        .iter()
-        .filter_map(|&source| {
-            let object = game.object(source)?;
-            let controller = game.controller_of(object);
-            (controller != searching_player
-                && game.current_has_static_ability_id(
-                    source,
-                    StaticAbilityId::OpponentSearchExileFoundCards,
-                ))
-            .then_some(OppositionAgentSearch { controller, source })
-        })
-        .collect();
+        let replacements: Vec<_> = game
+            .battlefield
+            .iter()
+            .filter_map(|&source| {
+                let object = game.object(source)?;
+                let controller = game.controller_of(object);
+                (controller != searching_player
+                    && game.current_has_static_ability_id(
+                        source,
+                        StaticAbilityId::OpponentSearchExileFoundCards,
+                    ))
+                .then_some(OppositionAgentSearch { controller, source })
+            })
+            .collect();
 
-    // Each found card has competing exile-and-play-permission replacements.
-    // Collect the choices before changing zones, so an interactive pause never
-    // commits a partial search. The search's scoped player control is still
-    // active when the owner makes this replacement decision.
-    let mut selected = Vec::new();
-    for &card_id in cards {
-        let Some(card) = game.object(card_id) else {
-            continue;
-        };
-        let owner = card.owner;
-        let card_name = card.name.to_string();
-        let index = if replacements.len() > 1 {
-            let options = replacements
+        // Each found card has competing exile-and-play-permission replacements.
+        // Collect the choices before changing zones, so an interactive pause never
+        // commits a partial search. The search's scoped player control is still
+        // active when the owner makes this replacement decision.
+        let mut selected = Vec::new();
+        for &card_id in cards {
+            let Some(card) = game.object(card_id) else {
+                continue;
+            };
+            let owner = card.owner;
+            let card_name = card.name.to_string();
+            let index = if replacements.len() > 1 {
+                let options = replacements
                 .iter()
                 .enumerate()
                 .map(|(index, replacement)| {
@@ -234,59 +378,88 @@ pub(crate) fn exile_found_cards_for_opposition_agent(
                     .with_related_objects(vec![replacement.source, card_id])
                 })
                 .collect();
-            let index = make_decision_with_fallback(
-                game,
-                &mut *ctx.decision_maker,
-                owner,
-                Some(ctx.source),
-                ReplacementSpec::new(options),
-                FallbackStrategy::FirstOption,
-            );
-            if ctx.decision_maker.awaiting_choice() {
-                return Ok(FoundCardsExileReceipt { moved_ids: Vec::new(), receipts: Vec::new() });
-            }
-            match index.as_slice() {
-                [index] => *index,
-                _ => return Err(ExecutionError::InternalError(
-                    "found-card exile replacement choice must name exactly one offered effect".into(),
-                )),
-            }
-        } else {
-            0
-        };
-        let replacement = replacements.get(index).ok_or_else(||
-            ExecutionError::InternalError("found-card exile replacement choice is invalid".into()))?;
-        selected.push((card_id, *replacement));
-    }
-    let opened_batch = game.open_simultaneous_action();
-    let movements = (|| -> Result<FoundCardsExileReceipt, ExecutionError> {
-        let mut moved_ids = Vec::new();
-        let mut receipts = Vec::new();
-        for (card, replacement) in selected {
-            let receipt = move_found_card_for_opposition_agent(game, ctx, card, replacement)?;
-            if ctx.decision_maker.awaiting_choice() { return Ok(FoundCardsExileReceipt { moved_ids: Vec::new(), receipts: Vec::new() }); }
-            match &receipt.original {
-                crate::events::processing::EventOutcome::Proceed(change) => moved_ids.extend(change.new_object_ids.iter().copied()),
-                crate::events::processing::EventOutcome::Replaced => {
-                    let ids = game.take_zone_change_results(card);
-                    if !ids.is_empty() { game.record_zone_change_results(card, ids.clone()); }
-                    moved_ids.extend(ids);
+                let index = make_decision_with_fallback(
+                    game,
+                    &mut *ctx.decision_maker,
+                    owner,
+                    Some(ctx.source),
+                    ReplacementSpec::new(options),
+                    FallbackStrategy::FirstOption,
+                );
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(FoundCardsExileReceipt {
+                        moved_ids: Vec::new(),
+                        receipts: Vec::new(),
+                    });
                 }
-                _ => {}
-            }
-            receipts.push((card, receipt));
+                match index.as_slice() {
+                    [index] => *index,
+                    _ => return Err(ExecutionError::InternalError(
+                        "found-card exile replacement choice must name exactly one offered effect"
+                            .into(),
+                    )),
+                }
+            } else {
+                0
+            };
+            let replacement = replacements.get(index).ok_or_else(|| {
+                ExecutionError::InternalError(
+                    "found-card exile replacement choice is invalid".into(),
+                )
+            })?;
+            selected.push((card_id, *replacement));
         }
-        Ok(FoundCardsExileReceipt { moved_ids, receipts })
-    })();
-    game.close_simultaneous_action(opened_batch);
-    movements
+        let opened_batch = game.open_simultaneous_action();
+        let movements = (|| -> Result<FoundCardsExileReceipt, ExecutionError> {
+            let mut moved_ids = Vec::new();
+            let mut receipts = Vec::new();
+            for (card, replacement) in selected {
+                let committed = move_found_card_for_opposition_agent_with_outputs(
+                    game,
+                    ctx,
+                    card,
+                    replacement,
+                )?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(FoundCardsExileReceipt {
+                        moved_ids: Vec::new(),
+                        receipts: Vec::new(),
+                    });
+                }
+                crate::effects::PublishedEffectOutputs::append_distinct(
+                    &mut published_outputs,
+                    committed.published_outputs,
+                );
+                let receipt = committed.receipt;
+                moved_ids.extend(crate::effects::zones::movement_arrivals(
+                    game, card, &receipt,
+                ));
+                receipts.push((card, receipt));
+            }
+            Ok(FoundCardsExileReceipt {
+                moved_ids,
+                receipts,
+            })
+        })();
+        game.close_simultaneous_action(opened_batch);
+        movements
     })();
     if result.is_err() || ctx.decision_maker.awaiting_choice() {
         *game = checkpoint;
         context_checkpoint.restore(ctx);
     }
-    if ctx.decision_maker.awaiting_choice() { return result.map(|_| FoundCardsExileReceipt { moved_ids: Vec::new(), receipts: Vec::new() }); }
-    result
+    if ctx.decision_maker.awaiting_choice() {
+        return result.map(|_| {
+            (
+                FoundCardsExileReceipt {
+                    moved_ids: Vec::new(),
+                    receipts: Vec::new(),
+                },
+                Vec::new(),
+            )
+        });
+    }
+    result.map(|receipt| (receipt, published_outputs))
 }
 
 pub(crate) fn offer_library_search_casts(
@@ -695,16 +868,15 @@ fn cast_from_library_while_searching(
         return Ok(());
     };
 
-    let event = if let Some(object) = game.object(new_id) {
-        let snapshot = crate::snapshot::ObjectSnapshot::from_object(object, game);
-        SpellCastEvent::new_with_snapshot(new_id, caster, Zone::Library, snapshot)
-    } else {
-        SpellCastEvent::new(new_id, caster, Zone::Library)
-    };
-    game.queue_trigger_event(
+    let (event, mut captured) = crate::game_loop::capture_completed_spell_cast(
+        game,
+        new_id,
+        caster,
+        Zone::Library,
         ctx.provenance,
-        TriggerEvent::new_with_provenance(event, ctx.provenance),
-    );
+    )?;
+    game.defer_trigger_entries(captured.take_all());
+    game.queue_trigger_event(ctx.provenance, event);
 
     Ok(())
 }

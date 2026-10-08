@@ -1,3 +1,4 @@
+import { isOpaqueExilePlayCommand, localOpaqueExilePlayCommand } from "../../lib/sync-object-identity.js";
 import { createOperationRevealBatch } from "../../lib/ziffle-operation-reveal-batch.js";
 import { assertMatchNotDisputed, isMatchDisputed } from "./match-lifecycle.js";
 import { acceptedZiffleEpochs, assertZiffleEpochInputs, assertZiffleEpochVerification, buildZiffleInputDeck, isPrivateZiffleEpoch, ziffleEpochMaterial, ziffleInputDeckFields } from "../../lib/ziffle-private-epochs.js";
@@ -45,7 +46,6 @@ import {
   selectObjectCandidateForId,
   selectObjectCandidateRevealPolicy,
   isSelfForfeitCommand,
-  isSorcerySpeedForfeitState,
   isSupportedZiffleDeckCount,
   isTrustedMultiplayerSecurityMode,
   isUnauthorizedAddCardCommand,
@@ -555,9 +555,6 @@ export function usePeerLobbyValidation(base, servicesRef) {
       const isProtocolTimeoutForfeit = isProtocolResponseTimeoutForfeitCommand(message.command);
       const isWitnessForfeit = isWitnessForfeitCommand(message.command);
       const isSelfForfeit = isSelfForfeitCommand(message.command, message.actorIndex);
-      if (isSelfForfeit && !isSorcerySpeedForfeitState(liveStateForClock, message.actorIndex)) {
-        throw new Error("Surrender is only available at sorcery speed");
-      }
       if (
         isForfeitCommand(message.command)
         && !isTimeoutForfeit
@@ -586,7 +583,8 @@ export function usePeerLobbyValidation(base, servicesRef) {
           actorIndex: message.actorIndex,
         });
       } else if (
-        expectedActor !== null
+        !isSelfForfeit
+        && expectedActor !== null
         && expectedActor !== undefined
         && Number(expectedActor) !== Number(message.actorIndex)
       ) {
@@ -735,7 +733,8 @@ export function usePeerLobbyValidation(base, servicesRef) {
         : liveStateForClock;
       const expectedActorBeforeApply = liveStateBeforeApply?.decision?.player;
       if (
-        expectedActorBeforeApply !== null
+        !isSelfForfeit
+        && expectedActorBeforeApply !== null
         && expectedActorBeforeApply !== undefined
         && Number(expectedActorBeforeApply) !== Number(message.actorIndex)
       ) {
@@ -1956,7 +1955,10 @@ export function usePeerLobbyValidation(base, servicesRef) {
     if (sequence !== expectedSeq) return reject("unexpected_sequence");
 
     const liveState = gameRef.current ? await gameRef.current.uiState() : stateRef.current;
-    const compatible = isDecisionCommandCompatible(liveState?.decision, auth.command);
+    // A peer-local ID is translated only by its frozen public incarnation.
+    // Keep the signed wire command unchanged for signature and head checks.
+    const localCommand = await localOpaqueExilePlayCommand(gameRef.current, auth.command);
+    const compatible = isDecisionCommandCompatible(liveState?.decision, localCommand);
     if (debug) {
       debug.liveDecisionKind = String(liveState?.decision?.kind || "");
       debug.liveDecisionPlayer = liveState?.decision?.player == null ? null : Number(liveState.decision.player);
@@ -2006,8 +2008,9 @@ export function usePeerLobbyValidation(base, servicesRef) {
 
     let previewedRequirements = [];
     try {
-      previewedRequirements = await previewRequirementsForCommand(auth.command);
-      previewedRequirements = await previewZiffleActionRequirements(auth, previewedRequirements);
+      previewedRequirements = await previewRequirementsForCommand(localCommand);
+      previewedRequirements = await previewZiffleActionRequirements(
+        isOpaqueExilePlayCommand(auth.command) ? { ...auth, command: localCommand } : auth, previewedRequirements);
     } catch (error) {
       // A concealed card may need its owner's already-visible hand opening
       // before this peer can preview the cast. Only the visible-state fallback
@@ -2333,6 +2336,11 @@ export function usePeerLobbyValidation(base, servicesRef) {
         );
       }
       if (authorizedByAction && actionDisclosure.intent) {
+        if (message.actionAuthorization?.command?.action_ref?.kind === "open_exiled_card_for_play") {
+          const signedIntent = message.actionAuthorization.actionIntent;
+          if (!signedIntent) throw new Error("Blind exile reveal shares require the original signed action intent");
+          await servicesRef.current.pinBlindExileOpeningIntent(signedIntent);
+        }
         // Pin the sequence before any token leaves this peer.
         lockFairRandomRevealIntent(actionDisclosure.intent);
       }
@@ -3988,6 +3996,26 @@ export function usePeerLobbyValidation(base, servicesRef) {
     if (!nextState) {
       return nextState;
     }
+    const hint = stateHint?.viewed_cards;
+    const current = nextState.viewed_cards;
+    const cardIds = view => (view?.card_ids || view?.cards?.map(card => card.id) || []).map(String).sort();
+    // Reopening proof material may replace an actual reveal with its passive
+    // stack-inspection view. Publish the original reveal of this same group
+    // so the opponent can acknowledge the hand revealed to pay the spell.
+    const preservePublicReveal = isInspectorOnlyViewedCards(current)
+      && current.visibility === "public"
+      && hint?.visibility === "public"
+      && !isInspectorOnlyViewedCards(hint)
+      && String(hint.source) === String(current.source)
+      && hint.zone === current.zone
+      && Number(hint.subject) === Number(current.subject)
+      && JSON.stringify(cardIds(hint)) === JSON.stringify(cardIds(current));
+    if (preservePublicReveal) {
+      return {
+        ...nextState,
+        viewed_cards: await hydrateViewedCardsFromLiveObjects(hint, currentGame),
+      };
+    }
     if (nextState.viewed_cards) {
       const viewedCards = await hydrateViewedCardsFromLiveObjects(
         nextState.viewed_cards,
@@ -4813,6 +4841,11 @@ export function usePeerLobbyValidation(base, servicesRef) {
 
 	  const applyMatchStart = useCallback(
 	    async (payload, options = {}) => {
+      // Direct/internal starts must pass admission even when genesis was
+      // already accepted or its verification is intentionally skipped.
+      if (payload?.protocolVersion !== PROTOCOL_VERSION) {
+        throw new Error(`Match start requires audit protocol ${PROTOCOL_VERSION}`);
+      }
       assertRuntimeVersion(payload);
 	      let currentGame = gameRef.current;
 	      if (!currentGame || typeof currentGame.startMatch !== "function") {

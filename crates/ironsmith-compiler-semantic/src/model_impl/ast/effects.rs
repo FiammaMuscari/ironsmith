@@ -185,6 +185,11 @@ pub enum EffectAst {
     SnapshotLastObjectTag {
         into: TagRef,
     },
+    /// Collect optional mana payments in controller-first turn order; bind
+    /// their checked total as a fresh local X for the complete nested body.
+    CollectManaPayments {
+        effects: Vec<EffectAst>,
+    },
 }
 
 impl EffectAst {
@@ -225,6 +230,29 @@ impl EffectAst {
             SubjectVerbActionAst::Grants(GrantActionAst::GrantNextSpellAbilityThisTurn {
                 filter,
                 ability: Box::new(ability),
+                mode: ironsmith_core::NextSpellGrantMode::Ability,
+            }),
+        )
+    }
+
+    pub fn subject_verb_next_play_timing_this_turn(
+        player: PlayerAst,
+        filter: ObjectFilter,
+        includes_land_plays: bool,
+    ) -> Self {
+        Self::subject_verb(
+            SubjectVerbRoleAst::AffectedPlayer,
+            player,
+            SubjectVerbActionAst::Grants(GrantActionAst::GrantNextSpellAbilityThisTurn {
+                filter,
+                ability: Box::new(GrantedAbilityAst::KeywordAction(Box::new(
+                    crate::payload::KeywordAction::Flash,
+                ))),
+                mode: if includes_land_plays {
+                    ironsmith_core::NextSpellGrantMode::PlayTiming
+                } else {
+                    ironsmith_core::NextSpellGrantMode::CastTiming
+                },
             }),
         )
     }
@@ -638,6 +666,7 @@ impl EffectAst {
                 amount,
                 target,
                 duration,
+                combat_only: false,
                 source_of_your_choice,
                 protect_you_and_permanents_you_control,
                 follow_up_effects,
@@ -663,6 +692,7 @@ impl EffectAst {
                     source_target: None,
                     protect_source_target: false,
                     follow_up_effects: Vec::new(),
+                    source_would_deal_surface: false,
                 },
             ),
         )
@@ -686,6 +716,7 @@ impl EffectAst {
                     source_target: None,
                     protect_source_target: false,
                     follow_up_effects: Vec::new(),
+                    source_would_deal_surface: false,
                 },
             ),
         )
@@ -708,6 +739,7 @@ impl EffectAst {
                     source_target: None,
                     protect_source_target: false,
                     follow_up_effects: Vec::new(),
+                    source_would_deal_surface: false,
                 },
             ),
         )
@@ -731,6 +763,7 @@ impl EffectAst {
                     source_target: Some(source_target),
                     protect_source_target: false,
                     follow_up_effects: Vec::new(),
+                    source_would_deal_surface: false,
                 },
             ),
         )
@@ -776,9 +809,34 @@ impl EffectAst {
                     target,
                     duration,
                     source_filter,
+                    source_would_deal_surface: false,
+                    of_chosen_color: false,
                 },
             ),
         )
+    }
+
+    /// Mark an all-damage prevention as authored "<source> would deal".
+    pub fn with_prevention_source_would_deal_surface(mut self) -> Self {
+        if let Self::SubjectVerb(subject) = &mut self
+            && let SubjectVerbActionAst::DamagePrevention(
+                DamagePreventionActionAst::PreventAllDamageToTarget {
+                    source_would_deal_surface,
+                    ..
+                }
+                | DamagePreventionActionAst::PreventAllDamageToTargetFromSourceFilter {
+                    source_would_deal_surface,
+                    ..
+                }
+                | DamagePreventionActionAst::PreventAllDamageFromSourceFilter {
+                    source_would_deal_surface,
+                    ..
+                },
+            ) = &mut subject.action
+        {
+            *source_would_deal_surface = true;
+        }
+        self
     }
 
     pub fn subject_verb_prevent_all_damage_from_source_filter(
@@ -793,6 +851,8 @@ impl EffectAst {
                     duration,
                     source_filter,
                     of_chosen_color: false,
+                    source_would_deal_surface: false,
+                    follow_up_effects: Vec::new(),
                 },
             ),
         )
@@ -810,6 +870,8 @@ impl EffectAst {
                     duration,
                     source_filter,
                     of_chosen_color: true,
+                    source_would_deal_surface: false,
+                    follow_up_effects: Vec::new(),
                 },
             ),
         )
@@ -1477,6 +1539,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedForAsLongAsExiled {
+                permission_bound_mana: false,
                 tag,
                 player,
                 allow_land,
@@ -1501,6 +1564,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedForAsLongAsExiled {
+                permission_bound_mana: false,
                 tag,
                 player,
                 allow_land,
@@ -1525,6 +1589,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedForAsLongAsExiled {
+                permission_bound_mana: false,
                 tag,
                 player,
                 allow_land: true,
@@ -1801,6 +1866,7 @@ impl EffectAst {
             SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
                 target,
                 source_top_only: false,
+                tagged_destinations: Vec::new(),
                 zone,
                 to_top,
                 library_order: None,
@@ -1837,6 +1903,7 @@ impl EffectAst {
             SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
                 target,
                 source_top_only: false,
+                tagged_destinations: Vec::new(),
                 zone,
                 to_top,
                 library_order: None,
@@ -1887,6 +1954,17 @@ impl EffectAst {
         {
             *library_order = Some(order);
             *library_order_chooser = chooser;
+        }
+        self
+    }
+
+    pub fn with_tagged_destinations(mut self, destinations: Vec<(TagRef, Zone)>) -> Self {
+        if let Self::SubjectVerb(subject) = &mut self
+            && let SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
+                tagged_destinations, ..
+            }) = &mut subject.action
+        {
+            *tagged_destinations = destinations;
         }
         self
     }
@@ -2577,6 +2655,11 @@ impl EffectAst {
         )
     }
 
+    pub fn subject_verb_change_text(target: TargetAst, selection: ironsmith_core::TextChangeSelection, duration: Until) -> Self {
+        Self::subject_verb(SubjectVerbRoleAst::Actor, PlayerAst::Implicit,
+            SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ChangeText { target, selection, duration }))
+    }
+
     pub fn subject_verb_set_colors(target: TargetAst, colors: ColorSet, duration: Until) -> Self {
         Self::subject_verb(
             SubjectVerbRoleAst::Actor,
@@ -3151,7 +3234,8 @@ impl EffectAst {
             SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::RedirectNextTimeDamageToSource {
                     source,
-                    target,
+                    combat_only: false,
+                    target: Some(target),
                     destination,
                     destination_target: None,
                     all_this_turn: false,
@@ -3171,7 +3255,8 @@ impl EffectAst {
             SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::RedirectNextTimeDamageToSource {
                     source,
-                    target,
+                    combat_only: false,
+                    target: Some(target),
                     destination: RedirectNextTimeDamageDestinationAst::TargetObject,
                     destination_target: Some(destination_target),
                     all_this_turn: false,
@@ -3191,7 +3276,8 @@ impl EffectAst {
             SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::RedirectNextTimeDamageToSource {
                     source,
-                    target,
+                    combat_only: false,
+                    target: Some(target),
                     destination,
                     destination_target: None,
                     all_this_turn: true,
@@ -3917,7 +4003,8 @@ impl EffectAst {
         )
     }
 
-    pub fn subject_verb_bolster(amount: u32) -> Self {
+    pub fn subject_verb_bolster(amount: impl Into<Value>) -> Self {
+        let amount = amount.into();
         Self::subject_verb(
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
@@ -4042,16 +4129,20 @@ impl EffectAst {
     pub fn subject_verb_dont_lose_this_mana_as_steps_and_phases_end_this_turn() -> Self {
         Self::subject_verb_dont_lose_this_mana_as_steps_and_phases_end_this_turn_by(
             PlayerAst::Implicit,
+            None,
         )
     }
 
     pub fn subject_verb_dont_lose_this_mana_as_steps_and_phases_end_this_turn_by(
         player: PlayerAst,
+        color: Option<crate::color::Color>,
     ) -> Self {
         Self::subject_verb(
             SubjectVerbRoleAst::Actor,
             player,
-            SubjectVerbActionAst::Mana(ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn),
+            SubjectVerbActionAst::Mana(ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn {
+                color,
+            }),
         )
     }
 
@@ -4677,7 +4768,7 @@ impl EffectAst {
         Self::subject_verb(
             SubjectVerbRoleAst::AffectedPlayer,
             player,
-            SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects { filter }),
+            SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects { filter, permit_while_exiled: false }),
         )
     }
 
@@ -4862,7 +4953,7 @@ impl EffectAst {
         Self::subject_verb(
             SubjectVerbRoleAst::AffectedPlayer,
             player,
-            SubjectVerbActionAst::Random(RandomActionAst::RollDie { sides, surface }),
+            SubjectVerbActionAst::Random(RandomActionAst::RollDie { sides, surface, result_modifier: None }),
         )
     }
 
@@ -5268,7 +5359,27 @@ impl EffectAst {
         Self::subject_verb(
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
-            SubjectVerbActionAst::Stack(StackActionAst::Counter { target }),
+            SubjectVerbActionAst::Stack(StackActionAst::Counter {
+                target,
+                exile_permission: None,
+            }),
+        )
+    }
+
+    /// The explicit "you" in the permission is the controller of this
+    /// resolving spell or ability. The counter remains unconditional; the
+    /// characteristic gate belongs only to its exile destination rider.
+    pub fn subject_verb_counter_with_exile_permission(
+        target: TargetAst,
+        permission: ironsmith_core::CounterExilePermission,
+    ) -> Self {
+        Self::subject_verb(
+            SubjectVerbRoleAst::Actor,
+            PlayerAst::You,
+            SubjectVerbActionAst::Stack(StackActionAst::Counter {
+                target,
+                exile_permission: Some(permission),
+            }),
         )
     }
 
@@ -5294,6 +5405,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::Counters(CounterActionAst::PutCounters {
+                maximum_total: None,
                 counter_type,
                 count,
                 target,
@@ -5461,6 +5573,23 @@ impl EffectAst {
                 count,
                 from,
                 to,
+                from_all: false,
+            }),
+        )
+    }
+
+    pub fn subject_verb_move_counters_from_all(
+        counter_type: CounterType,
+        count: ironsmith_core::effect::CounterMoveAmount,
+        from: ObjectFilter,
+        to: TargetAst,
+    ) -> Self {
+        Self::subject_verb(
+            SubjectVerbRoleAst::Actor,
+            PlayerAst::Implicit,
+            SubjectVerbActionAst::Counters(CounterActionAst::MoveCounters {
+                counter_type, count, from: TargetAst::Object(from, None, None), to,
+                from_all: true,
             }),
         )
     }

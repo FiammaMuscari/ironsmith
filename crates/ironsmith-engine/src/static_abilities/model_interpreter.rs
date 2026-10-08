@@ -401,6 +401,11 @@ impl StaticAbilityModelInterpreter {
             max_plays: spec.max_plays,
             cast_this_way_filter: spec.cast_this_way_filter.clone(),
             on_use_effects: spec.on_use_effects.clone(),
+            requires_linked_exile_pair: spec.requires_linked_exile_pair,
+            may_look_at_linked_exile: spec.may_look_at_linked_exile,
+            cast_mana_spend_mode: spec.cast_mana_spend_mode,
+            linked_exile_pair: spec.linked_exile_pair,
+            linked_exile_class_level: spec.linked_exile_class_level,
             source_exiled_surface: spec.source_exiled_surface.clone(),
             filtered_zone_surface: spec.filtered_zone_surface.clone(),
             top_card_only: spec.top_card_only,
@@ -608,6 +613,10 @@ impl StaticAbilityModelInterpreter {
             Model::ThisAbility { ability_index } => Runtime::ThisAbility {
                 ability_index: *ability_index,
             },
+            Model::Keyword(keyword) => Runtime::Keyword(*keyword),
+            Model::NonManaAbility => Runtime::NonManaAbility,
+            Model::LoyaltyAbility => Runtime::LoyaltyAbility,
+            Model::Activator(player) => Runtime::Activator(player.clone()),
             Model::All(conditions) => Runtime::All(
                 conditions
                     .iter()
@@ -1102,7 +1111,12 @@ impl StaticAbilityModelInterpreter {
                     leaf = inner.as_ref();
                 }
                 let converted = StaticAbility::from_model(leaf.clone());
-                if !converted.may_generate_continuous_effects() { return Some(converted); }
+                // A rule-modifying leaf ("This ability costs {2} less to
+                // activate if you have one or fewer cards in hand") carries
+                // the condition natively when it supports one.
+                if !converted.may_generate_continuous_effects() {
+                    return Some(converted.with_condition(combined.clone()).unwrap_or(converted));
+                }
                 converted.with_condition(combined.clone()).unwrap_or_else(|| {
                     StaticAbility::new(
                         crate::static_abilities::GrantAbility::source(converted)
@@ -1748,7 +1762,12 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::RevealFirstCardYouDrawEachTurn {
                 optional,
                 your_turns_only,
-            } => StaticAbility::reveal_first_card_you_draw_each_turn(*optional, *your_turns_only),
+                linked_reveal_pair,
+            } => {
+                let mut reveal = super::misc::RevealFirstCardYouDrawEachTurn::new(*optional, *your_turns_only);
+                reveal.linked_reveal_pair = *linked_reveal_pair;
+                StaticAbility::new(reveal)
+            },
             ironsmith_core::StaticAbilityPayload::ExileToCounteredExileInsteadOfGraveyard {
                 player,
                 counter_type,
@@ -2450,6 +2469,28 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         {
             let body = StaticAbility::from_model((**ability).clone()).display();
             return format!("{} — {body}", self.model.label);
+        }
+        // A conditional leaf with no continuous effect keeps its native
+        // display unconditioned; the gate is still part of the ability.
+        if let ironsmith_core::StaticAbilityPayload::Conditional { condition, .. } =
+            &self.model.payload
+            && let Some(leaf) = self.leaf_static_ability()
+            && !leaf.may_generate_continuous_effects()
+        {
+            let body = leaf.display();
+            let body = body.trim_end_matches('.');
+            let condition = super::continuous::describe_static_condition(condition);
+            if leaf.id() == StaticAbilityId::EntersTapped
+                && let Some(rest) = condition.strip_prefix("as long as ")
+            {
+                let mut chars = body.chars();
+                let lowered = chars
+                    .next()
+                    .map(|first| first.to_lowercase().chain(chars).collect::<String>())
+                    .unwrap_or_default();
+                return format!("If {rest}, {lowered}");
+            }
+            return format!("{body} {condition}");
         }
         if let Some(ability) = self.leaf_static_ability() {
             return ability.display();
@@ -3164,6 +3205,15 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         }
     }
 
+    fn foretell_special_action_modifier(&self) -> Option<(u32, bool)> {
+        match self.payload() {
+            ironsmith_core::StaticAbilityPayload::ForetellSpecialActionModifier { generic_reduction, any_players_turn } => {
+                Some((*generic_reduction, *any_players_turn))
+            }
+            _ => None,
+        }
+    }
+
     fn buyback_cost_reduction_amount(&self) -> Option<u32> {
         match self.payload() {
             ironsmith_core::StaticAbilityPayload::BuybackCostReduction(amount) => Some(*amount),
@@ -3320,10 +3370,12 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::RevealFirstCardYouDrawEachTurn {
                 optional,
                 your_turns_only,
+                linked_reveal_pair,
             } => Some(super::RevealDrawnCardSpec {
                 card_number: 1,
                 optional: *optional,
                 your_turns_only: *your_turns_only,
+                linked_reveal_pair: *linked_reveal_pair,
             }),
             _ => None,
         }
@@ -3428,6 +3480,7 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
             || self.additional_life_cost_per_target().is_some()
             || self.minimum_total_spell_mana().is_some()
             || self.buyback_cost_reduction_amount().is_some()
+            || self.foretell_special_action_modifier().is_some()
     }
 
     fn this_spell_cost_reduction(&self) -> Option<&super::ThisSpellCostReduction> {

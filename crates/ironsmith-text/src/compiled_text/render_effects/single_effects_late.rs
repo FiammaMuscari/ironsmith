@@ -476,17 +476,23 @@ pub(super) fn describe_villainous_choice(
         })
         .collect::<Vec<_>>();
 
+    // An empty surface elides the chooser shared with the preceding clause.
+    let player = if player.is_empty() {
+        String::new()
+    } else {
+        format!("{player} ")
+    };
     match modes.as_slice() {
         [first, second] => {
             format!(
-                "{player} faces a villainous choice — {}, or {}",
+                "{player}faces a villainous choice — {}, or {}",
                 capitalize_first(first),
                 lowercase_first(second)
             )
         }
-        [] => format!("{player} faces a villainous choice"),
+        [] => format!("{player}faces a villainous choice"),
         _ => format!(
-            "{player} faces a villainous choice — {}",
+            "{player}faces a villainous choice — {}",
             capitalize_first(&modes.join(", or "))
         ),
     }
@@ -2144,6 +2150,12 @@ pub(crate) fn collect_activation_restriction_clauses(
             .strip_prefix("__ironsmith_activation_label:")
             .is_some_and(|label| label.eq_ignore_ascii_case("Boast"))
     });
+    // Power-up's "only once" limit is likewise its reminder text.
+    let is_power_up = additional_restrictions.iter().any(|restriction| {
+        restriction
+            .strip_prefix("__ironsmith_activation_label:")
+            .is_some_and(|label| label.eq_ignore_ascii_case("Power-up"))
+    });
     for condition in activation_restrictions {
         if is_boast
             && matches!(
@@ -2152,6 +2164,9 @@ pub(crate) fn collect_activation_restriction_clauses(
                     | crate::ConditionExpr::MaxActivationsPerTurn(1)
             )
         {
+            continue;
+        }
+        if is_power_up && matches!(condition, crate::ConditionExpr::MaxActivationsPerObject(1)) {
             continue;
         }
         let described = super::abilities_and_costs::describe_mana_activation_condition(condition);
@@ -2425,7 +2440,10 @@ pub(crate) fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     if let AbilityKind::Activated(activated) = &ability.kind
         && activated.mana_cost.as_one_of().is_some()
     {
-        return describe_structural_equip_keyword(activated);
+        // "Reconfigure—Pay {2} or {E}{E}{E}" (Razorfield Ripper) also has
+        // a structural one-of cost surface.
+        return describe_structural_equip_keyword(activated)
+            .or_else(|| describe_structural_reconfigure_keyword(activated));
     }
     if let AbilityKind::Activated(activated) = &ability.kind
         && let Some(craft) = describe_structural_craft_keyword(ability, activated)
@@ -3039,7 +3057,9 @@ pub(super) fn describe_structural_craft_keyword(
     let returns_source = return_effect
         .downcast_ref::<crate::effects::MoveToZoneEffect>()
         .is_some_and(|move_to_zone| {
-            matches!(move_to_zone.target, ChooseSpec::Source)
+            (matches!(move_to_zone.target, ChooseSpec::Source)
+                || matches!(&move_to_zone.target, ChooseSpec::All(filter)
+                    if *filter == ObjectFilter::exact_tagged(ironsmith_core::tag::SOURCE_COST_PUBLIC_ARRIVAL_TAG)))
                 && move_to_zone.zone == Zone::Battlefield
                 && matches!(
                     move_to_zone.battlefield_controller,
@@ -3093,14 +3113,28 @@ pub(super) fn describe_craft_material_filter(
     filter: &ObjectFilter,
     count: ChoiceCount,
 ) -> Option<String> {
-    if count == ChoiceCount::exactly(1) && is_craft_artifact_material_filter(filter) {
-        return Some("artifact".to_string());
-    }
-    if count == ChoiceCount::exactly(1) && is_craft_creature_material_filter(filter) {
-        return Some("creature".to_string());
-    }
-    if count == ChoiceCount::at_least(1) && is_craft_one_or_more_material_filter(filter) {
-        return Some("one or more".to_string());
+    if let Some(material) = shared_craft_material_filter(filter) {
+        if count == ChoiceCount::at_least(1) && material == ObjectFilter::default() {
+            return Some("one or more".to_string());
+        }
+        if count.min > 0 && count == ChoiceCount::exactly(count.min) {
+            let noun = if material == ObjectFilter::default().with_type(CardType::Artifact) {
+                "artifact".to_string()
+            } else if material == ObjectFilter::default().with_type(CardType::Creature) {
+                "creature".to_string()
+            } else if let [subtype] = material.subtypes.as_slice()
+                && material == ObjectFilter::default().with_subtype(*subtype)
+            {
+                subtype.to_string()
+            } else {
+                return None;
+            };
+            return Some(if count.min == 1 { noun } else {
+                let amount = u32::try_from(count.min).ok()?;
+                let number = small_number_word(amount).unwrap_or_else(|| amount.to_string());
+                format!("{number} {noun}s")
+            });
+        }
     }
     if count == ChoiceCount::at_least(4) && is_craft_red_spell_material_filter(filter) {
         return Some("four or more red instant and/or sorcery cards".to_string());
@@ -3108,58 +3142,26 @@ pub(super) fn describe_craft_material_filter(
     None
 }
 
-pub(super) fn is_craft_artifact_material_filter(filter: &ObjectFilter) -> bool {
-    filter.any_of.len() == 2
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Battlefield)
-                && branch.controller == Some(PlayerFilter::You)
-                && branch.owner.is_none()
-                && branch.other
-                && branch.card_types == vec![CardType::Artifact]
-        })
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Graveyard)
-                && branch.owner == Some(PlayerFilter::You)
-                && branch.controller.is_none()
-                && branch.other
-                && branch.card_types == vec![CardType::Artifact]
-        })
-}
-
-pub(super) fn is_craft_creature_material_filter(filter: &ObjectFilter) -> bool {
-    filter.any_of.len() == 2
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Battlefield)
-                && branch.controller == Some(PlayerFilter::You)
-                && branch.owner.is_none()
-                && !branch.other
-                && branch.card_types == vec![CardType::Creature]
-        })
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Graveyard)
-                && branch.owner == Some(PlayerFilter::You)
-                && branch.controller.is_none()
-                && !branch.other
-                && branch.card_types == vec![CardType::Creature]
-        })
-}
-
-pub(super) fn is_craft_one_or_more_material_filter(filter: &ObjectFilter) -> bool {
-    filter.any_of.len() == 2
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Battlefield)
-                && branch.controller == Some(PlayerFilter::You)
-                && branch.owner.is_none()
-                && branch.other
-                && branch.card_types.is_empty()
-        })
-        && filter.any_of.iter().any(|branch| {
-            branch.zone == Some(Zone::Graveyard)
-                && branch.owner == Some(PlayerFilter::You)
-                && branch.controller.is_none()
-                && branch.other
-                && branch.card_types.is_empty()
-        })
+// Strip only the mechanic's zone/owner/control/source exclusions, then compare
+// complete remaining predicates. Do not hide additional material restrictions.
+fn shared_craft_material_filter(filter: &ObjectFilter) -> Option<ObjectFilter> {
+    if filter.any_of.len() != 2 { return None; }
+    let mut outer = filter.clone();
+    outer.any_of.clear();
+    if outer != ObjectFilter::default() { return None; }
+    let mut battlefield = filter.any_of.iter().find(|branch| branch.zone == Some(Zone::Battlefield))?.clone();
+    let mut graveyard = filter.any_of.iter().find(|branch| branch.zone == Some(Zone::Graveyard))?.clone();
+    if battlefield.controller != Some(PlayerFilter::You) || battlefield.owner.is_some()
+        || graveyard.owner != Some(PlayerFilter::You) || graveyard.controller.is_some()
+        || !battlefield.other || !graveyard.other
+    { return None; }
+    battlefield.zone = None;
+    battlefield.controller = None;
+    battlefield.other = false;
+    graveyard.zone = None;
+    graveyard.owner = None;
+    graveyard.other = false;
+    (battlefield == graveyard).then_some(battlefield)
 }
 
 pub(super) fn is_craft_red_spell_material_filter(filter: &ObjectFilter) -> bool {
@@ -3497,12 +3499,64 @@ pub(super) fn describe_structural_reconfigure_keyword(
         return None;
     }
 
-    let cost = describe_cost_list(activated.mana_cost.costs());
+    if let Some(branches) = activated.mana_cost.as_one_of() {
+        // "Reconfigure—Pay {2} or {E}{E}{E}" (CR 702.151a, Razorfield Ripper).
+        let has_non_mana_branch = branches.iter().any(|branch| branch.has_non_mana_costs());
+        let branches = branches
+            .iter()
+            .map(|branch| {
+                let described = describe_total_cost(branch);
+                if has_non_mana_branch && !branch.has_non_mana_costs() {
+                    format!("pay {described}")
+                } else if has_non_mana_branch {
+                    lowercase_first(&described)
+                } else {
+                    described
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" or ");
+        return Some(if has_non_mana_branch {
+            format!("Reconfigure—{}", capitalize_first(&branches))
+        } else {
+            format!("Reconfigure {branches}")
+        });
+    }
+    let cost = describe_cost_list(activated.mana_cost.as_all()?);
     if cost.trim().is_empty() || cost.eq_ignore_ascii_case("Free") {
         Some("Reconfigure {0}".to_string())
     } else {
         Some(format!("Reconfigure {cost}"))
     }
+}
+
+/// CR 702.151a: Reconfigure is two activated abilities. The unattach half
+/// (same cost, sorcery speed, only while attached) prints nothing of its own
+/// when it follows the attach half that renders "Reconfigure {cost}".
+pub(crate) fn is_reconfigure_unattach_half_of(
+    attach_half: &Ability,
+    ability: &Ability,
+) -> bool {
+    let (AbilityKind::Activated(attach), AbilityKind::Activated(unattach)) =
+        (&attach_half.kind, &ability.kind)
+    else {
+        return false;
+    };
+    if describe_structural_reconfigure_keyword(attach).is_none()
+        || !matches!(unattach.timing, ActivationTiming::SorcerySpeed)
+        || !unattach.choices.is_empty()
+        || unattach.mana_cost != attach.mana_cost
+        || unattach.effects.segments.len() != 1
+        || !unattach.effects.segments[0].self_replacements.is_empty()
+    {
+        return false;
+    }
+    let [effect] = unattach.effects.segments[0].default_effects.as_slice() else {
+        return false;
+    };
+    effect
+        .downcast_ref::<crate::effects::ReconfigureEffect>()
+        .is_some_and(|reconfigure| matches!(reconfigure.target.base(), ChooseSpec::Source))
 }
 
 pub(super) fn describe_structural_outlast_keyword(
@@ -3701,6 +3755,15 @@ pub(super) fn describe_structural_cumulative_upkeep_keyword(
 }
 
 pub(super) fn cumulative_upkeep_payment_text(payment: &[Effect]) -> Option<String> {
+    if let [choice, movement] = payment
+        && let Some(choice) = choice.downcast_ref::<crate::effects::ChooseObjectsEffect>()
+        && let Some(movement) = movement.downcast_ref::<crate::effects::MoveToZoneEffect>()
+        && matches!(movement.target.base(), ChooseSpec::Tagged(tag) if tag == &choice.tag)
+    {
+        let mut visible = movement.clone();
+        visible.target = ChooseSpec::Object(choice.filter.clone()).with_count(choice.count);
+        if let Some(text) = cumulative_upkeep_move_to_zone_text(&visible) { return Some(text); }
+    }
     if let Some(text) = cumulative_upkeep_chosen_player_token_payment(payment) {
         return Some(text);
     }
@@ -3720,7 +3783,14 @@ pub(super) fn cumulative_upkeep_payment_text(payment: &[Effect]) -> Option<Strin
         } else {
             root
         };
-        if let Some(pay_mana) = effect.downcast_ref::<crate::effects::PayManaEffect>() {
+        if let Some(add) = effect.downcast_ref::<crate::effects::AddManaEffect>() {
+            if add.player != PlayerFilter::You { return None; }
+            parts.push(format!("Add {}", crate::mana::ManaCost::from_symbols(add.mana.clone()).to_oracle()));
+        } else if let Some(draw) = effect.downcast_ref::<crate::effects::DrawCardsEffect>() {
+            if draw.player != PlayerFilter::You { return None; }
+            parts.push(if draw.count == Value::Fixed(1) { "Draw a card".to_string() }
+                else { format!("Draw {} cards", describe_value(&draw.count)) });
+        } else if let Some(pay_mana) = effect.downcast_ref::<crate::effects::PayManaEffect>() {
             parts.push(pay_mana.cost.to_oracle());
         } else if let Some(one_of) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
             let [first] = one_of.effects.as_slice() else {
@@ -3860,7 +3930,7 @@ pub(super) fn cumulative_upkeep_move_to_zone_text(
         ChooseSpec::Object(filter) => filter,
         _ => return None,
     };
-    if filter.zone != Some(Zone::Graveyard) {
+    if filter != &ObjectFilter::default().in_zone(Zone::Graveyard).single_graveyard() {
         return None;
     }
     let count = move_to_zone.target.count();
@@ -4082,7 +4152,9 @@ pub(super) fn describe_structural_fabricate_keyword(
 }
 
 pub(super) fn is_fabricate_servo_token(create: &crate::effects::CreateTokenEffect) -> bool {
-    if create.controller != PlayerFilter::You
+    if create.text_roles.as_ref() != Some(&ironsmith_core::TokenTextRoles::rules_implied(
+        ironsmith_core::TokenNameTextRole::SubtypeDerived, create.token.abilities.len()))
+        || create.controller != PlayerFilter::You
         || create.controller_target.is_some()
         || create.suppress_aura_attachment_choice
         || create.enters_tapped
@@ -4097,7 +4169,6 @@ pub(super) fn is_fabricate_servo_token(create: &crate::effects::CreateTokenEffec
 
     let token = &create.token;
     token.card.is_token
-        && token.card.name == "Servo"
         && token.card.color_indicator.is_none()
         && token.card.card_types == [CardType::Artifact, CardType::Creature]
         && token.card.subtypes == [Subtype::Servo]
@@ -4130,7 +4201,7 @@ pub(super) fn endure_spirit_token_size(
 
     let token = &create.token;
     if !token.card.is_token
-        || token.card.name != "Spirit"
+        || token.card.name.trim_end_matches(" Token") != "Spirit"
         || token.card.color_indicator != Some(crate::color::ColorSet::WHITE)
         || token.card.card_types != [CardType::Creature]
         || token.card.subtypes != [Subtype::Spirit]
@@ -4991,7 +5062,9 @@ pub(super) fn describe_structural_afterlife_keyword(
         return None;
     };
     let create = effect.downcast_ref::<crate::effects::CreateTokenEffect>()?;
-    if create.controller != PlayerFilter::You
+    if create.text_roles.as_ref() != Some(&ironsmith_core::TokenTextRoles::rules_implied(
+        ironsmith_core::TokenNameTextRole::SubtypeDerived, create.token.abilities.len()))
+        || create.controller != PlayerFilter::You
         || create.controller_target.is_some()
         || create.suppress_aura_attachment_choice
         || create.enters_tapped
@@ -5011,7 +5084,6 @@ pub(super) fn describe_structural_afterlife_keyword(
     }
     let token = &create.token;
     if !token.card.is_token
-        || token.card.name != "Spirit"
         || token.card.color_indicator
             != Some(crate::color::ColorSet::WHITE.union(crate::color::ColorSet::BLACK))
         || token.card.card_types != [CardType::Creature]
@@ -5290,10 +5362,9 @@ pub(super) fn describe_structural_mobilize_keyword(
         return None;
     };
     let create = effect.downcast_ref::<crate::effects::CreateTokenEffect>()?;
-    let Value::Fixed(amount) = create.count else {
-        return None;
-    };
-    if amount <= 0
+    let token = &create.token;
+    if create.text_roles.as_ref() != Some(&ironsmith_core::TokenTextRoles::rules_implied(
+        ironsmith_core::TokenNameTextRole::SubtypeDerived, token.abilities.len()))
         || create.controller != PlayerFilter::You
         || create.controller_target.is_some()
         || !create.enters_tapped
@@ -5302,12 +5373,20 @@ pub(super) fn describe_structural_mobilize_keyword(
         || create.sacrifice_at_end_of_combat
         || !create.sacrifice_at_next_end_step
         || create.exile_at_next_end_step
-        || !describe_create_token_blueprint(create)
-            .eq_ignore_ascii_case("1/1 red Warrior creature token")
+        || !token.card.is_token
+        || token.card.colors() != crate::color::ColorSet::RED
+        || token.card.card_types != [CardType::Creature]
+        || token.card.subtypes != [Subtype::Warrior]
+        || token.card.power_toughness != Some(crate::card::PowerToughness::fixed(1, 1))
+        || !token.abilities.is_empty()
     {
         return None;
     }
-    Some(format!("Mobilize {amount}"))
+    if let Value::Fixed(amount) = create.count.unhinted() {
+        return (*amount >= 0).then(|| format!("Mobilize {amount}"));
+    }
+    let basis = describe_where_x_basis(&create.count)?;
+    Some(format!("Mobilize X, where X is {basis}"))
 }
 
 pub(super) fn describe_structural_casualty_keyword(
@@ -5642,6 +5721,29 @@ pub(super) fn equip_target_qualifier_text(spec: &ChooseSpec) -> Option<String> {
             if filter.is_commander && filter.subtypes.is_empty() {
                 return Some("commander".to_string());
             }
+            // "Equip worthy {1}" (Mjölnir, Hammer of Thor): a worthy
+            // creature is a legendary non-Villain that's red and/or white.
+            if filter.subtypes.is_empty()
+                && filter.supertypes == [crate::types::Supertype::Legendary]
+                && filter.excluded_subtypes == [crate::types::Subtype::Villain]
+                && filter.colors.is_some_and(|colors| {
+                    colors
+                        == crate::color::ColorSet::from_color(crate::color::Color::Red)
+                            .with(crate::color::Color::White)
+                })
+            {
+                return Some("worthy".to_string());
+            }
+            // "Equip legendary creature [cost]" (Blackblade Reforged).
+            if filter.subtypes.is_empty() && !filter.supertypes.is_empty() {
+                let supertypes = filter
+                    .supertypes
+                    .iter()
+                    .map(|supertype| supertype.name().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                return Some(format!("{supertypes} creature"));
+            }
             if filter.subtypes.len() == 1 {
                 return Some(filter.subtypes[0].to_string());
             }
@@ -5955,6 +6057,25 @@ fn describe_payment_action_predicate(
 ) -> Option<String> {
     use crate::ability::{ManaPaymentPredicate as P, ManaPaymentPurpose as Purpose};
     match predicate {
+        P::ActivatedAbilityKeyword(keyword) => Some(match keyword {
+            ironsmith_core::ActivatedAbilityKeyword::Equip => "activate an equip ability",
+            ironsmith_core::ActivatedAbilityKeyword::PowerUp => "activate power-up abilities",
+            ironsmith_core::ActivatedAbilityKeyword::ClassLevel(level) => return Some(format!("activate a level {level} ability")),
+            ironsmith_core::ActivatedAbilityKeyword::Cycling => "activate cycling abilities",
+            ironsmith_core::ActivatedAbilityKeyword::Ninjutsu => "activate ninjutsu abilities",
+            ironsmith_core::ActivatedAbilityKeyword::Boast => "activate boast abilities",
+            ironsmith_core::ActivatedAbilityKeyword::Exhaust => "activate exhaust abilities",
+        }.to_string()),
+        P::DisturbCost => Some("pay a disturb cost".to_string()),
+        P::Purpose(Purpose::Foretell) => Some("foretell cards".to_string()),
+        P::AnyOf(parts) if parts.as_slice() == [
+            P::TurnFaceUpMethod(ironsmith_core::ManaTurnFaceUpMethod::Morph),
+            P::TurnFaceUpMethod(ironsmith_core::ManaTurnFaceUpMethod::Megamorph),
+        ] => Some("pay a morph cost".to_string()),
+        P::All(parts) if parts.as_slice() == [
+            P::TurnFaceUpMethod(ironsmith_core::ManaTurnFaceUpMethod::PrintedManaCost),
+            P::SourceManifested,
+        ] => Some("pay a mana cost to turn a manifested creature face up".to_string()),
         P::AnyOf(parts) if !parts.is_empty() => {
             let parts = parts
                 .iter()
@@ -6020,4 +6141,52 @@ fn describe_payment_action_predicate(
         }
         _ => None,
     }
+}
+
+#[cfg(test)]
+mod craft_material_surface_tests {
+    use super::*;
+    fn materials(material: ObjectFilter) -> ObjectFilter {
+        ObjectFilter { any_of: vec![
+            material.clone().in_zone(Zone::Battlefield).controlled_by(PlayerFilter::You).other(),
+            material.in_zone(Zone::Graveyard).owned_by(PlayerFilter::You).other(),
+        ], ..Default::default() }
+    }
+    #[test]
+    fn counts_types_and_subtypes_preserve_the_complete_material_surface() {
+        assert_eq!(describe_craft_material_filter(&materials(ObjectFilter::default().with_type(CardType::Creature)), ChoiceCount::exactly(2)), Some("two creatures".into()));
+        assert_eq!(describe_craft_material_filter(&materials(ObjectFilter::default().with_type(CardType::Artifact)), ChoiceCount::exactly(6)), Some("six artifacts".into()));
+        for subtype in [Subtype::Cave, Subtype::Island] {
+            assert_eq!(describe_craft_material_filter(&materials(ObjectFilter::default().with_subtype(subtype)), ChoiceCount::exactly(1)), Some(subtype.to_string()));
+        }
+    }
+    #[test]
+    fn extra_material_qualifiers_are_not_silently_discarded() {
+        let mut filter = materials(ObjectFilter::default().with_type(CardType::Creature));
+        filter.any_of[0].other = false;
+        assert!(describe_craft_material_filter(&filter, ChoiceCount::exactly(2)).is_none());
+        filter.any_of[0].other = true; filter.any_of[1].colors = Some(crate::color::ColorSet::RED);
+        assert!(describe_craft_material_filter(&filter, ChoiceCount::exactly(2)).is_none());
+    }
+}
+
+
+/// "Onto another target creature with the same controller": the destination
+/// target's controller is the controller of the first (source) target.
+fn describe_move_counters_destination(to: &ChooseSpec) -> String {
+    if let ChooseSpec::Target(inner) = to.unhinted()
+        && let ChooseSpec::Object(filter) = inner.unhinted()
+        && matches!(
+            filter.controller,
+            Some(PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target))
+        )
+    {
+        let mut unscoped = filter.clone();
+        unscoped.controller = None;
+        let described = describe_choose_spec(&ChooseSpec::Target(Box::new(ChooseSpec::Object(
+            unscoped,
+        ))));
+        return format!("{described} with the same controller");
+    }
+    describe_choose_spec(to)
 }

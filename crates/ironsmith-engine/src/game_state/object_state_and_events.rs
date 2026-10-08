@@ -1,6 +1,50 @@
 use super::*;
 
+/// Authored installations have distinct existing duplicate contracts.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AuthoredAbilityDuplicatePolicy {
+    PreserveAll,
+    SuppressEquivalentKindAndZones,
+    SuppressEqualAbility,
+}
+
 impl GameState {
+    /// Install an authored ability on this exact object incarnation.
+    /// Callers retain their authored duplicate policy: all occurrences,
+    /// equivalent kind/functional zones, or full ability equality. Temporary
+    /// grants use their separate timestamp and expiry owner.
+    pub(crate) fn install_authored_object_ability(
+        &mut self,
+        object_id: ObjectId,
+        ability: crate::ability::Ability,
+        duplicate_policy: AuthoredAbilityDuplicatePolicy,
+    ) -> bool {
+        let Some(object) = self.object_mut(object_id) else {
+            return false;
+        };
+        let duplicate = match duplicate_policy {
+            AuthoredAbilityDuplicatePolicy::PreserveAll => false,
+            AuthoredAbilityDuplicatePolicy::SuppressEquivalentKindAndZones => {
+                let fingerprint = |ability: &crate::ability::Ability| {
+                    format!("{:?}|{:?}", ability.kind, ability.functional_zones)
+                };
+                let new_fingerprint = fingerprint(&ability);
+                object
+                    .abilities
+                    .iter()
+                    .any(|existing| fingerprint(existing) == new_fingerprint)
+            }
+            AuthoredAbilityDuplicatePolicy::SuppressEqualAbility => {
+                object.abilities.contains(&ability)
+            }
+        };
+        if duplicate {
+            return false;
+        }
+        object.abilities_mut().push(ability);
+        true
+    }
+
     /// Check if a creature has summoning sickness.
     pub fn is_summoning_sick(&self, id: ObjectId) -> bool {
         self.battlefield_flags.summoning_sick.contains(&id)
@@ -396,15 +440,22 @@ impl GameState {
     }
 
     /// Mark a permanent as suspected.
-    pub fn set_suspected(&mut self, id: ObjectId) {
+    pub fn set_suspected(&mut self, id: ObjectId) -> bool {
+        self.update_cant_effects();
         let Some(object) = self
             .object(id)
             .filter(|object| object.zone == Zone::Battlefield)
         else {
-            return;
+            return false;
         };
-        if self.is_phased_out(id) {
-            return;
+        if self.is_phased_out(id)
+            || self
+                .effect_store
+                .cant_effects
+                .cant_become_suspected
+                .contains(&id)
+        {
+            return false;
         }
         let controller = self.current_controller(id).unwrap_or(object.owner);
         if self.battlefield_flags_mut().suspected.insert(id) {
@@ -428,11 +479,20 @@ impl GameState {
                 self.effect_store.continuous_effects.add_effect(effect);
             }
             self.mark_source_designation_changed(id, Self::condition_reads_suspected_state);
+            return true;
         }
+        false
     }
 
     /// Clear the suspected designation from a permanent.
     pub fn clear_suspected(&mut self, id: ObjectId) -> bool {
+        if self.is_phased_out(id)
+            || !self
+                .object(id)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
+        {
+            return false;
+        }
         let removed = self.battlefield_flags_mut().suspected.remove(&id);
         if removed {
             self.mark_source_designation_changed(id, Self::condition_reads_suspected_state);
@@ -697,6 +757,34 @@ impl GameState {
         self.battlefield_flags.face_down.contains(&id)
     }
 
+    /// Eligibility for turning an existing permanent face down (CR 712.11).
+    /// This is deliberately separate from `set_face_down`: a double-faced
+    /// card can enter face down through manifest, cloak, or a face-down cast.
+    pub fn can_turn_face_down_permanent(&self, id: ObjectId) -> bool {
+        let Some(object) = self.object(id) else {
+            return false;
+        };
+        if object.zone != Zone::Battlefield || self.is_face_down(id) || self.is_phased_out(id) {
+            return false;
+        }
+        let double_faced = |object: &crate::object::Object| {
+            matches!(object.linked_face_layout, LinkedFaceLayout::TransformLike)
+        };
+        if double_faced(object) {
+            return false;
+        }
+        !self
+            .commander_tracking
+            .merged_permanents
+            .get(&object.stable_id)
+            .is_some_and(|merged| {
+                merged
+                    .components
+                    .iter()
+                    .any(|component| double_faced(&component.object))
+            })
+    }
+
     /// Set an object face down.
     ///
     /// CR 730.2f turns every face-up component of a merged permanent face
@@ -754,6 +842,18 @@ impl GameState {
         if self.battlefield_flags_mut().manifested.insert(id) {
             self.mark_object_characteristics_dirty(id);
         }
+    }
+
+    /// Record cloak on the exact battlefield incarnation. Current ward and
+    /// characteristics cannot reconstruct this provenance.
+    pub fn set_cloaked(&mut self, id: ObjectId) {
+        if self.battlefield_flags_mut().cloaked.insert(id) {
+            self.mark_object_characteristics_dirty(id);
+        }
+    }
+
+    pub fn is_cloaked(&self, id: ObjectId) -> bool {
+        self.battlefield_flags.cloaked.contains(&id)
     }
 
     /// Check if a permanent is manifested.
@@ -981,13 +1081,16 @@ impl GameState {
             .object_store
             .object_mut(id)
             .is_some_and(|object| object.end_face_down_cast_overlay());
-        let (face_down_changed, manifested_changed) = {
+        let (face_down_changed, origin_changed) = {
             let flags = self.battlefield_flags_mut();
-            (flags.face_down.remove(&id), flags.manifested.remove(&id))
+            (
+                flags.face_down.remove(&id),
+                flags.manifested.remove(&id) | flags.cloaked.remove(&id),
+            )
         };
         if face_down_changed {
             self.mark_face_down_state_changed(id);
-        } else if manifested_changed {
+        } else if origin_changed {
             self.mark_object_characteristics_dirty(id);
         }
         face_down_changed
@@ -1243,35 +1346,50 @@ impl GameState {
         }
         let checkpoint = self.clone();
         let result = (|| {
-            let mut completed = Vec::new();
-            while let Some(id) = self
-                .turn_store
-                .pending_day_night_as_transforms
-                .first()
-                .copied()
-            {
-                if let Some(controller) = self
-                    .object(id)
-                    .filter(|object| object.zone == Zone::Battlefield)
-                    .and_then(|_| self.current_controller(id))
-                {
-                    self.execute_as_transforms_effect_programs(id, controller, decision_maker)?;
-                    if decision_maker.awaiting_choice() {
-                        return Ok(());
+            let (mut completed, observations) =
+                crate::effects::with_action_observations(self, |game| {
+                    let mut completed = Vec::new();
+                    while let Some(id) = game
+                        .turn_store
+                        .pending_day_night_as_transforms
+                        .first()
+                        .copied()
+                    {
+                        if let Some(controller) = game
+                            .object(id)
+                            .filter(|object| object.zone == Zone::Battlefield)
+                            .and_then(|_| game.current_controller(id))
+                        {
+                            game.execute_as_transforms_effect_programs(
+                                id,
+                                controller,
+                                decision_maker,
+                            )?;
+                            if decision_maker.awaiting_choice() {
+                                return Ok(completed);
+                            }
+                        }
+                        game.turn_store.pending_day_night_as_transforms.remove(0);
+                        let provenance = game
+                            .provenance_graph_mut()
+                            .alloc_root_event(crate::events::EventKind::Transformed);
+                        completed.push(crate::triggers::TriggerEvent::new_with_provenance(
+                            crate::events::other::TransformedEvent::new(id),
+                            provenance,
+                        ));
                     }
-                }
-                self.turn_store.pending_day_night_as_transforms.remove(0);
-                let provenance = self
-                    .provenance_graph_mut()
-                    .alloc_root_event(crate::events::EventKind::Transformed);
-                completed.push(crate::triggers::TriggerEvent::new_with_provenance(
-                    crate::events::other::TransformedEvent::new(id),
-                    provenance,
-                ));
+                    Ok(completed)
+                })?;
+            if decision_maker.awaiting_choice() {
+                return Ok(());
             }
             // All day/night changes and "as transforms" choices belong to
             // one completed operation. Never freeze intermediate faces.
-            crate::events::other::freeze_completed_lifecycle_events(self, &mut completed)?;
+            crate::effects::observe_lifecycle_completions_with_observations(
+                self,
+                &mut completed,
+                &observations,
+            )?;
             for event in completed {
                 self.queue_trigger_event(event.provenance(), event);
             }
@@ -1493,6 +1611,7 @@ impl GameState {
     ) {
         let attacked_permanent = target.attacked_permanent();
         let as_battle = matches!(target, crate::combat_state::AttackTarget::Battle(_));
+        self.retain_attacking_role(creature, &target);
         self.combat
             .get_or_insert_with(Default::default)
             .attackers
@@ -1521,34 +1640,8 @@ impl GameState {
     /// Remove an attacking or blocking permanent from combat (CR 506.4).
     /// Creatures it blocked stay blocked (CR 509.1h).
     pub(crate) fn remove_object_from_combat(&mut self, id: ObjectId) {
-        let Some(combat) = self.combat.as_mut() else {
-            return;
-        };
-        let was_participating = combat
-            .attackers
-            .iter()
-            .any(|attacker| attacker.creature == id)
-            || combat
-                .blockers
-                .values()
-                .any(|blockers| blockers.contains(&id));
-        combat.remember_blocked_attackers();
-        combat.attackers.retain(|attacker| attacker.creature != id);
-        combat.blockers.remove(&id);
-        combat.blocked_attackers.remove(&id);
-        combat.damage_assignment_order.remove(&id);
-        combat
-            .attacking_bands
-            .iter_mut()
-            .for_each(|band| band.retain(|member| *member != id));
-        combat.attacking_bands.retain(|band| !band.is_empty());
-        combat.had_to_attack_this_combat.remove(&id);
-        for blockers in combat.blockers.values_mut() {
-            blockers.retain(|blocker| *blocker != id);
-        }
-        for order in combat.damage_assignment_order.values_mut() {
-            order.retain(|object| *object != id);
-        }
+        self.retire_attacking_role(id);
+        let was_participating = self.mutate_combat_lanes(|combat| combat.remove_combatant(id));
         self.clear_ninjutsu_attack_targets_for(id);
         if was_participating {
             // Combat roles can condition abilities and replacement matchers.
@@ -1567,40 +1660,13 @@ impl GameState {
         permanent: ObjectId,
         defending_player: Option<PlayerId>,
     ) {
-        let Some(combat) = self.combat.as_ref() else {
-            return;
-        };
-        if !combat
-            .attackers
-            .iter()
-            .any(|info| info.target.attacked_permanent() == Some(permanent))
-        {
-            return;
-        }
         let planeswalker_defender = defending_player.or_else(|| self.controller_of_id(permanent));
         let battle_defender = defending_player.or_else(|| self.battle_protector(permanent));
-        let Some(combat) = self.combat.as_mut() else {
-            return;
-        };
-        combat.attacked_permanent_types.remove(&permanent);
-        for info in &mut combat.attackers {
-            info.target = match info.target {
-                crate::combat_state::AttackTarget::Planeswalker(id) if id == permanent => {
-                    crate::combat_state::AttackTarget::Nothing {
-                        defending_player: planeswalker_defender,
-                        was_planeswalker: true,
-                    }
-                }
-                crate::combat_state::AttackTarget::Battle(id) if id == permanent => {
-                    crate::combat_state::AttackTarget::Nothing {
-                        defending_player: battle_defender,
-                        was_planeswalker: false,
-                    }
-                }
-                ref other => other.clone(),
-            };
+        if self.mutate_combat_lanes(|combat| {
+            combat.remove_attacked_permanent(permanent, planeswalker_defender, battle_defender)
+        }) {
+            self.mark_continuous_state_dirty();
         }
-        self.mark_continuous_state_dirty();
     }
 
     /// Check if a card is exiled via madness.
@@ -1883,6 +1949,7 @@ impl GameState {
             flags.flipped.remove(&id);
             flags.face_down.remove(&id);
             flags.manifested.remove(&id);
+            flags.cloaked.remove(&id);
             flags.fully_unlocked_rooms.remove(&id);
             flags.rooms_with_no_unlocked_door.remove(&id);
             flags.transform_count.remove(&id);
@@ -1912,6 +1979,9 @@ impl GameState {
             choices.chosen_players.remove(&id);
             choices.chosen_objects.remove(&id);
             choices.chosen_named_options.remove(&id);
+            choices
+                .numeric_acquisitions
+                .retain(|owner, _| owner.host != id);
             choices
                 .chosen_modes_by_ability
                 .retain(|(source, _), _| *source != id);
@@ -2271,6 +2341,27 @@ impl GameState {
         }
     }
 
+    /// CR 406.3 retains a rules player's inspection entitlement without any
+    /// requirement that they actually looked. Exact member incarnations and
+    /// active acquisition-bound readers supply new entitlements; the durable
+    /// map deliberately does not retain the source as a continuing authority.
+    pub(crate) fn remember_linked_exile_inspection_entitlements(&mut self) {
+        let entitlements = self
+            .effect_store
+            .grant_registry
+            .linked_exile_inspection_entitlements(self);
+        for (member, player) in entitlements {
+            if !self
+                .exile_tracking
+                .face_down_exile_viewers
+                .get(&member)
+                .is_some_and(|viewers| viewers.contains(&player))
+            {
+                self.grant_face_down_exile_view(member, player);
+            }
+        }
+    }
+
     // === Chosen color helpers ===
 
     /// Record a chosen color for a permanent.
@@ -2509,14 +2600,89 @@ impl GameState {
                     object.base_toughness = Some(crate::card::PtValue::Fixed(option.toughness));
                     for granted in &option.abilities {
                         let ability = crate::ability::Ability::static_ability(granted.clone());
-                        if !object.abilities.contains(&ability) {
-                            object.abilities_mut().push(ability);
-                        }
+                        self.install_authored_object_ability(
+                            permanent_id,
+                            ability,
+                            AuthoredAbilityDuplicatePolicy::SuppressEqualAbility,
+                        );
                     }
                     self.mark_continuous_state_dirty();
                 }
             }
         }
+    }
+
+    pub fn set_number_for_acquisition(
+        &mut self,
+        owner: crate::source_numbers::NumberChoiceOwner,
+        number: u32,
+    ) -> Result<(), crate::effects::ExecutionError> {
+        let public_group = if let Some(record) = self.choice_store.numeric_acquisitions.get(&owner)
+        {
+            record.public_group
+        } else if let Some(last) = self
+            .choice_store
+            .numeric_acquisitions
+            .iter()
+            .filter(|(known, _)| known.host == owner.host)
+            .map(|(_, record)| record.public_group)
+            .max()
+        {
+            last.checked_add(1)
+                .ok_or(crate::effects::ExecutionError::ResourceLimitExceeded {
+                    resource: "numeric choice group sequence",
+                    requested: u128::from(last) + 1,
+                    maximum: u128::from(u64::MAX),
+                })?
+        } else {
+            0
+        };
+        // Numeric memory is noncopiable snapshot evidence even when no layer
+        // descriptor changes. Invalidate the object snapshot cache as well as
+        // calculated characteristics before publishing the completed choice.
+        self.bump_mutation_revision();
+        self.mark_continuous_state_dirty();
+        self.choice_store_mut().numeric_acquisitions.insert(
+            owner,
+            crate::source_numbers::NumberChoiceRecord {
+                number,
+                public_group,
+            },
+        );
+        Ok(())
+    }
+    pub fn numeric_choice_memory(
+        &self,
+        source: ObjectId,
+    ) -> crate::source_numbers::NumberChoiceMemory {
+        self.choice_store
+            .numeric_acquisitions
+            .iter()
+            .filter(|(owner, _)| owner.host == source)
+            .map(|(owner, number)| (owner.clone(), *number))
+            .collect()
+    }
+    pub fn number_for_acquisition(
+        &self,
+        owner: &crate::source_numbers::NumberChoiceOwner,
+        retained: Option<&crate::snapshot::ObjectSnapshot>,
+    ) -> Result<Option<u32>, crate::effects::ExecutionError> {
+        if self.object(owner.host).is_some() {
+            return Ok(self
+                .choice_store
+                .numeric_acquisitions
+                .get(owner)
+                .map(|record| record.number));
+        }
+        // A later completed choice before departure supersedes the older
+        // admission snapshot. Neither path follows a new object incarnation.
+        let snapshot = self
+            .source_departure_snapshot(owner.host)
+            .or_else(|| retained.filter(|snapshot| snapshot.object_id == owner.host));
+        let choices=snapshot.and_then(|snapshot|snapshot.numeric_choice_memory.as_deref())
+            .ok_or_else(||crate::effects::ExecutionError::IncompleteEvidence(
+                "numeric acquisition history is unavailable; the public proof is not an executable acquisition receipt".into()))?;
+        Ok(choices.get(owner).map(|record| record.number))
     }
 
     /// The number chosen for a permanent as it entered ("choose 2, 3, or 4
@@ -2626,7 +2792,8 @@ impl GameState {
             }
             let linked = tracking
                 .exiled_with_source
-                .remove(&source_id)
+                .get(&source_id)
+                .cloned()
                 .unwrap_or_default();
             let return_zones = tracking
                 .exiled_with_source_return_zones
@@ -2636,16 +2803,14 @@ impl GameState {
         };
         let returns = linked
             .into_iter()
-            .filter(|object_id| {
-                self.object(*object_id)
+            .filter_map(|object_id| {
+                // The source may also have an unrelated exile ability. Only
+                // an actual "exile until" receipt creates this duration;
+                // source ownership alone must not invent a return to play.
+                let return_zone = return_zones.get(&object_id).copied()?;
+                self.object(object_id)
                     .is_some_and(|object| object.zone == Zone::Exile)
-            })
-            .map(|object_id| {
-                let return_zone = return_zones
-                    .get(&object_id)
-                    .copied()
-                    .unwrap_or(Zone::Battlefield);
-                (object_id, return_zone)
+                    .then_some((object_id, return_zone))
             })
             .collect::<Vec<_>>();
         self.return_exiled_cards_at_duration_end(source_id, returns);
@@ -2822,6 +2987,39 @@ impl GameState {
     }
 
     /// Get cards exiled by a specific source object ID.
+    /// Record the exact resulting incarnation for this proven ability pair.
+    pub fn add_linked_exile_pair_member(
+        &mut self,
+        owner: crate::linked_exile::LinkedExileOwner,
+        member: ObjectId,
+    ) {
+        let members = self
+            .exile_tracking_mut()
+            .linked_exile_pairs
+            .entry(owner)
+            .or_default();
+        if !members.contains(&member) {
+            members.push(member);
+        }
+        self.remember_linked_exile_inspection_entitlements();
+    }
+
+    pub fn linked_exile_pair_members(
+        &self,
+        owner: &crate::linked_exile::LinkedExileOwner,
+    ) -> Result<&[ObjectId], crate::effects::ExecutionError> {
+        if self.exile_tracking.linked_exile_pairs_incomplete {
+            return Err(crate::effects::ExecutionError::IncompleteEvidence(
+                "linked exile ownership was omitted by a source-only state import; full replay required".into()));
+        }
+        Ok(self
+            .exile_tracking
+            .linked_exile_pairs
+            .get(owner)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]))
+    }
+
     pub fn get_exiled_with_source_links(&self, source_id: ObjectId) -> &[ObjectId] {
         self.exile_tracking
             .exiled_with_source
@@ -2901,7 +3099,10 @@ impl GameState {
     }
 
     pub fn replace_exiled_with_source_links(&mut self, links: HashMap<ObjectId, Vec<ObjectId>>) {
-        self.exile_tracking_mut().exiled_with_source = links;
+        let tracking = self.exile_tracking_mut();
+        tracking.exiled_with_source = links;
+        tracking.linked_exile_pairs.clear();
+        tracking.linked_exile_pairs_incomplete = true;
     }
 
     pub fn replace_return_exiled_when_source_leaves(&mut self, sources: HashSet<ObjectId>) {
@@ -2952,6 +3153,10 @@ impl GameState {
     /// Remove an exiled card from all source-link lists.
     pub fn remove_exiled_with_source_link(&mut self, exiled_card_id: ObjectId) {
         let tracking = self.exile_tracking_mut();
+        tracking.linked_exile_pairs.retain(|_, members| {
+            members.retain(|member| *member != exiled_card_id);
+            !members.is_empty()
+        });
         tracking.exiled_with_source.retain(|_, linked| {
             linked.retain(|id| *id != exiled_card_id);
             !linked.is_empty()
@@ -3247,6 +3452,7 @@ impl GameState {
             } else {
                 let changed = flags.face_down.remove(&target_id);
                 flags.manifested.remove(&target_id);
+                flags.cloaked.remove(&target_id);
                 changed
             }
         };
@@ -3341,12 +3547,18 @@ impl GameState {
         let object_snapshot = event
             .downcast::<crate::events::zones::ZoneChangeEvent>()
             .filter(|zone_change| zone_change.to == Zone::Battlefield)
-            .and_then(|zone_change| zone_change.destination_snapshots.first().cloned().or_else(|| {
-                zone_change.objects.first().copied().and_then(|id| {
-                    self.object(id)
-                        .map(|obj| crate::snapshot::ObjectSnapshot::from_object(obj, self))
-                })
-            }))
+            .and_then(|zone_change| {
+                zone_change
+                    .destination_snapshots
+                    .first()
+                    .cloned()
+                    .or_else(|| {
+                        zone_change.objects.first().copied().and_then(|id| {
+                            self.object(id)
+                                .map(|obj| crate::snapshot::ObjectSnapshot::from_object(obj, self))
+                        })
+                    })
+            })
             .or_else(|| event.snapshot().cloned())
             .or_else(|| {
                 // Attack-history characteristics are fixed after attackers
@@ -3355,7 +3567,9 @@ impl GameState {
                 event
                     .downcast::<crate::events::combat::CreatureAttackedEvent>()
                     .and_then(|attack| self.object(attack.attacker))
-                    .map(|object| crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, self))
+                    .and_then(|object| {
+                        crate::snapshot::ObjectSnapshot::capture_for_execution(object, self)
+                    })
             })
             .or_else(|| {
                 event.object_id().and_then(|id| {
@@ -3372,26 +3586,142 @@ impl GameState {
         (object_snapshot, source_snapshot)
     }
 
-    pub(crate) fn stage_turn_history_event(&mut self, event: &crate::triggers::TriggerEvent) {
-        // Captured receipts were already committed by their original-operation
-        // owner. Projection must not count them again while an effect returns.
+    /// Execute state construction through ordinary mutation/replacement owners
+    /// while suppressing action history and trigger publication. Local receipt
+    /// journals still serve child programs; enclosing journals/queues are kept
+    /// outside the scope. The caller owns world rollback and pending choices.
+    pub fn with_suppressed_action_observations<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let previous = self.effect_store.action_observations_suppressed;
+        let events = std::mem::take(&mut self.effect_store.pending_trigger_events);
+        let entries = std::mem::take(&mut self.effect_store.pending_trigger_entries);
+        let reflexive = std::mem::take(&mut self.effect_store.pending_reflexive_triggers);
+        let observers = std::mem::take(&mut self.effect_store.action_observation_records);
+        let original_observers =
+            std::mem::take(&mut self.effect_store.retained_original_observation_scopes);
+        let results = std::mem::take(&mut self.effect_store.instruction_result_records);
+        let matched = std::mem::take(&mut self.effect_store.matched_outcome_events);
+        self.effect_store.action_observations_suppressed = true;
+        let result = body(self);
+        self.effect_store.action_observations_suppressed = previous;
+        self.effect_store.pending_trigger_events = events;
+        self.effect_store.pending_trigger_entries = entries;
+        self.effect_store.pending_reflexive_triggers = reflexive;
+        self.effect_store.action_observation_records = observers;
+        self.effect_store.retained_original_observation_scopes = original_observers;
+        self.effect_store.instruction_result_records = results;
+        self.effect_store.matched_outcome_events = matched;
+        result
+    }
+
+    pub(crate) fn action_observations_suppressed(&self) -> bool {
+        self.effect_store.action_observations_suppressed
+    }
+
+    pub(crate) fn retain_action_observation(&mut self, event: &crate::triggers::TriggerEvent) {
+        if self.effect_store.action_observation_records.is_empty() {
+            return;
+        }
+        for observations in &mut self.effect_store.action_observation_records {
+            if let Some(previous) = observations
+                .iter_mut()
+                .find(|previous| previous.occurrence_key() == event.occurrence_key())
+            {
+                *previous = if previous.completed_action_provenance().is_some() {
+                    event.with_completed_action_receipt(previous)
+                } else {
+                    event.clone()
+                };
+            } else {
+                observations.push(event.clone());
+            }
+        }
+    }
+
+    pub(crate) fn stage_turn_history_event(&mut self, incoming: &crate::triggers::TriggerEvent) {
+        let incoming = self.event_with_retained_trigger_capture(incoming);
+        let incoming = &incoming;
+        if incoming.ordinary_triggers_captured() || incoming.delayed_triggers_captured() {
+            self.retain_trigger_capture_receipt(incoming);
+        }
+        if self.action_observations_suppressed() {
+            self.retain_action_observation(incoming);
+            return;
+        }
+        // An older alias cannot replace an archived completion's frozen payload.
+        let event = self
+            .turn_store
+            .action_history
+            .iter()
+            .find(|record| {
+                record.event.ptr_eq(incoming)
+                    && record.event.completed_action_provenance().is_some()
+            })
+            .map(|record| incoming.with_completed_action_receipt(&record.event))
+            .unwrap_or_else(|| incoming.clone());
+        self.retain_action_observation(&event);
+        if event.completed_action_provenance().is_some() {
+            let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(&event);
+            let record = self
+                .turn_store
+                .turn_history
+                .refresh_completed_action_record(
+                    &event,
+                    object_snapshot.clone(),
+                    source_snapshot.clone(),
+                )
+                .or_else(|| {
+                    self.turn_store
+                        .action_history
+                        .refresh_completed_action_record(&event, object_snapshot, source_snapshot)
+                });
+            if let Some(record) = record {
+                // Both views share one immutable receipt; replacing it retains
+                // chronology and never appends a past action into the new turn.
+                self.turn_store.action_history.replace_shared(record);
+                self.invalidate_continuous_history_modifiers();
+                return;
+            }
+        }
+        // Captured or archived occurrences have already been counted. This
+        // applies even after turn rollover clears the local alias map/history.
         if event.triggers_captured()
             || self
                 .effect_store
                 .matched_outcome_events
                 .contains_key(&event.occurrence_key())
+            || self
+                .turn_store
+                .action_history
+                .iter()
+                .any(|record| record.event.ptr_eq(&event))
         {
             return;
         }
-        let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(event);
+        let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(&event);
         self.turn_store
             .turn_history
-            .stage_event(event, object_snapshot, source_snapshot);
+            .stage_event(&event, object_snapshot, source_snapshot);
         self.invalidate_continuous_history_modifiers();
     }
 
     pub(crate) fn record_turn_history_event(&mut self, event: &crate::triggers::TriggerEvent) {
-        if event.triggers_captured() {
+        if self.action_observations_suppressed()
+            || event.triggers_captured()
+            || self
+                .turn_store
+                .turn_history
+                .event_records
+                .iter()
+                .any(|record| record.event.ptr_eq(event))
+            || self
+                .turn_store
+                .action_history
+                .iter()
+                .any(|record| record.event.ptr_eq(event))
+        {
             return;
         }
         if let Some(mutated) = event.downcast::<crate::events::other::MutatedEvent>() {
@@ -3441,19 +3771,198 @@ impl GameState {
         let Some(record) = self.turn_store.turn_history.event_records.last_shared() else {
             return;
         };
-        let involved_players = self
-            .players
-            .iter()
-            .map(|player| player.id)
-            .filter(|player| record.involves_player(*player))
-            .collect::<Vec<_>>();
-        for player in involved_players {
-            self.turn_store
-                .action_history_by_player
-                .entry(player)
-                .or_default()
-                .push_back(record.clone());
+        self.turn_store.action_history.push_shared(record);
+    }
+
+    /// Read only proof for this exact occurrence from the current branch's
+    /// immutable receipts. An equal-looking later event is a distinct action.
+    pub(crate) fn event_with_retained_trigger_capture(
+        &self,
+        event: &crate::triggers::TriggerEvent,
+    ) -> crate::triggers::TriggerEvent {
+        let mut event = event.clone();
+        if event.triggers_captured() {
+            return event;
         }
+        if let Some(receipt) = self
+            .effect_store
+            .matched_outcome_events
+            .get(&event.occurrence_key())
+        {
+            event = event.with_retained_trigger_capture(receipt);
+            if event.triggers_captured() {
+                return event;
+            }
+        }
+        for receipt in self.retained_action_observations() {
+            event = event.with_retained_trigger_capture(receipt);
+            if event.triggers_captured() {
+                break;
+            }
+        }
+        event
+    }
+
+    pub(crate) fn event_is_pending_for_trigger_matching(
+        &self,
+        event: &crate::triggers::TriggerEvent,
+    ) -> bool {
+        self.effect_store
+            .pending_trigger_events
+            .iter()
+            .any(|pending| pending.ptr_eq(event))
+    }
+
+    /// Only an actual matching owner publishes observer proof. Retain metadata
+    /// on the physical receipt without changing history counts or chronology.
+    pub(crate) fn retain_trigger_capture_receipt(
+        &mut self,
+        incoming: &crate::triggers::TriggerEvent,
+    ) {
+        if self.action_observations_suppressed() {
+            return;
+        }
+        let event = self.event_with_retained_trigger_capture(incoming);
+        let turn_retained = self
+            .turn_store
+            .turn_history
+            .retain_trigger_capture_receipt(&event);
+        let archived = self
+            .turn_store
+            .action_history
+            .retain_trigger_capture_receipt(&event)
+            .is_some();
+        if !turn_retained && !archived {
+            let (object_snapshot, source_snapshot) = self.projected_turn_event_snapshots(&event);
+            self.turn_store
+                .turn_history
+                .stage_event(&event, object_snapshot, source_snapshot);
+        }
+        for observations in &mut self.effect_store.action_observation_records {
+            for previous in observations
+                .iter_mut()
+                .filter(|previous| previous.ptr_eq(&event))
+            {
+                previous.inherit_trigger_capture(&event);
+            }
+        }
+        if self.effect_store.per_event_trigger_matching {
+            self.effect_store
+                .matched_outcome_events
+                .insert(event.occurrence_key(), event);
+        }
+    }
+
+    /// Shared history write for native activation completion and notification
+    /// publication. Callers retain their existing earlier/later boundaries.
+    pub(crate) fn record_land_mana_activation(
+        &mut self,
+        source: ObjectId,
+        activator: PlayerId,
+        snapshot: Option<&ObjectSnapshot>,
+    ) {
+        let is_land = self
+            .object(source)
+            .map(|object| object.is_land())
+            .or_else(|| snapshot.map(|snapshot| snapshot.is_land()))
+            .unwrap_or(false);
+        if is_land {
+            self.turn_store
+                .turn_history
+                .players_tapped_land_for_mana_this_turn
+                .insert(activator);
+        }
+    }
+
+    /// Allocate one activation notification occurrence from an already bound
+    /// payload. Its caller owns queueing and immediate-mana trigger timing.
+    pub(crate) fn complete_activation_notification(
+        &mut self,
+        activation: crate::events::AbilityActivatedEvent,
+    ) -> crate::effects::CompletedEffectOutputs {
+        if activation.is_mana_ability {
+            self.record_land_mana_activation(
+                activation.source,
+                activation.activator,
+                activation.snapshot.as_ref(),
+            );
+        }
+        let provenance = self
+            .provenance_graph_mut()
+            .alloc_root_event(crate::events::EventKind::AbilityActivated);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(activation, provenance);
+        crate::effects::CompletedEffectOutputs::aggregate_only(
+            crate::effect::EffectOutcome::resolved().with_event(event),
+        )
+    }
+
+    /// Exact departure evidence survives turn cleanup through the existing
+    /// physical event archive. Never follow another stable-card incarnation.
+    pub(crate) fn source_departure_snapshot(&self, source: ObjectId) -> Option<&ObjectSnapshot> {
+        self.turn_store
+            .turn_history
+            .source_departure_snapshot(source)
+            .or_else(|| {
+                self.turn_store
+                    .action_history
+                    .iter()
+                    .rev()
+                    .find_map(|record| record.event.source_departure_snapshot(source))
+            })
+    }
+
+    /// As above, with physical phasing receipts admitted explicitly.
+    pub(crate) fn source_last_known_snapshot(&self, source: ObjectId) -> Option<&ObjectSnapshot> {
+        self.turn_store
+            .turn_history
+            .source_last_known_snapshot(source)
+            .or_else(|| {
+                self.turn_store
+                    .action_history
+                    .iter()
+                    .rev()
+                    .find_map(|record| record.event.source_last_known_snapshot(source))
+            })
+    }
+
+    /// Historical characteristics for an execution source. None means that
+    /// current characteristics are authoritative (or no exact evidence exists).
+    /// This does not resolve an object for a physical action.
+    pub(crate) fn source_characteristic_lki_snapshot<'a>(
+        &'a self,
+        source: ObjectId,
+        retained: Option<&'a ObjectSnapshot>,
+    ) -> Option<&'a ObjectSnapshot> {
+        if self.is_phased_out(source) {
+            return self
+                .source_last_known_snapshot(source)
+                .or_else(|| retained.filter(|snapshot| snapshot.object_id == source));
+        }
+        if let Some(current) = self.object(source) {
+            // Preserve a caller's explicit old-incarnation binding, while
+            // preferring its actual departure over an earlier announcement.
+            let previous = retained.filter(|snapshot| {
+                snapshot.stable_id == current.stable_id
+                    && (snapshot.object_id != current.id || snapshot.zone != current.zone)
+            })?;
+            return self
+                .source_departure_snapshot(previous.object_id)
+                .or(Some(previous));
+        }
+        self.source_departure_snapshot(source)
+            .or_else(|| retained.filter(|snapshot| snapshot.object_id == source))
+    }
+
+    /// Current projections and retained full-game observations are the receipt
+    /// authority, including aliases created before a later turn boundary.
+    pub(crate) fn retained_action_observations(
+        &self,
+    ) -> impl Iterator<Item = &crate::triggers::TriggerEvent> {
+        self.turn_store
+            .turn_history
+            .projected_records()
+            .chain(self.turn_store.action_history.iter())
+            .map(|record| &record.event)
     }
 
     /// Freeze public milling characteristics at the outer instruction boundary,
@@ -3482,9 +3991,7 @@ impl GameState {
                     .filter(|object| object.zone == previous.zone)
                     && !self.is_face_down(object.id)
                 {
-                    milled.snapshot = Some(
-                        ObjectSnapshot::from_object_with_calculated_characteristics(object, self),
-                    );
+                    milled.snapshot = ObjectSnapshot::capture_for_execution(object, self);
                 }
                 Some((index, event.with_inner_event(milled)))
             })
@@ -3497,7 +4004,7 @@ impl GameState {
     /// Freeze actual entry characteristics at the completed original-operation
     /// boundary. Both reported and queued events use this owner. Simultaneous
     /// callers supply the entire batch after timestamps, before added programs.
-    pub(crate) fn freeze_completed_entry_events<'a>(
+    pub fn freeze_completed_entry_events<'a>(
         &mut self,
         events: impl IntoIterator<Item = &'a mut crate::triggers::TriggerEvent>,
     ) -> Result<(), crate::effects::ExecutionError> {
@@ -3514,59 +4021,60 @@ impl GameState {
                 .map(|event| &mut **event)
                 .chain(pending.iter_mut())
                 .collect::<Vec<_>>();
-            let mut entries = all
-                .iter_mut()
-                .map(|event| &mut **event)
-                .filter(|event| {
-                    event
-                        .downcast::<crate::events::EnterBattlefieldEvent>()
-                        .is_some_and(|entry| {
-                            entry.completed_snapshot.is_none()
-                                && self
-                                    .object(entry.object)
-                                    .is_some_and(|object| object.zone == Zone::Battlefield)
-                        })
+            let retained = self
+                .retained_action_observations()
+                .filter(|receipt| receipt.completed_action_provenance().is_some())
+                .map(|receipt| receipt.occurrence_key())
+                .collect::<std::collections::HashSet<_>>();
+            let entries = all
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    let entry = event.downcast::<crate::events::EnterBattlefieldEvent>()?;
+                    // Unobserved departures still need their own retained original
+                    // boundary; do not follow a returned card or invent its arrival.
+                    (entry.completed_snapshot.is_some()
+                        || event.completed_action_provenance().is_some()
+                        || retained.contains(&event.occurrence_key())
+                        || self
+                            .object(entry.object)
+                            .is_some_and(|object| object.zone == Zone::Battlefield))
+                    .then_some(index)
                 })
                 .collect::<Vec<_>>();
             if entries.is_empty() {
                 return Ok(());
             }
-            // Reported token events may still share their effect's provenance.
-            // Give every actual entry a row, then stage the whole batch before
-            // calculating any completed characteristics (including entry counts).
-            for event in &mut entries {
-                let parent = event.provenance();
-                let provenance = if self.provenance_graph().node(parent).is_some() {
-                    self.alloc_child_event_provenance(parent, event.kind())
-                } else {
-                    self.provenance_graph_mut().alloc_root_event(event.kind())
-                };
-                self.turn_store.turn_history.remove_staged_event(parent);
-                event.set_provenance(provenance);
-                self.stage_turn_history_event(event);
+            let completions = entries
+                .iter()
+                .map(|&index| {
+                    let event = &*all[index];
+                    let parent = self
+                        .provenance_graph()
+                        .node(event.provenance())
+                        .map(|_| event.provenance());
+                    (event.clone(), parent)
+                })
+                .collect();
+            let completed =
+                crate::effects::observe_action_completions_retaining_groups(self, completions)?;
+            let destinations = completed
+                .iter()
+                .filter_map(|event| event.snapshot().cloned())
+                .collect::<Vec<_>>();
+            let emerge_receipts = completed
+                .iter()
+                .filter_map(|event| {
+                    let entry = event.downcast::<crate::events::EnterBattlefieldEvent>()?;
+                    entry
+                        .emerge_sacrifice
+                        .clone()
+                        .map(|receipt| (entry.object, receipt))
+                })
+                .collect::<std::collections::HashMap<_, _>>();
+            for (index, event) in entries.into_iter().zip(completed) {
+                *all[index] = event;
             }
-            let observed = self
-                .continuous_query_snapshot()
-                .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-            let effects = observed
-                .try_all_continuous_effects_arc()
-                .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-            let snapshots = entries.iter().map(|event| {
-                let entry = event.downcast::<crate::events::EnterBattlefieldEvent>().unwrap();
-                observed.object(entry.object).map(|object|
-                    crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics_and_effects(object, &observed, &effects))
-            }).collect::<Vec<_>>();
-            let destinations = snapshots.iter().flatten().cloned().collect::<Vec<_>>();
-            for (event, snapshot) in entries.iter_mut().zip(snapshots) {
-                let mut entry = event
-                    .downcast::<crate::events::EnterBattlefieldEvent>()
-                    .unwrap()
-                    .clone();
-                entry.completed_snapshot = snapshot;
-                **event = event.with_inner_event(entry);
-                self.stage_turn_history_event(event);
-            }
-            drop(entries);
             // Preserve origin LKI and attach the same exact destination receipt
             // to zone notifications, including reported and queued token events.
             for event in &mut all {
@@ -3582,6 +4090,14 @@ impl GameState {
                         && zone.destination_snapshot(snapshot.object_id).is_none()
                     {
                         zone.destination_snapshots.push(snapshot.clone());
+                    }
+                }
+                if zone.from == Zone::Stack {
+                    for destination in zone.destination_objects().to_vec() {
+                        if let Some(receipt) = emerge_receipts.get(&destination) {
+                            zone.destination_emerge_sacrifices
+                                .insert(destination, receipt.clone());
+                        }
                     }
                 }
                 **event = event.with_inner_event(zone);
@@ -3603,6 +4119,16 @@ impl GameState {
         use crate::events::permanents::SacrificeEvent;
         use crate::events::zones::ZoneChangeEvent;
 
+        if let Some(draw) = event.downcast::<crate::events::CardsDrawnEvent>()
+            && draw.snapshots.is_empty()
+        {
+            let snapshots = draw
+                .cards
+                .iter()
+                .filter_map(|id| crate::snapshot::ObjectSnapshot::from_object_id(self, *id))
+                .collect();
+            event = event.with_inner_event(draw.clone().with_snapshots(snapshots));
+        }
         if let Some(targeted) = event.downcast::<crate::events::BecomesTargetedEvent>() {
             event = event.with_inner_event(targeted.clone().with_participant_snapshots(self));
         }
@@ -3711,7 +4237,11 @@ impl GameState {
         let queued = self
             .provenance_graph_mut()
             .alloc_child(event.provenance(), ProvenanceNodeKind::TriggerQueued);
-        event.set_provenance(queued);
+        // Queueing is a scheduling observation. A completed action already has
+        // its own immutable causal row; do not replace it with the queue node.
+        if event.completed_action_provenance().is_none() {
+            event.set_provenance(queued);
+        }
         // CR 603.2c: zone changes performed together (one instruction's
         // objects, one state-based-action check) are one simultaneous event.
         if event.simultaneous_batch().is_none()
@@ -3724,6 +4254,12 @@ impl GameState {
             .turn_history
             .remove_staged_event(initial_provenance);
         self.stage_turn_history_event(&event);
+        if !self.effect_store.instruction_result_records.is_empty() {
+            let facts = crate::effects::outcome_recording::event_facts(self, &event);
+            if let Some(record) = self.effect_store.instruction_result_records.last_mut() {
+                record.extend(facts);
+            }
+        }
         self.effect_store.pending_trigger_events.push(event);
     }
 
@@ -3805,6 +4341,9 @@ impl GameState {
         &mut self,
         entries: impl IntoIterator<Item = crate::triggers::TriggeredAbilityEntry>,
     ) {
+        if self.action_observations_suppressed() {
+            return;
+        }
         self.effect_store.pending_trigger_entries.extend(entries);
     }
 

@@ -171,6 +171,8 @@ fn queue_inherent_radiation_trigger(
     let trigger_identity = crate::triggers::compute_trigger_identity(&ability);
     let source = ObjectId::from_raw(u64::MAX - 2);
     trigger_queue.add(TriggeredAbilityEntry {
+        linked_exile_owner: None,
+        source_number_owner: None,
         source,
         controller,
         x_value: None,
@@ -245,11 +247,7 @@ pub(super) fn generate_damage_triggers(
         // Delayed triggers ("whenever that creature deals combat damage to a
         // player this turn") watch these events too; the simultaneous path
         // only consults abilities on objects.
-        for trigger in
-            crate::triggers::check_delayed_triggers_for_simultaneous_events(game, &trigger_events)
-        {
-            trigger_queue.add(trigger);
-        }
+        queue_delayed_triggers_for_simultaneous_events(game, trigger_queue, &trigger_events);
         queue_triggers_for_simultaneous_events(game, trigger_queue, trigger_events);
         game.clear_combat_damage_player_batch_hits();
         game.clear_combat_damage_object_batch_hits();
@@ -478,6 +476,9 @@ fn combat_damage_trigger_events(
         );
     }
     let mut damage_event = TriggerEvent::new_with_provenance(damage_event, damage_event_provenance);
+    if let Some(reference) = event.defending_player_reference {
+        damage_event = damage_event.with_defending_player_reference(reference);
+    }
     if let Some(snapshot) = &event.source_snapshot {
         damage_event = damage_event.with_source_snapshot(snapshot.clone());
     }
@@ -511,6 +512,26 @@ pub fn queue_combat_damage_triggers(
     generate_damage_triggers(game, events, trigger_queue);
 }
 
+/// Preserve typed failures from grouped counter receipts in combat's damage
+/// consequences and lifelink replacements before publishing the queue.
+pub fn try_queue_combat_damage_triggers(
+    game: &mut GameState,
+    events: &[CombatDamageEvent],
+    trigger_queue: &mut TriggerQueue,
+) -> Result<(), crate::effects::ExecutionError> {
+    let (root, meter) = game.begin_token_resource_scope();
+    let checkpoint = game.clone();
+    let queue_checkpoint = trigger_queue.clone();
+    generate_damage_triggers(game, events, trigger_queue);
+    let result = game.token_resource_failure().map_or(Ok(()), Err);
+    if result.is_err() {
+        game.restore_execution_checkpoint(checkpoint, false);
+        *trigger_queue = queue_checkpoint;
+    }
+    game.end_token_resource_scope(root, &meter);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +560,7 @@ mod tests {
         assert!(can_batch_combat_damage_trigger_events(&game));
         let events = vec![
             CombatDamageEvent {
+                defending_player_reference: None,
                 damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
@@ -559,6 +581,7 @@ mod tests {
                 lifelink_outcome: None,
             },
             CombatDamageEvent {
+                defending_player_reference: None,
                 damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
@@ -646,6 +669,7 @@ mod tests {
 
         let events = vec![
             CombatDamageEvent {
+                defending_player_reference: None,
                 damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,
@@ -666,6 +690,7 @@ mod tests {
                 lifelink_outcome: None,
             },
             CombatDamageEvent {
+                defending_player_reference: None,
                 damage_receipt: None,
                 source_snapshot: None,
                 target_snapshot: None,

@@ -348,6 +348,30 @@ pub(super) fn read_you_control_or_player_controls(
     input: &Predicate<'_>,
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let predicate_tokens = input.predicate_tokens;
+    // A team's battlefield is a union of controllers, not the permanents
+    // controlled by the ability's controller alone. Keep this bounded to one
+    // other named subtype; do not consume unsupported quantities or tails.
+    let team_clause = LexedClause::new(predicate_tokens).trimmed();
+    let words = team_clause.word_refs();
+    if team_clause.tokens().len() == words.len()
+        && let ["your", "team", "controls", "another", subtype] = words.as_slice()
+        && let Some(subtype) = parse_subtype_word(subtype)
+    {
+        let filter = ObjectFilter::default()
+            .with_subtype(subtype)
+            .in_zone(Zone::Battlefield)
+            .controlled_by(PlayerFilter::your_team());
+        // `other` is relative to announced targets in some contexts. Compare
+        // the full set with its exact-source subset instead: the latter is
+        // zero or one, never a target, snapshot, or new blink incarnation.
+        let mut source_filter = filter.clone();
+        source_filter.source = true;
+        return Ok(Some(PredicateAst::ValueComparison {
+            left: Value::Count(filter),
+            operator: crate::effect::ValueComparisonOperator::GreaterThan,
+            right: Value::Count(source_filter),
+        }));
+    }
     if non_article_token_words_starts_with_any(predicate_tokens, YOU_CONTROL_PREFIXES) {
         if let Some(predicate) =
             parse_you_control_conjoined_predicate(predicate_tokens).transpose()?
@@ -672,7 +696,41 @@ pub(super) fn read_same_name_as_filter_predicate(
     }))
 }
 
+/// An implicit name antecedent in an existence condition is the action's
+/// referenced object. "Another" excludes that exact object, not the source.
+fn read_another_same_name_object_exists(
+    input: &Predicate<'_>,
+) -> Result<Option<PredicateAst>, CardTextError> {
+    use winnow::prelude::*;
+    let tokens = crate::util::trim_edge_punctuation_tokens(input.predicate_tokens);
+    let Some((_, body)) = crate::grammar::primitives::parse_prefix(
+        tokens, crate::grammar::primitives::kw("another"),
+    ) else { return Ok(None); };
+    let Some((end, (), rest)) = crate::grammar::primitives::find_prefix(body, || {
+        crate::grammar::primitives::phrase(&["with", "the", "same", "name", "is", "on", "the", "battlefield"])
+            .void()
+    }) else { return Ok(None); };
+    if !rest.is_empty() || end == 0 { return Ok(None); }
+    let mut comparison = parse_object_filter(&body[..end], false)?;
+    comparison.zone = Some(Zone::Battlefield);
+    let mut relation = crate::target::ObjectCharacteristicRelation::shares(
+        vec![crate::target::ObjectCharacteristic::Name], comparison,
+    );
+    relation.exclude_candidate = true;
+    // The trailing-condition owner binds ItMatches to the declared action
+    // target before lowering; no ambient source or stale result tag is used.
+    let mut filter = ObjectFilter::default();
+    filter.characteristic_relations.push(relation);
+    Ok(Some(PredicateAst::ItMatches(filter)))
+}
+
 pub(super) const READINGS: &[Reading] = &[
+    Reading {
+        id: RuleId::new("another-same-name-object-exists"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| input.outcome(read_another_same_name_object_exists(input)),
+    },
     Reading {
         id: RuleId::new("same-name-as-filter-predicate"),
         head: HeadDiscriminator::Any,
@@ -874,6 +932,7 @@ pub(super) const READINGS: &[Reading] = &[
                 // Readings ranked above this one that read the input read it.
                 && !input.read_by("source-power-threshold-predicate")
                 && !input.read_by("turn-history-intervening-predicate")
+                && !input.read_by("half-starting-life-total-threshold-predicate")
         },
         read: |input| input.outcome(read_value_reference_comparison_predicate(input)),
     },

@@ -32,7 +32,7 @@ fn planner_request(
 ) -> crate::mana_payment::ManaPaymentRequest {
     let mut request = crate::mana_payment::ManaPaymentRequest::new(player_id, source, reason, cost)
         .with_x(x_value)
-        .with_spend_policy(game.mana_spend_policy(player_id, Some(source)));
+        .with_spend_policy(game.mana_spend_policy_for_reason(player_id, Some(source), reason));
     request.allow_black_life = crate::decision::mana_cost_has_black_symbol(&request.cost)
         && game.player_can_pay_black_with_life_for_reason(player_id, Some(source), reason);
     request
@@ -44,7 +44,19 @@ fn try_pay_interactively(
     ctx: &mut ExecutionContext,
     player_id: PlayerId,
     x_value: u32,
-) -> Result<bool, ExecutionError> {
+) -> Result<Option<Vec<crate::effects::CompletedEffectOutputs>>, ExecutionError> {
+    crate::effects::composition::execute_optional_world_transaction(game, ctx, |game, ctx| {
+        try_pay_interactively_inner(effect, game, ctx, player_id, x_value)
+    })
+}
+
+fn try_pay_interactively_inner(
+    effect: &PayManaEffect,
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    player_id: PlayerId,
+    x_value: u32,
+) -> Result<Option<Vec<crate::effects::CompletedEffectOutputs>>, ExecutionError> {
     const MAX_REPLANS: usize = 16;
     let payment_reason = payment_reason(ctx);
     let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
@@ -63,18 +75,19 @@ fn try_pay_interactively(
     );
     let mut replans = 0;
     let mut payment_open = false;
+    let mut outputs = Vec::new();
     loop {
         let planned = match crate::mana_payment::plan_first_mana_payment(game, &request) {
             Ok(plan) => Some(plan),
-            Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => return Err(error),
+            Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => {
+                return Err(error);
+            }
             Err(_) => None,
         };
         let Some(plan) = planned.or_else(|| {
-                payment_open
-                    .then(|| crate::mana_payment::unfunded_mana_payment_plan(game, &request))
-            })
-        else {
-            return Ok(false);
+            payment_open.then(|| crate::mana_payment::unfunded_mana_payment_plan(game, &request))
+        }) else {
+            return Ok(None);
         };
         let subject = game
             .object(ctx.source)
@@ -90,14 +103,14 @@ fn try_pay_interactively(
         payment_open = true;
         let response = ctx.decision_maker.decide_mana_payment(game, &decision);
         if ctx.decision_maker.awaiting_choice() {
-            return Ok(false);
+            return Ok(None);
         }
         match response {
             crate::mana_payment::ManaPaymentResponse::Activate {
                 source,
                 ability_index,
             } => {
-                crate::mana_payment::activate_mana_during_payment(
+                let activated = crate::mana_payment::activate_mana_during_payment_with_outputs(
                     game,
                     &request,
                     source,
@@ -106,10 +119,15 @@ fn try_pay_interactively(
                 )
                 .map_err(|error| match error {
                     crate::special_actions::ActionError::ExecutionFailure { error, .. } => error,
-                    other => ExecutionError::Impossible(format!("illegal mana activation: {other}")),
+                    other => {
+                        ExecutionError::Impossible(format!("illegal mana activation: {other}"))
+                    }
                 })?;
                 if ctx.decision_maker.awaiting_choice() {
-                    return Ok(false);
+                    return Ok(None);
+                }
+                if let Some(activated) = activated {
+                    outputs.extend(activated);
                 }
                 request
                     .preferences
@@ -120,11 +138,11 @@ fn try_pay_interactively(
                     .required_activations
                     .retain(|activation| activation.source != source);
             }
-            crate::mana_payment::ManaPaymentResponse::Cancel => return Ok(false),
+            crate::mana_payment::ManaPaymentResponse::Cancel => return Ok(None),
             crate::mana_payment::ManaPaymentResponse::Replan { mut preferences } => {
                 replans += 1;
                 if replans >= MAX_REPLANS {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 preferences.normalize();
                 request.preferences = preferences;
@@ -134,13 +152,26 @@ fn try_pay_interactively(
                 request_hash,
             } if plan.payable && plan_id == plan.id && request_hash == plan.request_hash => {
                 let execution = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-                return match crate::mana_payment::execute_mana_payment_plan_in_context(game, &request, &plan, &mut ctx.decision_maker, Some(&execution)) {
-                    Ok(crate::mana_payment::ManaPaymentExecution::Paid) => Ok(true),
-                    Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => Err(error),
-                    _ => Ok(false),
+                return match crate::mana_payment::execute_mana_payment_plan_in_context_with_outputs(
+                    game,
+                    &request,
+                    &plan,
+                    &mut ctx.decision_maker,
+                    Some(&execution),
+                ) {
+                    Ok(completed)
+                        if completed.status == crate::mana_payment::ManaPaymentExecution::Paid =>
+                    {
+                        outputs.extend(completed.outputs);
+                        Ok(Some(outputs))
+                    }
+                    Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => {
+                        Err(error)
+                    }
+                    _ => Ok(None),
                 };
             }
-            crate::mana_payment::ManaPaymentResponse::Confirm { .. } => return Ok(false),
+            crate::mana_payment::ManaPaymentResponse::Confirm { .. } => return Ok(None),
         }
     }
 }
@@ -166,7 +197,9 @@ fn maximum_affordable_bounded_x(
         );
         match crate::mana_payment::check_mana_payment(game, &request) {
             Ok(()) => Ok(true),
-            Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => Err(error),
+            Err(crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error)) => {
+                Err(error)
+            }
             Err(_) => Ok(false),
         }
     };
@@ -200,58 +233,114 @@ impl EffectExecutor for PayManaEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        crate::effects::tokens::execute_resource_transaction_atomically(game, ctx, |game, ctx| {
-        let player_id = resolve_player_from_spec(game, &self.player, ctx)?;
-        let chooses_x = self.cost.has_x() && self.x_value.is_none() && ctx.x_value.is_none();
-        let bounded_x = if self.x_maximum.is_some() || chooses_x {
-            let semantic_maximum = if let Some(maximum) = &self.x_maximum {
-                resolve_value(game, maximum, ctx)?.max(0) as u32
-            } else {
-                crate::derived_view::DerivedGameView::new(game)
-                    .potential_mana(player_id)
-                    .total()
-            };
-            let Some(affordable_maximum) =
-                maximum_affordable_bounded_x(self, game, ctx, player_id, semantic_maximum)?
-            else {
-                return Ok(EffectOutcome::impossible());
-            };
-            let chosen = make_decision_with_fallback(
-                game,
-                &mut ctx.decision_maker,
-                player_id,
-                Some(ctx.source),
-                XValueSpec::new(ctx.source, affordable_maximum),
-                FallbackStrategy::Maximum,
-            );
-            if ctx.decision_maker.awaiting_choice() {
-                return Ok(EffectOutcome::count(0));
-            }
-            Some(chosen.min(affordable_maximum))
-        } else {
-            None
-        };
-        let x_value = if let Some(chosen) = bounded_x {
-            chosen
-        } else {
-            self.x_value
-                .as_ref()
-                .map(|value| resolve_value(game, value, ctx))
-                .transpose()?
-                .unwrap_or(ctx.x_value.unwrap_or(0) as i32)
-                .max(0) as u32
-        };
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-        if !try_pay_interactively(self, game, ctx, player_id, x_value)? {
-            Ok(EffectOutcome::impossible())
-        } else if let Some(chosen) = bounded_x {
-            Ok(EffectOutcome::count(chosen as i32)
-                .with_execution_fact(ExecutionFact::ChosenNumber(chosen))
-                .with_execution_fact(ExecutionFact::ManaPaid { x_value: chosen }))
-        } else {
-            Ok(EffectOutcome::count(1))
-        }
-        })
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        crate::effects::tokens::execute_resource_transaction_with_pending_value(
+            game,
+            ctx,
+            || {
+                crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::with_objects(
+                    Vec::new(),
+                ))
+            },
+            |game, ctx| {
+                let player_id = resolve_player_from_spec(game, &self.player, ctx)?;
+                let chooses_x =
+                    self.cost.has_x() && self.x_value.is_none() && ctx.x_value.is_none();
+                let bounded_x = if self.x_maximum.is_some() || chooses_x {
+                    let semantic_maximum = if let Some(maximum) = &self.x_maximum {
+                        resolve_value(game, maximum, ctx)?.max(0) as u32
+                    } else if self.cost.has_waterbend_obligation() {
+                        let reason = payment_reason(ctx);
+                        let adjusted = game.adjust_mana_cost_for_payment_reason(
+                            player_id,
+                            Some(ctx.source),
+                            &self.cost,
+                            reason,
+                        );
+                        let request =
+                            planner_request(game, player_id, ctx.source, adjusted, 0, reason);
+                        crate::mana_payment::maximum_waterbend_x(game, &request).map_err(
+                            |failure| match failure {
+                                crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(
+                                    error,
+                                ) => error,
+                                _ => ExecutionError::IncompleteEvidence(
+                                    "unable to establish Waterbend X bound".into(),
+                                ),
+                            },
+                        )?
+                    } else {
+                        crate::derived_view::DerivedGameView::new(game)
+                            .potential_mana(player_id)
+                            .total()
+                    };
+                    let Some(affordable_maximum) =
+                        maximum_affordable_bounded_x(self, game, ctx, player_id, semantic_maximum)?
+                    else {
+                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            EffectOutcome::impossible(),
+                        ));
+                    };
+                    let chosen = make_decision_with_fallback(
+                        game,
+                        &mut ctx.decision_maker,
+                        player_id,
+                        Some(ctx.source),
+                        XValueSpec::new(ctx.source, affordable_maximum),
+                        FallbackStrategy::Maximum,
+                    );
+                    if ctx.decision_maker.awaiting_choice() {
+                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            EffectOutcome::count(0),
+                        ));
+                    }
+                    Some(chosen.min(affordable_maximum))
+                } else {
+                    None
+                };
+                let x_value = if let Some(chosen) = bounded_x {
+                    chosen
+                } else {
+                    self.x_value
+                        .as_ref()
+                        .map(|value| resolve_value(game, value, ctx))
+                        .transpose()?
+                        .unwrap_or(ctx.x_value.unwrap_or(0) as i32)
+                        .max(0) as u32
+                };
+
+                let Some(children) = try_pay_interactively(self, game, ctx, player_id, x_value)?
+                else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::impossible(),
+                    ));
+                };
+                let primary = if let Some(chosen) = bounded_x {
+                    EffectOutcome::count(chosen as i32)
+                        .with_execution_fact(ExecutionFact::ChosenNumber(chosen))
+                        .with_execution_fact(ExecutionFact::ManaPaid { x_value: chosen })
+                } else {
+                    EffectOutcome::count(1)
+                };
+                Ok(crate::effects::CompletedEffectOutputs::from_children(
+                    children,
+                    |outcomes| {
+                        let observations = EffectOutcome::aggregate(
+                            std::iter::once(primary.clone()).chain(outcomes),
+                        );
+                        primary.with_authoritative_observations(observations)
+                    },
+                ))
+            },
+        )
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -268,59 +357,61 @@ impl EffectExecutor for PayManaEffect {
 }
 
 impl CostExecutableEffect for PayManaEffect {
+    fn can_execute_as_cost_with_context(
+        &self,
+        game: &GameState,
+        ctx: &mut ExecutionContext,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), CostValidationError> {
+        let player = resolve_player_from_spec(game, &self.player, ctx)
+            .map_err(CostValidationError::ExecutionFailed)?;
+        let adjusted =
+            game.adjust_mana_cost_for_payment_reason(player, Some(ctx.source), &self.cost, reason);
+        let x = if self.x_maximum.is_some() {
+            0
+        } else {
+            self.x_value
+                .as_ref()
+                .map(|value| resolve_value(game, value, ctx))
+                .transpose()
+                .map_err(CostValidationError::ExecutionFailed)?
+                .map(|value| value.max(0) as u32)
+                .unwrap_or(ctx.x_value.unwrap_or(0))
+        };
+        let request = planner_request(game, player, ctx.source, adjusted, x, reason);
+        crate::mana_payment::check_mana_payment(game, &request).map_err(|error| match error {
+            crate::mana_payment::ManaPaymentFailure::EffectExecutionFailed(error) => {
+                CostValidationError::ExecutionFailed(error)
+            }
+            _ => CostValidationError::Other("not enough mana available to pay cost".into()),
+        })
+    }
+
     fn can_execute_as_cost(
         &self,
         game: &GameState,
         source: ObjectId,
         controller: PlayerId,
     ) -> Result<(), CostValidationError> {
-        let player_id = match self.player.inner() {
-            ChooseSpec::Player(PlayerFilter::You | PlayerFilter::EffectController) => controller,
-            ChooseSpec::Player(PlayerFilter::Specific(player))
-            | ChooseSpec::SpecificPlayer(player) => *player,
-            ChooseSpec::SourceController => game
-                .object(source)
-                .map(|object| game.controller_of(object))
-                .unwrap_or(controller),
-            _ => controller,
-        };
-        let adjusted_cost = game.adjust_mana_cost_for_payment_reason(
-            player_id,
-            Some(source),
-            &self.cost,
-            crate::costs::PaymentReason::Effect,
-        );
-        let x_value = if self.x_maximum.is_some() {
-            // Zero is always inside a bounded-X range. The semantic maximum
-            // may depend on trigger context that cost preflight does not have.
-            0
-        } else {
-            let context = ExecutionContext::new_default(source, controller);
-            self.x_value
-                .as_ref()
-                .map(|value| resolve_value(game, value, &context))
-                .transpose()
-                .map_err(|_| {
-                    CostValidationError::Other("unable to resolve mana payment X value".to_string())
-                })?
-                .unwrap_or(0)
-                .max(0) as u32
-        };
-        let request = planner_request(
+        CostExecutableEffect::can_execute_as_cost_with_reason(
+            self,
             game,
-            player_id,
             source,
-            adjusted_cost,
-            x_value,
+            controller,
             crate::costs::PaymentReason::Effect,
-        );
-        if crate::mana_payment::check_mana_payment(game, &request).is_ok() {
-            Ok(())
-        } else {
-            Err(CostValidationError::Other(
-                "not enough mana available to pay cost".to_string(),
-            ))
-        }
+        )
+    }
+
+    fn can_execute_as_cost_with_reason(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<(), CostValidationError> {
+        let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(source, controller, &mut decision_maker);
+        self.can_execute_as_cost_with_context(game, &mut ctx, reason)
     }
 }
 
@@ -441,6 +532,44 @@ mod tests {
                 .red,
             0
         );
+    }
+
+    #[test]
+    fn cancelled_effect_payment_restores_earlier_manual_mana_activation() {
+        struct ActivateThenCancel { source: ObjectId, prompts: usize }
+        impl DecisionMaker for ActivateThenCancel {
+            fn decide_mana_payment(&mut self, _: &GameState,
+                _: &crate::decisions::context::ManaPaymentContext,
+            ) -> crate::mana_payment::ManaPaymentResponse {
+                self.prompts += 1;
+                if self.prompts == 1 {
+                    crate::mana_payment::ManaPaymentResponse::Activate { source: self.source, ability_index: 0 }
+                } else { crate::mana_payment::ManaPaymentResponse::Cancel }
+            }
+        }
+        for dispatched in [false, true] {
+            let mut game = setup_game();
+            let player = PlayerId::from_index(0);
+            let land = CardBuilder::new(CardId::new(), "Manual source")
+                .card_types(vec![CardType::Land]).build();
+            let source = game.create_object_from_card(&land, player, Zone::Battlefield);
+            game.object_mut(source).unwrap().abilities_mut().push(Ability::mana(
+                crate::cost::TotalCost::from_cost(crate::costs::Cost::tap()), vec![ManaSymbol::Red],
+            ));
+            game.take_pending_trigger_events();
+            let mut dm = ActivateThenCancel { source, prompts: 0 };
+            let mut ctx = ExecutionContext::new(source, player, &mut dm);
+            let effect = PayManaEffect::new(ManaCost::from_symbols(vec![ManaSymbol::Red]),
+                ChooseSpec::Player(PlayerFilter::You));
+            let result = if dispatched {
+                crate::effects::execute_effect(&mut game, &crate::effect::Effect::new(effect), &mut ctx)
+            } else { effect.execute(&mut game, &mut ctx) }.unwrap();
+            assert_eq!(result.status, crate::effect::OutcomeStatus::Impossible);
+            assert_eq!(dm.prompts, 2);
+            assert!(!game.is_tapped(source));
+            assert_eq!(game.player(player).unwrap().mana_pool.total(), 0);
+            assert!(game.take_pending_trigger_events().is_empty());
+        }
     }
 
     #[test]
@@ -692,5 +821,39 @@ mod tests {
             game.player(alice).expect("alice exists").mana_pool.total(),
             0
         );
+    }
+}
+
+#[cfg(test)]
+mod waterbend_x_contracts {
+    use super::*;
+    use crate::effects::EffectExecutor;
+    struct ChooseMaximum { maximum: Option<u32> }
+    impl crate::decision::DecisionMaker for ChooseMaximum {
+        fn decide_number(&mut self, _game: &GameState, context: &crate::decisions::context::NumberContext) -> u32 {
+            self.maximum = Some(context.max); context.max
+        }
+    }
+    #[test]
+    fn freely_chosen_waterbend_x_counts_tap_resources_and_keeps_multiple_x_symbols() {
+        for symbols in [1, 2] {
+            let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+            let payer = PlayerId::from_index(0);
+            let mut resources = Vec::new();
+            for index in 0..2 {
+                let card = crate::card::CardBuilder::new(crate::CardId::new(), format!("Resource {index}"))
+                    .card_types(vec![crate::CardType::Artifact]).build();
+                resources.push(game.create_object_from_card(&card, payer, crate::Zone::Battlefield));
+            }
+            let cost = crate::mana::ManaCost::from_symbols(vec![crate::mana::ManaSymbol::X; symbols]).with_waterbend();
+            let effect = PayManaEffect::new(cost, ChooseSpec::Player(PlayerFilter::You));
+            let mut chooser = ChooseMaximum { maximum: None };
+            let mut context = ExecutionContext::new(resources[0], payer, &mut chooser);
+            let outcome = effect.execute(&mut game, &mut context).unwrap();
+            assert!(outcome.execution_facts().contains(&ExecutionFact::ManaPaid { x_value: (2 / symbols) as u32 }));
+            assert_eq!(chooser.maximum, Some((2 / symbols) as u32));
+            assert!(resources.iter().all(|id| game.is_tapped(*id)));
+            assert_eq!(game.player(payer).unwrap().mana_pool.total(), 0);
+        }
     }
 }

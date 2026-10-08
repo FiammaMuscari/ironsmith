@@ -1,6 +1,8 @@
 //! Look at and reorder the top of a planar deck.
 
-use crate::decisions::context::{SelectObjectsContext, SelectableObject, ViewCardsContext};
+#[cfg(test)]
+use crate::decisions::context::ViewCardsContext;
+use crate::decisions::context::{SelectObjectsContext, SelectableObject};
 use crate::effect::EffectOutcome;
 use crate::effects::helpers::{resolve_player_filter, resolve_player_filter_as_chooser};
 use crate::effects::{EffectExecutor, ExecutionContext, ExecutionError};
@@ -25,65 +27,108 @@ impl EffectExecutor for ReorderTopPlanarDeckEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let player = resolve_player_filter(game, &self.player, ctx)?;
-        let chooser = resolve_player_filter_as_chooser(game, &self.chooser, ctx)?;
-        let count = self.count as usize;
-        if count == 0 {
-            return Ok(EffectOutcome::count(0));
-        }
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-        let top_to_bottom = game
-            .planar_deck(player)
-            .ok_or_else(|| ExecutionError::Impossible("Planechase is not enabled".to_string()))?
-            .iter()
-            .rev()
-            .take(count)
-            .copied()
-            .collect::<Vec<_>>();
-        if top_to_bottom.is_empty() {
-            return Ok(EffectOutcome::count(0));
-        }
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        crate::effects::composition::execute_transaction(
+            game,
+            ctx,
+            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+            |game, ctx| {
+                let player = resolve_player_filter(game, &self.player, ctx)?;
+                let chooser = resolve_player_filter_as_chooser(game, &self.chooser, ctx)?;
+                let count = self.count as usize;
+                if count == 0 {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
 
-        let view_context = ViewCardsContext::new(
-            chooser,
-            player,
-            Some(ctx.source),
-            Zone::Command,
-            "Look at cards from the top of a planar deck",
-        );
-        ctx.decision_maker
-            .view_cards(game, chooser, &top_to_bottom, &view_context);
+                let top_to_bottom = game
+                    .planar_deck(player)
+                    .ok_or_else(|| {
+                        ExecutionError::Impossible("Planechase is not enabled".to_string())
+                    })?
+                    .iter()
+                    .rev()
+                    .take(count)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if top_to_bottom.is_empty() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
 
-        let candidates = top_to_bottom
-            .iter()
-            .filter_map(|id| {
-                game.object(*id)
-                    .map(|object| SelectableObject::new(*id, object.name.to_string()))
-            })
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            return Ok(EffectOutcome::count(0));
-        }
-        let selection_context = SelectObjectsContext::new(
-            chooser,
-            Some(ctx.source),
-            "Choose a card to put on the bottom of your planar deck",
-            candidates,
-            1,
-            Some(1),
-        );
-        let selected = ctx.decision_maker.decide_objects(game, &selection_context);
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-        let Some(chosen) = normalize_single_selection(selected, &top_to_bottom) else {
-            return Ok(EffectOutcome::count(0));
-        };
+                let observation = super::look_at_cards_with_outputs(
+                    game,
+                    ctx,
+                    chooser,
+                    player,
+                    Zone::Command,
+                    &top_to_bottom,
+                    "Look at cards from the top of a planar deck",
+                )?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
 
-        game.move_planar_deck_card_to_bottom(player, chosen)
-            .map_err(ExecutionError::Impossible)?;
+                let candidates = top_to_bottom
+                    .iter()
+                    .filter_map(|id| {
+                        game.object(*id)
+                            .map(|object| SelectableObject::new(*id, object.name.to_string()))
+                    })
+                    .collect::<Vec<_>>();
+                if candidates.is_empty() {
+                    return Ok(crate::effects::CompletedEffectOutputs::from_children(
+                        [observation],
+                        |_| EffectOutcome::count(0),
+                    ));
+                }
+                let selection_context = SelectObjectsContext::new(
+                    chooser,
+                    Some(ctx.source),
+                    "Choose a card to put on the bottom of your planar deck",
+                    candidates,
+                    1,
+                    Some(1),
+                );
+                let selected = ctx.decision_maker.decide_objects(game, &selection_context);
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                }
+                let Some(chosen) = normalize_single_selection(selected, &top_to_bottom) else {
+                    return Ok(crate::effects::CompletedEffectOutputs::from_children(
+                        [observation],
+                        |_| EffectOutcome::count(0),
+                    ));
+                };
 
-        Ok(EffectOutcome::resolved().with_affected_objects(vec![chosen]))
+                game.move_planar_deck_card_to_bottom(player, chosen)
+                    .map_err(ExecutionError::Impossible)?;
+
+                Ok(crate::effects::CompletedEffectOutputs::from_children(
+                    [observation],
+                    |children| {
+                        EffectOutcome::aggregate_with_primary_result(
+                            EffectOutcome::resolved().with_affected_objects(vec![chosen]),
+                            children,
+                        )
+                    },
+                ))
+            },
+        )
     }
 }
 

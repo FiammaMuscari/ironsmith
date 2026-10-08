@@ -304,6 +304,12 @@ export function usePeerLobbyMessaging(base, servicesRef) {
 
   const applyStateResync = useCallback(
     async (message) => {
+      // Trusted and Verified recovery both require the current outer carrier
+      // and nested match before resetting local state or touching the engine.
+      if (message?.protocolVersion !== PROTOCOL_VERSION
+        || message?.match?.protocolVersion !== PROTOCOL_VERSION) {
+        throw new Error(`State resync requires audit protocol ${PROTOCOL_VERSION} on both message and match`);
+      }
       awaitingStateResyncRef.current = true;
       resyncInProgressRef.current = true;
       try {
@@ -1345,6 +1351,7 @@ export function usePeerLobbyMessaging(base, servicesRef) {
           initialPublicCheckpointHash: payload.initialPublicCheckpointHash || "",
         };
       }
+      await servicesRef.current.persistRelayCheckpoint();
       sendMatchStartToClients(payload);
       await revealLocalZiffleHand(payload);
     } catch (err) {
@@ -1645,6 +1652,7 @@ export function usePeerLobbyMessaging(base, servicesRef) {
           initialPublicCheckpointHash: payload.initialPublicCheckpointHash || "",
         };
       }
+      await servicesRef.current.persistRelayCheckpoint();
       sendMatchStartToClients(payload);
       await revealLocalZiffleHand(payload);
     } catch (err) {

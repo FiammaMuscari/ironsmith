@@ -272,7 +272,12 @@ pub fn parse_cost_modifier_prefix_condition(
                         crate::lexer::token_word_refs(tokens).join(" ")
                     )));
                 }
-                let condition = match parse_static_condition_clause(condition_tokens) {
+                let condition = if crate::grammar::functional_zones::parse_source_command_or_battlefield_condition_tokens(condition_tokens) {
+                    PredicateAst::Or(
+                        Box::new(PredicateAst::Source(SourcePredicateAst::SourceIsInZone(Zone::Command))),
+                        Box::new(PredicateAst::Source(SourcePredicateAst::SourceIsInZone(Zone::Battlefield))),
+                    )
+                } else { match parse_static_condition_clause(condition_tokens) {
                     Ok(condition) => condition,
                     // Both branches are recognized predicates now.
                     Err(_) => parse_source_tap_status_condition_lexed(condition_tokens)
@@ -282,7 +287,7 @@ pub fn parse_cost_modifier_prefix_condition(
                                 crate::lexer::token_word_refs(condition_tokens).join(" ")
                             ))
                         })?,
-                };
+                } };
                 return Ok((Some(condition), subject_start));
             }
         }
@@ -1465,6 +1470,8 @@ pub fn parse_equip_cost_modifier_line(
             format!(
                 "Equip abilities you activate of other Equipment cost {amount_text} less to activate"
             )
+        } else if head.equip_abilities_head && filter.controller == Some(PlayerFilter::You) {
+            format!("Equip abilities you activate cost {amount_text} less to activate")
         } else if filter.controller == Some(PlayerFilter::Opponent) {
             format!("Equip costs your opponents pay cost {amount_text} less")
         } else {
@@ -1510,10 +1517,27 @@ pub fn parse_foretelling_cards_cost_modifier_line(
         return Ok(None);
     }
 
-    Err(CardTextError::ParseError(format!(
-        "unsupported foretelling cost modifier clause (clause: '{}')",
-        clause_words.join(" ")
-    )))
+    let Some(costs_index) = tokens.iter().position(|token| token.is_word("costs")) else {
+        return Ok(None);
+    };
+    let Some((Value::Fixed(amount), consumed)) = parse_cost_modifier_amount(&tokens[costs_index + 1..]) else {
+        return Err(CardTextError::ParseError("foretell special-action reduction needs a fixed generic cost".into()));
+    };
+    let prefix = &tokens[..=costs_index];
+    let mut tail = &tokens[costs_index + 1 + consumed..];
+    if tail.last().is_some_and(|token| token.is_period()) { tail = &tail[..tail.len() - 1]; }
+    let tail_words = crate::lexer::parser_token_word_refs(tail);
+    let exact_tail = matches!(tail_words.as_slice(),
+        ["less", "and", "can", "be", "done", "on", "any", "players", "turn"]
+        | ["less", "and", "can", "be", "done", "on", "any", "player", "s", "turn"]
+        | ["less", "and", "can", "be", "done", "on", "any", "player", "turn"]);
+    if amount < 0 || !prefix.iter().all(|token| token.kind == TokenKind::Word)
+        || !tail.iter().all(|token| matches!(token.kind, TokenKind::Word | TokenKind::Apostrophe))
+        || !exact_tail
+    {
+        return Err(CardTextError::ParseError("unsupported trailing or non-generic foretell special-action modifier syntax".into()));
+    }
+    Ok(Some(StaticAbility::foretell_special_action_modifier(amount as u32, true)))
 }
 
 pub fn parse_cost_modifier_amount(tokens: &[OwnedLexToken]) -> Option<(Value, usize)> {
@@ -2200,14 +2224,21 @@ pub fn parse_subject_are_card_types_in_addition_to_their_other_types_line(
         return Ok(None);
     };
     if fact.chosen_type {
-        let filter = parse_object_filter_lexed(fact.subject_tokens, false)?;
-        for card_type in &filter.card_types {
-            if *card_type == CardType::Land {
-                return Ok(Some(vec![StaticAbility::add_chosen_basic_land_type(
-                    filter,
-                    render_token_slice(tokens),
-                )]));
-            }
+        let Some(filter) = complete_characteristic_subject(fact.subject_tokens)? else {
+            return Ok(None);
+        };
+        // The authored family wins over recipient types. A land or land/creature
+        // union may receive the chosen creature type without choosing a land type.
+        let explicit_creature_type = fact.descriptor_tokens.iter().any(|token| token.is_word("creature"));
+        fn includes_land(filter: &ObjectFilter) -> bool {
+            filter.card_types.contains(&CardType::Land)
+                || filter.any_of.iter().any(includes_land)
+        }
+        if !explicit_creature_type && includes_land(&filter) {
+            return Ok(Some(vec![StaticAbility::add_chosen_basic_land_type(
+                filter,
+                render_token_slice(tokens),
+            )]));
         }
         return Ok(Some(vec![StaticAbility::add_chosen_creature_type(
             filter,
@@ -2248,6 +2279,148 @@ pub fn parse_subject_are_card_types_in_addition_to_their_other_types_line(
         abilities.push(StaticAbility::add_subtypes(filter, subtypes));
     }
     Ok(Some(abilities))
+}
+
+/// Whole nominal subjects for the bounded copular characteristic productions.
+/// No suffix recovery: unrelated words cannot become an ignored qualifier.
+pub fn complete_characteristic_subject(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ObjectFilter>, CardTextError> {
+    if !tokens.iter().all(|token| token.as_word().is_some()) { return Ok(None); }
+    let words = parser_token_word_refs(tokens);
+    if words.contains(&"instead") || words.last().is_some_and(|word| matches!(*word, "and" | "or" | "and/or")) {
+        return Ok(None);
+    }
+    if is_source_reference_words(&words) || anthem_grant_grammar::is_source_it_subject(tokens) {
+        return Ok(Some(ObjectFilter::source()));
+    }
+    if matches!(words.as_slice(), ["enchanted" | "equipped", "creature" | "permanent" | "artifact" | "land" | "vehicle"]) {
+        return parse_object_filter_lexed(tokens, false).map(Some);
+    }
+    let tokens = if tokens.first().is_some_and(|token| token.is_any_word(&["all", "each"])) {
+        &tokens[1..]
+    } else { tokens };
+    let mut filter = if let Some(filter) =
+        crate::grammar::filters::parse_simple_object_filter_lexed(tokens, false)
+    {
+        filter
+    } else if let Some(filter) = complete_characteristic_extended_subject(tokens)? {
+        filter
+    } else {
+        return Ok(None);
+    };
+    if filter.zone.is_none() && filter.any_of.is_empty()
+        && !filter.has_explicit_card_noun() && filter.stack_kind.is_none() {
+        filter.zone = Some(Zone::Battlefield);
+    }
+    Ok(Some(filter))
+}
+
+/// Two compositional extensions of a complete simple nominal: a terminal
+/// nonbattlefield card domain, or independently scoped nominal set arms.
+/// A bare type list is still owned by the simple reader (not split into sets).
+fn complete_characteristic_extended_subject(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<ObjectFilter>, CardTextError> {
+    for split in 1..tokens.len() {
+        let tail = parser_token_word_refs(&tokens[split..]);
+        if matches!(tail.as_slice(),
+            ["that", "aren't" | "arent" | "isn't" | "isnt", "on", "the", "battlefield"]
+            | ["that", "are" | "is", "not", "on", "the", "battlefield"])
+        {
+            if let Some(base) = crate::grammar::filters::parse_simple_object_filter_lexed(
+                &tokens[..split], false,
+            ) {
+                // The simple reader infers Battlefield from a permanent card
+                // type even with a card noun. That default is not an authored
+                // zone and must yield to the explicit nonbattlefield suffix.
+                let explicit_zone = tokens[..split].iter()
+                    .any(|token| token.is_any_word(&["in", "on", "from"]));
+                if base.has_explicit_card_noun() && !explicit_zone
+                    && matches!(base.zone, None | Some(Zone::Battlefield))
+                    && base.stack_kind.is_none() && base.any_of.is_empty()
+                {
+                    // Only this fully validated single nominal uses the existing
+                    // seven-zone expansion. No independently scoped arms are
+                    // reparsed through the broad union reader.
+                    return parse_object_filter_lexed(tokens, false).map(Some);
+                }
+            }
+            return Ok(None);
+        }
+        if !tokens[split].is_any_word(&["and", "or", "and/or"]) {
+            continue;
+        }
+        // Requiring a scoped complete left arm keeps an internal type list
+        // (e.g. artifact and enchantment creatures) out of this production.
+        let Some(left) = complete_characteristic_subject(&tokens[..split])? else {
+            continue;
+        };
+        if left.source || (left.controller.is_none() && left.owner.is_none()
+            && left.any_of.is_empty()) {
+            continue;
+        }
+        let Some(right) = complete_characteristic_subject(&tokens[split + 1..])? else {
+            continue;
+        };
+        if !right.source && (right.controller.is_some() || right.owner.is_some()
+            || !right.any_of.is_empty()) {
+            let mut union = ObjectFilter::default();
+            union.any_of = vec![left, right];
+            if tokens[split].is_word("and") {
+                union.set_conjunctive_set_surface(true);
+            } else if tokens[split].is_word("and/or") {
+                union.set_union_connective(crate::filter::ObjectFilterUnionConnective::AndOr);
+            }
+            return Ok(Some(union));
+        }
+    }
+    Ok(None)
+}
+
+/// Unconditional additive subtype assertions use the existing source-zone and
+/// origin owners to distinguish printed characteristic definitions from grants.
+pub fn parse_subject_is_also_subtypes_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let Some(fact) = type_and_color_facts::parse_subject_card_type_identity_tokens(tokens) else {
+        return Ok(None);
+    };
+    if !fact.descriptor_tokens.first().is_some_and(|token| token.is_word("also")) { return Ok(None); }
+    let Some(filter) = complete_characteristic_subject(fact.subject_tokens)? else { return Ok(None); };
+    if !fact.descriptor_tokens.last().and_then(OwnedLexToken::as_word)
+        .is_some_and(|word| parse_subtype_flexible(word).is_some()) {
+        return Ok(None);
+    }
+    let mut subtypes = Vec::new();
+    for token in &fact.descriptor_tokens[1..] {
+        if token.is_comma() { continue; }
+        let Some(word) = token.as_word() else { return Ok(None); };
+        if matches!(word, "a" | "an" | "and") { continue; }
+        let Some(subtype) = parse_subtype_flexible(word) else { return Ok(None); };
+        crate::slice_primitives::push_unique(&mut subtypes, subtype);
+    }
+    if subtypes.is_empty() { return Ok(None); }
+    Ok(Some(StaticAbility::add_subtypes(filter, subtypes)))
+}
+
+pub fn parse_subject_is_chosen_color_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    if keyword_static_lines::parse_source_is_chosen_color_tokens(tokens).is_some() {
+        // Preserve the established source owner and its canonical display.
+        return Ok(None);
+    }
+    let Some(fact) = type_and_color_facts::parse_subject_card_type_identity_tokens(tokens) else {
+        return Ok(None);
+    };
+    if !fact.descriptor_tokens.iter().all(|token| token.as_word().is_some()) { return Ok(None); }
+    let words = parser_token_word_refs(fact.descriptor_tokens);
+    if !matches!(words.as_slice(), ["the", "chosen", "color"] | ["chosen", "color"]) {
+        return Ok(None);
+    }
+    let Some(filter) = complete_characteristic_subject(fact.subject_tokens)? else { return Ok(None); };
+    Ok(Some(StaticAbility::set_chosen_color(filter, render_token_slice(tokens))))
 }
 
 pub fn parse_subject_is_card_types_line(
@@ -2453,7 +2626,14 @@ pub fn parse_all_creatures_are_color_line(
     let Some(fact) = type_and_color_facts::parse_subject_color_tokens(tokens) else {
         return Ok(None);
     };
-    let filter = parse_object_filter_lexed(fact.subject_tokens, false)?;
+    let mut filter = parse_object_filter_lexed(fact.subject_tokens, false)?;
+    // CR 109.2: an unqualified type/subtype noun ("Slivers") means
+    // permanents. Preserve source references and explicit card/zone domains.
+    if !filter.source && filter.zone.is_none() && filter.any_of.is_empty()
+        && !filter.has_explicit_card_noun()
+    {
+        filter.zone = Some(Zone::Battlefield);
+    }
 
     Ok(Some(StaticAbility::set_colors(filter, fact.color)))
 }
@@ -2550,12 +2730,27 @@ pub fn parse_lands_are_pt_creatures_still_lands_line(
     let Some(fact) = type_and_color_facts::parse_land_animation_tokens(tokens) else {
         return Ok(None);
     };
-    let filter = parse_object_filter_lexed(fact.subject_tokens, false)?;
-
-    Ok(Some(vec![
-        StaticAbility::add_card_types(filter.clone(), vec![CardType::Creature]),
-        StaticAbility::set_base_power_toughness(filter, fact.power, fact.toughness),
-    ]))
+    let Some(filter) = complete_characteristic_subject(fact.subject_tokens)? else {
+        return Ok(None);
+    };
+    let mut colors = ColorSet::new();
+    let mut subtypes = Vec::new();
+    let mut creature = false;
+    for token in fact.descriptor_tokens {
+        let Some(word) = token.as_word() else { return Ok(None); };
+        if matches!(word, "a" | "an" | "and") { continue; }
+        if matches!(word, "creature" | "creatures") { creature = true; }
+        else if let Some(color) = parse_color(word) { colors = colors.union(color); }
+        else if let Some(subtype) = parse_subtype_flexible(word).filter(Subtype::is_creature_type) {
+            crate::slice_primitives::push_unique(&mut subtypes, subtype);
+        } else { return Ok(None); }
+    }
+    if !creature { return Ok(None); }
+    let mut abilities = vec![StaticAbility::add_card_types(filter.clone(), vec![CardType::Creature])];
+    if !subtypes.is_empty() { abilities.push(StaticAbility::add_subtypes(filter.clone(), subtypes)); }
+    if !colors.is_empty() { abilities.push(StaticAbility::set_colors(filter.clone(), colors)); }
+    abilities.push(StaticAbility::set_base_power_toughness(filter, fact.power, fact.toughness));
+    Ok(Some(abilities))
 }
 
 pub fn parse_static_base_power_toughness_value_tail(
@@ -2566,6 +2761,115 @@ pub fn parse_static_base_power_toughness_value_tail(
     }
     let value = Value::ManaValueOf(Box::new(ChooseSpec::Iterated));
     Some((value.clone(), value))
+}
+
+/// Conditional copular creature descriptors with optional base size. Both the
+/// leading condition and a trailing "as long as" are owned in full. This reader
+/// does not absorb grants, durations, or quoted abilities.
+pub fn parse_conditional_copular_creature_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    // This is an ownership probe, never a committed parse: even a match is
+    // deferred to the established sized-addition owner below. Its speculative
+    // subject recovery must not taint a later, unrelated successful reading.
+    // Nested capture preserves the caller's diagnostics and error behavior;
+    // the eventual committed owner remains responsible for its own losses.
+    let (sized_addition, _) = crate::parse_loss::capture(|| {
+        parse_filter_is_pt_creature_in_addition_line(tokens)
+    });
+    if sized_addition?.is_some() {
+        // The established complete sized-addition bundle owns its ordering,
+        // condition representation and canonical rendering.
+        return Ok(None);
+    }
+    let tokens = crate::grammar::document_shapes::parse_statement_label_strip_tokens(tokens).body_tokens;
+    let tokens = trim_edge_punctuation_tokens(tokens);
+    if tokens.iter().any(|token| matches!(token.kind, TokenKind::Quote | TokenKind::Period | TokenKind::Semicolon)) {
+        return Ok(None);
+    }
+    let (body, condition_tokens) = if let Some(split) = split_as_long_as_condition_prefix_lexed(tokens) {
+        (split.remainder_tokens, split.condition_tokens)
+    } else if let Some(index) = tokens.windows(3).position(|part| {
+        part[0].is_word("as") && part[1].is_word("long") && part[2].is_word("as")
+    }) {
+        (&tokens[..index], &tokens[index + 3..])
+    } else { return Ok(None); };
+    let Some(be) = static_keyword_line_shapes::parse_animation_copula(body) else { return Ok(None); };
+    let contracted = be.token == 0 && body[0].is_any_word(&["it's", "it’s", "its"]);
+    let subject_tokens = if contracted { &body[..1] } else { &body[..be.token] };
+    let source_pronoun = contracted || matches!(parser_token_word_refs(subject_tokens).as_slice(), ["it"]);
+    let predicate = &body[be.token + 1..];
+    let addition = predicate.windows(3).position(|part| {
+        part[0].is_word("in") && part[1].is_word("addition") && part[2].is_word("to")
+    });
+    let descriptor = if let Some(index) = addition {
+        if type_and_color_facts::parse_other_type_addition_tail_tokens(&predicate[index..]).is_none() {
+            return Ok(None);
+        }
+        &predicate[..index]
+    } else { predicate };
+    if !descriptor.iter().all(|token| token.as_word().is_some() || token.kind == TokenKind::Number) {
+        return Ok(None);
+    }
+    let words = parser_token_word_refs(descriptor);
+    let words = strip_leading_article_word_refs(&words);
+    let fixed = words.first().and_then(|word| crate::grammar::primitives::probe_shape(parse_pt_modifier(word)));
+    let type_words = if fixed.is_some() { &words[1..] } else { words };
+    let mut card_types = Vec::new();
+    let mut subtypes = Vec::new();
+    for word in type_words {
+        if let Some(card_type) = parse_card_type(word) {
+            crate::slice_primitives::push_unique(&mut card_types, card_type);
+        } else if let Some(subtype) = parse_subtype_flexible(word).filter(Subtype::is_creature_type) {
+            crate::slice_primitives::push_unique(&mut subtypes, subtype);
+        } else { return Ok(None); }
+    }
+    if !card_types.contains(&CardType::Creature) { return Ok(None); }
+    // CR 205.1b: becoming an artifact creature retains existing types and
+    // subtypes even without "in addition". Other replacements are not this rule.
+    if addition.is_none() && card_types != [CardType::Artifact, CardType::Creature] {
+        return Ok(None);
+    }
+    let condition = parse_static_condition_clause(condition_tokens)?;
+    // Explicit off-battlefield functioning belongs to its separate owner;
+    // a battlefield-only conditional would otherwise be a vacuous success.
+    if copular_condition_has_source_zone(&condition) {
+        return Err(CardTextError::ParseError("unsupported source-zone condition in copular static".into()));
+    }
+    let filter = if source_pronoun {
+        match infer_attached_subject_filter_from_condition_expr(Some(&condition)) {
+            Some(filter) => filter,
+            None if condition_tokens.iter().any(|token| token.is_any_word(&["enchanted", "equipped", "fortified"])) => {
+                // Do not silently bind an attachment-dependent pronoun to the
+                // granting permanent when a compound antecedent is not modeled.
+                return Err(CardTextError::ParseError("unsupported compound attachment antecedent in copular static".into()));
+            }
+            None => ObjectFilter::source(),
+        }
+    } else {
+        let Some(filter) = complete_characteristic_subject(subject_tokens)? else { return Ok(None); };
+        filter
+    };
+    let mut result = vec![StaticAbility::add_card_types(filter.clone(), card_types).with_condition(condition.clone()).into()];
+    if !subtypes.is_empty() {
+        result.push(StaticAbility::add_subtypes(filter.clone(), subtypes).with_condition(condition.clone()).into());
+    }
+    if let Some((power, toughness)) = fixed {
+        result.push(StaticAbility::set_base_power_toughness(filter, power, toughness).with_condition(condition).into());
+    }
+    Ok(Some(result))
+}
+
+fn copular_condition_has_source_zone(condition: &PredicateAst) -> bool {
+    match condition {
+        PredicateAst::Source(SourcePredicateAst::SourceIsInZone(_)) => true,
+        PredicateAst::CountComparison { count: AnthemCountExpression::MatchingFilter(filter), .. } =>
+            filter.source && filter.zone.is_some(),
+        PredicateAst::And(left, right) | PredicateAst::Or(left, right) =>
+            copular_condition_has_source_zone(left) || copular_condition_has_source_zone(right),
+        PredicateAst::Not(inner) => copular_condition_has_source_zone(inner),
+        _ => false,
+    }
 }
 
 pub fn parse_filter_is_pt_creature_in_addition_and_has_line(
@@ -2930,11 +3234,14 @@ pub fn parse_creatures_cant_block_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
     if is_creatures_cant_block_line_lexed(tokens) {
-        return Ok(Some(StaticAbilityAst::GrantStaticAbility {
-            filter: ObjectFilter::creature(),
-            ability: Box::new(StaticAbilityAst::Static(StaticAbility::cant_block())),
-            condition: None,
-        }));
+        // This is a rule imposed by the source, not an ability granted to
+        // every creature. Use the same typed restriction as the complete
+        // generic reader, including its live source lifetime.
+        let Some(abilities) = parse_cant_clauses(tokens)? else { return Ok(None); };
+        let [ability]: [StaticAbility; 1] = abilities.try_into().map_err(|_| {
+            CardTextError::ParseError("a complete creatures-cant-block clause must contain one restriction".into())
+        })?;
+        return Ok(Some(StaticAbilityAst::Static(ability)));
     }
     Ok(None)
 }
@@ -4405,6 +4712,7 @@ pub fn parse_source_exiled_play_life_cost_line(
     }
     let usage_limit = during_your_turn.then_some(crate::grant::GrantUsageLimit::DuringYourTurns);
     let surface = crate::grant::SourceExiledGrantSurface {
+            mana_rider: None,
         source: reference.surface,
         plural_spell_subject: false,
         generic_card_pool: true,
@@ -4448,6 +4756,36 @@ pub fn parse_source_exiled_play_life_cost_line(
 pub fn parse_you_may_static_grant_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    if let Some(reference) = crate::grammar::permission_facts::source_exiled::parse_look_source_exiled_tokens(tokens) {
+        return Ok(Some(vec![StaticAbility::look_at_source_exiled_cards(reference.surface)]));
+    }
+    let inspected = crate::grammar::permission_facts::source_exiled::parse_look_and_play_source_exiled_tokens(tokens);
+    let may_look = inspected.is_some();
+    let inline = crate::grammar::permission_facts::source_exiled::parse_play_source_exiled_inline_mana_tokens(tokens);
+    let rider_surface = if inline.is_some() { ironsmith_core::SourceExiledManaRiderSurface::InlineCastSpells }
+        else { ironsmith_core::SourceExiledManaRiderSurface::ConditionalCast };
+    let converted = inline.or_else(|| crate::grammar::permission_facts::source_exiled::parse_play_source_exiled_with_mana_tokens(tokens));
+    let mode = converted.as_ref().map_or(ironsmith_core::value_model::ManaSpendMode::Normal, |(_, mode)| *mode);
+    if let Some(reference) = converted.map(|(reference, _)| reference).or(inspected).or_else(|| crate::grammar::permission_facts::source_exiled::
+        parse_play_lands_and_spells_from_source_exiled_tokens(tokens))
+    {
+        let mut filter = ObjectFilter::default().in_zone(Zone::Exile);
+        filter.tagged_constraints.push(crate::target::TaggedObjectConstraint {
+            tag: crate::tag::CompilerReferenceTag::SourceExiled.bind().into(),
+            relation: crate::target::TaggedOpbjectRelation::IsTaggedObject,
+        });
+        let mut spec = crate::model::CompilerGrantSpecCore::new(
+            crate::model::CompilerGrantableCore::play_from(), filter, Zone::Exile,
+        ).with_source_exiled_surface(crate::grant::SourceExiledGrantSurface {
+            mana_rider: (!mode.is_normal()).then_some(rider_surface),
+            source: reference.surface, plural_spell_subject: true,
+            generic_card_pool: true, generic_cast_this_way_subject: true,
+        });
+        spec.requires_linked_exile_pair = true;
+        spec.may_look_at_linked_exile = may_look;
+        spec.cast_mana_spend_mode = mode;
+        return Ok(Some(vec![StaticAbility::grants(spec)]));
+    }
     // The dedicated land permission owns this exact surface. Its canonical
     // grant must not compete with the broader play-from permission parser.
     if is_play_lands_from_graveyard_line_lexed(tokens) {
@@ -4835,6 +5173,13 @@ pub fn parse_cast_this_spell_as_though_it_had_flash_line(
 pub fn parse_attacks_each_combat_if_able_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbilityAst>, CardTextError> {
+    if super::combat_requirements::owns_combat_requirement_line(tokens) {
+        let parsed = super::combat_requirements::parse_combat_requirement_static_line(tokens)?;
+        return Ok(parsed.and_then(|mut abilities| {
+            (abilities.len() == 1).then(|| abilities.remove(0))
+        }));
+    }
+
     if let Some(unless) = tokens.iter().position(|token| token.is_word("unless"))
         && let Some(ability) = parse_attacks_each_combat_if_able_line(&tokens[..unless])?
     {
@@ -7779,26 +8124,50 @@ pub fn parse_loyalty_abilities_any_time_line(
     let body = prefix
         .as_ref()
         .map_or(tokens, |prefix| prefix.remainder_tokens);
-    let words: Vec<&str> = body
-        .iter()
-        .filter(|token| token.as_word().is_some())
-        .map(|token| token.parser_text())
-        .collect();
+    let view = crate::lexer::TokenWordView::new(body);
+    let words = view.to_word_refs();
     const START: &[&str] = &["you", "may", "activate"];
     const END: &[&str] = &["any", "time", "you", "could", "cast", "an", "instant"];
+    const ANY_PLAYER_TURN: &[&[&str]] = &[
+        &["on", "any", "players", "turn"],
+        &["on", "any", "player", "s", "turn"],
+        &["on", "any", "player", "turn"],
+    ];
     if !crate::word_primitives::parse_sequence_prefix(&words, START)
         || !crate::word_primitives::parse_sequence_suffix(&words, END)
     {
         return Ok(None);
     }
-    let subject = &words[START.len()..words.len() - END.len()];
+    let timing_start = words.len() - END.len();
+    let subject_and_turn = &words[START.len()..timing_start];
+    // This optional clause belongs to the timing permission, not its object
+    // selector. Both forms grant the same unrestricted instant timing.
+    let subject_len = ANY_PLAYER_TURN
+        .iter()
+        .find_map(|suffix| suffix_word_start(subject_and_turn, suffix))
+        .unwrap_or(subject_and_turn.len());
+    let subject_end = START.len() + subject_len;
+    let subject = &words[START.len()..subject_end];
     let mut filter = match subject {
         ["its" | "her" | "his" | "their", "loyalty", "abilities"] => ObjectFilter::source(),
         ["loyalty", "abilities", "of", rest @ ..] if !rest.is_empty() => {
-            let view = crate::lexer::TokenWordView::new(body);
-            let first = view.token_start_indices()[START.len() + 3];
-            let end = view.token_start_indices()[words.len() - END.len()];
-            parse_object_filter(&body[first..end], false)?
+            if let Some(surface) = crate::util::source_reference_surface_for_words(rest) {
+                ObjectFilter::source_with_surface(surface)
+            } else {
+                let Some(range) = view.token_span_for_words(START.len() + 3, subject_end) else {
+                    return Ok(None);
+                };
+                // Require the complete selector grammar: the permissive
+                // filter parser can discard an unsupported turn restriction
+                // and accidentally grant permission on every turn.
+                let Some(filter) = crate::grammar::filters::parse_simple_object_filter_lexed(
+                    &body[range],
+                    false,
+                ) else {
+                    return Ok(None);
+                };
+                filter
+            }
         }
         _ => return Ok(None),
     };
@@ -7825,6 +8194,7 @@ pub fn parse_loyalty_abilities_any_time_line(
 #[cfg(test)]
 mod loyalty_timing_tests {
     use super::*;
+
     #[test]
     fn loyalty_permission_parses_scoped_and_conditional_filters() {
         for (line, is_source, entered) in [
@@ -7834,12 +8204,37 @@ mod loyalty_timing_tests {
                 false,
             ),
             (
+                "You may activate its loyalty abilities on any player's turn any time you could cast an instant.",
+                true,
+                false,
+            ),
+            (
+                "You may activate loyalty abilities of this on any player's turn any time you could cast an instant.",
+                true,
+                false,
+            ),
+            (
+                "You may activate loyalty abilities of this planeswalker on any player’s turn any time you could cast an instant.",
+                true,
+                false,
+            ),
+            (
                 "You may activate loyalty abilities of planeswalkers you control any time you could cast an instant.",
                 false,
                 false,
             ),
             (
+                "You may activate loyalty abilities of planeswalkers you control on any player's turn any time you could cast an instant.",
+                false,
+                false,
+            ),
+            (
                 "As long as this entered this turn, you may activate its loyalty abilities any time you could cast an instant.",
+                true,
+                true,
+            ),
+            (
+                "As long as this entered this turn, you may activate its loyalty abilities on any player's turn any time you could cast an instant.",
                 true,
                 true,
             ),
@@ -7858,6 +8253,84 @@ mod loyalty_timing_tests {
             if !is_source {
                 assert!(filter.card_types.contains(&CardType::Planeswalker));
                 assert_eq!(filter.controller, Some(PlayerFilter::You));
+            }
+        }
+    }
+
+    #[test]
+    fn loyalty_permission_preserves_normalized_named_source() {
+        for (name, line) in [
+            (
+                "Teferi, Master of Time",
+                "You may activate loyalty abilities of Teferi on any player's turn any time you could cast an instant.",
+            ),
+            (
+                "Chronicle Adept",
+                "You may activate loyalty abilities of Chronicle Adept on any player's turn any time you could cast an instant.",
+            ),
+        ] {
+            let card = crate::card::CardBuilder::new(crate::ids::CardId::new(), name)
+                .card_types(vec![CardType::Planeswalker]);
+            let tokens = crate::lexer::lex_line(line, 0).unwrap();
+            let normalized =
+                crate::document_parser::normalize_named_source_tokens_for_builder(&card, &tokens)
+                    .expect("the card's own name should become a source reference");
+            let ability = parse_loyalty_abilities_any_time_line(&normalized)
+                .unwrap()
+                .expect(line);
+            let ironsmith_core::StaticAbilityPayload::LoyaltyAbilitiesAnyTime { filter } =
+                ability.payload
+            else {
+                panic!("{line}");
+            };
+            assert!(filter.source, "{line}");
+            assert!(filter.controller.is_none(), "{line}");
+            assert!(filter.subtypes.is_empty(), "{line}");
+        }
+    }
+
+    #[test]
+    fn loyalty_permission_keeps_generic_filter_scope_before_turn_qualifier() {
+        let line = "You may activate loyalty abilities of legendary planeswalkers your opponents control on any player's turn any time you could cast an instant.";
+        let tokens = crate::lexer::lex_line(line, 0).unwrap();
+        let ability = parse_loyalty_abilities_any_time_line(&tokens)
+            .unwrap()
+            .expect(line);
+        let ironsmith_core::StaticAbilityPayload::LoyaltyAbilitiesAnyTime { filter } = ability.payload
+        else {
+            panic!("{line}");
+        };
+        assert!(!filter.source);
+        assert_eq!(filter.card_types, vec![CardType::Planeswalker]);
+        assert_eq!(filter.controller, Some(PlayerFilter::Opponent));
+        assert_eq!(filter.supertypes, vec![crate::types::Supertype::Legendary]);
+    }
+
+    #[test]
+    fn loyalty_permission_rejects_unmodeled_turn_restrictions() {
+        for subject in [
+            "its loyalty abilities",
+            "loyalty abilities of this planeswalker",
+            "loyalty abilities of planeswalkers you control",
+        ] {
+            for qualifier in [
+                "on your turn",
+                "only on your turn",
+                "during your turn",
+                "on any opponent's turn",
+                "on any player's next turn",
+                "on any player's end step",
+                "on any player's turn this turn",
+                "on your turn on any player's turn",
+            ] {
+                let line = format!(
+                    "You may activate {subject} {qualifier} any time you could cast an instant."
+                );
+                let tokens = crate::lexer::lex_line(&line, 0).unwrap();
+                assert!(
+                    !matches!(parse_loyalty_abilities_any_time_line(&tokens), Ok(Some(_))),
+                    "unsupported restriction was widened: {line}"
+                );
             }
         }
     }
@@ -8108,3 +8581,62 @@ mod generic_flash_permission_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod foretell_special_action_modifier_tests {
+    use super::*;
+    #[test]
+    fn complete_modifier_shape_keeps_amount_and_rejects_unconsumed_syntax() {
+        for amount in [0, 1, 3] {
+            let tokens = crate::lexer::lex_line(&format!("Foretelling cards from your hand costs {{{amount}}} less and can be done on any player's turn."), 0).unwrap();
+            let parsed = parse_foretelling_cards_cost_modifier_line(&tokens).unwrap().unwrap();
+            assert!(matches!(parsed.payload, ironsmith_core::StaticAbilityPayload::ForetellSpecialActionModifier {
+                generic_reduction, any_players_turn: true,
+            } if generic_reduction == amount));
+        }
+        for line in [
+            "Foretelling cards from your hand costs {R} less and can be done on any player's turn.",
+            "Foretelling cards from your hand costs {1}{R} less and can be done on any player's turn.",
+            "Foretelling cards from your hand costs {1}{1} less and can be done on any player's turn.",
+            "Foretelling cards from your hand costs {1} less and can be done on any player's turn if you control an Island.",
+            "Foretelling cards from your hand costs {1} less and can be done on any player's turn {R}.",
+        ] {
+            let tokens = crate::lexer::lex_line(line, 0).unwrap();
+            assert!(parse_foretelling_cards_cost_modifier_line(&tokens).is_err(), "{line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod static_color_subject_tests {
+    use super::*;
+
+    #[test]
+    fn nominal_slivers_mean_permanents_and_literal_source_colorless_is_not_devoid() {
+        let tokens = crate::lexer::lex_line("All Slivers are colorless.", 0).unwrap();
+        let ability = parse_all_creatures_are_color_line(&tokens).unwrap().unwrap();
+        let ironsmith_core::StaticAbilityPayload::SetColors { filter, colors } = ability.payload else {
+            panic!("literal color statement must use SetColors");
+        };
+        assert_eq!(colors, crate::color::ColorSet::COLORLESS);
+        assert_eq!(filter.zone, Some(Zone::Battlefield));
+        assert_eq!(filter.subtypes, vec![Subtype::Sliver]);
+        assert!(filter.card_types.is_empty());
+        assert!(filter.controller.is_none() && !filter.source && !filter.other);
+        let tokens = crate::lexer::lex_line("This spell is colorless.", 0).unwrap();
+        let ability = parse_all_creatures_are_color_line(&tokens).unwrap().unwrap();
+        let ironsmith_core::StaticAbilityPayload::SetColors { filter, colors } = ability.payload else {
+            panic!("literal colorless is not the Devoid keyword");
+        };
+        assert!(filter.is_source_only());
+        assert_eq!(colors, crate::color::ColorSet::COLORLESS);
+    }
+}
+
+#[cfg(test)]
+#[path = "copular_characteristic_tests.rs"]
+mod copular_characteristic_tests;
+
+#[cfg(test)]
+#[path = "copular_probe_loss_tests.rs"]
+mod copular_probe_loss_tests;

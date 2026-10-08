@@ -1,4 +1,4 @@
-import { createLocalAnalysisJournal, releaseRestoredRuntimeSavepoints } from "../lib/local-analysis-replay.js";
+import { ANALYSIS_SEED_MIN_OPERATIONS, createLocalAnalysisJournal, localReplayCaughtUp, localReplayTransfer, releaseRestoredRuntimeSavepoints, seededLocalReplay } from "../lib/local-analysis-replay.js";
 import { createPaymentOptionsAnalysis } from "../lib/payment-options-analysis.js";
 import { createAsyncLimiter } from "../lib/bounded-async.js";
 import { inRuntimeBranch } from "../lib/runtime-branches.js";
@@ -131,12 +131,26 @@ const ANALYSIS_READ_METHOD = /^(beginPaymentAnalysis|stepPaymentAnalysis|cancelP
 let priorityIdentity = null;
 let priorityViewRevision = 0;
 const workerTasks = createWorkerTaskDiagnostics({ publish: message => self.postMessage(message) });
+// Analysis replicas replay this session's engine calls. One that is far behind
+// (new, or idle for a long time) instead restores an exact image of the
+// runtime, so its catch-up cost does not grow with the length of the game.
+function analysisReplay(replicaMark = null) {
+  const replay = localAnalysisJournal.capture();
+  if (replay.operations.length - localReplayCaughtUp(replay, replicaMark) < ANALYSIS_SEED_MIN_OPERATIONS) return replay;
+  try {
+    return seededLocalReplay(replay, exactSnapshotRuntime.captureLocal(game));
+  } catch (error) {
+    console.warn("[ironsmith] analysis seed unavailable; replaying the session:", error);
+    return replay;
+  }
+}
+
 const priorityAnalysis = createIsolatedPriorityAnalysis({
   identity: () => game?.priorityAnalysisIdentity(),
   pending: () => game?.priorityAnalysisPending?.() === true,
   eligible: () => game?.hasPriorityDecision?.() === true,
-  capture: () => enqueueCall(() => ({
-    localReplay: localAnalysisJournal.capture(),
+  capture: ({ replicaMark = null } = {}) => enqueueCall(() => ({
+    localReplay: analysisReplay(replicaMark),
     module: engineModule,
   }), { kind: 'priority_analysis_capture' }),
   createWorker: () => new Worker(new URL('./priorityAnalysisWorker.js', import.meta.url), { type: 'module' }),
@@ -144,7 +158,7 @@ const priorityAnalysis = createIsolatedPriorityAnalysis({
   deliver: operation => enqueueCall(operation, { kind: 'priority_analysis_publish' }),
   publish: analysis => {
     if (analysis.decision?.analysis_complete) {
-      game.rememberPriorityAffordability(analysis.decision.actions.map(action => action.action_ref));
+      game.rememberPriorityAffordability(analysis.decision.actions.filter(action => action.payment_proven === true).map(action => action.action_ref));
     }
     self.postMessage({ type: 'priorityAnalysis', ...analysis });
   },
@@ -152,15 +166,25 @@ const priorityAnalysis = createIsolatedPriorityAnalysis({
 });
 
 const paymentOptionsAnalysis = createPaymentOptionsAnalysis({
-  capture: (requestHash, planId) => enqueueCall(() => {
+  capture: ([requestHash, planId], { replicaMark }) => enqueueCall(() => {
     const request = game.exportManaPaymentOptionsRequest(requestHash, planId);
     if (request === 'null') return null;
     return {
       request,
-      localReplay: localAnalysisJournal.capture(),
+      localReplay: analysisReplay(replicaMark),
       module: engineModule,
     };
   }, { kind: 'payment_options_capture' }),
+  createWorker: () => new Worker(new URL('./paymentOptionsWorker.js', import.meta.url), { type: 'module' }),
+});
+
+// Even a single resumable planner node can run synchronous replacement
+// simulation. Keep ranking off the authoritative queue, just like options.
+const paymentRankingAnalysis = createPaymentOptionsAnalysis({
+  capture: (_, { replicaMark }) => enqueueCall(() => ({
+    kind: 'ranking', request: 'ranking',
+    localReplay: analysisReplay(replicaMark), module: engineModule,
+  }), { kind: 'payment_ranking_capture' }),
   createWorker: () => new Worker(new URL('./paymentOptionsWorker.js', import.meta.url), { type: 'module' }),
 });
 
@@ -764,7 +788,7 @@ async function handleInit(msg = {}) {
   try {
     clearBackgroundTimer();
     snapshotEncoder.reset();
-    paymentOptionsAnalysis.cancel();
+    paymentOptionsAnalysis.cancel(); paymentRankingAnalysis.cancel();
     previewWorker?.terminate(); previewWorker = null; targetPreviews.clear();
     game = null;
     pendingCallCount = 0;
@@ -860,12 +884,13 @@ function handleTargetPreview(id, args) {
   enqueueCall(() => {
     workerTasks.phase(task, 'target_checkpoint');
     if (!game) throw new Error("Game is not initialized yet");
-    return { localReplay: localAnalysisJournal.capture(), identity: game.priorityAnalysisIdentity() };
+    return { localReplay: analysisReplay(previewWorker?.replicaMark), identity: game.priorityAnalysisIdentity() };
   }, {}, task).then(input => {
     if (id !== latestTargetPreview) { respond(task, { type: "result", id, ok: true, result: null }); return; }
     if (!previewWorker) {
       previewWorker = new Worker(new URL("./targetPreviewWorker.js", import.meta.url), { type: "module" });
       previewWorker.onmessage = ({ data }) => {
+        if (data.replicaMark) previewWorker.replicaMark = data.replicaMark;
         const request = targetPreviews.get(data.id);
         if (!request) return;
         targetPreviews.delete(data.id);
@@ -882,13 +907,20 @@ function handleTargetPreview(id, args) {
     targetPreviews.set(id, { identity: input.identity, task });
     workerTasks.phase(task, 'target_worker_wait');
     previewWorker.postMessage({ type: "preview", id, module: engineModule,
-      localReplay: input.localReplay, actions: args[0], perspective: args[1] });
+      localReplay: input.localReplay, actions: args[0], perspective: args[1] }, localReplayTransfer(input.localReplay));
   }).catch(error => respond(task, { type: "result", id, ok: false, error: serializeError(error) }))
     .finally(() => { pendingCallCount--; priorityAnalysis.start(priorityViewRevision); });
 }
 
 function handleCall(msg) {
   const { id, method, args = [] } = msg;
+  if (msg.runtimeBranch == null && method === 'analyzePayment') {
+    paymentRankingAnalysis.run().then(result =>
+      postWorkerResult({ type: 'result', id, ok: true, result }), error =>
+      postWorkerResult({ type: 'result', id, ok: false, error: serializeError(error) }));
+    return;
+  }
+  if (msg.runtimeBranch == null && method === 'cancelPaymentAnalysis') paymentRankingAnalysis.cancel();
   if (msg.runtimeBranch == null && method === "getPaymentActivationOptions") {
     paymentOptionsAnalysis.run(...args).then(result =>
       postWorkerResult({ type: "result", id, ok: true, result }), error =>
@@ -958,7 +990,7 @@ function handleCall(msg) {
       return { result, registryStatus: null };
     }
     if (method === 'restoreExactBuildSnapshot') {
-      priorityAnalysis.invalidate(); paymentOptionsAnalysis.cancel();
+      priorityAnalysis.invalidate(); paymentOptionsAnalysis.cancel(); paymentRankingAnalysis.cancel();
       latestTargetPreview = null; previewWorker?.postMessage({ type: 'cancel' });
       let result;
       try {
@@ -987,7 +1019,7 @@ function handleCall(msg) {
       // Publishing a verified branch may copy the identical visible state.
       // Compare its analysis identity after the copy instead of discarding work.
       if (method !== "copyRuntimeSavepoint") priorityAnalysis.invalidate();
-      paymentOptionsAnalysis.cancel();
+      paymentOptionsAnalysis.cancel(); paymentRankingAnalysis.cancel();
       game?.cancelPaymentAnalysis?.();
       latestTargetPreview = null;
       previewWorker?.postMessage({ type: "cancel" });
@@ -1062,7 +1094,7 @@ function handleCall(msg) {
     const result = await fn.apply(game, args);
     if (previousViewIdentity !== null && previousViewIdentity !== game.priorityAnalysisIdentity()) {
       priorityAnalysis.invalidate();
-      paymentOptionsAnalysis.cancel();
+      paymentOptionsAnalysis.cancel(); paymentRankingAnalysis.cancel();
     }
     rememberCardNamesFromEngineResult(result);
     const wasmCallMs = nowMs() - wasmStartedAt;

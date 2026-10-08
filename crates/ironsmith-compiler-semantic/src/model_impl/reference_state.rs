@@ -219,10 +219,19 @@ pub fn join_object_target_bindings(
     )
 }
 
+/// One exact activation counter-removal producer, separate from announced X.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CounterRemovalCostReference {
+    pub effect_id: EffectId,
+    pub counter_type: Option<ironsmith_core::CounterType>,
+    pub can_announce_quantity: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ReferenceFrame {
     pub last_effect_id: Option<EffectId>,
     pub last_library_search_effect_id: Option<EffectId>,
+    pub counter_removal_cost: Option<CounterRemovalCostReference>,
     pub last_object_tag: Option<TagKey>,
     pub last_value_comparison: Option<(crate::effect::Value, crate::effect::Value)>,
     pub recent_object_target_bindings: Arc<Vec<ObjectTargetBinding>>,
@@ -239,9 +248,14 @@ pub struct ReferenceFrame {
     pub allow_excess_damage_event_value: bool,
     pub milling_event_filter: Option<std::sync::Arc<ObjectFilter>>,
     pub dice_event_grouped: Option<bool>,
+    pub cast_event_quantity: Option<ironsmith_core::CastEventQuantity>,
     pub life_event_binding: Option<std::sync::Arc<crate::trigger_references::LifeEventBinding>>,
     pub life_amount_producers: std::sync::Arc<Vec<crate::trigger_references::LifeAmountProducer>>,
     pub die_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub coin_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub number_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub color_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub reveal_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
     pub bind_unbound_x_to_last_effect: bool,
     pub has_announced_x: bool,
 }
@@ -251,6 +265,7 @@ impl ReferenceFrame {
         Self {
             last_effect_id: frame.last_effect_id,
             last_library_search_effect_id: frame.last_library_search_effect_id,
+            counter_removal_cost: frame.counter_removal_cost,
             last_object_tag: frame.last_object_tag.clone(),
             last_value_comparison: frame.last_value_comparison.clone(),
             recent_object_target_bindings: Arc::default(),
@@ -267,9 +282,14 @@ impl ReferenceFrame {
             allow_excess_damage_event_value: frame.allow_excess_damage_event_value,
             milling_event_filter: frame.milling_event_filter.clone(),
             dice_event_grouped: frame.dice_event_grouped,
+            cast_event_quantity: frame.cast_event_quantity,
             life_event_binding: frame.life_event_binding.clone(),
             life_amount_producers: frame.life_amount_producers.clone(),
             die_result_producers: frame.die_result_producers.clone(),
+            coin_result_producers: frame.coin_result_producers.clone(),
+            number_result_producers: frame.number_result_producers.clone(),
+            color_result_producers: frame.color_result_producers.clone(),
+            reveal_result_producers: frame.reveal_result_producers.clone(),
             bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
             has_announced_x: frame.has_announced_x,
         }
@@ -280,6 +300,7 @@ impl ReferenceFrame {
             declared_target_references: Vec::new(),
             last_effect_id: self.last_effect_id,
             last_library_search_effect_id: self.last_library_search_effect_id,
+            counter_removal_cost: self.counter_removal_cost,
             last_object_tag: self.last_object_tag.clone(),
             last_value_comparison: self.last_value_comparison.clone(),
             snapshot_tag_aliases: self.snapshot_tag_aliases.clone(),
@@ -301,9 +322,14 @@ impl ReferenceFrame {
             allow_excess_damage_event_value: self.allow_excess_damage_event_value,
             milling_event_filter: self.milling_event_filter.clone(),
             dice_event_grouped: self.dice_event_grouped,
+            cast_event_quantity: self.cast_event_quantity,
             life_event_binding: self.life_event_binding.clone(),
             life_amount_producers: self.life_amount_producers.clone(),
             die_result_producers: self.die_result_producers.clone(),
+            coin_result_producers: self.coin_result_producers.clone(),
+            number_result_producers: self.number_result_producers.clone(),
+            color_result_producers: self.color_result_producers.clone(),
+            reveal_result_producers: self.reveal_result_producers.clone(),
             bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
             has_announced_x: self.has_announced_x,
         }
@@ -338,6 +364,9 @@ impl<T: Clone + PartialEq> RefState<T> {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReferenceImports {
+    /// X already belongs to this spell or activation's announced payment.
+    /// Result branches must not reinterpret it as their local outcome.
+    pub has_announced_x: bool,
     pub last_object_tag: Option<TagKey>,
     pub last_value_comparison: Option<(crate::effect::Value, crate::effect::Value)>,
     pub recent_object_target_bindings: Arc<Vec<ObjectTargetBinding>>,
@@ -352,11 +381,13 @@ pub struct ReferenceImports {
     pub source_object_antecedent: bool,
     pub last_effect_id: Option<EffectId>,
     pub last_library_search_effect_id: Option<EffectId>,
+    pub counter_removal_cost: Option<CounterRemovalCostReference>,
 }
 
 impl ReferenceImports {
     pub fn is_empty(&self) -> bool {
-        self.last_value_comparison.is_none()
+        !self.has_announced_x
+            && self.last_value_comparison.is_none()
             && self.last_object_tag.is_none()
             && self.recent_object_target_bindings.is_empty()
             && self.snapshot_tag_aliases.is_empty()
@@ -366,6 +397,7 @@ impl ReferenceImports {
             && !self.source_object_antecedent
             && self.last_effect_id.is_none()
             && self.last_library_search_effect_id.is_none()
+            && self.counter_removal_cost.is_none()
     }
 
     pub fn with_last_object_tag(tag: impl Into<TagKey>) -> Self {
@@ -379,6 +411,7 @@ impl ReferenceImports {
 
     pub fn from_frame(frame: &ReferenceFrame) -> Self {
         Self {
+            has_announced_x: frame.has_announced_x,
             last_object_tag: frame.last_object_tag.clone(),
             last_value_comparison: frame.last_value_comparison.clone(),
             recent_object_target_bindings: frame.recent_object_target_bindings.clone(),
@@ -389,6 +422,7 @@ impl ReferenceImports {
             source_object_antecedent: frame.source_object_antecedent,
             last_effect_id: frame.last_effect_id,
             last_library_search_effect_id: frame.last_library_search_effect_id,
+            counter_removal_cost: frame.counter_removal_cost,
         }
     }
 
@@ -412,15 +446,21 @@ pub struct ReferenceEnv {
     pub source_object_antecedent: bool,
     pub last_effect_id: RefState<EffectId>,
     pub last_library_search_effect_id: RefState<EffectId>,
+    pub counter_removal_cost: Option<CounterRemovalCostReference>,
     pub iterated_player: bool,
     pub iterated_object: bool,
     pub allow_life_event_value: bool,
     pub allow_excess_damage_event_value: bool,
     pub milling_event_filter: Option<std::sync::Arc<ObjectFilter>>,
     pub dice_event_grouped: Option<bool>,
+    pub cast_event_quantity: Option<ironsmith_core::CastEventQuantity>,
     pub life_event_binding: Option<std::sync::Arc<crate::trigger_references::LifeEventBinding>>,
     pub life_amount_producers: std::sync::Arc<Vec<crate::trigger_references::LifeAmountProducer>>,
     pub die_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub coin_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub number_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub color_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
+    pub reveal_result_producers: std::sync::Arc<Vec<Option<EffectId>>>,
     pub bind_unbound_x_to_last_effect: bool,
     pub has_announced_x: bool,
 }
@@ -437,15 +477,21 @@ impl Default for ReferenceEnv {
             source_object_antecedent: false,
             last_effect_id: RefState::Unknown,
             last_library_search_effect_id: RefState::Unknown,
+            counter_removal_cost: None,
             iterated_player: false,
             iterated_object: false,
             allow_life_event_value: false,
             allow_excess_damage_event_value: false,
             milling_event_filter: None,
             dice_event_grouped: None,
+            cast_event_quantity: None,
             life_event_binding: None,
             life_amount_producers: Default::default(),
             die_result_producers: Default::default(),
+            coin_result_producers: Default::default(),
+            number_result_producers: Default::default(),
+            color_result_producers: Default::default(),
+            reveal_result_producers: Default::default(),
             bind_unbound_x_to_last_effect: false,
             has_announced_x: false,
         }
@@ -474,17 +520,23 @@ impl ReferenceEnv {
             last_library_search_effect_id: RefState::from_option(
                 imports.last_library_search_effect_id,
             ),
+            counter_removal_cost: imports.counter_removal_cost,
             iterated_player,
             iterated_object: imports.iterated_object,
             allow_life_event_value,
             allow_excess_damage_event_value: false,
             milling_event_filter: None,
             dice_event_grouped: None,
+            cast_event_quantity: None,
             life_event_binding: None,
             life_amount_producers: Default::default(),
             die_result_producers: Default::default(),
+            coin_result_producers: Default::default(),
+            number_result_producers: Default::default(),
+            color_result_producers: Default::default(),
+            reveal_result_producers: Default::default(),
             bind_unbound_x_to_last_effect,
-            has_announced_x: false,
+            has_announced_x: imports.has_announced_x,
         }
     }
 
@@ -501,15 +553,21 @@ impl ReferenceEnv {
             last_library_search_effect_id: RefState::from_option(
                 frame.last_library_search_effect_id,
             ),
+            counter_removal_cost: frame.counter_removal_cost,
             iterated_player: frame.iterated_player,
             iterated_object: frame.iterated_object,
             allow_life_event_value: frame.allow_life_event_value,
             allow_excess_damage_event_value: frame.allow_excess_damage_event_value,
             milling_event_filter: frame.milling_event_filter.clone(),
             dice_event_grouped: frame.dice_event_grouped,
+            cast_event_quantity: frame.cast_event_quantity,
             life_event_binding: frame.life_event_binding.clone(),
             life_amount_producers: frame.life_amount_producers.clone(),
             die_result_producers: frame.die_result_producers.clone(),
+            coin_result_producers: frame.coin_result_producers.clone(),
+            number_result_producers: frame.number_result_producers.clone(),
+            color_result_producers: frame.color_result_producers.clone(),
+            reveal_result_producers: frame.reveal_result_producers.clone(),
             bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
             has_announced_x: frame.has_announced_x,
         }
@@ -527,6 +585,7 @@ impl ReferenceEnv {
         ReferenceFrame {
             last_effect_id: self.last_effect_id.clone().into_option(),
             last_library_search_effect_id: self.last_library_search_effect_id.clone().into_option(),
+            counter_removal_cost: self.counter_removal_cost,
             last_object_tag: self.last_object_tag.clone().into_option(),
             last_value_comparison: self.last_value_comparison.clone().into_option(),
             recent_object_target_bindings: self.recent_object_target_bindings.clone(),
@@ -543,9 +602,14 @@ impl ReferenceEnv {
             allow_excess_damage_event_value: self.allow_excess_damage_event_value,
             milling_event_filter: self.milling_event_filter.clone(),
             dice_event_grouped: self.dice_event_grouped,
+            cast_event_quantity: self.cast_event_quantity,
             life_event_binding: self.life_event_binding.clone(),
             life_amount_producers: self.life_amount_producers.clone(),
             die_result_producers: self.die_result_producers.clone(),
+            coin_result_producers: self.coin_result_producers.clone(),
+            number_result_producers: self.number_result_producers.clone(),
+            color_result_producers: self.color_result_producers.clone(),
+            reveal_result_producers: self.reveal_result_producers.clone(),
             bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
             has_announced_x: self.has_announced_x,
         }
@@ -588,6 +652,7 @@ impl ReferenceEnv {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReferenceExports {
+    pub has_announced_x: bool,
     pub last_object_tag: RefState<TagKey>,
     pub last_value_comparison: RefState<(crate::effect::Value, crate::effect::Value)>,
     pub recent_object_target_bindings: Arc<Vec<ObjectTargetBinding>>,
@@ -596,12 +661,14 @@ pub struct ReferenceExports {
     pub source_object_antecedent: bool,
     pub last_effect_id: RefState<EffectId>,
     pub last_library_search_effect_id: RefState<EffectId>,
+    pub counter_removal_cost: Option<CounterRemovalCostReference>,
     pub iterated_player: bool,
 }
 
 impl Default for ReferenceExports {
     fn default() -> Self {
         Self {
+            has_announced_x: false,
             last_object_tag: RefState::Unknown,
             last_value_comparison: RefState::Unknown,
             recent_object_target_bindings: Arc::default(),
@@ -610,6 +677,7 @@ impl Default for ReferenceExports {
             source_object_antecedent: false,
             last_effect_id: RefState::Unknown,
             last_library_search_effect_id: RefState::Unknown,
+            counter_removal_cost: None,
             iterated_player: false,
         }
     }
@@ -618,6 +686,7 @@ impl Default for ReferenceExports {
 impl ReferenceExports {
     pub fn from_env(env: &ReferenceEnv) -> Self {
         Self {
+            has_announced_x: env.has_announced_x,
             last_object_tag: env.last_object_tag.clone(),
             last_value_comparison: env.last_value_comparison.clone(),
             recent_object_target_bindings: env.recent_object_target_bindings.clone(),
@@ -626,12 +695,14 @@ impl ReferenceExports {
             source_object_antecedent: env.source_object_antecedent,
             last_effect_id: env.last_effect_id.clone(),
             last_library_search_effect_id: env.last_library_search_effect_id.clone(),
+            counter_removal_cost: env.counter_removal_cost,
             iterated_player: env.iterated_player,
         }
     }
 
     pub fn join(left: &Self, right: &Self) -> Self {
         Self {
+            has_announced_x: left.has_announced_x && right.has_announced_x,
             last_object_tag: RefState::join(&left.last_object_tag, &right.last_object_tag),
             last_value_comparison: RefState::join(
                 &left.last_value_comparison,
@@ -650,12 +721,14 @@ impl ReferenceExports {
                 &left.last_library_search_effect_id,
                 &right.last_library_search_effect_id,
             ),
+            counter_removal_cost: if left.counter_removal_cost == right.counter_removal_cost { left.counter_removal_cost } else { None },
             iterated_player: left.iterated_player && right.iterated_player,
         }
     }
 
     pub fn to_imports(&self) -> ReferenceImports {
         ReferenceImports {
+            has_announced_x: self.has_announced_x,
             last_object_tag: self.last_object_tag.clone().into_option(),
             last_value_comparison: self.last_value_comparison.clone().into_option(),
             recent_object_target_bindings: self.recent_object_target_bindings.clone(),
@@ -666,6 +739,7 @@ impl ReferenceExports {
             source_object_antecedent: self.source_object_antecedent,
             last_effect_id: self.last_effect_id.clone().into_option(),
             last_library_search_effect_id: self.last_library_search_effect_id.clone().into_option(),
+            counter_removal_cost: self.counter_removal_cost,
         }
     }
 }

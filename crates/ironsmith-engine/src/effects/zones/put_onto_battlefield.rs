@@ -1,12 +1,14 @@
 //! Put onto battlefield effect implementation.
 
 use super::battlefield_entry::{
-    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_batch_with_options,
-    resolve_battlefield_entry_counters,
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, PreparedBattlefieldEntryBatch,
+    prepare_battlefield_entry_batch, resolve_battlefield_entry_counters,
 };
-use crate::effect::{EffectOutcome, OutcomeObjectMemory};
-use crate::effects::EffectExecutor;
+use crate::effect::EffectOutcome;
 use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter};
+use crate::effects::{
+    CompletedEffectOutputs, EffectExecutor, SimultaneousEffectCommit, SimultaneousEffectProposal,
+};
 use crate::effects::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::snapshot::ObjectSnapshot;
@@ -36,23 +38,28 @@ pub use ironsmith_core::PutOntoBattlefieldEffect;
 /// );
 /// ```
 impl EffectExecutor for PutOntoBattlefieldEffect {
+    fn own_preflight_object_specs(&self) -> Vec<ChooseSpec> {
+        vec![self.target.clone()]
+    }
+
     fn supports_simultaneous_player_action(&self) -> bool {
-        // A tagged result set was already fixed by an earlier action.  Defer
-        // the battlefield move so quantified-player sequences can finish the
-        // action for every player before beginning the next one (Living
-        // Death/Living End/Scrap Mastery).
-        matches!(self.target.base(), ChooseSpec::Tagged(_))
+        // Both a tagged set and an object iterator already identify the exact
+        // original cards. Capture them before any player's entry commits.
+        matches!(
+            self.target.base(),
+            ChooseSpec::Tagged(_) | ChooseSpec::Iterated
+        )
     }
 
     fn prepare_simultaneous_player_action(
         &self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &mut ExecutionContext,
-    ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, ExecutionError> {
-        Ok(Box::new(crate::effects::DeferredPlayerActionProposal {
-            effect: crate::effect::Effect::new(self.clone()),
-            iterated_player: ctx.iteration.iterated_player,
-        }))
+    ) -> Result<Box<dyn SimultaneousEffectProposal>, ExecutionError> {
+        let objects = crate::effects::helpers::resolve_objects_from_spec(game, &self.target, ctx)?;
+        Ok(Box::new(PutProposal::from_objects(
+            self, game, ctx, objects,
+        )?))
     }
 
     fn execute(
@@ -60,84 +67,34 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let instruction = (|| -> Result<EffectOutcome, ExecutionError> {
-        let controller_id = resolve_player_filter(game, &self.controller, ctx)?;
-        let object_ids = resolve_objects_for_effect(game, ctx, &self.target)?;
-        if object_ids.is_empty() {
-            return Ok(EffectOutcome::target_invalid());
-        }
-
-        let entries = object_ids
-            .into_iter()
-            .map(|object_id| {
-                let Some(object) = game.object(object_id) else {
-                    return Ok(None);
-                };
-                let memory =
-                    OutcomeObjectMemory::from_snapshot(&ObjectSnapshot::from_object(object, game));
-                let counters = resolve_battlefield_entry_counters(
-                    game,
-                    ctx,
-                    object_id,
-                    &self.enters_with_counters,
-                )?;
-                Ok(Some((object_id, memory, counters)))
-            })
-            .collect::<Result<Vec<_>, ExecutionError>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let outcomes = move_to_battlefield_batch_with_options(
+        self.execute_with_outputs(game, ctx)
+            .map(CompletedEffectOutputs::into_outcome)
+    }
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<CompletedEffectOutputs, ExecutionError> {
+        crate::effects::composition::execute_transaction(
             game,
             ctx,
-            entries
-                .iter()
-                .map(|(object, _, counters)| {
-                    (
-                        *object,
-                        BattlefieldEntryOptions::specific(controller_id, self.tapped)
-                            .with_initial_counters(counters.clone()),
-                    )
-                })
-                .collect(),
-        )?;
-
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-        if outcomes.len() != entries.len() { return Err(ExecutionError::InternalError("battlefield batch lost an entry receipt".into())); }
-        let mut receipts = Vec::new();
-        let mut moved_ids = Vec::new();
-        let mut affected_memory = Vec::new();
-        let mut prevented = false;
-        for ((object_id, memory, _), outcome) in entries.into_iter().zip(outcomes) {
-            match &outcome.outcome {
-                BattlefieldEntryOutcome::Moved(new_id) => {
-                    moved_ids.push(*new_id);
-                    affected_memory.push(memory);
+            || CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+            |game, ctx| {
+                let objects = super::resolve_zone_move_objects(game, ctx, &self.target)?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
                 }
-                BattlefieldEntryOutcome::Redirected(receipt) => {
-                    moved_ids.extend(receipt.new_object_ids.iter().copied());
-                    affected_memory.push(memory);
-                }
-                BattlefieldEntryOutcome::Prevented => prevented = true,
-            }
-            let (original, receipt) = outcome.into_zone_receipt();
-            if original != object_id { return Err(ExecutionError::InternalError("battlefield receipt changed original identity".into())); }
-            receipts.push((original, receipt));
-        }
-
-        let original = if !moved_ids.is_empty() {
-            EffectOutcome::with_objects(moved_ids).with_affected_object_memory(affected_memory)
-        } else if prevented { EffectOutcome::impossible() }
-        else { EffectOutcome::target_invalid() };
-        super::finish_zone_change_receipts(game, ctx, original, receipts)
-        })();
-        let pending = ctx.decision_maker.awaiting_choice();
-        if pending || instruction.is_err() { *game = checkpoint; context_checkpoint.restore(ctx); }
-        if pending { return instruction.map(|_| EffectOutcome::count(0)); }
-        instruction
+                let proposal = PutProposal::from_objects(self, game, ctx, objects)?;
+                crate::effects::composition::complete_prepared_original_with_outputs(
+                    Box::new(proposal),
+                    game,
+                    ctx,
+                    true,
+                )
+            },
+        )
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -150,6 +107,158 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
 
     fn target_description(&self) -> &'static str {
         "card to put onto battlefield"
+    }
+}
+
+/// Complete entry preparation is shared by standalone and simultaneous puts.
+/// Every identity, controller and counter amount belongs to the original
+/// instruction; replacement programs cannot reselect another player's cards.
+#[derive(Debug)]
+struct PutProposal {
+    entries: Vec<(
+        crate::ids::ObjectId,
+        ObjectSnapshot,
+        Vec<(crate::object::CounterType, u32)>,
+    )>,
+    controller: crate::ids::PlayerId,
+    tapped: bool,
+    prepared: Option<PreparedBattlefieldEntryBatch>,
+    draws: super::ZoneInstructionDraws,
+}
+impl PutProposal {
+    fn from_objects(
+        effect: &PutOntoBattlefieldEffect,
+        game: &GameState,
+        ctx: &ExecutionContext,
+        objects: Vec<crate::ids::ObjectId>,
+    ) -> Result<Self, ExecutionError> {
+        let controller = resolve_player_filter(game, &effect.controller, ctx)?;
+        let entries = objects
+            .into_iter()
+            .filter_map(|id| game.object(id).map(|object| (id, object)))
+            .map(|(id, object)| {
+                Ok((
+                    id,
+                    ObjectSnapshot::try_from_object_with_calculated_characteristics(object, game)?,
+                    resolve_battlefield_entry_counters(
+                        game,
+                        ctx,
+                        id,
+                        &effect.enters_with_counters,
+                    )?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        Ok(Self {
+            entries,
+            controller,
+            tapped: effect.tapped,
+            prepared: None,
+            draws: Default::default(),
+        })
+    }
+}
+impl SimultaneousEffectProposal for PutProposal {
+    fn prepare_original(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
+        let requests = self
+            .entries
+            .iter()
+            .map(|(id, _, counters)| {
+                (
+                    *id,
+                    BattlefieldEntryOptions::specific(self.controller, self.tapped)
+                        .with_initial_counters(counters.clone()),
+                )
+            })
+            .collect();
+        self.prepared = prepare_battlefield_entry_batch(
+            game,
+            ctx,
+            requests,
+            Default::default(),
+            Some(&mut self.draws),
+        )?;
+        Ok(())
+    }
+    fn commit_original(
+        mut self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<SimultaneousEffectCommit, ExecutionError> {
+        if self.entries.is_empty() {
+            return Ok(SimultaneousEffectCommit::finished(
+                EffectOutcome::target_invalid(),
+            ));
+        }
+        let prepared = self.prepared.ok_or_else(|| {
+            ExecutionError::InternalError(
+                "battlefield put committed without complete entry preparation".into(),
+            )
+        })?;
+        let outcomes = prepared.commit(game, ctx)?;
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(SimultaneousEffectCommit::finished(EffectOutcome::count(0)));
+        }
+        if outcomes.len() != self.entries.len() {
+            return Err(ExecutionError::InternalError(
+                "battlefield batch lost an entry receipt".into(),
+            ));
+        }
+        let mut receipts = Vec::new();
+        let mut moved_ids = Vec::new();
+        let mut affected_memory = Vec::new();
+        let mut prevented = false;
+        for ((object_id, memory, _), outcome) in self.entries.into_iter().zip(outcomes) {
+            match &outcome.outcome {
+                BattlefieldEntryOutcome::Moved(new_id) => {
+                    moved_ids.push(*new_id);
+                    affected_memory.push(memory);
+                }
+                BattlefieldEntryOutcome::Redirected(receipt) => {
+                    moved_ids.extend(receipt.new_object_ids.iter().copied());
+                    affected_memory.push(memory);
+                }
+                BattlefieldEntryOutcome::Prevented => prevented = true,
+            }
+            let (original, receipt) = self.draws.retain_entry_receipt(outcome);
+            if original != object_id {
+                return Err(ExecutionError::InternalError(
+                    "battlefield receipt changed original identity".into(),
+                ));
+            }
+            receipts.push((original, receipt));
+        }
+        let outcome = if !moved_ids.is_empty() {
+            EffectOutcome::with_objects(moved_ids).with_affected_object_memory(affected_memory)
+        } else if prevented {
+            EffectOutcome::impossible()
+        } else {
+            EffectOutcome::target_invalid()
+        };
+        Ok(self.draws.finish(outcome, receipts, ctx))
+    }
+    fn commit_original_with_outputs(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<SimultaneousEffectCommit<CompletedEffectOutputs>, ExecutionError> {
+        self.commit_original(game, ctx)
+            .map(SimultaneousEffectCommit::into_retained)
+    }
+    fn commit(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        crate::effects::composition::complete_prepared_original_with_outputs(self, game, ctx, true)
+            .map(CompletedEffectOutputs::into_outcome)
     }
 }
 
@@ -492,7 +601,8 @@ mod replacement_battlefield_owner_contract_tests {
             .power_toughness(crate::card::PowerToughness::fixed(2,2)).build();
         game.create_object_from_card(&card, owner, zone)
     }
-    fn check(return_all: bool, mode: u8) {
+    fn check(return_all: bool, mode: u8) { check_controller(return_all, mode, false); }
+    fn check_controller(return_all: bool, mode: u8, other_controller: bool) {
         let mut game = crate::tests::test_helpers::setup_two_player_game();
         let alice = PlayerId::from_index(0); let bob = PlayerId::from_index(1);
         let parent = card(&mut game, "Battlefield parent", alice, Zone::Battlefield);
@@ -521,7 +631,8 @@ mod replacement_battlefield_owner_contract_tests {
         let effect = if return_all {
             Effect::new(crate::effects::ReturnAllToBattlefieldEffect::new(ObjectFilter::creature()
                 .in_zone(Zone::Graveyard).owned_by(crate::target::PlayerFilter::You), true))
-        } else { Effect::new(PutOntoBattlefieldEffect::you_control(ChooseSpec::tagged("selected"), true)) };
+        } else { Effect::new(PutOntoBattlefieldEffect::new(ChooseSpec::tagged("selected"), true,
+            if other_controller { crate::target::PlayerFilter::Specific(bob) } else { crate::target::PlayerFilter::You })) };
         let result = crate::effects::execute_effect(&mut game, &effect, &mut ctx);
         if mode == 1 { assert!(matches!(result, Err(ExecutionError::UnresolvableValue(_)))); }
         else if mode == 2 { assert!(ctx.decision_maker.awaiting_choice()); }
@@ -538,6 +649,8 @@ mod replacement_battlefield_owner_contract_tests {
             if mode == 4 { assert_eq!(game.object(first).unwrap().zone, Zone::Graveyard); }
             let second_arrived = game.find_object_by_stable_id(stable[1]).unwrap();
             assert_eq!(game.object(second_arrived).unwrap().zone, destination);
+            assert_eq!(game.object(second_arrived).unwrap().owner, alice);
+            assert_eq!(game.current_controller(second_arrived), Some(if other_controller { bob } else { alice }));
             assert!(game.effect_store.replacement_effects.get_effect(shield).is_none());
         }
         assert_eq!(ctx.get_tagged_all("it").unwrap()[0].object_id, sentinel.object_id);
@@ -565,4 +678,111 @@ mod replacement_battlefield_owner_contract_tests {
     #[test] fn return_all_addition_error_restores_owner() { check(true,1); }
     #[test] fn return_all_addition_pending_replays_owner() { check(true,2); }
     #[test] fn return_all_addition_binds_arrival() { check(true,3); }
+    // UNRUN: explicit destination controller is retained by the same native
+    // proposal through replacement completion, rollback, and resumed entry.
+    #[test] fn relative_controller_addition_sees_whole_batch() { check_controller(false,0,true); }
+    #[test] fn relative_controller_late_error_restores_originals() { check_controller(false,1,true); }
+    #[test] fn relative_controller_pending_replays_exact_entry() { check_controller(false,2,true); }
+    #[test] fn relative_controller_addition_binds_arrival() { check_controller(false,3,true); }
+
+    #[test]
+    fn relative_entry_resource_failure_rolls_back_every_original_and_can_retry() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId(0); let bob = PlayerId(1);
+        let source = card(&mut game, "Entry source", alice, Zone::Battlefield);
+        let originals = [card(&mut game, "First arrival", alice, Zone::Graveyard),
+            card(&mut game, "Second arrival", alice, Zone::Graveyard)];
+        let stable = originals.map(|id| game.object(id).unwrap().stable_id);
+        let mut shields = Vec::new();
+        for original in originals {
+            shields.push(game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(
+                source, bob, crate::events::zones::matchers::WouldChangeZoneMatcher::new(
+                    ObjectFilter::specific(original), Some(Zone::Graveyard), Some(Zone::Battlefield)),
+                ReplacementAction::Additionally(vec![Effect::new(crate::effects::InvestigateEffect::you(1))]),
+            )));
+        }
+        let snapshots = originals.iter().map(|id| ObjectSnapshot::from_object(game.object(*id).unwrap(), &game)).collect();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.set_tagged_objects("entries", snapshots);
+        let effect = Effect::new(PutOntoBattlefieldEffect::new(ChooseSpec::tagged("entries"), true,
+            crate::target::PlayerFilter::Specific(bob)));
+        game.set_token_creation_limits(crate::effects::tokens::resources::TokenCreationLimits {
+            max_created_tokens: 1, ..Default::default()
+        });
+        let before_ids = game.next_object_id_counter();
+        game.take_pending_trigger_events();
+        assert!(matches!(crate::effects::execute_effect(&mut game, &effect, &mut ctx),
+            Err(ExecutionError::ResourceLimitExceeded { .. })));
+        assert_eq!(game.next_object_id_counter(), before_ids);
+        assert!(originals.iter().all(|id| game.object(*id).unwrap().zone == Zone::Graveyard));
+        assert!(shields.iter().all(|id| game.effect_store.replacement_effects.get_effect(*id).is_some()));
+        assert!(game.take_pending_trigger_events().is_empty());
+        game.set_token_creation_limits(crate::effects::tokens::resources::TokenCreationLimits {
+            max_created_tokens: 2, ..Default::default()
+        });
+        crate::effects::execute_effect(&mut game, &effect, &mut ctx).unwrap();
+        for original in stable {
+            let arrived = game.find_object_by_stable_id(original).unwrap();
+            assert_eq!(game.current_controller(arrived), Some(bob));
+            assert_eq!(game.object(arrived).unwrap().owner, alice);
+            assert!(game.is_tapped(arrived));
+        }
+        assert!(shields.iter().all(|id| game.effect_store.replacement_effects.get_effect(*id).is_none()));
+    }
+
+    #[test]
+    fn source_zone_qualification_is_an_exact_reference_without_a_selection_prompt() {
+        struct NoObjectChoice;
+        impl crate::decision::DecisionMaker for NoObjectChoice {
+            fn decide_objects(&mut self, _: &GameState, _: &crate::decisions::context::SelectObjectsContext) -> Vec<ObjectId> {
+                panic!("the source reference is fixed, not a choice from its graveyard");
+            }
+        }
+        for zone in [Zone::Graveyard, Zone::Hand] {
+            let mut game = crate::tests::test_helpers::setup_two_player_game();
+            let alice = PlayerId(0); let bob = PlayerId(1);
+            let source = card(&mut game, "Same name", alice, zone);
+            let decoy = card(&mut game, "Same name", alice, Zone::Graveyard);
+            let stable = game.object(source).unwrap().stable_id;
+            let filter = ObjectFilter::source().in_zone(Zone::Graveyard);
+            let effect = Effect::new(PutOntoBattlefieldEffect::new(ChooseSpec::Object(filter), false,
+                crate::target::PlayerFilter::Specific(bob)));
+            let mut dm = NoObjectChoice;
+            let mut ctx = ExecutionContext::new(source, bob, &mut dm);
+            crate::effects::execute_effect(&mut game, &effect, &mut ctx).unwrap();
+            let current = game.find_object_by_stable_id(stable).unwrap();
+            assert_eq!(game.object(current).unwrap().zone, if zone == Zone::Graveyard { Zone::Battlefield } else { Zone::Hand });
+            assert_eq!(game.object(decoy).unwrap().zone, Zone::Graveyard);
+            if zone == Zone::Graveyard {
+                assert_eq!(game.current_controller(current), Some(bob));
+                assert_eq!(game.object(current).unwrap().owner, alice);
+                // The old source reference cannot follow another incarnation.
+                let hand = game.move_object_by_effect(current, Zone::Hand).unwrap();
+                let grave = game.move_object_by_effect(hand, Zone::Graveyard).unwrap();
+                crate::effects::execute_effect(&mut game, &effect, &mut ctx).unwrap();
+                assert_eq!(game.object(grave).unwrap().zone, Zone::Graveyard);
+            }
+        }
+    }
+
+    #[test]
+    fn missing_player_or_object_binding_returns_a_checked_error_without_moving_cards() {
+        for missing_player in [false, true] {
+            let mut game = crate::tests::test_helpers::setup_two_player_game();
+            let alice = PlayerId(0);
+            let source = card(&mut game, "Bound source", alice, Zone::Graveyard);
+            let mut missing_collection = ObjectFilter::exact_tagged("missing").in_zone(Zone::Graveyard);
+            missing_collection.match_captured_public_destination = true;
+            let effect = Effect::new(PutOntoBattlefieldEffect::new(
+                if missing_player { ChooseSpec::Source } else { ChooseSpec::Object(missing_collection) }, false,
+                if missing_player { crate::target::PlayerFilter::AliasedTarget(Box::new(crate::target::PlayerFilter::Opponent)) }
+                    else { crate::target::PlayerFilter::You }));
+            let before_ids = game.next_object_id_counter();
+            let mut ctx = ExecutionContext::new_default(source, alice);
+            let result = crate::effects::execute_effect(&mut game, &effect, &mut ctx);
+            assert!(matches!(result, Err(ExecutionError::InvalidTarget | ExecutionError::IncompleteEvidence(_))));
+            assert_eq!(game.object(source).unwrap().zone, Zone::Graveyard);
+            assert_eq!(game.next_object_id_counter(), before_ids);
+        }
+    }
 }

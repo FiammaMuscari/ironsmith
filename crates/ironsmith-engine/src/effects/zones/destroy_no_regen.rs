@@ -61,19 +61,34 @@ impl DestroyNoRegenerationEffect {
 }
 
 impl EffectExecutor for DestroyNoRegenerationEffect {
+    fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
+        Some(crate::effect::PriorEffectAction::Destroyed)
+    }
+
     fn execute(
         &self,
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
+
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
         // Regeneration shields are one-shot replacement effects; "can't be
         // regenerated" means they can't replace this destruction (CR 701.19c).
         // Otherwise this is an ordinary destroy: a mass destruction is one
         // simultaneous event (CR 701.8a, 603.10a).
         if self.spec.is_target() && self.spec.is_single() {
-            return super::destroy::execute_single_target_destroy(game, ctx, &self.spec, false);
+            return super::destroy::execute_single_target_destroy_with_outputs(
+                game, ctx, &self.spec, false,
+            );
         }
-        super::destroy::execute_simultaneous_destroy(game, ctx, &self.spec, false)
+        super::destroy::execute_simultaneous_destroy_with_outputs(game, ctx, &self.spec, false)
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

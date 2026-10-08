@@ -23,7 +23,9 @@ pub(super) fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usiz
         return Some(quantity);
     }
     let offset = usize::from(words.first() == Some(&"the"));
-    if words.get(offset..offset + 2) == Some(&["chosen", "number"][..]) {
+    if words.get(offset..offset + 2) == Some(&["chosen", "number"][..])
+        || words == ["that", "number"] || words == ["the", "number"]
+    {
         return Some((
             Value::PendingPriorEffectMetric(
                 ironsmith_core::PriorEffectMetricQuery::new(
@@ -32,7 +34,7 @@ pub(super) fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usiz
                 )
                 .with_action(ironsmith_core::PriorEffectAction::ChosenNumber),
             ),
-            offset + 2,
+            if words == ["that", "number"] || words == ["the", "number"] { 2 } else { offset + 2 },
         ));
     }
     // A named option is a vote-result scalar, not an object filter. Keeping
@@ -927,6 +929,16 @@ pub(super) fn parse_number_of_value(words: &[&str]) -> Option<(Value, usize)> {
             return Some((
                 Value::PlayerCounters(PlayerFilter::You, counter_type),
                 counter_idx + 3,
+            ));
+        }
+        if permission_shapes::starts_at_words(
+            words,
+            counter_idx + 1,
+            &["your", "opponents", "have"],
+        ) {
+            return Some((
+                Value::PlayerCounters(PlayerFilter::Opponent, counter_type),
+                counter_idx + 4,
             ));
         }
         if words

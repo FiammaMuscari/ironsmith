@@ -204,6 +204,8 @@ pub fn parse_modal_header(
                 infer_activated_functional_zones_lexed(cost_tokens, &effect_sentences);
 
             activated = Some(ModalActivatedHeader {
+                keyword: crate::grammar::activated_lowering::parse_activated_presentation_kind_tokens(&info.source_tokens)
+                    .and_then(crate::ir::ActivatedPresentationKind::keyword),
                 mana_cost,
                 functional_zones,
                 timing: if loyalty_shorthand {
@@ -706,7 +708,7 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeZones { .. })
             | SubjectVerbActionAst::Library(LibraryActionAst::PutRestOnBottomOfLibrary)
             | SubjectVerbActionAst::Mana(
-                ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn,
+                ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn { .. },
             )
             | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeValues { .. })
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ExileInsteadOfGraveyardThisTurn)
@@ -979,7 +981,8 @@ fn replace_modal_header_x_in_effect_ast(
                 ..
             })
             | SubjectVerbActionAst::Grants(
-                GrantActionAst::GrantPlayTaggedForAsLongAsYouControlSource { .. },
+                GrantActionAst::GrantPlayTaggedForAsLongAsYouControlSource { .. }
+                | GrantActionAst::GrantPlayTaggedWhileSourceOnBattlefield { .. },
             )
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ReturnToBattlefield { .. })
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ReturnAllToBattlefield {
@@ -1042,7 +1045,9 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::Characteristics(
                 CharacteristicActionAst::BecomeCreatureTypeChoice { .. },
             )
-            | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeColorChoice {
+            | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ChangeText {
+                ..
+            }) | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeColorChoice {
                 ..
             })
             | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeCopy {
@@ -1070,6 +1075,9 @@ fn replace_modal_header_x_in_effect_ast(
             })
             | SubjectVerbActionAst::Game(GameActionAst::ReverseTurnOrder)
             | SubjectVerbActionAst::PermanentState(PermanentStateActionAst::TurnFaceUp {
+                ..
+            })
+            | SubjectVerbActionAst::PermanentState(PermanentStateActionAst::TurnFaceDown {
                 ..
             })
             | SubjectVerbActionAst::Library(LibraryActionAst::ShuffleLibrary) => {}
@@ -1144,8 +1152,14 @@ fn parse_modal_header_prefix_effects(
                 IfResultPredicate::PriorEffectResult(surface) => {
                     EffectPredicate::PriorEffectResult(surface)
                 }
+                IfResultPredicate::AffectedObjectsShare { required_count, characteristic } => {
+                    EffectPredicate::AffectedObjectsShare { required_count, characteristic }
+                }
+                IfResultPredicate::ConditionMatched => {
+                    EffectPredicate::Value(crate::effect::Comparison::GreaterThan(0))
+                }
                 IfResultPredicate::WasDeclined => EffectPredicate::WasDeclined,
-                IfResultPredicate::Value(cmp) => EffectPredicate::Value(cmp),
+                IfResultPredicate::Value(cmp) | IfResultPredicate::DieValue(cmp) => EffectPredicate::Value(cmp),
             };
             (
                 gate_spec.prefix_tokens,

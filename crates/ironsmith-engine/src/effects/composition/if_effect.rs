@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, EffectPredicate, EffectPredicateRuntimeExt, ExecutionFact};
 use crate::effects::EffectExecutor;
-use crate::effects::{ExecutionContext, ExecutionError, execute_effect};
+use crate::effects::{ExecutionContext, ExecutionError};
 use crate::filter::{ObjectFilterExt, player_filter_matches_game};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -67,7 +67,9 @@ fn restriction_mentions_iterated_player(restriction: &crate::effect::Restriction
     match restriction {
         crate::effect::Restriction::PreventDamageFrom { sources, .. }
         | crate::effect::Restriction::ActivateLoyaltyAbilitiesOf(sources)
-        | crate::effect::Restriction::MustAttack(sources) => {
+        | crate::effect::Restriction::MustAttack(sources)
+        | crate::effect::Restriction::MustBlock(sources)
+        | crate::effect::Restriction::MaximumBlockers { filter: sources, .. } => {
             object_filter_mentions_iterated_player(sources)
         }
         crate::effect::Restriction::PlayLandsMatching(player, filter) => {
@@ -102,7 +104,7 @@ fn effect_list_mentions_iterated_player(effects: &[crate::effect::Effect]) -> bo
 }
 
 fn result_memories_share_characteristic(
-    memories: &[&crate::effect::OutcomeObjectMemory],
+    memories: &[&crate::effect::ObjectSnapshot],
     required_count: usize,
     characteristic: crate::ObjectCharacteristic,
 ) -> bool {
@@ -162,7 +164,7 @@ fn result_memories_share_characteristic(
         crate::ObjectCharacteristic::ManaValue => memories.iter().any(|candidate| {
             memories
                 .iter()
-                .filter(|memory| memory.mana_value == candidate.mana_value)
+                .filter(|memory| memory.mana_value() == candidate.mana_value())
                 .count()
                 >= required_count
         }),
@@ -170,11 +172,17 @@ fn result_memories_share_characteristic(
             candidate
                 .name
                 .split(" // ")
+                .chain(candidate.split_other_half_name())
                 .filter(|name| !crate::filter::name_is_nameless(name))
                 .any(|name| {
                     memories
                         .iter()
-                        .filter(|memory| crate::filter::names_match(name, &memory.name))
+                        .filter(|memory| {
+                            crate::filter::names_match(name, &memory.name)
+                                || memory
+                                    .split_other_half_name()
+                                    .is_some_and(|other| crate::filter::names_match(name, other))
+                        })
                         .count()
                         >= required_count
                 })
@@ -188,11 +196,18 @@ pub(super) fn predicate_matches_with_context(
     game: &GameState,
     ctx: &ExecutionContext,
 ) -> bool {
+    if let EffectPredicate::AffectedObjectsShare { required_count, characteristic } = predicate {
+        let Some(memory) = outcome.affected_object_memory() else { return false; };
+        let mut seen = std::collections::HashSet::new();
+        let objects = memory.iter().filter(|object| seen.insert(object.stable_id)).collect::<Vec<_>>();
+        return *required_count >= 2 && objects.len() >= *required_count as usize
+            && result_memories_share_characteristic(&objects, *required_count as usize, *characteristic);
+    }
     if let EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player } = predicate {
         let Some(all_memory) = outcome.affected_object_memory() else {
             return false;
         };
-        let Some(greatest) = all_memory.iter().map(|memory| memory.mana_value).max() else {
+        let Some(greatest) = all_memory.iter().map(|memory| memory.mana_value()).max() else {
             return false;
         };
         let Some(partitions) = outcome.player_affected_object_memory() else {
@@ -201,7 +216,7 @@ pub(super) fn predicate_matches_with_context(
         let filter_ctx = ctx.filter_context(game);
         return partitions.iter().any(|(affected_player, memory)| {
             player_filter_matches_game(player, *affected_player, game, &filter_ctx)
-                && memory.iter().any(|object| object.mana_value == greatest)
+                && memory.iter().any(|object| object.mana_value() == greatest)
         });
     }
 
@@ -218,12 +233,18 @@ pub(super) fn predicate_matches_with_context(
             ctx,
         );
     }
+    if matches!(surface.action, crate::effect::PriorEffectAction::CountersMoved(_)) {
+        return outcome.count_or_zero() > 0;
+    }
     if surface.action == crate::effect::PriorEffectAction::Died {
         let filter_ctx = ctx.filter_context(game);
-        let matching = outcome.affected_object_memory().unwrap_or_default().iter()
+        let recorded =
+            crate::effects::outcome_recording::action_objects(outcome, surface.action, None);
+        let known = recorded.is_some();
+        let matching = recorded.as_deref().or_else(|| outcome.affected_object_memory()).unwrap_or_default().iter()
             .filter(|memory| memory.card_types.contains(&crate::types::CardType::Creature)
-                && surface.filter.matches_snapshot(&memory.to_snapshot(game), &filter_ctx, game)
-                && (outcome.execution_facts.iter().any(|fact|
+                && surface.filter.matches_snapshot(memory, &filter_ctx, game)
+                && (known || outcome.execution_facts.iter().any(|fact|
                                 matches!(fact, crate::effect::ExecutionFact::ObjectsDied(ids) if ids.contains(&memory.object_id)))
                             || outcome.events_of_type::<crate::events::ZoneChangeEvent>().any(|event|
                     event.from == crate::zone::Zone::Battlefield
@@ -271,11 +292,7 @@ pub(super) fn predicate_matches_with_context(
                     .then_some(cards)
             })
             .flatten()
-            .filter(|card| {
-                surface
-                    .filter
-                    .matches_snapshot(&card.to_snapshot(game), &filter_ctx, game)
-            })
+            .filter(|card| surface.filter.matches_snapshot(card, &filter_ctx, game))
             .collect::<Vec<_>>();
         if cards.len() < surface.required_count.unwrap_or(1) as usize {
             return false;
@@ -303,7 +320,15 @@ pub(super) fn predicate_matches_with_context(
             crate::effect::PriorEffectResultActor::Passive => None,
             crate::effect::PriorEffectResultActor::It => return false,
         };
+        if let Some(objects) = crate::effects::outcome_recording::action_objects(
+            outcome,
+            surface.action,
+            player.as_ref().map(std::slice::from_ref),
+        ) {
+            return objects.len() >= surface.required_count.unwrap_or(1) as usize;
+        }
         let drawn: u32 = outcome
+            .instruction_result()
             .events_of_type::<crate::events::CardsDrawnEvent>()
             .filter(|event| player.is_none_or(|player| event.player == player))
             .map(|event| event.amount())
@@ -314,10 +339,48 @@ pub(super) fn predicate_matches_with_context(
         && surface.required_count.is_none()
         && surface.shared_characteristic.is_none()
     {
-        return predicate.evaluate_outcome(outcome);
+        let player = match surface.actor {
+            crate::effect::PriorEffectResultActor::You => Some(ctx.controller),
+            crate::effect::PriorEffectResultActor::ThatPlayer => {
+                let Some(player) = ctx.iteration.iterated_player else {
+                    return false;
+                };
+                Some(player)
+            }
+            crate::effect::PriorEffectResultActor::Passive => None,
+            crate::effect::PriorEffectResultActor::It => return false,
+        };
+        if let Some(objects) = crate::effects::outcome_recording::action_objects(
+            outcome,
+            surface.action,
+            player.as_ref().map(std::slice::from_ref),
+        ) {
+            return !objects.is_empty();
+        }
+        return predicate.evaluate_outcome(outcome.instruction_result());
     }
 
-    let Some(memories) = outcome.affected_object_memory() else {
+    let actor = match surface.actor {
+        crate::effect::PriorEffectResultActor::You => Some(ctx.controller),
+        crate::effect::PriorEffectResultActor::ThatPlayer => {
+            let Some(player) = ctx.iteration.iterated_player else {
+                return false;
+            };
+            Some(player)
+        }
+        crate::effect::PriorEffectResultActor::Passive => None,
+        crate::effect::PriorEffectResultActor::It => return false,
+    };
+    let players = actor.map(|actor| vec![actor]);
+    let recorded = crate::effects::outcome_recording::action_objects(
+        outcome,
+        surface.action,
+        players.as_deref(),
+    );
+    let Some(memories) = recorded
+        .as_deref()
+        .or_else(|| outcome.affected_object_memory())
+    else {
         return false;
     };
     let filter_ctx = ctx.filter_context(game);
@@ -330,11 +393,7 @@ pub(super) fn predicate_matches_with_context(
             surface.action != crate::effect::PriorEffectAction::Milled
                 || (memory.zone == crate::zone::Zone::Library && !memory.is_token)
         })
-        .filter(|memory| {
-            surface
-                .filter
-                .matches_snapshot(&memory.to_snapshot(game), &filter_ctx, game)
-        })
+        .filter(|memory| surface.filter.matches_snapshot(memory, &filter_ctx, game))
         .collect::<Vec<_>>();
     if surface
         .required_count
@@ -382,6 +441,7 @@ pub(crate) struct PreparedIfBranch {
     pub(crate) player: Option<crate::ids::PlayerId>,
     pub(crate) effects: Vec<crate::effect::Effect>,
     pub(crate) repetitions: usize,
+    pub(crate) branch: usize,
 }
 
 /// Freeze contextual result predicates and participant partitions once.
@@ -450,6 +510,7 @@ pub(crate) fn prepare_if_branches(
                 player: Some(player_id),
                 effects: branch.clone(),
                 repetitions: 1,
+                branch: if predicate_matches { 0 } else { 1 },
             });
         }
         return branches;
@@ -460,7 +521,7 @@ pub(crate) fn prepare_if_branches(
             .execution_facts
             .iter()
             .filter_map(|fact| match fact {
-                ExecutionFact::ChosenNumber(n) => Some(*n as i32),
+                ExecutionFact::ChosenNumber(n) => Some(i64::from(*n)),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -469,7 +530,7 @@ pub(crate) fn prepare_if_branches(
         } else {
             let matches = chosen_numbers
                 .into_iter()
-                .filter(|value| cmp.evaluate(*value))
+                .filter(|value| cmp.evaluate_wide(*value))
                 .count();
             Some(matches)
         }
@@ -477,16 +538,16 @@ pub(crate) fn prepare_if_branches(
         None
     };
 
-    let (branch, repetitions) = if let Some(matches) = match_repetitions {
+    let (branch, repetitions, branch_identity) = if let Some(matches) = match_repetitions {
         if matches > 0 {
-            (&effect.then, matches)
+            (&effect.then, matches, 0)
         } else {
-            (&effect.else_, 1)
+            (&effect.else_, 1, 1)
         }
     } else if predicate_matches_with_context(&effect.predicate, outcome, game, ctx) {
-        (&effect.then, 1)
+        (&effect.then, 1, 0)
     } else {
-        (&effect.else_, 1)
+        (&effect.else_, 1, 1)
     };
 
     if branch.is_empty() {
@@ -496,54 +557,101 @@ pub(crate) fn prepare_if_branches(
             player: None,
             effects: branch.clone(),
             repetitions,
+            branch: branch_identity,
         }]
     }
 }
 
-pub(crate) fn execute_if_branches(
+fn if_branch_cursor(branches: &[PreparedIfBranch]) -> Box<dyn crate::effects::ActionProgramCursor> {
+    super::branch_program::selected_branch_cursor(
+        branches
+            .iter()
+            .enumerate()
+            .map(
+                |(index, branch)| super::branch_program::SelectedProgramBranch {
+                    effects: branch.effects.clone(),
+                    identity: vec![branch.branch, index],
+                    repetitions: branch.repetitions,
+                    scope: crate::effects::ProgramActionScope {
+                        iterated_player: branch.player.map(Some),
+                        ..Default::default()
+                    },
+                    child_scope: None,
+                    first_scope: None,
+                    match_before_first: true,
+                },
+            )
+            .collect(),
+    )
+}
+
+pub(crate) fn execute_if_branches_with_outputs(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     branches: &[PreparedIfBranch],
-) -> Result<EffectOutcome, ExecutionError> {
-    let mut outcomes = Vec::new();
-    for branch in branches {
-        let previous = ctx.iteration.iterated_player;
-        if let Some(player) = branch.player {
-            ctx.iteration.iterated_player = Some(player);
-        }
-        let result = (|| {
-            for _ in 0..branch.repetitions {
-                for effect in &branch.effects {
-                    crate::effects::match_triggers_at_instruction_boundary(
-                        game,
-                        ctx,
-                        Some(effect),
-                        outcomes
-                            .iter()
-                            .flat_map(|outcome: &EffectOutcome| outcome.events.iter()),
-                    );
-                    outcomes.push(execute_effect(game, effect, ctx)?);
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok::<_, ExecutionError>(());
-                    }
-                }
-            }
-            Ok(())
-        })();
-        ctx.iteration.iterated_player = previous;
-        result?;
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-    }
-    if outcomes.is_empty() {
-        Ok(EffectOutcome::count(0))
-    } else {
-        Ok(EffectOutcome::aggregate(outcomes))
-    }
+) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+    super::action_program::execute_action_program_with_outputs(
+        if_branch_cursor(branches),
+        game,
+        ctx,
+        crate::effects::EffectExecutionPurpose::Action,
+    )
+}
+
+/// A shared antecedent selects an exact roster for one simultaneous authored
+/// action. Delegate it to the same player-action owner as ordinary ForPlayers.
+fn correlated_branch(effect: &IfEffect, branches: &[PreparedIfBranch])
+    -> Option<(Vec<crate::ids::PlayerId>, Vec<crate::effect::Effect>)> {
+    if !effect.per_player_result || !effect.else_.is_empty() { return None; }
+    let first = branches.iter().find(|branch| !branch.effects.is_empty())?;
+    if !first.effects.iter().all(|effect| effect.0.supports_simultaneous_player_action()
+        || effect.0.is_read_only_simultaneous_player_action()
+        || effect.0.supports_prepared_action_program()) { return None; }
+    if !branches.iter().filter(|branch| !branch.effects.is_empty()).all(|branch|
+        branch.player.is_some() && branch.repetitions == 1 && branch.effects == first.effects) { return None; }
+    let participants = branches.iter().filter(|branch| !branch.effects.is_empty())
+        .filter_map(|branch| branch.player).collect::<Vec<_>>();
+    (participants.len() > 1).then(|| (participants, first.effects.clone()))
 }
 
 impl EffectExecutor for IfEffect {
+    fn supports_replacement_draw_continuation(&self) -> bool {
+        self.then.iter().chain(&self.else_).all(crate::effects::replacement::replacement_effect_supported)
+    }
+    fn prepare_replacement_draw_continuation_with_outputs(
+        &self, game: &mut GameState, ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>, ExecutionError> {
+        let branches = prepare_if_branches(self, game, ctx);
+        if let Some((participants, effects)) = correlated_branch(self, &branches) {
+            let excluded = participants.into_iter().fold(crate::target::PlayerFilter::Any, |remaining, player|
+                crate::target::PlayerFilter::excluding(remaining, crate::target::PlayerFilter::Specific(player)));
+            let filter = crate::target::PlayerFilter::excluding(crate::target::PlayerFilter::Any, excluded);
+            return super::ForPlayersEffect::new(filter, effects).prepare_draw_continuation(game, ctx)
+                .map(super::for_players::ForPlayersDrawProgress::into_commit);
+        }
+        let cursor = self.select_prepared_action_program(game, ctx)?;
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+    }
+
+    fn supports_prepared_action_program(&self) -> bool {
+        // A per-player antecedent owns its own simultaneous roster boundary.
+        !self.per_player_result && self.then
+            .iter()
+            .chain(&self.else_)
+            .all(super::action_program::action_program_child_is_prepared)
+    }
+    fn select_prepared_action_program(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Box<dyn crate::effects::ActionProgramCursor>>, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(None);
+        }
+        let branches = prepare_if_branches(self, game, ctx);
+        Ok(Some(if_branch_cursor(&branches)))
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -562,11 +670,23 @@ impl EffectExecutor for IfEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
+
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
         // A prior instruction that never ran (a declined optional, an
         // untaken branch, an antecedent skipped because its object is gone)
         // left no result: it didn't happen (CR 608.2c).
         let branches = prepare_if_branches(self, game, ctx);
-        execute_if_branches(game, ctx, &branches)
+        if let Some((participants, effects)) = correlated_branch(self, &branches) {
+            return super::execute_player_occurrences_with_outputs(&effects, participants, game, ctx);
+        }
+        execute_if_branches_with_outputs(game, ctx, &branches)
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -786,20 +906,23 @@ mod tests {
                 .enumerate()
                 .map(|(i, ty)| {
                     let id = crate::ids::ObjectId::from_raw(1000 + i as u64);
-                    crate::effect::OutcomeObjectMemory {
-                        object_id: id,
-                        stable_id: crate::ids::StableId::from(id),
-                        name: "Revealed Probe".into(),
-                        controller: alice,
-                        owner: alice,
-                        zone: crate::zone::Zone::Library,
-                        power: None,
-                        toughness: None,
-                        mana_value: 1,
-                        card_types: vec![*ty],
-                        colors: crate::color::ColorSet::default(),
-                        subtypes: vec![],
-                        is_token: false,
+                    {
+                        let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
+                            id,
+                            crate::ids::StableId::from(id),
+                            alice,
+                            alice,
+                            crate::zone::Zone::Library,
+                        );
+                        snapshot.name = "Revealed Probe".into();
+                        snapshot.power = None;
+                        snapshot.toughness = None;
+                        snapshot.linked_face_mana_value = Some((1) as u32);
+                        snapshot.card_types = vec![*ty];
+                        snapshot.colors = crate::color::ColorSet::default();
+                        snapshot.subtypes = vec![];
+                        snapshot.is_token = false;
+                        snapshot
                     }
                 })
                 .collect();
@@ -825,22 +948,25 @@ mod tests {
             id: u64,
             card_type: crate::types::CardType,
             colors: crate::color::ColorSet,
-        ) -> crate::effect::OutcomeObjectMemory {
+        ) -> crate::effect::ObjectSnapshot {
             let object_id = crate::ids::ObjectId::from_raw(id);
-            crate::effect::OutcomeObjectMemory {
-                object_id,
-                stable_id: crate::ids::StableId::from(object_id),
-                name: format!("Card {id}"),
-                controller: PlayerId::from_index(0),
-                owner: PlayerId::from_index(0),
-                zone: crate::zone::Zone::Library,
-                power: None,
-                toughness: None,
-                mana_value: id as i32,
-                card_types: vec![card_type],
-                colors,
-                subtypes: Vec::new(),
-                is_token: false,
+            {
+                let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
+                    object_id,
+                    crate::ids::StableId::from(object_id),
+                    PlayerId::from_index(0),
+                    PlayerId::from_index(0),
+                    crate::zone::Zone::Library,
+                );
+                snapshot.name = format!("Card {id}");
+                snapshot.power = None;
+                snapshot.toughness = None;
+                snapshot.linked_face_mana_value = Some((id as i32) as u32);
+                snapshot.card_types = vec![card_type];
+                snapshot.colors = colors;
+                snapshot.subtypes = Vec::new();
+                snapshot.is_token = false;
+                snapshot
             }
         }
 
@@ -955,27 +1081,19 @@ mod tests {
 
     #[test]
     fn participant_discard_extremum_executes_on_a_tie_but_not_a_strict_loss() {
-        fn memory(
-            id: u64,
-            player: PlayerId,
-            mana_value: i32,
-        ) -> crate::effect::OutcomeObjectMemory {
+        fn memory(id: u64, player: PlayerId, mana_value: i32) -> crate::effect::ObjectSnapshot {
             let object_id = crate::ids::ObjectId::from_raw(id);
-            crate::effect::OutcomeObjectMemory {
+            let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
                 object_id,
-                stable_id: crate::ids::StableId::from(object_id),
-                name: format!("Discarded {id}"),
-                controller: player,
-                owner: player,
-                zone: crate::zone::Zone::Hand,
-                power: None,
-                toughness: None,
-                mana_value,
-                card_types: vec![crate::types::CardType::Sorcery],
-                colors: crate::color::ColorSet::default(),
-                subtypes: Vec::new(),
-                is_token: false,
-            }
+                crate::ids::StableId::from(object_id),
+                player,
+                player,
+                crate::zone::Zone::Hand,
+            );
+            snapshot.name = format!("Discarded {id}");
+            snapshot.linked_face_mana_value = Some(mana_value as u32);
+            snapshot.card_types = vec![crate::types::CardType::Sorcery];
+            snapshot
         }
 
         fn run_case(your_mana_value: i32, their_mana_value: i32) -> u32 {
@@ -1196,7 +1314,7 @@ mod replacement_original_if_adapter_contract_tests {
                 snapshot.linked_face_layout = crate::card::LinkedFaceLayout::Split;
                 snapshot.other_face_name = Some(right.into());
             }
-            crate::effect::OutcomeObjectMemory::from_snapshot(&snapshot)
+            Clone::clone(&snapshot)
         };
         let ab = memory("Alpha", Some("Beta"));
         let bc = memory("Beta", Some("Gamma"));
@@ -1219,4 +1337,33 @@ mod replacement_original_if_adapter_contract_tests {
             ObjectCharacteristic::Name
         ));
     }
+    #[test]
+    fn affected_name_subset_uses_distinct_latest_objects_and_rejects_short_or_empty_sets() {
+        use crate::ids::PlayerId;
+        let game = crate::tests::test_helpers::setup_two_player_game();
+        let ctx = ExecutionContext::new_default(crate::ids::ObjectId::from_raw(500), PlayerId(0));
+        let memory = |id: u64, name: &str| {
+            let object = crate::ids::ObjectId::from_raw(id);
+            let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
+                object, object.into(), PlayerId(0), PlayerId(0), crate::zone::Zone::Library,
+            );
+            snapshot.name = name.into();
+            snapshot
+        };
+        let pair = vec![memory(1, "Same"), memory(2, "Same"), memory(3, "Other"), memory(4, "Different")];
+        let predicate = EffectPredicate::AffectedObjectsShare {
+            required_count: 2, characteristic: crate::ObjectCharacteristic::Name,
+        };
+        for (objects, expected) in [
+            (pair.clone(), true), (pair[..2].to_vec(), true),
+            (vec![pair[0].clone()], false), (Vec::new(), false),
+            (vec![pair[0].clone(), pair[0].clone()], false),
+            (vec![pair[1].clone(), pair[2].clone()], false),
+            (vec![memory(5, ""), memory(6, "")], false),
+        ] {
+            let result = EffectOutcome::count(objects.len() as i32).with_affected_object_memory(objects);
+            assert_eq!(predicate_matches_with_context(&predicate, &result, &game, &ctx), expected);
+        }
+    }
+
 }

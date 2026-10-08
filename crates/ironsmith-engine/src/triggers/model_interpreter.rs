@@ -447,8 +447,11 @@ pub(crate) fn interpret_trigger_model(
             player,
             one_or_more,
             each_damaged_player,
+            per_source_controller,
         } => {
-            if one_or_more && each_damaged_player {
+            if one_or_more && per_source_controller {
+                crate::triggers::Trigger::deals_combat_damage_per_source_controller(source, player, each_damaged_player)
+            } else if one_or_more && each_damaged_player {
                 crate::triggers::Trigger::deals_combat_damage_to_each_player_one_or_more(
                     source, player,
                 )
@@ -613,7 +616,12 @@ pub(crate) fn interpret_trigger_model(
             player,
             filter,
             from_source,
-        } => crate::triggers::Trigger::player_reveals_card(player, filter, from_source),
+            first_draw_pair,
+        } => {
+            let mut trigger = crate::triggers::PlayerRevealsCardTrigger::new(player, filter, from_source);
+            trigger.first_draw_pair = first_draw_pair;
+            crate::triggers::Trigger::new(trigger)
+        },
         TriggerKind::PlayerSacrifices {
             player,
             filter,
@@ -969,6 +977,9 @@ impl super::Trigger {
             ironsmith_core::DelayedTriggerSpec::ThisBecomesBlockedByObject(filter) => {
                 Self::this_becomes_blocked_by_object(filter)
             }
+            ironsmith_core::DelayedTriggerSpec::PlayerAttackDeclaration { attacker, defender, grouping } => {
+                Self::new(crate::triggers::PlayerAttackDeclarationTrigger { attacker, defender, grouping })
+            }
             ironsmith_core::DelayedTriggerSpec::Attacks(filter) => Self::attacks(filter),
             ironsmith_core::DelayedTriggerSpec::AttacksYou(filter) => Self::attacks_you(filter),
             ironsmith_core::DelayedTriggerSpec::PlayerTapsForMana { player, filter } => {
@@ -1006,12 +1017,20 @@ impl super::Trigger {
             ironsmith_core::DelayedTriggerSpec::DealsCombatDamageToPlayerOneOrMore {
                 source,
                 player,
+                each_damaged_player,
+                per_source_controller: true,
+            } => Self::deals_combat_damage_per_source_controller(source, player, each_damaged_player),
+            ironsmith_core::DelayedTriggerSpec::DealsCombatDamageToPlayerOneOrMore {
+                source,
+                player,
                 each_damaged_player: false,
+                per_source_controller: false,
             } => Self::deals_combat_damage_to_player_one_or_more(source, player),
             ironsmith_core::DelayedTriggerSpec::DealsCombatDamageToPlayerOneOrMore {
                 source,
                 player,
                 each_damaged_player: true,
+                per_source_controller: false,
             } => Self::deals_combat_damage_to_each_player_one_or_more(source, player),
             ironsmith_core::DelayedTriggerSpec::IsDealtDamage(target) => {
                 Self::is_dealt_damage(target)

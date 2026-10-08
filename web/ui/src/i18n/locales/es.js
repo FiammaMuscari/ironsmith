@@ -1,5 +1,7 @@
 // All interface copy for es. Preserve interpolation placeholders.
 export const messages = {
+  "Pass through phases until a pause or the next turn": "Pasar fases hasta una pausa o el próximo turno",
+  "Generate a 1v1 board from two lobby catalog decks. Each card comes from its deck; the remaining cards stay in the library.": "Genera un tablero 1v1 con dos mazos del catálogo del lobby. Cada carta proviene de su mazo; las restantes quedan en la biblioteca.",
   "Payment options could not be loaded.": "No se pudieron cargar las opciones de pago.",
   "Loading payment options…": "Cargando opciones de pago…",
   "Replacement": "Reemplazo",
@@ -97,6 +99,7 @@ export const messages = {
   "action.noPending": "Sin accion pendiente",
   "action.surrender": "Conceder",
   "action.surrenderUnavailable": "Conceder no disponible",
+  "action.surrenderConfirm": "¿Conceder esta partida?",
   "action.surrenderSorcery": "Solo puedes conceder a velocidad de conjuro",
   "action.undo": "Deshacer",
   "action.undoUnavailable": "Deshacer no disponible",
@@ -705,6 +708,7 @@ export const ui = {
   "Compiled {0}": "Se compiló {0}",
   "Compiled {0} cards...": "Se compilaron {0} cartas...",
   "Compiled Abilities": "Habilidades compiladas",
+  "Show empty values": "Mostrar valores vacíos",
   "Compiled Text": "Texto compilado",
   "Compiled text:\n{0}": "Texto compilado:\n{0}",
   "Compiling...": "Compilando...",

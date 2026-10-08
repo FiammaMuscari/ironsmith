@@ -413,8 +413,30 @@ pub fn parse_filter_keyword_constraint_words(
     if words.is_empty() {
         return None;
     }
+    // Costed face-down keywords are real static abilities. Consume the
+    // optional article and explicit ability noun, retaining the same typed
+    // predicate for "morph", "a morph ability", and "morph abilities".
+    let article = usize::from(words.first() == Some(&"a"));
+    let keyword = match words.get(article) {
+        Some(&"morph") => Some(StaticAbilityId::Morph),
+        Some(&"megamorph") => Some(StaticAbilityId::Megamorph),
+        Some(&"disguise") => Some(StaticAbilityId::Disguise),
+        _ => None,
+    };
+    if let Some(keyword) = keyword {
+        let noun = usize::from(words.get(article + 1)
+            .is_some_and(|word| matches!(*word, "ability" | "abilities")));
+        return Some((FilterKeywordConstraint::Static(keyword), article + 1 + noun));
+    }
     if prefix_one_of(words, &[&["mana", "ability"], &["mana", "abilities"]]) {
         return Some((FilterKeywordConstraint::Marker("mana ability"), 2));
+    }
+    // "an Aura card with enchant creature" (Tallowisp): the Aura's enchant
+    // restriction is exactly "creature".
+    if permission_shapes::prefix_words(words, &["enchant", "creature"])
+        && !matches!(words.get(2), Some(&"you" | &"an" | &"your" | &"with" | &"without"))
+    {
+        return Some((FilterKeywordConstraint::Marker("enchant creature"), 2));
     }
     if cycling_keyword_root(words[0]).is_some() {
         return Some((FilterKeywordConstraint::Marker("cycling"), 1));
@@ -509,12 +531,21 @@ pub fn parse_hand_advantage_player(words: &[&str]) -> Option<PlayerFilter> {
         return None;
     }
     idx += 2;
-    if permission_shapes::starts_at_words(words, idx, &["at", "least"]) {
+    let explicit_minimum = permission_shapes::starts_at_words(words, idx, &["at", "least"]);
+    if explicit_minimum {
         idx += 2;
     }
-    let count =
-        crate::grammar::primitives::probe_shape(leaf::parse_number_complete(words.get(idx)?))?;
-    idx += 1;
+    // Bare "more cards" is a strict comparison, equivalent to at least one
+    // additional card. An explicit "at least" still requires its number.
+    let count = if !explicit_minimum && words.get(idx) == Some(&"more") {
+        1
+    } else {
+        let count = crate::grammar::primitives::probe_shape(
+            leaf::parse_number_complete(words.get(idx)?),
+        )?;
+        idx += 1;
+        count
+    };
     if !prefix_at_one_of(
         words,
         idx,

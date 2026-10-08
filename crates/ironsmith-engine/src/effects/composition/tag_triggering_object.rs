@@ -13,13 +13,23 @@ impl EffectExecutor for TagTriggeringObjectEffect {
         Box::new(self.clone())
     }
 
-    fn is_resolution_prelude(&self) -> bool {
-        true
+    fn as_resolution_prelude(&self) -> Option<&dyn crate::effects::ResolutionPreludeBinding> {
+        Some(self)
     }
 
     fn execute(
         &self,
         game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        crate::effects::ResolutionPreludeBinding::bind_resolution_prelude(self, game, ctx)
+    }
+}
+
+impl crate::effects::ResolutionPreludeBinding for TagTriggeringObjectEffect {
+    fn bind_resolution_prelude(
+        &self,
+        game: &GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let event = ctx.triggering_event.as_ref().ok_or_else(|| {
@@ -48,6 +58,28 @@ impl EffectExecutor for TagTriggeringObjectEffect {
             .triggering_event
             .as_ref()
             .expect("triggering event checked above");
+
+        // Keep a singular entry reference independent from a subsequent
+        // looked/revealed card. Grouped references retain their whole-set owner.
+        let singular_entry = event
+            .downcast::<crate::events::EnterBattlefieldEvent>()
+            .is_some()
+            || event
+                .downcast::<crate::events::ZoneChangeEvent>()
+                .is_some_and(|change| {
+                    change.to == crate::zone::Zone::Battlefield
+                        && change.destination_objects().len() == 1
+                });
+        if singular_entry
+            && ctx
+                .get_tagged_all(ironsmith_core::ZONE_CHANGE_GROUP_TAG)
+                .is_none_or(|group| group.is_empty())
+        {
+            let snapshot =
+                crate::condition_eval::capture_triggering_object_at_resolution(game, event)?;
+            set_triggering_object_tags(ctx, self.tag.as_str(), vec![snapshot]);
+            return Ok(EffectOutcome::count(1));
+        }
 
         // A typed attachment trigger has two participants. Its ordinary
         // demonstrative is the recipient, never the Aura/Equipment itself.
@@ -721,9 +753,13 @@ mod tests {
                 Zone::Graveyard,
                 crate::events::cause::EventCause::from_sba(),
                 Some(ObjectSnapshot {
+                    stack_kind: None,
+                    ability_origins: None,
                     chosen_subtype: None,
+                numeric_choice_memory: None,
                     secret_chosen_subtype: None,
                     noted_life_total: None,
+                saddled: None,
                     chosen_object: None,
                     object_id: ObjectId::from_raw(999),
                     stable_id: StableId::from(ObjectId::from_raw(999)),
@@ -753,6 +789,7 @@ mod tests {
                     abilities: std::sync::Arc::new(Vec::new()),
                     aura_attach_filter: None,
                     copiable_values: crate::snapshot::CopiableValues::default(),
+                revealed_cast_definition: None,
                     x_value: None,
                     cast_order_this_turn: None,
                     mana_spent_to_cast: crate::player::ManaPool::default(),
@@ -766,6 +803,7 @@ mod tests {
                     tapped: false,
                     attacking: false,
                     goaded: Some(false),
+            suspected: Some(false),
                     ring_bearer: None,
                     flipped: false,
                     face_down: false,

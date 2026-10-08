@@ -56,72 +56,6 @@ use crate::model::reference_state::{
     LoweredEffects, ReferenceEnv, ReferenceExports, ReferenceImports,
 };
 
-pub fn replace_pending_removed_counter_metrics_with_x(effects: &mut [EffectAst]) {
-    fn replace_value(value: &mut Value) {
-        let hints = value.surface_hints().to_vec();
-        if matches!(
-            value.unhinted(),
-            Value::PendingPriorEffectMetric(query)
-                if query.action == Some(ironsmith_core::PriorEffectAction::Removed)
-        ) {
-            *value = Value::X.with_surface_hints(hints);
-            return;
-        }
-        match value {
-            Value::Add(left, right) | Value::Min(left, right) => {
-                replace_value(left);
-                replace_value(right);
-            }
-            Value::Scaled(inner, _)
-            | Value::DividedRoundedDown(inner, _)
-            | Value::HalfRoundedDown(inner)
-            | Value::SurfaceHinted { value: inner, .. } => replace_value(inner),
-            _ => {}
-        }
-    }
-
-    fn replace_effect(effect: &mut EffectAst) {
-        if let EffectAst::SubjectVerb(subject_verb) = effect {
-            match &mut subject_verb.action {
-                SubjectVerbActionAst::Mana(ManaActionAst::AddManaScaled { amount, .. })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColor { amount, .. })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { amount })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor {
-                    amount, ..
-                })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
-                    amount,
-                    ..
-                })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount })
-                | SubjectVerbActionAst::Counters(CounterActionAst::PutCounters {
-                    count: amount,
-                    ..
-                })
-                | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterChoice {
-                    count: amount,
-                    ..
-                })
-                | SubjectVerbActionAst::Counters(CounterActionAst::PutCountersAll {
-                    count: amount,
-                    ..
-                }) => replace_value(amount),
-                _ => {}
-            }
-        }
-        for_each_nested_effects_mut(effect, true, |nested| {
-            for nested_effect in nested {
-                replace_effect(nested_effect);
-            }
-        });
-    }
-
-    for effect in effects {
-        replace_effect(effect);
-    }
-}
-
 fn value_counts_creature_deaths(value: &Value) -> bool {
     match value {
         Value::CreaturesDiedThisTurn
@@ -567,6 +501,86 @@ fn fuse_delayed_return_control_loss_sacrifice_followup(lowered: &mut LoweredEffe
         lowered.effects.segments[0].default_effects.drain(2..4);
     }
     true
+}
+
+/// "return it to the battlefield ... at the beginning of the next end step.
+/// That creature is a black Zombie in addition to its other colors and
+/// types" (Grave Betrayal): the characteristic change names the returned
+/// permanent, a new object (CR 400.7), so it belongs inside the delayed
+/// return, applied to what that return put onto the battlefield.
+fn fuse_delayed_return_characteristics_followup(lowered: &mut LoweredEffects) {
+    fn fuse(schedule: &Effect, followup: &Effect) -> Option<Effect> {
+        let schedule = schedule.downcast_ref::<crate::effects::ScheduleDelayedTriggerEffect>()?;
+        if !schedule.one_shot {
+            return None;
+        }
+        let tagged = schedule
+            .effects
+            .last()?
+            .downcast_ref::<crate::effects::TaggedEffect>()?;
+        let move_to_zone = tagged
+            .effect
+            .downcast_ref::<crate::effects::MoveToZoneEffect>()?;
+        let ChooseSpec::Tagged(returned_source) = move_to_zone.target.base() else {
+            return None;
+        };
+        if move_to_zone.zone != Zone::Battlefield {
+            return None;
+        }
+        let apply = followup.downcast_ref::<crate::effects::ApplyContinuousEffect>()?;
+        if !matches!(apply.until, crate::effect::Until::Forever)
+            || !matches!(
+                apply.target_spec.as_ref().map(ChooseSpec::base),
+                Some(ChooseSpec::Tagged(tag)) if tag == returned_source
+            )
+        {
+            return None;
+        }
+        let mut applied = apply.clone();
+        applied.target_spec = Some(ChooseSpec::Tagged(tagged.tag.clone()));
+        let mut fused = schedule.clone();
+        fused.effects.push(Effect::new(applied));
+        Some(Effect::new(fused))
+    }
+
+    let mut segments = lowered.effects.segments.clone();
+    let mut fused_any = false;
+    for index in 0..segments.len() {
+        if !segments[index].self_replacements.is_empty() {
+            continue;
+        }
+        let mut effect_index = 0;
+        while effect_index + 1 < segments[index].default_effects.len() {
+            let effects = &mut segments[index].default_effects;
+            if let Some(fused) = fuse(&effects[effect_index], &effects[effect_index + 1]) {
+                effects[effect_index] = fused;
+                effects.remove(effect_index + 1);
+                fused_any = true;
+                continue;
+            }
+            effect_index += 1;
+        }
+        if index + 1 < segments.len()
+            && segments[index + 1].self_replacements.is_empty()
+            && segments[index + 1].default_effects.len() == 1
+            && let Some(last) = segments[index].default_effects.last()
+            && let Some(fused) = fuse(last, &segments[index + 1].default_effects[0])
+        {
+            *segments[index]
+                .default_effects
+                .last_mut()
+                .expect("checked above") = fused;
+            segments[index + 1].default_effects.clear();
+            fused_any = true;
+        }
+    }
+    if !fused_any {
+        return;
+    }
+    segments.retain(|segment| {
+        !segment.default_effects.is_empty() || !segment.self_replacements.is_empty()
+    });
+    lowered.effects.replace_segments(segments);
 }
 
 fn fuse_source_control_loss_sacrifice_followup(lowered: &mut LoweredEffects) {
@@ -2594,12 +2608,18 @@ fn stage_effects_from_normalized(
         config.bind_unbound_x_to_last_effect,
         config.initial_last_effect_id,
     );
+    initial_env.has_announced_x |= config.has_announced_x;
     initial_env.allow_excess_damage_event_value = config.allow_excess_damage_event_value;
     initial_env.milling_event_filter = config.milling_event_filter.clone();
     initial_env.dice_event_grouped = config.dice_event_grouped;
+    initial_env.cast_event_quantity = config.cast_event_quantity;
     initial_env.life_event_binding = config.life_event_binding.clone();
     initial_env.life_amount_producers = config.life_amount_producers.clone();
     initial_env.die_result_producers = config.die_result_producers.clone();
+    initial_env.coin_result_producers = config.coin_result_producers.clone();
+    initial_env.number_result_producers = config.number_result_producers.clone();
+    initial_env.color_result_producers = config.color_result_producers.clone();
+    initial_env.reveal_result_producers = config.reveal_result_producers.clone();
     let implicit_trigger_references = include_trigger_prelude.then(|| {
         semantic_effects
             .iter()
@@ -2704,42 +2724,30 @@ fn source_sentence_boundary_continues_repeat_process(
     effects: &[EffectAst],
     boundary: usize,
 ) -> bool {
-    if boundary + 1 != effects.len() {
-        return false;
-    }
-    if matches!(
-        effects.get(boundary),
-        Some(
-            EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess)
-                | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessOnce)
-                | EffectAst::ForEach(ForEachEffectAst::RepeatThisProcessMay)
-        )
-    ) {
-        return true;
-    }
-    let Some(EffectAst::Conditionals(ConditionalEffectAst::IfResult { effects, .. })) =
-        effects.get(boundary)
-    else {
-        return false;
-    };
-    match effects.last() {
-        Some(EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess)) => true,
-        Some(EffectAst::Coordinated { effects, .. }) => {
-            matches!(
-                effects.last(),
-                Some(EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess))
-            )
+    fn contains_marker(effect: &EffectAst) -> bool {
+        match effect {
+            EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess
+                | ForEachEffectAst::RepeatThisProcessOnce
+                | ForEachEffectAst::RepeatThisProcessAdditional { .. }
+                | ForEachEffectAst::RepeatThisProcessMay) => true,
+            EffectAst::Conditionals(ConditionalEffectAst::Conditional { if_true, if_false, .. }) =>
+                if_true.iter().chain(if_false).any(contains_marker),
+            EffectAst::Conditionals(ConditionalEffectAst::IfResult { effects, .. })
+            | EffectAst::Permissions(PermissionEffectAst::May { effects })
+            | EffectAst::Permissions(PermissionEffectAst::MayByPlayer { effects, .. })
+            | EffectAst::SourceSentence { effects, .. }
+            | EffectAst::Sequence { effects }
+            | EffectAst::CommaThen { effects }
+            | EffectAst::Coordinated { effects, .. } => effects.iter().any(contains_marker),
+            EffectAst::Coordination(coordination) => coordination.members.iter()
+                .flat_map(|member| &member.effects).any(contains_marker),
+            _ => false,
         }
-        Some(EffectAst::Coordination(coordination)) => {
-            coordination.members.last().is_some_and(|member| {
-                matches!(
-                    member.effects.as_slice(),
-                    [EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess)]
-                )
-            })
-        }
-        _ => false,
     }
+    // Preserve all sentences preceding the marker as one complete process,
+    // including intervening result branches. A suffix remains outside the
+    // normalized loop and must share its aggregate receipt.
+    effects[boundary..].iter().any(contains_marker)
 }
 
 fn push_unique_source_sentence_hand_tag(tags: &mut Vec<TagKey>, tag: &TagKey) {
@@ -3385,6 +3393,7 @@ pub fn stage_effects_with_trigger_context_for_lowering(
             milling_event_filter: trigger.and_then(
                 ironsmith_compiler_semantic::trigger_references::trigger_milling_event_filter,
             ),
+            cast_event_quantity: trigger.and_then(ironsmith_compiler_semantic::trigger_references::trigger_cast_event_quantity),
             dice_event_grouped: trigger.and_then(
                 ironsmith_compiler_semantic::trigger_references::trigger_die_event_grouped,
             ),
@@ -3581,7 +3590,7 @@ pub fn stage_owned_triggered_effects_for_lowering(
             | PredicateAst::ItMatches(_)
             | PredicateAst::ItMatchedLastKnown(_)
             | PredicateAst::TargetMatches(_) => true,
-            PredicateAst::TaggedMatches(tag, _)
+            PredicateAst::TaggedMatches(tag, _) | PredicateAst::TaggedMatchedLastKnown(tag, _)
                 if tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str()
                     || tag.as_str() == "triggering" =>
             {
@@ -3643,7 +3652,7 @@ pub fn stage_owned_triggered_effects_for_lowering(
 
     fn predicate_references_triggering_tag(predicate: &PredicateAst) -> bool {
         match predicate {
-            PredicateAst::TaggedMatches(tag, _) => tag.as_str() == "triggering",
+            PredicateAst::TaggedMatches(tag, _) | PredicateAst::TaggedMatchedLastKnown(tag, _) => tag.as_str() == "triggering",
             PredicateAst::Not(inner) => predicate_references_triggering_tag(inner),
             PredicateAst::And(left, right) | PredicateAst::Or(left, right) => {
                 predicate_references_triggering_tag(left)
@@ -4103,6 +4112,7 @@ pub fn stage_owned_triggered_effects_for_lowering(
                 ironsmith_compiler_semantic::trigger_references::trigger_milling_event_filter(
                     &trigger,
                 ),
+            cast_event_quantity: ironsmith_compiler_semantic::trigger_references::trigger_cast_event_quantity(&trigger),
             dice_event_grouped:
                 ironsmith_compiler_semantic::trigger_references::trigger_die_event_grouped(&trigger),
             life_event_binding:
@@ -4213,13 +4223,13 @@ fn stage_parsed_ability_payload(
             )?;
             Some(NormalizedPreparedAbility::Triggered { trigger, prepared })
         }
-        (crate::model::CompilerAbilityKindCore::Activated(_), _) => Some(
-            NormalizedPreparedAbility::Activated(stage_effects_with_trigger_context_for_lowering(
-                None,
-                effects_ast,
-                parsed.reference_imports.clone(),
-            )?),
-        ),
+        (crate::model::CompilerAbilityKindCore::Activated(activated), _) => {
+            let mut imports = parsed.reference_imports.clone();
+            imports.has_announced_x |= crate::model::costs::cost_has_announced_x(&activated.mana_cost);
+            Some(NormalizedPreparedAbility::Activated(
+                stage_effects_with_trigger_context_for_lowering(None, effects_ast, imports)?,
+            ))
+        }
         _ => None,
     })
 }
@@ -4281,6 +4291,7 @@ fn lower_parsed_ability_internal(
             }
             bind_cast_spell_future_entry_counters(&trigger, &mut lowered);
             fuse_source_control_loss_sacrifice_followup(&mut lowered);
+            fuse_delayed_return_characteristics_followup(&mut lowered);
             triggered.trigger = compile_trigger_spec(trigger);
             triggered.effects = lowered.effects;
             triggered.choices = lowered.choices;
@@ -4291,6 +4302,7 @@ fn lower_parsed_ability_internal(
     };
 
     if !activated.effects.is_empty() || !activated.choices.is_empty() {
+        validate_counter_cost_target_program(activated)?;
         mark_activated_mana_output_if_needed(activated);
         return Ok(ability);
     }
@@ -4306,8 +4318,21 @@ fn lower_parsed_ability_internal(
     )?;
     activated.effects = lowered.effects;
     activated.choices = lowered.choices;
+    validate_counter_cost_target_program(activated)?;
     mark_activated_mana_output_if_needed(activated);
     Ok(ability)
+}
+
+fn validate_counter_cost_target_program(activated: &crate::ability::ActivatedAbility) -> Result<(), CardTextError> {
+    fn collect(effect: &Effect, targets: &mut Vec<ChooseSpec>) {
+        if let Some(spec) = effect.target_spec().filter(|spec| spec.is_target()) && !targets.contains(spec) { targets.push(spec.clone()); }
+        effect.visit_child_effects(&mut |child| collect(child, targets));
+    }
+    let mut targets = Vec::new(); for effect in &activated.effects { collect(effect, &mut targets); }
+    if targets.iter().any(ChooseSpec::is_activation_counter_power_bound) && (targets.len() != 1 || !targets[0].is_activation_counter_power_bound()) {
+        return Err(CardTextError::ParseError("counter-cost declaration supports one power-bounded target requirement".into()));
+    }
+    Ok(())
 }
 
 fn mark_activated_mana_output_if_needed(activated: &mut crate::ability::ActivatedAbility) {
@@ -4534,6 +4559,8 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         | KeywordAction::Soulbond
         | KeywordAction::Soulshift(_)
         | KeywordAction::SoulshiftValue(_)
+        | KeywordAction::Mobilize(_)
+        | KeywordAction::MobilizeValue { .. }
         | KeywordAction::Outlast(_)
         | KeywordAction::Unearth(_)
         | KeywordAction::Encore(_)
@@ -4581,6 +4608,12 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         KeywordAction::HexproofFrom(filter) => Some(StaticAbility::hexproof_from(filter.clone())),
         KeywordAction::ProtectionFrom(colors) => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::Color(colors),
+        )),
+        KeywordAction::ProtectionFromOwnColors => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::OwnColors,
+        )),
+        KeywordAction::ProtectionFromColorsAmong(filter) => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::ColorsAmong { filter, reference_source: None },
         )),
         KeywordAction::ProtectionFromAllColors => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::AllColors,
@@ -5763,7 +5796,7 @@ pub(crate) fn lower_compiler_static_ability_core(
 fn lower_compiler_resolution_program(
     program: ironsmith_core::ResolutionProgram<EffectAst>,
 ) -> Result<(ironsmith_core::ResolutionProgram<Effect>, Vec<ChooseSpec>), CardTextError> {
-    lower_compiler_resolution_program_with(program, None)
+    lower_compiler_resolution_program_with(program, None, false)
 }
 
 /// Lowers a resolution program. With a shared context, every child resolves
@@ -5772,10 +5805,12 @@ fn lower_compiler_resolution_program(
 fn lower_compiler_resolution_program_with(
     program: ironsmith_core::ResolutionProgram<EffectAst>,
     mut shared: Option<&mut crate::model::facts::EffectLoweringContext>,
+    has_announced_x: bool,
 ) -> Result<(ironsmith_core::ResolutionProgram<Effect>, Vec<ChooseSpec>), CardTextError> {
     let mut choices = Vec::new();
     let lowered = program.try_map_effects(|effect| {
         let mut isolated = crate::model::facts::EffectLoweringContext::new();
+        isolated.has_announced_x = has_announced_x;
         let ctx = match shared.as_deref_mut() {
             Some(ctx) => ctx,
             None => &mut isolated,
@@ -5831,7 +5866,7 @@ fn lower_compiler_triggered_ability_core_with(
     shared: Option<&mut crate::model::facts::EffectLoweringContext>,
 ) -> Result<crate::ability::TriggeredAbility, CardTextError> {
     let (effects, derived_choices) =
-        lower_compiler_resolution_program_with(triggered.effects, shared)?;
+        lower_compiler_resolution_program_with(triggered.effects, shared, false)?;
     let mut choices = triggered.choices;
     for choice in derived_choices {
         if !choices.contains(&choice) {
@@ -5896,7 +5931,9 @@ pub(crate) fn resolve_trigger_intervening_if(
 fn lower_compiler_activated_ability_core(
     activated: crate::model::CompilerActivatedAbilityCore,
 ) -> Result<crate::ability::ActivatedAbility, CardTextError> {
-    let (effects, derived_choices) = lower_compiler_resolution_program(activated.effects)?;
+    let has_announced_x = crate::model::costs::cost_has_announced_x(&activated.mana_cost);
+    let (effects, derived_choices) =
+        lower_compiler_resolution_program_with(activated.effects, None, has_announced_x)?;
     let mut choices = activated.choices;
     for choice in derived_choices {
         if !choices.contains(&choice) {
@@ -5929,7 +5966,8 @@ fn lower_compiler_activated_ability_core(
         mana_usage_restrictions.push(lowered);
     }
     Ok(crate::ability::ActivatedAbility {
-        mana_cost: crate::lowering::cost_materialization::materialize_compiler_core_total_cost(
+        keyword: activated.keyword,
+        mana_cost: crate::lowering::cost_materialization::materialize_compiler_activation_total_cost(
             &activated.mana_cost,
         )?,
         effects,
@@ -6338,10 +6376,17 @@ fn validate_effect_for_iterated_player(
         return Ok(());
     }
     if let Some(vote) = effect.downcast_ref::<crate::effects::VoteEffect>() {
-        if let crate::effects::VoteChoice::NamedOptions(options) = &vote.choice {
+        if vote.payloads.is_empty()
+            && let crate::effects::VoteChoice::NamedOptions(options) = &vote.choice
+        {
             for option in options {
                 validate_effects_for_iterated_player(&option.effects_per_vote, true, context)?;
             }
+        }
+        for payload in &vote.payloads {
+            let bound = matches!(payload, ironsmith_core::VotePayload::ForEachVote { .. })
+                || iterated_player_bound;
+            validate_effects_for_iterated_player(payload.effects(), bound, context)?;
         }
         return Ok(());
     }
@@ -7079,34 +7124,7 @@ mod tests {
         assert!(control_loss.watch_ability_source);
     }
 
-    #[test]
-    fn dynamic_remove_counter_cost_metrics_bind_counter_followups_to_x() {
-        let query = ironsmith_core::PriorEffectMetricQuery::new(
-            ironsmith_core::EffectMetricSource::AffectedObjects,
-            ironsmith_core::EffectMetric::Count,
-        )
-        .with_action(ironsmith_core::PriorEffectAction::Removed);
-        let mut effects = vec![EffectAst::subject_verb_put_counters(
-            crate::object::CounterType::PlusOnePlusOne,
-            Value::PendingPriorEffectMetric(query)
-                .with_surface_hint(ValueSurfaceHint::CountersRemovedThisWay),
-            TargetAst::Tagged(crate::tag::CompilerReferenceTag::It.bind(), None),
-            None,
-            false,
-        )];
 
-        replace_pending_removed_counter_metrics_with_x(&mut effects);
-
-        let EffectAst::SubjectVerb(SubjectVerbEffectAst {
-            action: SubjectVerbActionAst::Counters(CounterActionAst::PutCounters { count, .. }),
-            ..
-        }) = &effects[0]
-        else {
-            panic!("expected a typed counter-placement effect");
-        };
-        assert_eq!(count.unhinted(), &Value::X);
-        assert!(count.has_surface_hint(ValueSurfaceHint::CountersRemovedThisWay));
-    }
 
     #[test]
     fn triggering_blocker_prelude_uses_event_identity_not_live_blocking_state() {

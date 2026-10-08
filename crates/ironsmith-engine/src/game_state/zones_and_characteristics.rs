@@ -19,6 +19,10 @@ pub(crate) struct PreparedEtbChoices {
         std::collections::HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
     pub(crate) transfer_as_enters_source_links: bool,
     pub(crate) as_enters_continuous_effects: Vec<crate::continuous::ContinuousEffectId>,
+    /// Actual programme packets; metadata clones share their producer handles.
+    pub(crate) as_enters_outputs: Vec<crate::effects::PublishedEffectOutputs>,
+    /// Exact native acquisition shared by prospective and committed duration copies.
+    pub(crate) entry_copy_registration: Option<crate::continuous::ContinuousEffectId>,
 }
 
 /// Real source cards represented by one prospective entering permanent.
@@ -133,12 +137,24 @@ fn ability_retains_counters_moving_to(
     )
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 struct AsEntersProgramExecution {
+    outputs: Vec<crate::effects::CompletedEffectOutputs>,
     ran: bool,
     continuous_effects: Vec<crate::continuous::ContinuousEffectId>,
     tagged_objects:
         std::collections::HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+}
+
+impl std::fmt::Debug for AsEntersProgramExecution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AsEntersProgramExecution")
+            .field("ran", &self.ran)
+            .field("continuous_effects", &self.continuous_effects)
+            .field("tagged_objects", &self.tagged_objects)
+            .field("output_count", &self.outputs.len())
+            .finish()
+    }
 }
 
 fn merge_retained_tagged_objects(
@@ -162,6 +178,36 @@ fn merge_retained_tagged_objects(
 }
 
 impl GameState {
+    /// A spell reads its current layer-derived program. Captured activated and
+    /// triggered abilities are owned by their StackEntry instead (CR 113.7a).
+    pub fn current_spell_program(
+        &self,
+        id: ObjectId,
+    ) -> Result<
+        crate::resolution::ResolutionProgram,
+        crate::static_ability_processor::StaticEffectDiscoveryError,
+    > {
+        let chars = self.calculated_characteristics(id).ok_or(
+            crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object: id })?;
+        chars.validate_numeric_range()?;
+        if !chars.spell_effect.has_complete_definition() {
+            return Err(
+                crate::static_ability_processor::StaticEffectDiscoveryError::TextChangeDomain(
+                    crate::continuous::text_changes::TextChangeDomainError::SpellProgram,
+                ),
+            );
+        }
+        match chars.spell_effect {
+            crate::snapshot::SpellProgramState::Present(program) => Ok(program),
+            crate::snapshot::SpellProgramState::Absent => Ok(Default::default()),
+            crate::snapshot::SpellProgramState::Unavailable => Err(
+                crate::static_ability_processor::StaticEffectDiscoveryError::TextChangeDomain(
+                    crate::continuous::text_changes::TextChangeDomainError::SpellProgram,
+                ),
+            ),
+        }
+    }
+
     /// The rest of an enter-as-copy choice once the copy entered: "If you do,
     /// it gains haste until end of turn" applies as part of the replacement;
     /// "When you do, exile that card" is a reflexive triggered ability
@@ -201,9 +247,11 @@ impl GameState {
                         continue;
                     };
                     let copied_tag = crate::tag::TagKey::from("copied_object");
-                    let snapshot = crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-                        copied, self,
-                    );
+                    let Some(snapshot) =
+                        crate::snapshot::ObjectSnapshot::capture_for_execution(copied, self)
+                    else {
+                        return;
+                    };
                     let mut tagged_objects = std::collections::HashMap::new();
                     tagged_objects.insert(copied_tag.clone(), vec![snapshot]);
                     crate::effects::composition::queue_reflexive_trigger(
@@ -225,9 +273,11 @@ impl GameState {
                         continue;
                     };
                     let copied_tag = crate::tag::TagKey::from("copied_object");
-                    let snapshot = crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
-                        copied, self,
-                    );
+                    let Some(snapshot) =
+                        crate::snapshot::ObjectSnapshot::capture_for_execution(copied, self)
+                    else {
+                        return;
+                    };
                     let mut tagged_objects = std::collections::HashMap::new();
                     tagged_objects.insert(copied_tag.clone(), vec![snapshot]);
                     let frozen = crate::target::ObjectFilter::default().match_tagged(
@@ -385,10 +435,39 @@ impl GameState {
                         source, controller,
                     ))
                     .with_provenance(provenance);
+            if program.source_number_pair.is_some() {
+                context.source_number_owner = Some(if preparing_entry {
+                    let from = self
+                        .object(source)
+                        .ok_or(crate::effects::ExecutionError::ObjectNotFound(source))?
+                        .zone;
+                    let default_event = crate::events::EnterBattlefieldEvent::new(source, from);
+                    let prospective = entry_event
+                        .unwrap_or(&default_event)
+                        .try_prospective_game_state(self)
+                        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?
+                        .ok_or(crate::effects::ExecutionError::ObjectNotFound(source))?;
+                    crate::source_numbers::resolve_owner(
+                        &prospective,
+                        source,
+                        program.source_number_pair,
+                        None,
+                        None,
+                    )?
+                } else {
+                    crate::source_numbers::resolve_owner(
+                        self,
+                        source,
+                        program.source_number_pair,
+                        None,
+                        None,
+                    )?
+                });
+            }
             context.replacement.entry_counter_source = preparing_entry.then_some(source);
             context.replacement.entry_event = entry_event.cloned().map(Box::new);
             context.replacement.entry_reserved_objects = entry_reserved_objects.clone();
-            let events = crate::game_loop::execute_resolution_program_typed(
+            let completed = crate::game_loop::execute_resolution_program_with_outputs_typed(
                 self,
                 &mut context,
                 controller,
@@ -397,9 +476,10 @@ impl GameState {
                 None,
                 &[],
             )?;
-            for event in events {
+            for event in completed.events {
                 self.queue_trigger_event(provenance, event);
             }
+            execution.outputs.extend(completed.outputs);
             execution.continuous_effects = self
                 .effect_store
                 .continuous_effects
@@ -506,6 +586,13 @@ impl GameState {
             as_enters_tagged_objects: execution.tagged_objects,
             transfer_as_enters_source_links: execution.ran,
             as_enters_continuous_effects: execution.continuous_effects,
+            as_enters_outputs: execution
+                .outputs
+                .into_iter()
+                .map(crate::effects::PublishedEffectOutputs::retain)
+                .collect(),
+            entry_copy_registration: entry_event
+                .and_then(|event| event.program_choices.entry_copy_registration),
             ..Default::default()
         }))
     }
@@ -577,6 +664,7 @@ impl GameState {
                     &mut combined.tagged_objects,
                     &execution.tagged_objects,
                 );
+                combined.outputs.extend(execution.outputs);
                 if decision_maker.awaiting_choice() {
                     return Ok(combined);
                 }
@@ -622,6 +710,16 @@ impl GameState {
         controller: PlayerId,
         decision_maker: &mut dyn crate::decision::DecisionMaker,
     ) -> Result<(), crate::effects::ExecutionError> {
+        self.execute_as_transforms_effect_programs_with_outputs(source, controller, decision_maker)
+            .map(|_| ())
+    }
+
+    pub(crate) fn execute_as_transforms_effect_programs_with_outputs(
+        &mut self,
+        source: ObjectId,
+        controller: PlayerId,
+        decision_maker: &mut dyn crate::decision::DecisionMaker,
+    ) -> Result<Vec<crate::effects::CompletedEffectOutputs>, crate::effects::ExecutionError> {
         let abilities = self
             .object(source)
             .map(|object| object.abilities_vec())
@@ -645,7 +743,7 @@ impl GameState {
                 &execution.tagged_objects,
             );
         }
-        Ok(())
+        Ok(execution.outputs)
     }
 
     pub(crate) fn execute_as_enters_effect_programs_for_turn_face_up(
@@ -654,6 +752,20 @@ impl GameState {
         controller: PlayerId,
         decision_maker: &mut dyn crate::decision::DecisionMaker,
     ) -> Result<(), crate::effects::ExecutionError> {
+        self.execute_as_enters_effect_programs_for_turn_face_up_with_outputs(
+            source,
+            controller,
+            decision_maker,
+        )
+        .map(|_| ())
+    }
+
+    pub(crate) fn execute_as_enters_effect_programs_for_turn_face_up_with_outputs(
+        &mut self,
+        source: ObjectId,
+        controller: PlayerId,
+        decision_maker: &mut dyn crate::decision::DecisionMaker,
+    ) -> Result<Vec<crate::effects::CompletedEffectOutputs>, crate::effects::ExecutionError> {
         let abilities = self
             .object(source)
             .map(|object| object.abilities_vec())
@@ -671,7 +783,7 @@ impl GameState {
                 &execution.tagged_objects,
             );
         }
-        Ok(())
+        Ok(execution.outputs)
     }
 
     /// "If this enchantment leaves the battlefield, this effect continues
@@ -768,7 +880,13 @@ impl GameState {
         let pre_event_lookback_source_snapshots = if self
             .may_have_triggered_abilities_for_event_kind(crate::events::EventKind::ZoneChange)
         {
-            self.trigger_source_lookback_snapshots()
+            match self.try_trigger_source_lookback_snapshots() {
+                Ok(snapshots) => snapshots,
+                Err(error) => {
+                    self.record_token_resource_failure(&error);
+                    return None;
+                }
+            }
         } else {
             Vec::new()
         };
@@ -940,6 +1058,17 @@ impl GameState {
         if self.token_cannot_change_zones(old_id, new_zone) {
             return None;
         }
+        // A hidden identity can leave and re-enter the same zone with the same
+        // commitment. Bind that new object to a distinct public generation.
+        // Exhaustion rejects this move before any state, queue or ID mutation;
+        // unknown historical generations stay unknown, never restart at zero.
+        let next_hidden_incarnation = match self
+            .hidden_card_info(old_id)
+            .and_then(|info| info.incarnation)
+        {
+            Some(current) => Some(current.checked_add(1)?),
+            None => None,
+        };
         // Use the object's current typed abilities while it is still in the
         // origin zone. This honors ability-loss effects on the battlefield and
         // still lets an all-zone retention ability operate from other zones.
@@ -958,6 +1087,25 @@ impl GameState {
                     .any(|ability| ability_retains_counters_moving_to(ability, new_zone))
             },
         );
+        // Capture before the first mutation. Legacy Option movement reports
+        // incompleteness to the surrounding event/effect root and moves nothing.
+        let pre_move_snapshot = match lki_snapshot {
+            Some(snapshot) => Some(snapshot),
+            None => match self
+                .objects
+                .get(&old_id)
+                .map(|object| {
+                    self.try_cached_object_snapshot_with_calculated_characteristics(object)
+                })
+                .transpose()
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    self.record_token_resource_failure(&error);
+                    return None;
+                }
+            },
+        };
         let was_face_down = self.is_face_down(old_id);
         let was_foretold = self.is_foretold(old_id);
         let preserved_exile_viewers = if self
@@ -971,12 +1119,6 @@ impl GameState {
         } else {
             None
         };
-        // Capture a full pre-move snapshot for LKI-based trigger matching.
-        let pre_move_snapshot = lki_snapshot.or_else(|| {
-            self.objects
-                .get(&old_id)
-                .map(|obj| self.cached_object_snapshot_with_calculated_characteristics(obj))
-        });
         if self
             .objects
             .get(&old_id)
@@ -1037,6 +1179,21 @@ impl GameState {
             && new_zone != Zone::Battlefield
         {
             self.detach_relations_for_leaving_object(old_id);
+        }
+        if self
+            .object(old_id)
+            .is_some_and(|object| object.zone == Zone::Stack)
+        {
+            if let (Some(snapshot), Some(previous)) = (
+                pre_move_snapshot.as_ref(),
+                self.turn_store.cast_spell_lki.get(&old_id).cloned(),
+            ) {
+                let (mut object, entry) = (*previous).clone();
+                object.copy_spell_values_from_values(&snapshot.copiable_values);
+                self.turn_store
+                    .cast_spell_lki
+                    .insert(old_id, Arc::new((object, entry)));
+            }
         }
         self.object_store.changes.record(old_id);
         self.object_store.render_changes.record(old_id);
@@ -1338,6 +1495,7 @@ impl GameState {
         new_object.cast_alternative_method = None;
         new_object.cast_play_from_constraints = None;
         new_object.cast_price = None;
+        new_object.cast_play_permission = None;
         // A card cast through a granted "it gains suspend" trigger carries a
         // synthetic "Suspend 0—{0}" permission only for that cast; it isn't a
         // printed ability and must not follow the card (CR 400.7, 702.62a).
@@ -1440,6 +1598,8 @@ impl GameState {
             let entering_library = (new_zone == Zone::Library && old_zone != Zone::Library)
                 .then(|| audit_info.clone());
             info.zone = new_zone;
+            info.incarnation = next_hidden_incarnation;
+            self.observe_hidden_incarnation(info.incarnation);
             self.auxiliary_tracking_mut()
                 .hidden_cards
                 .insert(new_id, info);
@@ -2049,11 +2209,32 @@ impl GameState {
                     (!face_up_only).then_some(program)
                 })
                 .collect();
+            let from = self
+                .object(old_id)
+                .ok_or(crate::effects::ExecutionError::ObjectNotFound(old_id))?
+                .zone;
+            let mut entry_event = crate::events::EnterBattlefieldEvent::new(old_id, from);
+            entry_event.enters_as_copy_of = result.enters_as_copy_of;
+            entry_event.copy_duration = result.copy_duration.clone();
+            entry_event.copy_name_override = result.copy_name_override.clone();
+            entry_event.added_colors = result.added_colors;
+            entry_event.added_card_types = result.added_card_types.clone();
+            entry_event.removes_other_card_types = result.removes_other_card_types;
+            entry_event.added_supertypes = result.added_supertypes.clone();
+            entry_event.removed_supertypes = result.removed_supertypes.clone();
+            entry_event.added_subtypes = result.added_subtypes.clone();
+            entry_event.added_abilities = result.added_abilities.clone();
+            entry_event.set_base_power_toughness = result.set_base_power_toughness;
+            entry_event.controller_override = Some(prospective_controller);
+            if result.copy_duration.is_some() && result.enters_as_copy_of.is_some() {
+                entry_event.program_choices.entry_copy_registration =
+                    Some(self.effect_store.continuous_effects.reserve_entry_effect());
+            }
             let Some(choices) = self.execute_entry_programs(
                 old_id,
                 prospective_controller,
                 programs,
-                None,
+                Some(&entry_event),
                 decision_maker,
             )?
             else {
@@ -2694,13 +2875,25 @@ impl GameState {
         prepared_entry: Option<PreparedEtbEntry>,
     ) -> Result<super::EntryCommitResult, crate::effects::ExecutionError> {
         if new_zone == Zone::Battlefield && self.card_cannot_enter_battlefield(old_id) {
+            let mut published_outputs = Vec::new();
             let programs = prepared_entry
-                .map(|mut entry| std::mem::take(&mut entry.result.additional_programs))
+                .map(|mut entry| {
+                    crate::effects::PublishedEffectOutputs::append_distinct(
+                        &mut published_outputs,
+                        entry.result.completed_program_outputs.iter().cloned(),
+                    );
+                    crate::effects::PublishedEffectOutputs::append_distinct(
+                        &mut published_outputs,
+                        entry.choices.as_enters_outputs.iter().cloned(),
+                    );
+                    std::mem::take(&mut entry.result.additional_programs)
+                })
                 .unwrap_or_default();
             return Ok(super::EntryCommitResult {
                 original: crate::events::processing::EventOutcome::NotApplicable,
                 programs,
                 pending: false,
+                published_outputs,
             });
         }
         if new_zone == Zone::Battlefield {
@@ -2763,6 +2956,7 @@ impl GameState {
         use crate::events::processing::EventOutcome;
         let checkpoint = self.clone();
         let mut programs = Vec::new();
+        let mut published_outputs = Vec::new();
         let mut original_verdict = EventOutcome::NotApplicable;
         let result = self.move_object_with_etb_processing_with_dm_and_cause_body_inner(
             old_id,
@@ -2777,6 +2971,7 @@ impl GameState {
             entry_prevalidated,
             &mut programs,
             &mut original_verdict,
+            &mut published_outputs,
         );
         if result.is_err() || decision_maker.awaiting_choice() {
             *self = checkpoint;
@@ -2797,6 +2992,7 @@ impl GameState {
             original,
             programs,
             pending: false,
+            published_outputs,
         })
     }
 
@@ -2814,9 +3010,18 @@ impl GameState {
         entry_prevalidated: bool,
         programs: &mut Vec<crate::events::processing::PreparedReplacementProgram>,
         original_verdict: &mut crate::events::processing::EventOutcome<()>,
+        published_outputs: &mut Vec<crate::effects::PublishedEffectOutputs>,
     ) -> Result<Option<EntersResult>, crate::effects::ExecutionError> {
         use crate::events::processing::EventOutcome;
         if let Some(entry) = &mut prepared_entry {
+            crate::effects::PublishedEffectOutputs::append_distinct(
+                published_outputs,
+                entry.result.completed_program_outputs.iter().cloned(),
+            );
+            crate::effects::PublishedEffectOutputs::append_distinct(
+                published_outputs,
+                entry.choices.as_enters_outputs.iter().cloned(),
+            );
             programs.append(&mut entry.result.additional_programs);
             *original_verdict = if entry.result.replaced {
                 EventOutcome::Replaced
@@ -2866,6 +3071,10 @@ impl GameState {
                 initial_enters_tapped,
                 cause.clone(),
             )?;
+            crate::effects::PublishedEffectOutputs::append_distinct(
+                published_outputs,
+                result.completed_program_outputs.iter().cloned(),
+            );
             programs.append(&mut result.additional_programs);
             if result.replaced {
                 *original_verdict = EventOutcome::Replaced;
@@ -2890,6 +3099,14 @@ impl GameState {
             entry_attachment,
             entry_attachment_requires_aura,
         } = prepared_entry;
+        crate::effects::PublishedEffectOutputs::append_distinct(
+            published_outputs,
+            result.completed_program_outputs.iter().cloned(),
+        );
+        crate::effects::PublishedEffectOutputs::append_distinct(
+            published_outputs,
+            choices.as_enters_outputs.iter().cloned(),
+        );
         // A completed Instead payload leaves no entry proposal to commit.
         // Its legitimate movement can invalidate old source IDs without being
         // an execution error; validation remains mandatory for actual commits.
@@ -3078,6 +3295,19 @@ impl GameState {
             if let Some(names) = choice_store.chosen_named_options.remove(&old_id) {
                 choice_store.chosen_named_options.insert(new_id, names);
             }
+            let numeric = choice_store
+                .numeric_acquisitions
+                .iter()
+                .filter(|(owner, _)| owner.host == old_id)
+                .map(|(owner, number)| (owner.clone(), *number))
+                .collect::<Vec<_>>();
+            choice_store
+                .numeric_acquisitions
+                .retain(|owner, _| owner.host != old_id);
+            for (mut owner, number) in numeric {
+                owner.host = new_id;
+                choice_store.numeric_acquisitions.insert(owner, number);
+            }
             // Devour runs as the permanent enters (CR 702.82a) and records the
             // devoured count on the pre-move id.
             let devoured = self.devoured_count(old_id);
@@ -3215,7 +3445,14 @@ impl GameState {
                     );
                     // Stage the copy with the remaining entry fields. Its
                     // counters and prepared choices are not assembled yet.
-                    self.effect_store.continuous_effects.add_effect(effect);
+                    let registration = choices.entry_copy_registration.ok_or_else(|| {
+                        crate::effects::ExecutionError::IncompleteEvidence(
+                            "temporary entry copy omitted its prospective acquisition".into(),
+                        )
+                    })?;
+                    self.effect_store
+                        .continuous_effects
+                        .add_reserved_entry_effect(registration, effect)?;
                 }
             } else {
                 let copy_source = self.object(copy_source_id).cloned();
@@ -3286,12 +3523,12 @@ impl GameState {
                     }
                 }
             }
-            if !result.added_abilities.is_empty()
-                && let Some(new_obj) = self.object_mut(new_id)
-            {
-                new_obj
-                    .abilities_mut()
-                    .extend(result.added_abilities.iter().cloned());
+            for ability in &result.added_abilities {
+                self.install_authored_object_ability(
+                    new_id,
+                    ability.clone(),
+                    AuthoredAbilityDuplicatePolicy::PreserveAll,
+                );
             }
             if let Some((power, toughness)) = result.set_base_power_toughness
                 && let Some(new_obj) = self.object_mut(new_id)
@@ -3335,7 +3572,11 @@ impl GameState {
                 object.base_toughness = Some(crate::card::PtValue::Fixed(*toughness));
                 for granted in abilities {
                     let ability = crate::ability::Ability::static_ability(granted.clone());
-                    object.abilities_mut().push(ability);
+                    self.install_authored_object_ability(
+                        new_id,
+                        ability,
+                        AuthoredAbilityDuplicatePolicy::PreserveAll,
+                    );
                 }
                 self.mark_continuous_state_dirty();
             }
@@ -3731,7 +3972,19 @@ impl GameState {
             return;
         }
         self.remove_from_zone_index(id, zone, owner);
+        // Casting face up from concealed exile is not a turn-face-up action.
+        // The isolated declaration clears old concealment; its caller reapplies
+        // the face-down flag only for a declared face-down cast.
+        let concealed = {
+            let flags = self.battlefield_flags_mut();
+            flags.manifested.remove(&id);
+            flags.cloaked.remove(&id);
+            flags.face_down.remove(&id)
+        };
         self.object_mut(id).expect("proposal source exists").zone = Zone::Stack;
+        if concealed {
+            self.mark_face_down_state_changed(id);
+        }
     }
 
     /// Removes an object ID from its zone index.
@@ -4470,6 +4723,52 @@ impl GameState {
         effects
     }
 
+    pub(crate) fn characteristicless_face_down_characteristics(
+        &self,
+        object: ObjectId,
+    ) -> Option<crate::continuous::CalculatedCharacteristics> {
+        // CR 406.3a and hidden-agenda rules: these face-down objects have no
+        // characteristics. Their identities and zones remain available.
+        if !self.is_face_down_conspiracy(object)
+            && !(self.is_face_down(object)
+                && self
+                    .object(object)
+                    .is_some_and(|object| object.zone == Zone::Exile))
+        {
+            return None;
+        }
+        let owner = self.object(object)?.owner;
+        Some(crate::continuous::CalculatedCharacteristics {
+            alternate_name: None,
+            name: "".into(),
+            mana_cost: None,
+            linked_face_mana_value: None,
+            compiled_card_text: std::sync::Arc::<str>::from(""),
+            ability_labels: Default::default(),
+            base_power: None,
+            base_toughness: None,
+            power: None,
+            toughness: None,
+            card_types: Vec::new().into(),
+            subtypes: Vec::new().into(),
+            supertypes: Vec::new().into(),
+            world_supertype_since: None,
+            colors: crate::color::ColorSet::COLORLESS,
+            loyalty: None,
+            defense: None,
+            abilities: Vec::new().into(),
+            static_abilities: Vec::new().into(),
+            numeric_range_error: None,
+            numeric_choice_error: None,
+            text_change_error: None,
+            spell_effect: crate::snapshot::SpellProgramState::Absent,
+            text_changes: Vec::new(),
+            ability_gain_prohibitions: Vec::new(),
+            aura_attach_filter: None,
+            controller: owner,
+        })
+    }
+
     /// Calculate all characteristics for an object using precomputed continuous effects.
     ///
     /// This avoids rebuilding/allocating the full effect list when multiple
@@ -4479,7 +4778,7 @@ impl GameState {
         id: ObjectId,
         effects: &[ContinuousEffect],
     ) -> Option<crate::continuous::CalculatedCharacteristics> {
-        if let Some(chars) = self.face_down_conspiracy_characteristics(id) {
+        if let Some(chars) = self.characteristicless_face_down_characteristics(id) {
             return Some(chars);
         }
         if let Some(chars) = crate::continuous::in_progress_characteristics(self, id) {
@@ -4509,7 +4808,7 @@ impl GameState {
             self,
         );
         for id in ids {
-            if let Some(chars) = self.face_down_conspiracy_characteristics(*id) {
+            if let Some(chars) = self.characteristicless_face_down_characteristics(*id) {
                 calculated.insert(*id, chars);
             }
         }
@@ -4686,6 +4985,7 @@ impl GameState {
         let mut chars =
             self.calculated_characteristics(id)
                 .unwrap_or_else(|| CalculatedCharacteristics {
+                    alternate_name: object.split_other_half_name().map(str::to_string),
                     name: object.name.clone(),
                     mana_cost: object.mana_cost_owned(),
                     linked_face_mana_value: object.linked_face_mana_value(),
@@ -4727,12 +5027,18 @@ impl GameState {
                         .collect::<Vec<_>>()
                         .into(),
                     numeric_range_error: None,
+                    numeric_choice_error: None,
+                    text_change_error: None,
+                    spell_effect: crate::snapshot::SpellProgramState::from_option(
+                        object.spell_effect_owned(),
+                    ),
+                    text_changes: Vec::new(),
                     ability_gain_prohibitions: Vec::new(),
                     aura_attach_filter: object.aura_attach_filter_owned(),
                     controller: self.controller_of(object),
                 });
 
-        if chars.numeric_range_error.is_some() {
+        if chars.validate_numeric_range().is_err() {
             return None;
         }
         Self::normalize_current_characteristic_subtypes(object, &mut chars);
@@ -5449,134 +5755,165 @@ impl GameState {
         let effects_can_change_cant_abilities = all_effects
             .iter()
             .any(Self::continuous_effect_requires_cant_update);
-        let abilities_to_apply: Vec<(StaticAbility, ObjectId, PlayerId)> =
-            if !effects_can_change_cant_abilities {
-                self.objects
-                    .iter()
-                    .flat_map(|(&object_id, object)| {
-                        // CR 702.26b: phased-out sources do not supply static
-                        // rule restrictions, even on the printed-only fast path.
-                        if self.is_phased_out(object_id) {
-                            return Vec::new();
-                        }
-                        let zone = object.zone;
-                        let controller = self.controller_of(object);
-                        let mut abilities = object
-                            .abilities
-                            .iter()
-                            .filter_map(|ability| match &ability.kind {
-                                AbilityKind::Static(static_ability)
-                                    if ability.functions_in(&zone)
-                                        && Self::static_ability_requires_cant_update(
-                                            static_ability,
-                                        )
-                                        && static_ability.is_active(self, object_id) =>
-                                {
-                                    Some((static_ability.clone(), object_id, controller))
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>();
-                        if zone == Zone::Battlefield {
-                            abilities.extend(
-                                object
-                                    .level_granted_abilities()
-                                    .into_iter()
-                                    .filter(|static_ability| {
-                                        Self::static_ability_requires_cant_update(static_ability)
-                                            && static_ability.is_active(self, object_id)
-                                    })
-                                    .map(|static_ability| (static_ability, object_id, controller)),
-                            );
-                            abilities.extend(
-                                object
-                                    .temporary_static_ability_grants
-                                    .iter()
-                                    .filter(|grant| !grant.is_expired(self.turn.turn_number))
-                                    .filter_map(|grant| grant.materialize())
-                                    .filter(|static_ability| {
-                                        Self::static_ability_requires_cant_update(static_ability)
-                                            && static_ability.is_active(self, object_id)
-                                    })
-                                    .map(|static_ability| (static_ability, object_id, controller)),
-                            );
-                        }
-                        abilities
-                    })
-                    .collect()
-            } else {
-                // Ability-changing effects require the fully layered view so
-                // grants and removals are reflected in restriction tracking.
-                let battlefield_ids: Vec<_> = self
-                    .objects
-                    .iter()
-                    .filter_map(|(&object_id, object)| {
-                        (object.zone == Zone::Battlefield).then_some(object_id)
-                    })
-                    .collect();
-                if self.continuous_state_is_clean() {
-                    self.prewarm_calculated_characteristics(&battlefield_ids);
-                }
-                self.objects
-                    .iter()
-                    .flat_map(|(&object_id, object)| {
-                        // CR 702.26b: phased-out sources do not supply static
-                        // rule restrictions, even on the printed-only fast path.
-                        if self.is_phased_out(object_id) {
-                            return Vec::new();
-                        }
-                        let zone = object.zone;
-                        let controller = self.controller_of(object);
-                        match zone {
-                            Zone::Battlefield => if self.continuous_state_is_clean() {
-                                self.calculated_characteristics_arc(object_id)
-                            } else {
-                                self.calculated_characteristics_with_effects(
+        let abilities_to_apply: Vec<(
+            StaticAbility,
+            ObjectId,
+            PlayerId,
+            Option<crate::continuous::AbilityOrigin>,
+        )> = if !effects_can_change_cant_abilities {
+            self.objects
+                .iter()
+                .flat_map(|(&object_id, object)| {
+                    // CR 702.26b: phased-out sources do not supply static
+                    // rule restrictions, even on the printed-only fast path.
+                    if self.is_phased_out(object_id) {
+                        return Vec::new();
+                    }
+                    let zone = object.zone;
+                    let controller = self.controller_of(object);
+                    let mut abilities = object
+                        .abilities
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(slot, ability)| match &ability.kind {
+                            AbilityKind::Static(static_ability)
+                                if ability.functions_in(&zone)
+                                    && Self::static_ability_requires_cant_update(
+                                        static_ability,
+                                    )
+                                    && static_ability.is_active(self, object_id) =>
+                            {
+                                Some((
+                                    static_ability.clone(),
                                     object_id,
-                                    all_effects.as_slice(),
-                                )
-                                .map(Arc::new)
+                                    controller,
+                                    Some(crate::continuous::AbilityOrigin::Printed(slot)),
+                                ))
                             }
-                            .map(|chars| {
-                                chars
-                                    .static_abilities
-                                    .iter()
-                                    .filter(|static_ability| {
-                                        static_ability.is_active(self, object_id)
-                                    })
-                                    .cloned()
-                                    .map(|static_ability| (static_ability, object_id, controller))
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default(),
-                            _ => object
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if zone == Zone::Battlefield {
+                        abilities.extend(
+                            object
+                                .level_granted_abilities()
+                                .into_iter()
+                                .filter(|static_ability| {
+                                    Self::static_ability_requires_cant_update(static_ability)
+                                        && static_ability.is_active(self, object_id)
+                                })
+                                .map(|static_ability| {
+                                    (static_ability, object_id, controller, None)
+                                }),
+                        );
+                        abilities.extend(
+                            object
+                                .temporary_static_ability_grants
+                                .iter()
+                                .filter(|grant| !grant.is_expired(self.turn.turn_number))
+                                .filter_map(|grant| grant.materialize())
+                                .filter(|static_ability| {
+                                    Self::static_ability_requires_cant_update(static_ability)
+                                        && static_ability.is_active(self, object_id)
+                                })
+                                .map(|static_ability| {
+                                    (static_ability, object_id, controller, None)
+                                }),
+                        );
+                    }
+                    abilities
+                })
+                .collect()
+        } else {
+            // Ability-changing effects require the fully layered view so
+            // grants and removals are reflected in restriction tracking.
+            let battlefield_ids: Vec<_> = self
+                .objects
+                .iter()
+                .filter_map(|(&object_id, object)| {
+                    (object.zone == Zone::Battlefield).then_some(object_id)
+                })
+                .collect();
+            if self.continuous_state_is_clean() {
+                self.prewarm_calculated_characteristics(&battlefield_ids);
+            }
+            self.objects
+                .iter()
+                .flat_map(|(&object_id, object)| {
+                    // CR 702.26b: phased-out sources do not supply static
+                    // rule restrictions, even on the printed-only fast path.
+                    if self.is_phased_out(object_id) {
+                        return Vec::new();
+                    }
+                    let zone = object.zone;
+                    let controller = self.controller_of(object);
+                    match zone {
+                        Zone::Battlefield => if self.continuous_state_is_clean() {
+                            self.calculated_characteristics_arc(object_id)
+                        } else {
+                            self.calculated_characteristics_with_effects(
+                                object_id,
+                                all_effects.as_slice(),
+                            )
+                            .map(Arc::new)
+                        }
+                        .map(|chars| {
+                            chars
                                 .abilities
                                 .iter()
-                                .filter_map(|ability| {
-                                    if let AbilityKind::Static(static_ability) = &ability.kind {
-                                        if ability.functions_in(&zone)
-                                            && static_ability.is_active(self, object_id)
-                                        {
-                                            Some((static_ability.clone(), object_id, controller))
-                                        } else {
-                                            None
-                                        }
+                                .enumerate()
+                                .filter_map(|(slot, ability)| {
+                                    let AbilityKind::Static(static_ability) = &ability.kind else {
+                                        return None;
+                                    };
+                                    (ability.functions_in(&zone)
+                                        && static_ability.is_active(self, object_id))
+                                    .then(|| {
+                                        (
+                                            static_ability.clone(),
+                                            object_id,
+                                            controller,
+                                            chars.abilities.origin(slot).cloned(),
+                                        )
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                        _ => object
+                            .abilities
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(slot, ability)| {
+                                if let AbilityKind::Static(static_ability) = &ability.kind {
+                                    if ability.functions_in(&zone)
+                                        && static_ability.is_active(self, object_id)
+                                    {
+                                        Some((
+                                            static_ability.clone(),
+                                            object_id,
+                                            controller,
+                                            Some(crate::continuous::AbilityOrigin::Printed(slot)),
+                                        ))
                                     } else {
                                         None
                                     }
-                                })
-                                .collect::<Vec<_>>(),
-                        }
-                    })
-                    .collect()
-            };
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    }
+                })
+                .collect()
+        };
 
         // Now apply each ability's restrictions using the trait method.
         // Maximum-hand-size modifications are rule changes applied in
         // timestamp order (CR 613.11, 402.2) together with the spell-created
         // "no maximum hand size" effects below, so defer them.
         let mut hand_size_modifications: Vec<(u64, HandSizeModification)> = Vec::new();
-        for (static_ability, permanent_id, controller) in abilities_to_apply {
+        for (static_ability, permanent_id, controller, origin) in abilities_to_apply {
             if Self::static_ability_modifies_maximum_hand_size(&static_ability) {
                 let timestamp = self
                     .effect_store
@@ -5590,6 +5927,32 @@ impl GameState {
                 continue;
             }
             static_ability.apply_restrictions(self, permanent_id, controller);
+            if let Some(pair) = crate::source_numbers::static_pair(&static_ability) {
+                let owner =
+                    crate::source_numbers::capture(permanent_id, Some(pair), origin.as_ref());
+                if owner.is_none() {
+                    self.record_token_resource_failure(
+                        &crate::effects::ExecutionError::IncompleteEvidence(
+                            "numeric cast restriction has no exact acquisition origin".into(),
+                        ),
+                    );
+                }
+                for restrictions in self
+                    .effect_store
+                    .cant_effects
+                    .cant_cast_filters
+                    .values_mut()
+                {
+                    for restriction in restrictions {
+                        if restriction.source == Some(permanent_id)
+                            && restriction.source_number_owner.is_none()
+                            && crate::source_numbers::filter_pair(&restriction.filter) == Some(pair)
+                        {
+                            restriction.source_number_owner = owner.clone();
+                        }
+                    }
+                }
+            }
         }
 
         // Apply active restriction effects from spells/abilities.
@@ -5603,8 +5966,10 @@ impl GameState {
             } else if effect.is_pending()
                 || (matches!(
                     effect.duration,
-                    crate::effect::Until::ControllersNextUntapStep
-                ) && !effect.is_expired(current_turn))
+                    crate::effect::Until::ControllersNextUntapStep | crate::effect::Until::YourNextUntapStep
+                        | crate::effect::Until::PlayersNextUntapStep { .. }
+                ) && !effect.is_expired(current_turn)
+                    && effect.untap_step_player(self).is_some())
             {
                 retained_restrictions.push(effect.clone());
             }
@@ -5744,6 +6109,7 @@ impl GameState {
         match modification {
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
+        | Modification::RewriteText(_)
             | Modification::SetTextBox(_)
             | Modification::CopyStaticAbilityVariants { .. }
             // Restriction modifications materialize as cant-relevant static
@@ -6100,7 +6466,7 @@ fn is_synthetic_granted_suspend(
 ) -> bool {
     matches!(
         method,
-        crate::alternative_cast::AlternativeCastingMethod::Suspend { cost, time: 0 }
+        crate::alternative_cast::AlternativeCastingMethod::Suspend { cost, time: ironsmith_core::SuspendTime::Fixed(0) }
             if cost.is_empty()
     )
 }

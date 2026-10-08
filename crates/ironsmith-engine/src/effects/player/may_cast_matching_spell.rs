@@ -51,6 +51,9 @@ fn object_ids_in_zone(game: &GameState, player: PlayerId, zone: Zone) -> Vec<Obj
 }
 
 impl EffectExecutor for MayCastMatchingSpellWithoutPayingManaCostEffect {
+    fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
+        Some(crate::effect::PriorEffectAction::Cast)
+    }
     fn execute(
         &self,
         game: &mut GameState,
@@ -196,6 +199,6 @@ impl EffectExecutor for MayCastMatchingSpellWithoutPayingManaCostEffect {
             player_id,
             result.from_zone,
             ctx.provenance,
-        ))
+        )?)
     }
 }

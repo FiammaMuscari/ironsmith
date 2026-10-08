@@ -331,6 +331,31 @@ fn sacrifice_mana_activation_exposes_and_honors_card_choice() {
 }
 
 #[test]
+fn protocol_cancel_restores_sacrificed_treasure_during_payment() {
+    let _guard = crate::test_id_counter_guard();
+    let mut treasure = None;
+    let (mut g, land, _) = live_fixture_with(ManaCost::new().add_generic(2), |g| {
+        let definition = ironsmith_registry_test::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Payment Treasure")
+            .card_types(vec![CardType::Artifact]).token()
+            .parse_text("{T}, Sacrifice this artifact: Add {U}.").unwrap();
+        treasure = Some(g.game.create_object_from_definition(&definition,
+            PlayerId::from_index(0), Zone::Battlefield));
+    });
+    let treasure = treasure.unwrap();
+    choose_mana_source(&mut g, treasure, 0);
+    assert!(!g.game.battlefield.contains(&treasure));
+    assert_eq!(g.game.player(PlayerId::from_index(0)).unwrap().mana_pool.blue, 1);
+    live_response(&mut g, PayManaCostOutput::Cancel);
+    assert!(g.game.battlefield.contains(&treasure));
+    assert!(!g.game.is_tapped(treasure));
+    assert!(!g.game.is_tapped(land));
+    assert_eq!(g.game.player(PlayerId::from_index(0)).unwrap().mana_pool.total(), 0);
+    assert!(g.game.stack.is_empty());
+    assert!(g.game.player(PlayerId::from_index(0)).unwrap().hand.iter()
+        .any(|id| g.game.object(*id).is_some_and(|object| object.name == "Live audit spell")));
+}
+
+#[test]
 fn payment_contract_matrix() {
     let _guard = crate::test_id_counter_guard();
     let mut rows = Vec::new();
@@ -1224,4 +1249,40 @@ fn payment_contract_matrix() {
         rows.len() - failures
     );
     assert_eq!(failures, 0, "see complete conformance matrix above");
+}
+
+#[test]
+fn waterbend_v3_uses_typed_use_release_actions_and_exact_runtime_preferences() {
+    assert_eq!(manabrew_protocol::protocol::PROTOCOL_VERSION, 3);
+    assert!(validate_manabrew_protocol_version(3).is_ok());
+    for stale in [0, 2, 4] { assert!(validate_manabrew_protocol_version(stale).is_err()); }
+    let mut game = fixture();
+    let resource = card(&mut game, "An arbitrary display label", vec![CardType::Artifact], Zone::Battlefield);
+    let mut request = request(&mut game, ManaCost::new().add_generic(1).with_waterbend().add_generic(1));
+    game.game.player_mut(request.payer).unwrap().mana_pool.add(ManaSymbol::Blue, 1);
+    let initial = open(&game, &context(&game, &request));
+    let action = payment(&initial).actions.iter().find(|action| matches!(
+        action.kind, PaymentActionKind::UseResource { resource: PaymentResourceKind::Waterbend, .. }
+    )).expect("Waterbend resource has its own typed wire action");
+    let json = serde_json::to_value(action).unwrap();
+    assert_eq!(json["resource"], "waterbend");
+    let roundtrip: PaymentAction = serde_json::from_value(json).unwrap();
+    assert!(matches!(roundtrip.kind, PaymentActionKind::UseResource { resource: PaymentResourceKind::Waterbend, .. }));
+    request.preferences = replan(&game, &initial, &action.id);
+    assert_eq!(request.preferences.required_alternatives, vec![RequiredAlternativePayment {
+        source: resource, kind: ManaPaymentSourceKind::Waterbend,
+    }]);
+    let chosen = open(&game, &context(&game, &request));
+    assert!(payment(&chosen).can_confirm_from_pool);
+    let release = payment(&chosen).actions.iter().find(|action| matches!(
+        action.kind, PaymentActionKind::ReleaseResource { resource: PaymentResourceKind::Waterbend, .. }
+    )).expect("release preserves the same typed resource");
+    assert!(replan(&game, &chosen, &release.id).required_alternatives.is_empty());
+    let ctx = context(&game, &request);
+    assert_eq!(ctx.plan.allocations.iter().filter(|allocation|
+        matches!(allocation.payment, PlannedPipPayment::Waterbend(_))).count(), 1);
+    assert_eq!(execute_mana_payment_plan(&mut game.game, &request, &ctx.plan,
+        &mut ironsmith::decision::SelectFirstDecisionMaker).unwrap(), ManaPaymentExecution::Paid);
+    assert!(game.game.is_tapped(resource));
+    assert_eq!(game.game.player(request.payer).unwrap().mana_pool.total(), 0);
 }

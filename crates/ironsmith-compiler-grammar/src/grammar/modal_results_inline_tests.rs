@@ -296,3 +296,48 @@ fn complete_put_into_your_hand_results_keep_destination_and_negation() {
         assert!(parse_direct_prior_effect_result_surface(&tokens).is_none(), "{text}");
     }
 }
+
+#[test]
+fn counter_transfer_result_keeps_its_kind_and_only_accepts_a_complete_surface() {
+    let tokens = lex_line("one or more +1/+1 counters are moved this way", 0).unwrap();
+    let Some(IfResultPredicate::PriorEffectResult(surface)) = parse_if_result_predicate_lexed_tokens(&tokens) else {
+        panic!("expected a typed moved-counter result");
+    };
+    assert_eq!(surface.action, PriorEffectAction::CountersMoved(ironsmith_core::counter::CounterType::PlusOnePlusOne));
+    assert_eq!(surface.actor, PriorEffectResultActor::Passive);
+    assert_eq!(surface.quantifier, PriorEffectResultQuantifier::ActionOnly);
+    for text in ["one or more 2 counters are moved this way", "one or more +1/+1 counters are moved and drawn this way"] {
+        assert!(parse_if_result_predicate_lexed_tokens(&lex_line(text, 0).unwrap()).is_none());
+    }
+}
+
+#[test]
+fn demonstrative_result_names_require_a_qualifying_subset_not_the_whole_collection() {
+    assert_eq!(parse_if_result_predicate_lexed_tokens(&lex_line(
+        "two or more of those cards have the same name", 0).unwrap()),
+        Some(IfResultPredicate::AffectedObjectsShare {
+            required_count: 2, characteristic: ObjectCharacteristic::Name,
+        }));
+    for text in ["two or more of those cards have the same name and color", "one of those cards has the same name"] {
+        assert!(!matches!(parse_if_result_predicate_lexed_tokens(&lex_line(text, 0).unwrap()),
+            Some(IfResultPredicate::AffectedObjectsShare { .. })));
+    }
+}
+
+#[test]
+fn counted_sharing_decomposes_filter_relation_and_authored_action_without_absorbing_words() {
+    for (text, action, nonland) in [
+        ("two cards that share a color were milled this way", PriorEffectAction::Milled, false),
+        ("two nonland cards that share a color were exiled this way", PriorEffectAction::Exiled, true),
+    ] {
+        let Some(IfResultPredicate::PriorEffectResult(surface)) =
+            parse_if_result_predicate_lexed_tokens(&lex_line(text, 0).unwrap()) else { panic!("{text}"); };
+        assert_eq!(surface.required_count, Some(2));
+        assert_eq!(surface.shared_characteristic, Some(ObjectCharacteristic::Color));
+        assert_eq!(surface.action, action);
+        assert_eq!(surface.filter.excluded_card_types.contains(&crate::types::CardType::Land), nonland);
+    }
+    for text in ["two cards that share a color and a name were milled this way", "two cards that share a color were milled this way yesterday"] {
+        assert!(!matches!(parse_direct_prior_effect_result_surface(&lex_line(text, 0).unwrap()), Some(_)));
+    }
+}

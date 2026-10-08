@@ -284,11 +284,21 @@ fn double_quoted_rule_bodies(tokens: &[OwnedLexToken]) -> Vec<&[OwnedLexToken]> 
 /// this sentence boundary prevents that grant from also being copied into the
 /// token definition.
 fn inline_quoted_token_creation_sentence(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
+    inline_quoted_token_creation_sentence_with_ordinal(tokens).map(|(sentence, _, _)| sentence)
+}
+
+/// The last create sentence carrying an inline quoted rule, its ordinal among
+/// create sentences, and the number of create sentences. A period that ends a
+/// quoted rule (`... can't block." Then create ...`) also ends the sentence.
+fn inline_quoted_token_creation_sentence_with_ordinal(
+    tokens: &[OwnedLexToken],
+) -> Option<(&[OwnedLexToken], usize, usize)> {
     let mut sentence_start = 0usize;
     let mut inside_quote = false;
     let mut saw_create = false;
     let mut saw_quote_after_create = false;
     let mut last_create_sentence = None;
+    let mut create_sentences = 0usize;
 
     for (idx, token) in tokens.iter().enumerate() {
         if token.kind == TokenKind::Quote {
@@ -296,6 +306,20 @@ fn inline_quoted_token_creation_sentence(tokens: &[OwnedLexToken]) -> Option<&[O
                 saw_quote_after_create = true;
             }
             inside_quote = !inside_quote;
+            let closes_sentence = !inside_quote
+                && idx > 0
+                && tokens[idx - 1].kind == TokenKind::Period
+                && tokens.get(idx + 1).is_some();
+            if closes_sentence {
+                if saw_create {
+                    last_create_sentence =
+                        Some((sentence_start, idx + 1, saw_quote_after_create, create_sentences));
+                    create_sentences += 1;
+                }
+                sentence_start = idx + 1;
+                saw_create = false;
+                saw_quote_after_create = false;
+            }
             continue;
         }
         if inside_quote {
@@ -306,7 +330,11 @@ fn inline_quoted_token_creation_sentence(tokens: &[OwnedLexToken]) -> Option<&[O
         }
         if token.kind == TokenKind::Period {
             if saw_create {
-                last_create_sentence = Some((sentence_start, idx + 1, saw_quote_after_create));
+                if saw_quote_after_create || last_create_sentence.is_none_or(|(_, _, quoted, _)| !quoted) {
+                    last_create_sentence =
+                        Some((sentence_start, idx + 1, saw_quote_after_create, create_sentences));
+                }
+                create_sentences += 1;
             }
             sentence_start = idx + 1;
             saw_create = false;
@@ -315,10 +343,14 @@ fn inline_quoted_token_creation_sentence(tokens: &[OwnedLexToken]) -> Option<&[O
     }
 
     if saw_create {
-        last_create_sentence = Some((sentence_start, tokens.len(), saw_quote_after_create));
+        if saw_quote_after_create || last_create_sentence.is_none_or(|(_, _, quoted, _)| !quoted) {
+            last_create_sentence =
+                Some((sentence_start, tokens.len(), saw_quote_after_create, create_sentences));
+        }
+        create_sentences += 1;
     }
-    let (start, end, has_inline_quote) = last_create_sentence?;
-    has_inline_quote.then_some(&tokens[start..end])
+    let (start, end, has_inline_quote, ordinal) = last_create_sentence?;
+    has_inline_quote.then_some((&tokens[start..end], ordinal, create_sentences))
 }
 
 fn tokens_outside_double_quoted_rules(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
@@ -554,14 +586,15 @@ fn parse_inline_token_granted_abilities(
     // below. Recover only those typed Equipment facts from the complete
     // clause; merging all complete-clause reminder facts would also leak
     // keywords from nested tokens inside quotes onto the outer token.
-    let complete_reminder = token_definition_grammar::parse_token_reminder_facts_tokens(tokens);
-    token_definition_grammar::merge_token_equipment_reminder_definition(
+    let rule_source = token_definition_grammar::token_definition_rule_tokens(tokens);
+    let complete_reminder = token_definition_grammar::parse_token_reminder_facts_tokens(&rule_source);
+    token_definition_grammar::merge_authored_token_equipment_facts(
         definition,
         &complete_reminder,
     );
-    let outer_tokens = tokens_outside_double_quoted_rules(tokens);
+    let outer_tokens = token_definition_grammar::token_definition_outer_tokens(tokens);
     let outer_reminder = token_definition_grammar::parse_token_reminder_facts_tokens(&outer_tokens);
-    token_definition_grammar::merge_token_reminder_definition(definition, &outer_reminder);
+    token_definition_grammar::merge_authored_token_definition_facts(definition, &outer_reminder);
     for rule_tokens in double_quoted_rule_bodies(tokens) {
         // Reminder parsing intentionally scans a whole quoted token rule so
         // specialized rules such as a dies-triggered token creation can be
@@ -577,17 +610,7 @@ fn parse_inline_token_granted_abilities(
             })
             .flatten();
         let reminder = token_definition_grammar::parse_token_reminder_facts_tokens(rule_tokens);
-        let rule_is_triggered_or_activated = rule_tokens
-            .first()
-            .is_some_and(|token| token.is_any_word(&["when", "whenever", "at"]))
-            || rule_tokens
-                .iter()
-                .any(|token| token.kind == TokenKind::Colon);
-        let reminder = if rule_is_triggered_or_activated {
-            reminder.without_rule_effect_keywords()
-        } else {
-            reminder
-        };
+        let reminder = reminder.without_rule_effect_keywords();
         let conflicting_combat_restriction =
             match (&*definition, reminder.creature_combat_restriction()) {
                 (
@@ -605,7 +628,7 @@ fn parse_inline_token_granted_abilities(
         // continue through the ordinary granted-ability parser; replacing
         // the first slot here silently discards one of the two.
         let merged = !conflicting_combat_restriction
-            && token_definition_grammar::merge_token_reminder_definition(definition, &reminder);
+            && token_definition_grammar::merge_authored_token_definition_facts(definition, &reminder);
         if let Some(keywords) = outer_keywords
             && let crate::model::token_definition::TokenDefinitionSpec::Creature(creature) =
                 definition
@@ -740,7 +763,7 @@ fn parse_inline_token_granted_abilities(
             // Reapply the outer clause so an Equipment rule body cannot
             // discard a trailing `and equip` clause outside its quotes. Do
             // not merge keywords from a nested token rule into this token.
-            token_definition_grammar::merge_token_reminder_definition(definition, &outer_reminder);
+            token_definition_grammar::merge_authored_token_definition_facts(definition, &outer_reminder);
             continue;
         }
         if !conflicting_combat_restriction
@@ -1005,11 +1028,45 @@ pub fn attach_inline_token_granted_abilities_to_last_create(
     effects: &mut [EffectAst],
     tokens: &[OwnedLexToken],
 ) -> bool {
-    let Some(tokens) = inline_quoted_token_creation_sentence(tokens) else {
+    let Some((tokens, ordinal, create_sentences)) =
+        inline_quoted_token_creation_sentence_with_ordinal(tokens)
+    else {
         return false;
     };
     if double_quoted_rule_bodies(tokens).is_empty() {
         return false;
+    }
+    // A quoted rule in an earlier create sentence belongs to that sentence's
+    // token, not to a later sentence's creation.
+    fn contains_create(effect: &EffectAst) -> bool {
+        if matches!(
+            effect,
+            EffectAst::SubjectVerb(subject_verb)
+                if matches!(
+                    subject_verb.action,
+                    SubjectVerbActionAst::Tokens(TokenActionAst::CreateTokenWithMods { .. })
+                )
+        ) {
+            return true;
+        }
+        let mut found = false;
+        crate::model::visit::for_each_nested_effects(effect, true, |nested| {
+            found |= nested.iter().any(contains_create);
+        });
+        found
+    }
+    let is_top_level_create = |effect: &EffectAst| contains_create(effect);
+    if ordinal + 1 < create_sentences
+        && effects.iter().filter(|effect| is_top_level_create(effect)).count() == create_sentences
+    {
+        let Some(effect) = effects
+            .iter_mut()
+            .filter(|effect| is_top_level_create(effect))
+            .nth(ordinal)
+        else {
+            return false;
+        };
+        return attach_inline_token_granted_abilities_to_effect(effect, tokens);
     }
     for effect in effects.iter_mut().rev() {
         if attach_inline_token_granted_abilities_to_effect(effect, tokens) {
@@ -1369,6 +1426,17 @@ pub fn parse_create(
         None
     };
     let tokens = creation_grammar::creation_body_tokens(tokens);
+    // "Create ... unless <player> pays ..." is a whole-clause alternative,
+    // owned by the unless reading; the token tail must never absorb it.
+    if crate::grammar::lexical::LexedClause::new(tokens)
+        .find_unquoted_token_word("unless")
+        .is_some()
+    {
+        return Err(CardTextError::ParseError(format!(
+            "create clause carries a trailing unless alternative (clause: '{}')",
+            token_word_refs(tokens).join(" ")
+        )));
+    }
     let input = create_clause_readings::CreateClause { tokens, subject };
     match create_clause_readings::read(&input) {
         crate::recognition::ParseOutcome::Match(matched) => return Ok(matched.value.value),
@@ -1919,7 +1987,9 @@ pub fn parse_create(
         token_definition_grammar::parse_token_definition_shape_tokens(&definition_tokens)
             .or_else(|| {
                 parse_prior_created_token_reference_words(&name_words)
-                    .map(|_| crate::model::token_definition::TokenDefinitionSpec::PriorCreated)
+                    .map(|_| crate::model::token_definition::TokenDefinitionSpec::PrototypeReference(
+                        crate::model::token_definition::TokenPrototypeReference::PreviousDefinition,
+                    ))
             })
             .ok_or_else(|| {
                 CardTextError::ParseError(format!(
@@ -1928,27 +1998,57 @@ pub fn parse_create(
                 ))
             })?;
     if has_raw_name_override {
+        if let crate::model::token_definition::TokenDefinitionSpec::Builtin(template) = &definition {
+            definition = crate::model::token_definition::TokenDefinitionSpec::ModifiedBuiltin(
+                crate::model::token_definition::ModifiedBuiltinTokenShape::new(*template));
+        }
         match &mut definition {
+            crate::model::token_definition::TokenDefinitionSpec::ModifiedBuiltin(shape) => shape.name = Some(name.clone()),
             crate::model::token_definition::TokenDefinitionSpec::Vehicle(shape) => {
                 shape.name = name.clone();
+                if let Some(roles) = &mut shape.text_roles { roles.name = ironsmith_core::TokenNameTextRole::Explicit; }
             }
             crate::model::token_definition::TokenDefinitionSpec::Artifact(shape) => {
                 shape.name = name.clone();
+                if let Some(roles) = &mut shape.text_roles { roles.name = ironsmith_core::TokenNameTextRole::Explicit; }
             }
             crate::model::token_definition::TokenDefinitionSpec::Creature(shape) => {
                 shape.name = name.clone();
+                if let Some(roles) = &mut shape.text_roles { roles.name = ironsmith_core::TokenNameTextRole::Explicit; }
+            }
+            crate::model::token_definition::TokenDefinitionSpec::Enchantment(shape) => {
+                shape.name = name.clone();
+                if let Some(roles) = &mut shape.text_roles { roles.name = ironsmith_core::TokenNameTextRole::Explicit; }
             }
             _ => {}
         }
     }
-    if let Some(postnominal_colors) =
-        token_definition_grammar::parse_postnominal_token_colors_tokens(&tail_tokens)
+    if let Some((postnominal_colors, color_role)) =
+        token_definition_grammar::parse_postnominal_token_color_words_tokens(&tail_tokens)
     {
+        if let crate::model::token_definition::TokenDefinitionSpec::Builtin(template) = &definition {
+            definition = crate::model::token_definition::TokenDefinitionSpec::ModifiedBuiltin(
+                crate::model::token_definition::ModifiedBuiltinTokenShape::new(*template));
+        }
         match &mut definition {
+            crate::model::token_definition::TokenDefinitionSpec::ModifiedBuiltin(shape) => {
+                if shape.colors.is_none_or(|colors| colors.is_empty()) || shape.color_words == color_role {
+                    shape.color_words = color_role;
+                } else { shape.color_words = ironsmith_core::TokenWordRole::Unrecorded; }
+                shape.colors = Some(shape.colors.unwrap_or_default().union(postnominal_colors));
+            }
             crate::model::token_definition::TokenDefinitionSpec::Creature(creature) => {
+                if let Some(roles) = &mut creature.text_roles {
+                    if creature.colors.is_empty() || roles.colors == color_role { roles.colors = color_role; }
+                    else { roles.colors = ironsmith_core::TokenWordRole::Unrecorded; }
+                }
                 creature.colors = creature.colors.union(postnominal_colors);
             }
             crate::model::token_definition::TokenDefinitionSpec::Artifact(artifact) => {
+                if let Some(roles) = &mut artifact.text_roles {
+                    if artifact.colors.is_empty() || roles.colors == color_role { roles.colors = color_role; }
+                    else { roles.colors = ironsmith_core::TokenWordRole::Unrecorded; }
+                }
                 artifact.colors = artifact.colors.union(postnominal_colors);
             }
             _ => {}
@@ -2346,9 +2446,13 @@ pub fn parse_investigate(
             (Value::Fixed(1), Value::Count(filter)) => {
                 Value::CountScaled(filter, 1).with_surface_hint(ValueSurfaceHint::ForEach)
             }
-            (Value::Fixed(1), each_count) => each_count,
+            (Value::Fixed(1), each_count) => each_count.with_surface_hint(ValueSurfaceHint::ForEach),
             (Value::Fixed(multiplier), Value::Count(filter)) => {
                 Value::CountScaled(filter, multiplier).with_surface_hint(ValueSurfaceHint::ForEach)
+            }
+            (Value::Fixed(multiplier), each_count) => {
+                Value::Scaled(Box::new(each_count), multiplier)
+                    .with_surface_hint(ValueSurfaceHint::ForEach)
             }
             (multiplier, each_count) => {
                 return Err(CardTextError::ParseError(format!(

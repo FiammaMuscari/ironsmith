@@ -3471,6 +3471,7 @@ fn equipment_token_compactor_requires_pump_clause() {
     let target = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature().you_control()));
     let equip = crate::ability::Ability {
         kind: crate::ability::AbilityKind::Activated(crate::ability::ActivatedAbility {
+            keyword: None,
             mana_cost: crate::cost::TotalCost::free(),
             effects: crate::resolution::ResolutionProgram::from_effects(vec![
                 crate::effect::Effect::attach_to(target.clone()),
@@ -4860,3 +4861,24 @@ fn for_each_named_graveyard_filter_keeps_zone_scope() {
         "card named Undead Servant in your graveyard"
     );
 }
+#[test]
+fn team_other_subtype_condition_renders_only_the_exact_scoped_existential() {
+    let mut filter = ObjectFilter::default()
+        .with_subtype(Subtype::Warrior)
+        .in_zone(Zone::Battlefield)
+        .controlled_by(PlayerFilter::your_team());
+    let mut source = filter.clone();
+    source.source = true;
+    let condition = |filter, source| Condition::ValueComparison {
+        left: Value::Count(filter),
+        operator: crate::effect::ValueComparisonOperator::GreaterThan,
+        right: Value::Count(source),
+    };
+    assert_eq!(describe_condition(&condition(filter.clone(), source.clone())), "your team controls another Warrior");
+    let mut wrong_source = source.clone();
+    wrong_source.source = false;
+    assert_ne!(describe_condition(&condition(filter.clone(), wrong_source)), "your team controls another Warrior");
+    filter.owner = Some(PlayerFilter::You);
+    assert_ne!(describe_condition(&condition(filter, source)), "your team controls another Warrior");
+}
+

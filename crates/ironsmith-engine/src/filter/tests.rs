@@ -528,6 +528,7 @@ fn blocked_by_tagged_filter_matches_current_combat_relationship() {
     game.combat = Some(crate::combat_state::CombatState {
         block_declaration_complete: true,
         attacked_permanent_types: Default::default(),
+        last_attack_declaration_step_players: None,
         attackers: vec![crate::combat_state::AttackerInfo {
             creature: attacker.id,
             target: crate::combat_state::AttackTarget::Player(bob),
@@ -3334,4 +3335,11 @@ fn ring_bearer_filters_read_current_designation_but_snapshots_keep_exact_lki() {
     let restored = before.clone();
     assert_eq!(restored.ring_bearer, Some(true));
     assert!(filter.matches_snapshot(&restored, &ctx, &game));
+}
+
+#[test]
+fn nameless_current_characteristics_do_not_inherit_an_alternate_split_name() {
+    assert!(super::names_share("First", Some("Second"), "Second", None));
+    assert!(!super::names_share("", Some("Second"), "Second", None));
+    assert!(!super::names_share("Second", None, crate::object::FACE_DOWN_DISPLAY_NAME, Some("Second")));
 }

@@ -1185,8 +1185,8 @@ fn preflight_invalid_payment_keyword_lines(lines: &[&[OwnedLexToken]]) -> Option
 ///
 /// Recognition already holds the tokens, so the card's own name is replaced in
 /// them directly: every alias occurrence the string form would rewrite becomes
-/// the typed self-reference as synthesized word tokens, and the "enter" that
-/// follows a rewritten subject becomes "enters" the same way. Nothing is
+/// the typed self-reference as synthesized word tokens. Finite "enter" after
+/// that subject becomes "enters", while causative infinitives stay intact. Nothing is
 /// rendered back to text and lexed again. Kept tokens keep their spans; a
 /// synthesized subject takes the span of the name it stands in for, which is
 /// where the reference was authored.
@@ -1301,24 +1301,13 @@ fn quoted_attachment_grant_token_replacements(
         }
         return replacements;
     }
-    let mut span_start: Option<usize> = None;
-    for (index, token) in tokens.iter().enumerate() {
-        if token.kind != TokenKind::Quote {
-            continue;
+    let mut text = String::new(); let mut offsets = Vec::new();
+    for token in tokens { if !text.is_empty() { text.push(' '); } offsets.push(text.len()); text.push_str(&token.slice.to_ascii_lowercase()); }
+    let scopes = crate::grammar::preprocess::attachment_grant_quote_scopes(&text);
+    for (index, offset) in offsets.into_iter().enumerate() {
+        if scopes.iter().any(|scope| scope.start <= offset && offset < scope.end) {
+            replacements[index] = Some(crate::preprocess::GRANTING_SOURCE_SURFACE);
         }
-        if let Some(start) = span_start.take() {
-            let head_start = tokens[..start - 1]
-                .iter()
-                .rposition(|token| {
-                    matches!(token.kind, TokenKind::Period | TokenKind::Quote)
-                        || matches!(token.slice.as_str(), "—" | "-" | "–")
-                })
-                .map_or(0, |separator| separator + 1);
-            let replacement = host_for_head(&tokens[head_start..start - 1]);
-            replacements[start..index].fill(replacement);
-            continue;
-        }
-        span_start = Some(index + 1);
     }
     replacements
 }
@@ -1392,6 +1381,33 @@ fn replace_named_source_alias_tokens(
             word_idx += 1;
             continue;
         }
+        // "until end of turn" on a card named Turn (Turn // Burn): the
+        // game's turn noun after a determiner or "of" is never the source.
+        if alias_words.len() == 1
+            && alias_words[0] == "turn"
+            && word_idx.checked_sub(1).is_some_and(|previous| {
+                matches!(
+                    pieces[previous].text,
+                    "of" | "this"
+                        | "that"
+                        | "each"
+                        | "next"
+                        | "your"
+                        | "their"
+                        | "extra"
+                        | "same"
+                        | "whose"
+                        | "a"
+                        | "an"
+                        | "its"
+                        | "his"
+                        | "her"
+                )
+            })
+        {
+            word_idx += 1;
+            continue;
+        }
         let overlaps_preserved_longer_alias = all_alias_words.iter().any(|longer_words| {
             longer_words.len() > alias_words.len()
                 && source_alias_word_span_matches(&pieces, word_idx, longer_words)
@@ -1422,16 +1438,11 @@ fn replace_named_source_alias_tokens(
                     && all_alias_words
                         .iter()
                         .all(|other| other.len() <= alias_words.len())
-                    && word_idx.checked_sub(1).is_some_and(|previous| {
-                        matches!(
-                            pieces[previous].text,
-                            "sacrifice" | "return" | "exile" | "destroy" | "tap" | "untap"
-                        )
-                    })
-                    && !tokens[piece_tokens[end_word - 1] + 1..]
-                        .iter()
-                        .take_while(|token| token.kind != TokenKind::Quote)
-                        .any(|token| token.kind == TokenKind::Colon)
+                    && crate::grammar::preprocess::attachment_grant_name_is_operand(
+                        word_idx.checked_sub(1).map(|index| pieces[index].text),
+                        word_idx.checked_sub(2).map(|index| pieces[index].text),
+                        tokens[piece_tokens[end_word - 1] + 1..].iter().take_while(|token| token.kind != TokenKind::Quote)
+                            .any(|token| token.kind == TokenKind::Colon))
             });
         let preserve_surface = attachment_replacement.is_none()
             && (alias_is_strict_prefix_of_compound_subtype
@@ -1509,7 +1520,8 @@ fn replace_named_source_alias_tokens(
     Some(out)
 }
 
-/// "this creature enter" → "this creature enters", on tokens.
+/// Normalize a finite source-subject verb, without inflecting the bare
+/// infinitive in a causative such as "you may have this creature enter".
 fn normalize_named_source_enter_agreement_tokens(
     tokens: &mut [OwnedLexToken],
     subject: &str,
@@ -1523,12 +1535,18 @@ fn normalize_named_source_enter_agreement_tokens(
             .enumerate()
             .all(|(offset, word)| tokens[index + offset].is_word(word));
         let enter_index = index + subject_words.len();
+        // `have <object> enter` is already grammatical. The entry-copy reader
+        // accepts either spelling, so changing this to `enters` otherwise
+        // survives into its retained display and hides the damaged source
+        // sentence until the authoritative semantic-marker gate.
+        let causative_have = index > 0 && tokens[index - 1].is_word("have");
         // The string form only rewrote "enter" at the end of the text or
         // before a space, never before punctuation.
         let followed_by_word_or_end = tokens
             .get(enter_index + 1)
             .is_none_or(|next| matches!(next.kind, TokenKind::Word | TokenKind::Number));
-        if subject_here && tokens[enter_index].is_word("enter") && followed_by_word_or_end {
+        if subject_here && !causative_have
+            && tokens[enter_index].is_word("enter") && followed_by_word_or_end {
             let span = tokens[enter_index].span;
             tokens[enter_index] = OwnedLexToken::word("enters", span);
             changed = true;
@@ -1928,7 +1946,7 @@ fn source_alias_occurrence_should_preserve_surface_lexed(
 fn source_alias_occurrence_is_name_override_surface_lexed(
     pieces: &[SourceAliasWordPiece<'_>],
     start_word: usize,
-    _end_word: usize,
+    end_word: usize,
 ) -> bool {
     let previous_word = start_word
         .checked_sub(1)
@@ -1951,6 +1969,68 @@ fn source_alias_occurrence_is_name_override_surface_lexed(
             && matches!(previous_previous_word, Some("them" | "it"))
             && third_previous_word == Some("meld"))
         || source_alias_occurrence_ends_named_phrase_lexed(pieces, start_word)
+        || source_alias_occurrence_is_named_list_member_lexed(pieces, start_word, end_word)
+}
+
+/// "Equipment named Sword of Kaldra, Shield of Kaldra, and Helm of Kaldra"
+/// on Shield of Kaldra: the alias is one entry of a list of card names, not
+/// a reference to this object. The alias must sit inside the list (followed
+/// by a separator, or introduced by "and"/"or"), and every word walked back
+/// to "named" must be a name word or a list separator.
+fn source_alias_occurrence_is_named_list_member_lexed(
+    pieces: &[SourceAliasWordPiece<'_>],
+    start_word: usize,
+    end_word: usize,
+) -> bool {
+    let Some(alias) = pieces.get(start_word) else {
+        return false;
+    };
+    let Some(last) = end_word.checked_sub(1).and_then(|idx| pieces.get(idx)) else {
+        return false;
+    };
+    let followed_by_separator = pieces.get(end_word).is_some_and(|next| {
+        next.sentence == last.sentence
+            && (next.clause != last.clause || matches!(next.text, "and" | "or"))
+    });
+    let introduced_by_connective = start_word
+        .checked_sub(1)
+        .and_then(|idx| pieces.get(idx))
+        .is_some_and(|prev| matches!(prev.text, "and" | "or"));
+    if !followed_by_separator && !introduced_by_connective {
+        return false;
+    }
+    let mut idx = start_word;
+    let mut crossed_separator = false;
+    for _ in 0..16 {
+        let Some(prev) = idx.checked_sub(1).and_then(|i| pieces.get(i)) else {
+            return false;
+        };
+        let current_clause = pieces.get(idx).map_or(alias.clause, |piece| piece.clause);
+        if prev.sentence != alias.sentence || prev.possessive {
+            return false;
+        }
+        if prev.clause != current_clause {
+            crossed_separator = true;
+        }
+        if prev.text == "named" {
+            return crossed_separator && idx != start_word;
+        }
+        if matches!(prev.text, "and" | "or") {
+            crossed_separator = true;
+        } else if matches!(
+                prev.text,
+                "this" | "that" | "it" | "its" | "you" | "your" | "a" | "an" | "if" | "then"
+                    | "when" | "whenever" | "target" | "card" | "cards" | "creature"
+                    | "creatures" | "permanent" | "permanents" | "control" | "controls"
+                    | "with" | "from" | "to" | "on" | "into" | "onto" | "is" | "are"
+                    | "deals" | "gets" | "has" | "have"
+            )
+        {
+            return false;
+        }
+        idx -= 1;
+    }
+    false
 }
 
 /// "a creature named Keeper of Kookus" on a card named Kookus: the alias is
@@ -2266,7 +2346,9 @@ fn looks_like_ability_word_label(
         && !label_tokens
             .iter()
             .any(|token| matches!(token.kind, TokenKind::Colon))
-        && token_word_refs(label_tokens).len() <= 4
+        // Flavor-word labels run up to five words ("A Test of Your
+        // Reflexes!", Magitek Scythe).
+        && token_word_refs(label_tokens).len() <= 5
 }
 
 /// Build the labeled public-route recognized form for the source-qualified
@@ -3029,24 +3111,30 @@ fn try_parse_labeled_line_dispatch(
                     &preprocessed.card,
                     &effect_parse_tokens,
                 )?;
-                return Ok(Some(LineDispatchResult::single(
-                    RecognizedLine::Activated(RecognizedActivatedLine {
-                        info: line.info.clone(),
-                        cost,
-                        cost_parse_tokens: normalized_cost_tokens,
-                        effect_parse_tokens,
-                        presentation: presentation.clone(),
-                        chosen_option: max_speed_chosen_option.clone().or_else(|| {
-                            preserve_as_choice_label
-                                .then(|| {
-                                    document_grammar::parse_chosen_option_context_tokens(
-                                        label_tokens,
-                                    )
-                                })
-                                .flatten()
-                        }),
+                let activated = RecognizedActivatedLine {
+                    info: line.info.clone(),
+                    cost,
+                    cost_parse_tokens: normalized_cost_tokens,
+                    effect_parse_tokens,
+                    presentation: presentation.clone(),
+                    chosen_option: max_speed_chosen_option.clone().or_else(|| {
+                        preserve_as_choice_label
+                            .then(|| {
+                                document_grammar::parse_chosen_option_context_tokens(
+                                    label_tokens,
+                                )
+                            })
+                            .flatten()
                     }),
-                    idx + 1,
+                };
+                let (activated, next_idx) = extend_activated_line_with_result_followups(
+                    &preprocessed.items,
+                    idx,
+                    activated,
+                );
+                return Ok(Some(LineDispatchResult::single(
+                    RecognizedLine::Activated(activated),
+                    next_idx,
                 )));
             }
             Err(err) if looks_like_activation_cost_prefix(&cost_tokens) => {
@@ -3056,7 +3144,14 @@ fn try_parse_labeled_line_dispatch(
         }
     }
 
-    if is_named_label && let Some(keyword_line) = recognize_keyword_line(&body_line)? {
+    // A flavor-word label never changes a keyword body ("Murasame — Equip
+    // {5}"): the body still owns its keyword line.
+    let keyword_line = match recognize_keyword_line(&body_line) {
+        Ok(keyword_line) => keyword_line,
+        Err(error) if is_named_label => return Err(error),
+        Err(_) => None,
+    };
+    if let Some(keyword_line) = keyword_line {
         return Ok(Some(LineDispatchResult::single(
             RecognizedLine::Keyword(keyword_line),
             idx + 1,
@@ -3187,24 +3282,30 @@ fn try_parse_labeled_line_dispatch(
                     &preprocessed.card,
                     &effect_parse_tokens,
                 )?;
-                return Ok(Some(LineDispatchResult::single(
-                    RecognizedLine::Activated(RecognizedActivatedLine {
-                        info: line.info.clone(),
-                        cost,
-                        cost_parse_tokens: normalized_cost_tokens,
-                        effect_parse_tokens,
-                        presentation,
-                        chosen_option: max_speed_chosen_option.or_else(|| {
-                            preserve_as_choice_label
-                                .then(|| {
-                                    document_grammar::parse_chosen_option_context_tokens(
-                                        label_tokens,
-                                    )
-                                })
-                                .flatten()
-                        }),
+                let activated = RecognizedActivatedLine {
+                    info: line.info.clone(),
+                    cost,
+                    cost_parse_tokens: normalized_cost_tokens,
+                    effect_parse_tokens,
+                    presentation,
+                    chosen_option: max_speed_chosen_option.or_else(|| {
+                        preserve_as_choice_label
+                            .then(|| {
+                                document_grammar::parse_chosen_option_context_tokens(
+                                    label_tokens,
+                                )
+                            })
+                            .flatten()
                     }),
-                    idx + 1,
+                };
+                let (activated, next_idx) = extend_activated_line_with_result_followups(
+                    &preprocessed.items,
+                    idx,
+                    activated,
+                );
+                return Ok(Some(LineDispatchResult::single(
+                    RecognizedLine::Activated(activated),
+                    next_idx,
                 )));
             }
             Err(err) if looks_like_activation_cost_prefix(&cost_tokens) => {
@@ -3774,6 +3875,14 @@ fn propagate_station_thresholds(lines: &mut [RecognizedLine]) {
     }
 }
 
+fn is_owned_station_threshold(preprocessed: &PreprocessedDocument, idx: usize, line: &PreprocessedLine) -> bool {
+    line_family_grammar::parse_station_threshold_line(&line.tokens).is_some()
+        && preprocessed.items[..idx].iter().any(|item| {
+            let PreprocessedItem::Line(prior) = item else { return false; };
+            line_family_grammar::parse_station_keyword_line(&prior.tokens, &prior.info.source_tokens).is_some()
+        })
+}
+
 pub fn recognize_document_with_context(
     context: ParseContextView<'_>,
     preprocessed: &PreprocessedDocument,
@@ -3794,6 +3903,21 @@ pub fn recognize_document_with_context(
                 idx += 1;
             }
             PreprocessedItem::Line(line) => {
+                if let Some(types) = &line.info.semantic_facts.intrinsic_basic_land_mana_reminder {
+                    // Use final typed metadata, even if its source line occurs
+                    // after the reminder. Keep the original line in the CST and
+                    // Oracle text, but never turn rule reminder text into an
+                    // authored activation or copied text-box ability.
+                    if !preprocessed.card.card_types_ref().contains(&crate::types::CardType::Land)
+                        || types.iter().any(|subtype| !preprocessed.card.subtypes_ref().contains(subtype))
+                    {
+                        return Err(CardTextError::ParseError(
+                            "intrinsic basic-land mana reminder disagrees with land type metadata".into(),
+                        ));
+                    }
+                    idx += 1;
+                    continue;
+                }
                 // Every recognizer of this line, and the later phases that parse
                 // its effects, bind the keys they mint in the line's symbol scope.
                 let line_context = context.child(ParseScopeKind::Line {
@@ -3806,11 +3930,19 @@ pub fn recognize_document_with_context(
                     idx += 1;
                     continue;
                 }
-                // Numeric result rows belong to the preceding die-roll
-                // instruction, even when their body contains a gain clause.
+                // A local die-roll owner consumes its complete rows while
+                // extending its statement/activation/trigger. A row still
+                // here must belong to a real Station ability, not acquire a
+                // meaning from its N+ typography or an unrelated result.
                 if document_grammar::parse_numeric_result_prefix_tokens(&line.info.source_tokens)
                     .is_some()
                 {
+                    if !is_owned_station_threshold(preprocessed, idx, line) {
+                        return Err(CardTextError::ParseError(format!(
+                            "numeric result row has no preceding die-result owner: '{}'",
+                            line.info.raw_line,
+                        )));
+                    }
                     idx = dispatch_remaining_preprocessed_line(
                         line_context,
                         preprocessed,
@@ -3923,7 +4055,7 @@ fn dispatch_remaining_preprocessed_line(
     ) {
         return Ok(next_idx);
     }
-    if try_push_reveal_first_draw_line(line, lines)? {
+    if try_push_reveal_first_draw_line(line_context, line, lines)? {
         return Ok(idx + 1);
     }
     if try_push_trailing_keyword_activation(preprocessed, line, lines)? {
@@ -3961,6 +4093,13 @@ fn dispatch_remaining_preprocessed_line(
         return Ok(idx + 1);
     }
     if try_push_complete_typed_statement(&preprocessed.card, line, lines)? {
+        // Fast-path effect recognition does not end the enclosing spell's
+        // program. Result rows still belong to its preceding roll/selection.
+        if let Some(RecognizedLine::Statement(statement)) = lines.last_mut() {
+            return Ok(extend_statement_line_with_result_followups_in_place(
+                &preprocessed.items, idx, statement,
+            ));
+        }
         return Ok(idx + 1);
     }
     if let Some(next_idx) = try_push_named_source_dispatch(
@@ -4166,12 +4305,22 @@ fn try_push_saga_chapter(
 }
 
 fn try_push_reveal_first_draw_line(
+    context: ParseContextView<'_>,
     line: &PreprocessedLine,
     lines: &mut Vec<RecognizedLine>,
 ) -> Result<bool, CardTextError> {
     let Some(chunks) = split_reveal_first_draw_line_rewrite_lexed(&line.tokens) else {
         return Ok(false);
     };
+    // This typed local key records the exact sentence family recognized here.
+    // Lowering replaces the provisional definition stamp after all finalizers.
+    let pair = ironsmith_core::LinkedExilePair {
+        definition: ironsmith_core::LinkedExileDefinition([0; 32]),
+        pair: u32::try_from(lines.len()).map_err(|_| CardTextError::InvariantViolation(
+            "too many authored ability groups".into(),
+        ))?,
+    };
+    let mut recognized_lines = Vec::new();
     for chunk_tokens in chunks {
         let chunk_line = rewrite_line_tokens(line, &chunk_tokens);
         if line_starts_with_trigger_intro_tokens(&chunk_line.tokens) {
@@ -4180,12 +4329,22 @@ fn try_push_reveal_first_draw_line(
                 let recognized =
                     RecognizedLine::Triggered(recognize_triggered_line(&trigger_line)?);
                 trace_recognized_line(&recognized);
-                lines.push(recognized);
+                recognized_lines.push(recognized);
             }
-        } else if let Some(static_line) = recognize_static_line(&chunk_line)? {
+        } else if let Some(mut static_line) = recognize_static_line(&chunk_line)? {
+            let mut abilities = parse_static_ability_ast_line_lexed(&chunk_line.tokens)?
+                .ok_or_else(|| CardTextError::InvariantViolation("first-draw static lost its typed reading".into()))?;
+            let [crate::cards::builders::StaticAbilityAst::Static(ability)] = abilities.as_mut_slice() else {
+                return Err(CardTextError::InvariantViolation("first-draw static must be one ability".into()));
+            };
+            let ironsmith_core::StaticAbilityPayload::RevealFirstCardYouDrawEachTurn { linked_reveal_pair, .. } = &mut ability.payload else {
+                return Err(CardTextError::InvariantViolation("first-draw static has the wrong payload".into()));
+            };
+            *linked_reveal_pair = Some(pair);
+            static_line.parsed = Some(Box::new(LineAst::StaticAbilities(abilities)));
             let recognized = RecognizedLine::Static(static_line);
             trace_recognized_line(&recognized);
-            lines.push(recognized);
+            recognized_lines.push(recognized);
         } else {
             return Err(CardTextError::ParseError(format!(
                 "parser could not split reveal-first-draw line family: '{}'",
@@ -4193,6 +4352,25 @@ fn try_push_reveal_first_draw_line(
             )));
         }
     }
+    // This family bypasses the ordinary line registry after splitting. It
+    // must attach the same typed trigger facts as every registered family,
+    // including all sentences of each linked trigger's effect body.
+    let mut dispatch = line_dispatch::LineDispatchResult {
+        lines: recognized_lines,
+        next_idx: 0,
+    };
+    line_dispatch::attach_compiler_trigger_facts(context, &mut dispatch)?;
+    for recognized in &mut dispatch.lines {
+        let RecognizedLine::Triggered(triggered) = recognized else { continue; };
+        let Some(ability) = triggered.info.semantic_facts.triggered_ability.compiler_ability.as_mut() else {
+            return Err(CardTextError::InvariantViolation("first-draw trigger has no compiler facts".into()));
+        };
+        let crate::model::ast::TriggerSpec::PlayerRevealsCard { from_source: true, first_draw_pair, .. } = &mut ability.event.semantics else {
+            return Err(CardTextError::ParseError("first-draw family contains an unrelated trigger".into()));
+        };
+        *first_draw_pair = Some(pair);
+    }
+    lines.extend(dispatch.lines);
     Ok(true)
 }
 
@@ -5520,6 +5698,44 @@ fn rewrite_line_normalized(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn source_enter_agreement_preserves_causative_copy_infinitives() {
+        for text in [
+            "You may have this creature enter as a copy of a creature you control.",
+            "If you attacked this turn, you may have this creature enter as a copy of any creature on the battlefield.",
+            "You may have this creature enter tapped as a copy of any creature on the battlefield.",
+        ] {
+            let mut tokens = super::lex_line(text, 0).unwrap();
+            let original = tokens.clone();
+            assert!(!super::normalize_named_source_enter_agreement_tokens(&mut tokens, "this creature"));
+            assert_eq!(tokens, original, "the infinitive and its exact source tokens survive");
+        }
+        let mut tokens = super::lex_line("This creature enter tapped.", 0).unwrap();
+        assert!(super::normalize_named_source_enter_agreement_tokens(&mut tokens, "this creature"));
+        assert_eq!(super::render_token_slice(&tokens), "This creature enters tapped.");
+    }
+
+    #[test]
+    fn named_copy_subject_keeps_enter_and_literal_name_exception() {
+        let card = super::CardBuilder::new(crate::ids::CardId::new(), "Chameleon, Master of Disguise")
+            .card_types(vec![crate::types::CardType::Creature]);
+        let text = "You may have Chameleon enter as a copy of a creature you control, except his name is Chameleon, Master of Disguise.";
+        let tokens = super::lex_line(text, 0).unwrap();
+        let rewritten = super::normalize_named_source_tokens_for_builder(&card, &tokens).unwrap();
+        let words = crate::lexer::parser_token_word_refs(&rewritten);
+        assert!(words.windows(5).any(|words| words == ["enter", "as", "a", "copy", "of"]));
+        assert!(!words.iter().any(|word| *word == "enters"));
+        let ability = crate::keyword_static::parse_enter_as_copy_as_enters_line(&rewritten)
+            .unwrap().unwrap();
+        let ironsmith_core::StaticAbilityPayload::EnterAsCopyAsEnters { spec, display } = ability.payload else {
+            panic!("entry-copy model");
+        };
+        assert_eq!(spec.name_override.as_deref(), Some("Chameleon, Master of Disguise"));
+        assert!(display.contains("enter as a copy"));
+        assert!(spec.may);
+        assert_eq!(spec.filter.controller, Some(crate::target::PlayerFilter::You));
+    }
+
+    #[test]
     fn quoted_gain_shortcut_does_not_claim_continuous_bundles() {
         for text in [
             "Enchanted creature gets +2/+2 and has \"Whenever this creature attacks, draw a card.\"",
@@ -5994,6 +6210,121 @@ mod tests {
         assert!(effect_text.contains("2—9"), "{effect_text}");
         assert!(effect_text.contains("10—20"), "{effect_text}");
 
+        Ok(())
+    }
+
+    #[test]
+    fn labeled_activation_owns_all_numeric_rows_and_preserves_next_ability()
+    -> Result<(), CardTextError> {
+        for label in ["Search the Room", "Circle of Death", "Unfamiliar Label"] {
+            let text = format!("{label} — {{5}}{{U}}: Roll a d20.\n1—9 | Draw a card.\n10—20 | You gain 2 life.\n{{T}}: Add {{U}}.");
+            let preprocessed = preprocess_document(
+                CardBuilder::new(CardId::new(), "Labeled die table").card_types(vec![CardType::Artifact]),
+                &text,
+            )?;
+            let recognized = super::recognize_document(&preprocessed, false)?;
+            let [super::RecognizedLine::Activated(table), super::RecognizedLine::Activated(next)] = recognized.lines.as_slice() else {
+                panic!("expected two separate activation envelopes: {:?}", recognized.lines);
+            };
+            let body = render_token_slice(&table.effect_parse_tokens);
+            assert!(body.contains("roll a d20") && body.contains("1—9") && body.contains("10—20"), "{body}");
+            assert!(!body.contains("add"), "{body}");
+            assert!(render_token_slice(&next.effect_parse_tokens).contains("add"));
+            assert!(table.presentation.is_some());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn all_resolving_envelopes_own_low_range_and_open_ended_rows()
+    -> Result<(), CardTextError> {
+        for head in [
+            "Roll a d20.",
+            "{2}: Roll a d20.",
+            "Fortune — {2}: Roll a d20.",
+            "When this artifact enters, roll a d20.",
+        ] {
+            let text = format!("{head}\n9 or less | Draw a card.\n10—19 | You gain 2 life.\n20+ | Draw two cards. You gain 3 life.\n{{T}}: Add {{U}}.");
+            let preprocessed = preprocess_document(
+                CardBuilder::new(CardId::new(), "Complete die envelopes").card_types(vec![CardType::Artifact]),
+                &text,
+            )?;
+            let recognized = super::recognize_document(&preprocessed, false)?;
+            let [table, super::RecognizedLine::Activated(next)] = recognized.lines.as_slice() else {
+                panic!("result table escaped its envelope: {:?}", recognized.lines);
+            };
+            let tokens = match table {
+                super::RecognizedLine::Statement(line) => &line.parse_tokens,
+                super::RecognizedLine::Activated(line) => &line.effect_parse_tokens,
+                super::RecognizedLine::Triggered(line) => &line.effect_parse_tokens,
+                other => panic!("unexpected result owner: {other:?}"),
+            };
+            let body = render_token_slice(tokens);
+            for fragment in ["roll a d20", "9 or less", "10—19", "20+", "gain 3 life"] {
+                assert!(body.contains(fragment), "{head}: {body}");
+            }
+            assert!(!body.contains("add"), "{body}");
+            assert!(render_token_slice(&next.effect_parse_tokens).contains("add"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn numeric_rows_require_a_die_owner_and_do_not_consume_station_striations()
+    -> Result<(), CardTextError> {
+        for head in ["", "Draw a card.\n", "{0}: Draw a card.\n", "When this artifact enters, draw a card.\n",
+            "Roll a d20. Draw a card.\n", "{0}: Roll a d20. Draw a card.\n",
+            "Fortune — {0}: Roll a d20. Draw a card.\n",
+            "When this artifact enters, roll a d20. Draw a card.\n",
+            "You may roll a d20.\n", "If you control a creature, roll a d20.\n"] {
+            for row in ["9 or less | Draw a card.", "15+ | Draw a card.", "15+ | Flying"] {
+                let preprocessed = preprocess_document(
+                    CardBuilder::new(CardId::new(), "Orphan numeric row").card_types(vec![CardType::Artifact]),
+                    &format!("{head}{row}"),
+                )?;
+                assert!(super::recognize_document(&preprocessed, false).is_err(), "{head}{row}");
+            }
+        }
+        // An ordinary activation immediately before a new striation cannot
+        // steal it as a result row just because N+ is now recognized.
+        let preprocessed = preprocess_document(
+            CardBuilder::new(CardId::new(), "Station ownership").card_types(vec![CardType::Artifact]),
+            "Station\n3+ | {T}: Add {U}.\n{1}: You gain 1 life.\n9+ | Flying",
+        )?;
+        let recognized = super::recognize_document(&preprocessed, false)?;
+        let [super::RecognizedLine::Activated(station), super::RecognizedLine::Activated(first), super::RecognizedLine::Activated(second), super::RecognizedLine::Static(last)] = recognized.lines.as_slice() else {
+            panic!("Station striations lost their separate owners: {:?}", recognized.lines);
+        };
+        assert!(station.chosen_option.is_none());
+        assert_eq!(first.chosen_option, Some(super::ChosenOptionContext::StationThreshold(3)));
+        assert_eq!(second.chosen_option, Some(super::ChosenOptionContext::StationThreshold(3)));
+        assert_eq!(last.chosen_option, Some(super::ChosenOptionContext::StationThreshold(9)));
+        Ok(())
+    }
+
+    #[test]
+    fn station_striation_is_not_consumed_by_any_preceding_die_ability_envelope()
+    -> Result<(), CardTextError> {
+        for head in ["{T}: Roll a d20.", "Fortune — {T}: Roll a d20.", "When this artifact enters, roll a d20."] {
+            let preprocessed = preprocess_document(
+                CardBuilder::new(CardId::new(), "Station with die ability").card_types(vec![CardType::Artifact]),
+                &format!("Station\n3+ | Flying\n{head}\n9+ | Vigilance"),
+            )?;
+            let recognized = super::recognize_document(&preprocessed, false)?;
+            assert_eq!(recognized.lines.len(), 4, "{head}: {:?}", recognized.lines);
+            let super::RecognizedLine::Static(last) = recognized.lines.last().unwrap() else {
+                panic!("9+ must retain its own static Station owner: {:?}", recognized.lines);
+            };
+            assert_eq!(last.chosen_option, Some(super::ChosenOptionContext::StationThreshold(9)));
+            let owner = &recognized.lines[2];
+            let (chosen_option, tokens) = match owner {
+                super::RecognizedLine::Activated(line) => (&line.chosen_option, &line.effect_parse_tokens),
+                super::RecognizedLine::Triggered(line) => (&line.chosen_option, &line.effect_parse_tokens),
+                other => panic!("die owner changed envelope: {other:?}"),
+            };
+            assert_eq!(*chosen_option, Some(super::ChosenOptionContext::StationThreshold(3)));
+            assert!(!render_token_slice(tokens).contains("vigilance"));
+        }
         Ok(())
     }
 

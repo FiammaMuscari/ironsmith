@@ -34,9 +34,13 @@ pub fn check_and_apply_sbas_with(
     if decision_maker.awaiting_choice() {
         return Ok(());
     }
+    let (resource_root, resource_meter) = game.begin_token_resource_scope();
     let checkpoint = game.clone();
     let queue_checkpoint = trigger_queue.clone();
-    let result = check_and_apply_sbas_with_inner(game, trigger_queue, decision_maker);
+    let mut result = check_and_apply_sbas_with_inner(game, trigger_queue, decision_maker);
+    if let Some(error) = game.token_resource_failure() {
+        result = Err(GameLoopError::ExecutionFailed(error));
+    }
     let pending = decision_maker.awaiting_choice();
     // Sector answers are an uncommitted choice continuation, not sector state.
     let pending_sectors = (pending && result.is_ok())
@@ -49,6 +53,7 @@ pub fn check_and_apply_sbas_with(
             game.set_pending_sector_designations(choices);
         }
     }
+    game.end_token_resource_scope(resource_root, &resource_meter);
     result
 }
 
@@ -69,7 +74,7 @@ fn check_and_apply_sbas_with_inner(
     // (or the rule-driven changes below) changes it: a permanent that is about
     // to be put into a graveyard still sees them (Chandra, Fire Artisan dealt
     // lethal combat damage still triggers on her removed loyalty counters).
-    drain_pending_trigger_events(game, trigger_queue);
+    try_drain_pending_trigger_events(game, trigger_queue)?;
     // Refresh continuous state (static ability effects and "can't" effect tracking)
     // before checking SBAs. This ensures the layer system is up to date.
     game.refresh_continuous_state();
@@ -88,11 +93,11 @@ fn check_and_apply_sbas_with_inner(
             game.refresh_continuous_state();
         }
         // CR 704.5t: remove dungeons whose last room ability has left the stack.
-        crate::effects::player::complete_finished_dungeons(game, trigger_queue);
+        crate::effects::player::complete_finished_dungeons(game, trigger_queue)?;
         // Events since the previous check (the transforms above, sector
         // choices, dungeon completion) are matched before this check's
         // actions are performed (CR 603.2).
-        drain_pending_trigger_events(game, trigger_queue);
+        try_drain_pending_trigger_events(game, trigger_queue)?;
         game.refresh_continuous_state();
         let view = crate::derived_view::DerivedGameView::from_refreshed_state(game);
         let context = StateBasedActionContext::from_trigger_queue(trigger_queue);
@@ -308,6 +313,25 @@ pub fn put_triggers_on_stack_with_dm(
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<(), GameLoopError> {
+    let (root, meter) = game.begin_token_resource_scope();
+    let checkpoint = game.clone();
+    let queue_checkpoint = trigger_queue.clone();
+    let mut result = put_triggers_on_stack_with_dm_inner(game, trigger_queue, decision_maker);
+    if let Some(error) = game.token_resource_failure() {
+        result = Err(GameLoopError::ExecutionFailed(error));
+    }
+    if result.is_err() {
+        game.restore_execution_checkpoint(checkpoint, false);
+        *trigger_queue = queue_checkpoint;
+    }
+    game.end_token_resource_scope(root, &meter);
+    result
+}
+fn put_triggers_on_stack_with_dm_inner(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
+) -> Result<(), GameLoopError> {
     game.refresh_continuous_state();
     let mut announced_counts = std::collections::HashMap::<
         (crate::ids::ObjectId, crate::triggers::TriggerIdentity),
@@ -403,10 +427,16 @@ fn resolve_pending_hidden_draw_reveals(
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
 ) -> bool {
+    // Enclosing setup must neither consume existing trigger offers nor finish
+    // deferred disclosures under a different observation policy.
+    if game.action_observations_suppressed() {
+        return false;
+    }
     // "Reveal the first card you draw each turn" reveals deferred from a
     // draw step come first: a card they open publicly no longer needs its own
     // Miracle question below.
-    while let Some(pending) = game.next_pending_hidden_automatic_draw_reveal() {
+    while let Some(deferred) = game.next_pending_hidden_automatic_draw_reveal() {
+        let pending = deferred.reveal;
         let revealed = if game.hidden_identity_is_private(pending.card) {
             let Some(revealed) = game.reveal_private_hidden_cards_publicly(
                 decision_maker,
@@ -419,6 +449,17 @@ fn resolve_pending_hidden_draw_reveals(
                 return true;
             };
             revealed.contains(&pending.card)
+        } else if pending.optional {
+            let candidate =
+                crate::effects::cards::automatic_draw_reveal_candidate_for_pending(game, &pending);
+            let accepted = decision_maker.decide_boolean(
+                game,
+                &crate::effects::cards::automatic_draw_reveal_boolean_context(&candidate),
+            );
+            if decision_maker.awaiting_choice() {
+                return true;
+            }
+            accepted
         } else {
             true
         };
@@ -426,25 +467,27 @@ fn resolve_pending_hidden_draw_reveals(
         if !revealed {
             continue;
         }
-        game.refresh_continuous_state();
+        if let Err(error) = game.refresh_continuous_state() {
+            game.record_token_resource_failure(
+                &crate::effects::ExecutionError::ContinuousDiscovery(error),
+            );
+            return true;
+        }
         let candidate =
             crate::effects::cards::automatic_draw_reveal_candidate_for_pending(game, &pending);
-        let provenance = game
-            .provenance_graph_mut()
-            .alloc_root_event(crate::events::EventKind::CardRevealed);
         let event = crate::effects::cards::emit_automatic_draw_reveal_event(
             game,
             decision_maker,
             &candidate,
-            provenance,
+            deferred.parent_provenance,
         );
-        game.record_turn_history_event(&event);
-        for trigger in crate::triggers::check_triggers(game, &event) {
-            trigger_queue.add(trigger);
+        if !deferred.observations_suppressed {
+            queue_triggers_from_event(game, trigger_queue, event, true);
         }
     }
 
-    while let Some((player, card)) = game.next_pending_hidden_draw_reveal() {
+    while let Some(pending) = game.next_pending_hidden_draw_reveal() {
+        let (player, card) = (pending.player, pending.card);
         // Already opened publicly by another owner-answered reveal of this
         // draw: re-check its draw triggers without asking again.
         let revealed = if game.hidden_identity_is_private(card) {
@@ -466,15 +509,8 @@ fn resolve_pending_hidden_draw_reveals(
         if !revealed {
             continue;
         }
-        let provenance = game
-            .provenance_graph_mut()
-            .alloc_root_event(crate::events::EventKind::CardsDrawn);
-        let event = TriggerEvent::new(
-            crate::events::other::CardsDrawnEvent::new(player, vec![card], true),
-            provenance,
-        );
         game.refresh_continuous_state();
-        for trigger in crate::triggers::check_triggers(game, &event) {
+        for trigger in crate::triggers::check_triggers(game, &pending.event) {
             // Every other source already saw the original draw event.
             if trigger.source == card {
                 trigger_queue.add(trigger);
@@ -1048,100 +1084,80 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
     decision_maker: &mut dyn DecisionMaker,
     entry: StackEntry,
 ) -> Result<(), GameLoopError> {
-    // Mirror stack-resolution context as closely as possible, but without using the stack.
-    let mut ctx = ExecutionContext::new(entry.object_id, entry.controller, decision_maker)
-        .with_optional_costs_paid(entry.optional_costs_paid.clone())
-        .with_cause(EventCause::from_effect(entry.object_id, entry.controller));
-    if let Some(x) = entry.x_value {
-        ctx = ctx.with_x(x);
+    resolve_triggered_stack_entry_immediately_with_outputs(
+        game,
+        trigger_queue,
+        decision_maker,
+        entry,
+    )
+    .map(|_| ())
+}
+
+fn resolve_triggered_stack_entry_immediately_with_outputs(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
+    entry: StackEntry,
+) -> Result<Vec<crate::effects::CompletedEffectOutputs>, GameLoopError> {
+    if entry.triggering_event.is_none()
+        && entry
+            .intervening_if
+            .as_ref()
+            .is_some_and(crate::condition_eval::condition_requires_retained_attack_event)
+    {
+        return Err(GameLoopError::ExecutionFailed(
+            crate::effects::ExecutionError::IncompleteEvidence(
+                "combat intervening-if has no retained triggering attack event".into(),
+            ),
+        ));
     }
-    if let Some(defending) = entry.defending_player {
-        ctx = ctx.with_defending_player(defending);
-    }
-    if let Some(triggering_event) = entry.triggering_event.clone() {
-        if let Some(attacked) =
-            triggering_event.downcast::<crate::events::combat::CreatureAttackedEvent>()
-        {
-            if let Some(attacker) = game.object(attacked.attacker) {
-                ctx = ctx.with_attacking_player(game.controller_of(attacker));
-            }
-        } else if let Some(attacked) =
-            triggering_event.downcast::<crate::events::combat::CreatureAttackedAndUnblockedEvent>()
-            && let Some(attacker) = game.object(attacked.attacker)
-        {
-            ctx = ctx.with_attacking_player(game.controller_of(attacker));
-        }
-    }
-    if entry.chosen_player.is_some() {
-        ctx = ctx.with_chosen_player(entry.chosen_player);
-    }
-    if let Some(triggering_event) = entry.triggering_event.clone() {
-        ctx = ctx.with_triggering_event(triggering_event);
-    }
-    if let Some(event_value_amount) = entry.event_value_amount {
-        ctx = ctx.with_event_value_amount(event_value_amount);
-    }
-    if let Some(trigger_identity) = entry.trigger_identity {
-        ctx = ctx.with_trigger_identity(trigger_identity);
-        ctx.do_this_limit = entry.intervening_if.as_ref().and_then(|condition| {
-            crate::effects::DoThisLimit::from_condition(
-                condition,
-                entry.object_id,
-                trigger_identity,
-            )
-        });
-    }
-    if let Some(source_snapshot) = entry.source_snapshot.clone() {
-        ctx = ctx.with_source_snapshot(source_snapshot);
-    }
-    if !entry.tagged_objects.is_empty() {
-        ctx = ctx.with_tagged_objects(entry.tagged_objects.clone());
-    }
-    if let Some(ref modes) = entry.chosen_modes {
-        ctx = ctx.with_chosen_modes(Some(modes.clone()));
-    }
-    apply_keyword_payment_tags_for_resolution(game, &entry, &mut ctx);
+
+    let mut ctx =
+        super::stack_resolution::stack_entry_execution_context(game, &entry, decision_maker)?;
 
     let (valid_targets, valid_target_assignments, all_targets_invalid) =
         validate_stack_entry_targets_with_context(game, &entry, Some(&ctx))?;
     if !entry.targets.is_empty() && all_targets_invalid {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     if let Some(trigger_identity) = entry.trigger_identity {
-        game.record_triggered_ability_resolved(entry.object_id, trigger_identity);
+        game.record_triggered_ability_resolved(ctx.source, trigger_identity);
     }
 
     if let Some(ref condition) = entry.intervening_if
         && let Some(ref triggering_event) = entry.triggering_event
-        && !verify_intervening_if(
+        && !crate::triggers::verify_intervening_if_at_resolution_checked(
             game,
             condition,
             entry.controller,
             triggering_event,
-            entry.object_id,
+            ctx.source,
             None,
             Some(&entry.optional_costs_paid),
         )
+        .map_err(GameLoopError::ExecutionFailed)?
     {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
-    ctx = ctx
-        .with_targets(valid_targets)
-        .with_target_assignments(valid_target_assignments.clone())
-        .with_announced_target_assignments(entry.target_assignments.clone());
-    ctx.snapshot_targets(game);
+    ctx = super::stack_resolution::bind_stack_entry_resolution_targets(
+        game,
+        &entry,
+        ctx,
+        valid_targets,
+        &valid_target_assignments,
+    )?;
 
     let effects = if let Some(ref ability_effects) = entry.ability_effects {
         ability_effects.clone()
     } else if let Some(obj) = game.object(entry.object_id) {
-        get_effects_for_stack_entry(game, &entry, obj)
+        get_effects_for_stack_entry(game, &entry, obj)?
     } else {
         crate::resolution::ResolutionProgram::default()
     };
 
-    let all_events = match super::stack_resolution::execute_resolution_program(
+    let completed = super::stack_resolution::execute_resolution_program_with_outputs_typed(
         game,
         &mut ctx,
         entry.controller,
@@ -1149,16 +1165,12 @@ pub(super) fn resolve_triggered_stack_entry_immediately(
         &effects,
         entry.chosen_modes.as_deref(),
         &valid_target_assignments,
-    ) {
-        Ok(events) => events,
-        Err(error) => return Err(error),
-    };
+    )
+    .map_err(GameLoopError::ExecutionFailed)?;
 
-    for event in all_events {
-        queue_triggers_from_event(game, trigger_queue, event, false);
-    }
-    drain_pending_trigger_events(game, trigger_queue);
-    Ok(())
+    queue_triggers_for_events(game, trigger_queue, completed.events)?;
+    try_drain_pending_trigger_events(game, trigger_queue)?;
+    Ok(completed.outputs)
 }
 
 /// Resolve immediate mana triggers for callers that keep their pending triggers
@@ -1168,13 +1180,7 @@ pub(crate) fn resolve_pending_mana_triggers(
     game: &mut GameState,
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<(), GameLoopError> {
-    let mut queue = TriggerQueue::default();
-    drain_pending_trigger_events(game, &mut queue);
-    let result = resolve_triggered_mana_abilities_with_dm(game, &mut queue, decision_maker);
-    game.effect_store
-        .pending_trigger_entries
-        .extend(queue.take_all());
-    result
+    resolve_pending_mana_triggers_with_outputs(game, decision_maker).map(|_| ())
 }
 
 pub(super) fn resolve_triggered_mana_abilities_with_dm(
@@ -1182,6 +1188,28 @@ pub(super) fn resolve_triggered_mana_abilities_with_dm(
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<(), GameLoopError> {
+    resolve_triggered_mana_abilities_with_outputs(game, trigger_queue, decision_maker).map(|_| ())
+}
+
+pub(crate) fn resolve_pending_mana_triggers_with_outputs(
+    game: &mut GameState,
+    decision_maker: &mut dyn DecisionMaker,
+) -> Result<Vec<crate::effects::CompletedEffectOutputs>, GameLoopError> {
+    let mut queue = TriggerQueue::default();
+    try_drain_pending_trigger_events(game, &mut queue)?;
+    let result = resolve_triggered_mana_abilities_with_outputs(game, &mut queue, decision_maker);
+    game.effect_store
+        .pending_trigger_entries
+        .extend(queue.take_all());
+    result
+}
+
+pub(super) fn resolve_triggered_mana_abilities_with_outputs(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
+) -> Result<Vec<crate::effects::CompletedEffectOutputs>, GameLoopError> {
+    let mut outputs = Vec::new();
     let mut mandatory_loop = super::mandatory_loop::MandatoryLoopTracker::default();
     loop {
         let mut pending = trigger_queue.take_all();
@@ -1230,12 +1258,12 @@ pub(super) fn resolve_triggered_mana_abilities_with_dm(
                     );
                 let queued_before_resolution = trigger_queue.entries.len();
                 game.record_trigger_fired(trigger.source, trigger.trigger_identity);
-                resolve_triggered_stack_entry_immediately(
+                outputs.extend(resolve_triggered_stack_entry_immediately_with_outputs(
                     game,
                     trigger_queue,
                     decision_maker,
                     entry,
-                )?;
+                )?);
                 let queued = trigger_queue
                     .entries
                     .iter()
@@ -1259,7 +1287,7 @@ pub(super) fn resolve_triggered_mana_abilities_with_dm(
         trigger_queue.entries.extend(remaining_triggers);
     }
 
-    Ok(())
+    Ok(outputs)
 }
 
 pub(super) fn can_stack_trigger_this_turn(
@@ -1571,6 +1599,7 @@ fn target_requirements_from_explicit_choices(
                 entry.source_snapshot.as_ref(),
                 tagged_objects_ref,
                 entry.defending_player,
+                entry.defending_player_reference,
                 attacking_player,
                 &view,
             );
@@ -1686,6 +1715,8 @@ fn refresh_trigger_program_target_requirements(
             ctx.event_value_amount = trigger.event_value_amount;
             ctx.tagged_objects = entry.tagged_objects.clone();
             ctx.x_value = entry.x_value;
+            ctx.combat.defending_player = entry.defending_player;
+            ctx.combat.defending_player_reference = entry.defending_player_reference;
             if let Ok(count) = crate::effects::helpers::resolve_value(game, &value, &ctx) {
                 let count = count.max(0) as usize;
                 requirement.min_targets = if requirement.spec.count().is_up_to_dynamic_x() {
@@ -1700,9 +1731,13 @@ fn refresh_trigger_program_target_requirements(
             &requirement.spec,
             entry.triggering_event.as_ref(),
         );
-        let mut ctx =
-            crate::effects::ExecutionContext::new_default(trigger.source, trigger.controller)
-                .with_triggering_event(trigger.triggering_event.clone());
+        let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = crate::effects::ExecutionContext::new(
+            trigger.source,
+            trigger.controller,
+            &mut decision_maker,
+        )
+        .with_triggering_event(trigger.triggering_event.clone());
         ctx.source_snapshot = entry.source_snapshot.clone();
         ctx.tagged_objects = entry.tagged_objects.clone();
         ctx.x_value = entry.x_value;
@@ -1710,6 +1745,7 @@ fn refresh_trigger_program_target_requirements(
         ctx.event_value_amount = entry.event_value_amount;
         ctx.iteration = entry.iteration;
         ctx.combat.defending_player = entry.defending_player;
+        ctx.combat.defending_player_reference = entry.defending_player_reference;
         ctx.combat.attacking_player = attacking_player;
         requirement.legal_targets =
             crate::targeting::compute_legal_targets_with_execution_context_and_view(
@@ -1737,10 +1773,20 @@ fn add_triggering_object_tag(
     >,
 ) {
     if let Some(object_id) = triggering_event.object_id()
-        && let Some(snapshot) = triggering_event.snapshot().cloned().or_else(|| {
-            game.object(object_id)
-                .map(|obj| ObjectSnapshot::from_object(obj, game))
-        })
+        && let Some(snapshot) = triggering_event
+            .snapshot()
+            .cloned()
+            .or_else(|| {
+                game.object(object_id)
+                    .map(|obj| ObjectSnapshot::from_object(obj, game))
+            })
+            .or_else(|| {
+                // State-based actions can remove a declared attacker before its
+                // trigger is stacked. The event still names that exact incarnation.
+                triggering_event
+                    .downcast::<crate::events::CreatureAttackedEvent>()
+                    .and_then(|_| game.source_departure_snapshot(object_id).cloned())
+            })
     {
         tagged_objects
             .entry(crate::tag::TagKey::from("__it__"))
@@ -1768,6 +1814,7 @@ fn resolve_trigger_target_chooser(
         .with_active_player(game.turn.active_player)
         .with_tagged_objects(&entry.tagged_objects);
     filter_ctx.defending_player = entry.defending_player;
+    filter_ctx.defending_player_reference = entry.defending_player_reference;
     filter_ctx.chosen_player = entry.chosen_player;
     filter_ctx.attacking_player = entry
         .triggering_event
@@ -2052,7 +2099,6 @@ pub(super) fn create_triggered_stack_entry_with_targets(
 
     let mut explicit_requirements =
         target_requirements_from_explicit_choices(game, trigger, &entry);
-    refresh_trigger_program_target_requirements(game, trigger, &entry, &mut explicit_requirements);
     let mut program_requirements = extract_target_requirements_from_program_with_modes(
         game,
         &trigger.ability.effects,
@@ -2060,6 +2106,36 @@ pub(super) fn create_triggered_stack_entry_with_targets(
         Some(trigger.source),
         entry.chosen_modes.as_deref(),
     );
+    let needs_defender = explicit_requirements
+        .iter()
+        .chain(&program_requirements)
+        .any(|requirement| {
+            requirement
+                .spec
+                .mentions_player_filter(&PlayerFilter::Defending)
+        });
+    if needs_defender
+        && matches!(
+            entry.defending_player_reference,
+            Some(crate::combat_state::DefendingPlayerReference::CombatOpponents { .. })
+        )
+    {
+        let reference = entry.defending_player_reference;
+        let mut ctx = ExecutionContext::new(entry.object_id, entry.controller, decision_maker);
+        ctx.combat.defending_player_reference = reference;
+        match ctx.bind_defending_player(game) {
+            Ok(true) => {
+                entry.defending_player = ctx.combat.defending_player;
+                entry.defending_player_reference = ctx.combat.defending_player_reference;
+            }
+            Ok(false) => return None,
+            Err(error) => {
+                game.record_token_resource_failure(&error);
+                return None;
+            }
+        }
+    }
+    refresh_trigger_program_target_requirements(game, trigger, &entry, &mut explicit_requirements);
     refresh_trigger_program_target_requirements(game, trigger, &entry, &mut program_requirements);
 
     // An announced division (damage or counters, CR 601.2d) belongs to the
@@ -2227,10 +2303,12 @@ pub(super) fn triggered_to_stack_entry_with_effects(
         .source_snapshot
         .clone()
         .or_else(|| {
-            game.object(trigger.source).map(|obj| {
-                ObjectSnapshot::from_object_with_calculated_characteristics_and_effects(
+            game.object(trigger.source).and_then(|obj| {
+                ObjectSnapshot::try_from_object_with_calculated_characteristics_and_effects(
                     obj, game, effects,
                 )
+                .inspect_err(|error| game.record_token_resource_failure(error))
+                .ok()
             })
         })
         .or_else(|| {
@@ -2246,10 +2324,7 @@ pub(super) fn triggered_to_stack_entry_with_effects(
             // stack (a planeswalker that loses its last loyalty counters to
             // damage, a watcher a later instruction destroyed): use its last
             // known information from the zone change that moved it.
-            game.turn_store
-                .turn_history
-                .departed_object_snapshot(trigger.source)
-                .cloned()
+            game.source_last_known_snapshot(trigger.source).cloned()
         });
 
     // Create an ability stack entry with the effects from the triggered ability
@@ -2262,11 +2337,19 @@ pub(super) fn triggered_to_stack_entry_with_effects(
     .with_source_info(trigger.source_stable_id, trigger.source_name.clone())
     .with_triggering_event(trigger.triggering_event.clone())
     .with_trigger_identity(trigger.trigger_identity);
+    entry.linked_exile_owner = trigger.linked_exile_owner.clone();
+    entry.source_number_owner = trigger.source_number_owner.clone();
     if let Some(event_value_amount) = trigger.event_value_amount {
         entry = entry.with_event_value_amount(event_value_amount);
     }
     if let Some(source_obj) = game.object(trigger.source) {
         entry = entry.with_optional_costs_paid(source_obj.optional_costs_paid.clone());
+    } else if let Some(snapshot) = source_snapshot
+        .as_ref()
+        .filter(|snapshot| snapshot.object_id == trigger.source)
+    {
+        // Retain the exact departed source's choices, never a later incarnation.
+        entry = entry.with_optional_costs_paid(snapshot.optional_costs_paid.clone());
     }
     entry = entry.with_chosen_player(game.chosen_player(trigger.source));
     if !trigger.tagged_objects.is_empty() {
@@ -2363,116 +2446,8 @@ pub(super) fn triggered_to_stack_entry_with_effects(
     }
 
     // Extract defending player from combat triggers
-    if trigger.triggering_event.kind() == EventKind::CreatureAttacked
-        && let Some(attacked) = trigger.triggering_event.downcast::<CreatureAttackedEvent>()
-    {
-        match attacked.target {
-            AttackEventTarget::Player(player_id) => {
-                entry = entry.with_defending_player(player_id);
-            }
-            AttackEventTarget::Planeswalker(planeswalker_id) => {
-                if let Some(planeswalker) = game.object(planeswalker_id) {
-                    entry = entry.with_defending_player(game.controller_of(planeswalker));
-                }
-            }
-            AttackEventTarget::Battle(battle_id) => {
-                if let Some(protector) = game.battle_protector(battle_id) {
-                    entry = entry.with_defending_player(protector);
-                }
-            }
-            // CR 506.4c / 508.5: it attacks nothing now; its defending player
-            // is the one it was attacking when declared.
-            AttackEventTarget::Nothing => {
-                if let Some(defending_player) = game.combat.as_ref().and_then(|combat| {
-                    crate::combat_state::defending_player_for_attacker(
-                        game,
-                        combat,
-                        attacked.attacker,
-                    )
-                }) {
-                    entry = entry.with_defending_player(defending_player);
-                }
-            }
-        }
-    }
-    if trigger.triggering_event.kind() == EventKind::CreatureAttackedAndUnblocked
-        && let Some(attacked) = trigger
-            .triggering_event
-            .downcast::<CreatureAttackedAndUnblockedEvent>()
-    {
-        match attacked.target {
-            AttackEventTarget::Player(player_id) => {
-                entry = entry.with_defending_player(player_id);
-            }
-            AttackEventTarget::Planeswalker(planeswalker_id) => {
-                if let Some(planeswalker) = game.object(planeswalker_id) {
-                    entry = entry.with_defending_player(game.controller_of(planeswalker));
-                }
-            }
-            AttackEventTarget::Battle(battle_id) => {
-                if let Some(protector) = game.battle_protector(battle_id) {
-                    entry = entry.with_defending_player(protector);
-                }
-            }
-            // CR 506.4c / 508.5: it attacks nothing now; its defending player
-            // is the one it was attacking when declared.
-            AttackEventTarget::Nothing => {
-                if let Some(defending_player) = game.combat.as_ref().and_then(|combat| {
-                    crate::combat_state::defending_player_for_attacker(
-                        game,
-                        combat,
-                        attacked.attacker,
-                    )
-                }) {
-                    entry = entry.with_defending_player(defending_player);
-                }
-            }
-        }
-    }
-    if trigger.triggering_event.kind() == EventKind::CreatureBecameBlocked
-        && let Some(blocked) = trigger
-            .triggering_event
-            .downcast::<CreatureBecameBlockedEvent>()
-        && let Some(target) = blocked.attack_target
-    {
-        match target {
-            AttackEventTarget::Player(player_id) => {
-                entry = entry.with_defending_player(player_id);
-            }
-            AttackEventTarget::Planeswalker(planeswalker_id) => {
-                if let Some(planeswalker) = game.object(planeswalker_id) {
-                    entry = entry.with_defending_player(game.controller_of(planeswalker));
-                }
-            }
-            AttackEventTarget::Battle(battle_id) => {
-                if let Some(protector) = game.battle_protector(battle_id) {
-                    entry = entry.with_defending_player(protector);
-                }
-            }
-            // CR 506.4c / 508.5: it attacks nothing now; its defending player
-            // is the one it was attacking when declared.
-            AttackEventTarget::Nothing => {
-                if let Some(defending_player) = game.combat.as_ref().and_then(|combat| {
-                    crate::combat_state::defending_player_for_attacker(
-                        game,
-                        combat,
-                        blocked.attacker,
-                    )
-                }) {
-                    entry = entry.with_defending_player(defending_player);
-                }
-            }
-        }
-    }
-    if trigger.triggering_event.kind() == EventKind::Damage
-        && let Some(damage) = trigger
-            .triggering_event
-            .downcast::<crate::events::DamageEvent>()
-        && damage.is_combat
-        && let Some(defending_player) = combat_damage_defending_player(game, damage)
-    {
-        entry = entry.with_defending_player(defending_player);
-    }
+    entry.defending_player_reference =
+        game.defending_reference_for_event(&trigger.triggering_event);
 
     if trigger.ability.trigger.saga_chapters().is_some() {
         entry = entry.with_chapter_ability_source(trigger.source);
@@ -2482,20 +2457,6 @@ pub(super) fn triggered_to_stack_entry_with_effects(
     }
 
     entry
-}
-
-fn combat_damage_defending_player(
-    game: &GameState,
-    damage: &crate::events::DamageEvent,
-) -> Option<PlayerId> {
-    match damage.target {
-        crate::events::DamageTarget::Player(player) => Some(player),
-        crate::events::DamageTarget::Object(_) => {
-            let combat = game.combat.as_ref()?;
-            let attack_target = get_attack_target(combat, damage.source)?;
-            crate::combat_state::defending_player_for_attack_target(game, attack_target)
-        }
-    }
 }
 
 #[cfg(test)]

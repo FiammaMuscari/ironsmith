@@ -12,15 +12,43 @@ use crate::filter::{FilterContext, ObjectFilterExt as _};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::rules::combat::{
-    can_attack_target, can_block, has_vigilance_with_game, maximum_blockers,
-    minimum_blockers_with_game,
+    can_attack_target, can_block, maximum_blockers, minimum_blockers_with_game,
 };
 use crate::static_abilities::StaticAbility;
 use crate::zone::Zone;
 
+/// Exact attacking tenure, retained in the native copy-on-write combat owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AttackingRoleId(pub(crate) usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DefendingPlayersId(pub(crate) usize);
+
+/// Current-or-last combat actor. None on an envelope means no inherited role;
+/// Missing is an explicit lack of required evidence, not an empty player set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefendingPlayerReference {
+    Selected(PlayerId),
+    KnownAbsent,
+    Attacker { attacker: ObjectId, role: AttackingRoleId },
+    CombatOpponents { attacking_player: PlayerId, defenders: DefendingPlayersId },
+    LegacyAttack { attacker: ObjectId, player: PlayerId },
+    Missing,
+}
+#[derive(Debug, Clone)]
+pub(crate) struct RetainedAttackingRole {
+    pub attacker: ObjectId,
+    pub last_defender: Option<PlayerId>,
+}
+
 /// Combat state tracking.
 #[derive(Debug, Clone, Default)]
 pub struct CombatState {
+    /// Direct-player declarations from the latest begun declare attackers
+    /// step in this combat. None is absent/uncommitted, Some(empty) is a
+    /// completed declaration with no directly attacked player. Retained after
+    /// that step ends; a "this step" consumer must require DeclareAttackers.
+    /// Reset at every new declaration-step entry, even in the same combat.
+    pub last_attack_declaration_step_players: Option<std::collections::BTreeSet<PlayerId>>,
     /// CR 509.1h: attackers are neither blocked nor unblocked until the whole
     /// declaration (including its costs) completes, even when no blockers exist.
     pub block_declaration_complete: bool,
@@ -52,6 +80,59 @@ pub struct AttackedPermanentTypes {
 }
 
 impl CombatState {
+    pub(crate) fn remove_combatant(&mut self, id: ObjectId) -> bool {
+        let was_participating = self
+            .attackers
+            .iter()
+            .any(|attacker| attacker.creature == id)
+            || self
+                .blockers
+                .values()
+                .any(|blockers| blockers.contains(&id));
+        self.remember_blocked_attackers();
+        self.attackers.retain(|attacker| attacker.creature != id);
+        self.blockers.remove(&id);
+        self.blocked_attackers.remove(&id);
+        self.damage_assignment_order.remove(&id);
+        self
+            .attacking_bands
+            .iter_mut()
+            .for_each(|band| band.retain(|member| *member != id));
+        self.attacking_bands.retain(|band| !band.is_empty());
+        self.had_to_attack_this_combat.remove(&id);
+        for blockers in self.blockers.values_mut() {
+            blockers.retain(|blocker| *blocker != id);
+        }
+        for order in self.damage_assignment_order.values_mut() {
+            order.retain(|object| *object != id);
+        }
+        was_participating
+    }
+    pub(crate) fn remove_attacked_permanent(&mut self, permanent: ObjectId,
+        planeswalker_defender: Option<PlayerId>, battle_defender: Option<PlayerId>) -> bool
+    {
+        if !self.attackers.iter().any(|info| info.target.attacked_permanent() == Some(permanent)) { return false; }
+        self.attacked_permanent_types.remove(&permanent);
+        for info in &mut self.attackers {
+            info.target = match info.target {
+                crate::combat_state::AttackTarget::Planeswalker(id) if id == permanent => {
+                    crate::combat_state::AttackTarget::Nothing {
+                        defending_player: planeswalker_defender,
+                        was_planeswalker: true,
+                    }
+                }
+                crate::combat_state::AttackTarget::Battle(id) if id == permanent => {
+                    crate::combat_state::AttackTarget::Nothing {
+                        defending_player: battle_defender,
+                        was_planeswalker: false,
+                    }
+                }
+                ref other => other.clone(),
+            };
+        }
+        true
+    }
+
     /// Record, for each planeswalker or battle that just began being
     /// attacked, the card types it has now (CR 506.4e). Already-recorded
     /// permanents keep their declaration-time types.
@@ -236,6 +317,8 @@ pub enum CombatError {
         blocker: ObjectId,
         attacker: ObjectId,
     },
+    /// The shared declaration procedure rejected the whole declaration.
+    InvalidDeclaration(String),
     /// Checked cost evaluation failed; this is not an illegal declaration.
     ExecutionFailed(crate::effects::ExecutionError),
 }
@@ -251,6 +334,7 @@ impl std::fmt::Display for CombatError {
         }
 
         match self {
+            CombatError::InvalidDeclaration(message) => write!(f, "Invalid declaration: {message}"),
             CombatError::ExecutionFailed(error) => write!(f, "Combat cost execution failed: {error}"),
             CombatError::CreatureCannotAttack(id) => {
                 write!(f, "Creature {} cannot attack", object_label(id))
@@ -384,6 +468,7 @@ pub fn new_combat() -> CombatState {
 
 /// Clears all combat state at end of combat.
 pub fn end_combat(combat: &mut CombatState) {
+    combat.last_attack_declaration_step_players = None;
     combat.block_declaration_complete = false;
     combat.attackers.clear();
     combat.blockers.clear();
@@ -457,23 +542,6 @@ pub(crate) fn max_creatures_can_attack_defending_player_each_combat(
         .min()
 }
 
-fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
-    use crate::mana::ManaSymbol;
-
-    if amount == 0 {
-        return crate::mana::ManaCost::new();
-    }
-
-    let mut pips = Vec::new();
-    let mut remaining = amount;
-    while remaining > 0 {
-        let chunk = remaining.min(u8::MAX as u32) as u8;
-        pips.push(vec![ManaSymbol::Generic(chunk)]);
-        remaining -= chunk as u32;
-    }
-    crate::mana::ManaCost::from_pips(pips)
-}
-
 /// Declares attackers for combat.
 ///
 /// This function validates all attackers and taps those without vigilance.
@@ -495,7 +563,6 @@ pub fn declare_attackers(
     let active_player = game.turn.active_player;
     let declared_attackers: Vec<ObjectId> = declarations.iter().map(|(id, _)| *id).collect();
     let all_effects = game.all_continuous_effects();
-    let mut additional_attack_mana_cost = 0u32;
 
     // First pass: validate all declarations
     let mut seen_attackers = std::collections::HashSet::new();
@@ -630,13 +697,6 @@ pub fn declare_attackers(
             {
                 return Err(CombatError::CreatureCannotAttack(*creature_id));
             }
-            if let Some(cost) = ability.generic_attack_mana_cost_for_source(
-                game,
-                creature.id,
-                game.controller_of(creature),
-            ) {
-                additional_attack_mana_cost = additional_attack_mana_cost.saturating_add(cost);
-            }
         }
     }
 
@@ -678,83 +738,31 @@ pub fn declare_attackers(
         }
     }
 
-    // Pay non-mana attacker costs from "can't attack unless ..." restrictions.
-    for (creature_id, _target) in &declarations {
-        let Some(creature) = game.object(*creature_id) else {
-            return Err(CombatError::NotOnBattlefield(*creature_id));
-        };
-        let creature_source = creature.id;
-        let creature_controller = game.controller_of(creature);
-        let abilities = game
-            .calculated_characteristics(creature_source)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                creature
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        crate::ability::AbilityKind::Static(static_ability) => {
-                            Some(static_ability.clone())
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            });
-        for ability in abilities {
-            if let Some(result) =
-                ability.pay_non_mana_attack_cost(game, creature_source, creature_controller)
-                && result.is_err()
-            {
-                return Err(CombatError::CreatureCannotAttack(*creature_id));
-            }
+    // The game-loop declaration owner stages taps before costs, freezes
+    // vigilance and attack requirements, restores failed payments, and owns
+    // attack history plus trigger qualification. This API retains its typed
+    // declaration diagnostics but must not own a second commit procedure.
+    let declarations = declarations
+        .into_iter()
+        .map(|(creature, target)| crate::decision::AttackerDeclaration { creature, target })
+        .collect::<Vec<_>>();
+    let mut trigger_queue = crate::triggers::TriggerQueue::new();
+    match crate::game_loop::apply_attacker_declarations(
+        game,
+        combat,
+        &mut trigger_queue,
+        &declarations,
+    ) {
+        Ok(()) => {
+            game.defer_trigger_entries(trigger_queue.take_all());
+            Ok(())
         }
+        Err(crate::game_loop::GameLoopError::CombatError(error)) => Err(error),
+        Err(crate::game_loop::GameLoopError::ExecutionFailed(error)) => {
+            Err(CombatError::ExecutionFailed(error))
+        }
+        Err(error) => Err(CombatError::InvalidDeclaration(error.to_string())),
     }
-
-    // Pay aggregated generic mana attacker costs after validation.
-    if additional_attack_mana_cost > 0
-        && let Some((first_attacker, _)) = declarations.first()
-    {
-        let mana_cost = generic_mana_cost(additional_attack_mana_cost);
-        if !game.can_pay_mana_cost(active_player, None, &mana_cost, 0)
-            || !game.try_pay_mana_cost(active_player, None, &mana_cost, 0)
-                .map_err(CombatError::ExecutionFailed)?
-        {
-            return Err(CombatError::CreatureCannotAttack(*first_attacker));
-        }
-    }
-
-    let had_to_attack: HashSet<ObjectId> = declarations
-        .iter()
-        .filter_map(|(creature_id, _)| {
-            let creature = game.object(*creature_id)?;
-            crate::rules::combat::must_attack_with_game(creature, game).then_some(*creature_id)
-        })
-        .collect();
-
-    // Second pass: apply declarations and tap attackers without vigilance
-    combat.block_declaration_complete = false;
-    for (creature_id, target) in declarations {
-        // Add to attackers list
-        combat.attackers.push(AttackerInfo {
-            creature: creature_id,
-            target,
-        });
-
-        // Initialize empty blocker list
-        combat.blockers.insert(creature_id, Vec::new());
-        if had_to_attack.contains(&creature_id) {
-            combat.had_to_attack_this_combat.insert(creature_id);
-        }
-
-        // Tap the creature unless it has vigilance
-        let creature = game.object(creature_id).unwrap();
-        if !has_vigilance_with_game(creature, game) {
-            game.tap(creature_id);
-        }
-    }
-    combat.record_attacked_permanent_types(game);
-
-    Ok(())
 }
 
 /// Declares blockers for combat.
@@ -1095,7 +1103,8 @@ fn game_may_have_must_block_requirements(
         })
     });
 
-    raw_ability_can_require_or_grant_blocking
+    !game.effect_store.cant_effects.must_block.is_empty()
+        || raw_ability_can_require_or_grant_blocking
         || effects
             .iter()
             .any(|effect| effect.modification.layer() == crate::continuous::Layer::Ability)
@@ -1132,7 +1141,8 @@ fn blocking_requirements(
                     .filter(|ability| {
                         ability.id() == crate::static_abilities::StaticAbilityId::MustBlock
                     })
-                    .count();
+                    .count()
+                    + game.effect_store.cant_effects.must_block.get(&blocker).copied().unwrap_or(0);
                 requirements.extend(std::iter::repeat_n(
                     BlockingRequirement::BlockerMustBlock(blocker),
                     requirement_count,

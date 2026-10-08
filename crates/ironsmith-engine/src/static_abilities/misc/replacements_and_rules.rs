@@ -231,6 +231,26 @@ impl DamageAmountReplacementMatcher {
         damage: &DamageEvent,
         ctx: &crate::events::context::EventContext<'_>,
     ) -> bool {
+        // "Enchanted creature" is the object currently attached to this
+        // replacement's source. An old damage snapshot may remember an Aura
+        // which has since moved; it cannot restore that obsolete relationship
+        // or substitute a new incarnation of the same creature.
+        // Singular source phrases compile to an identity tag, whereas some
+        // other attachment filters use the explicit inverse relation. Neither
+        // form may fall through to historical or intrinsic attachment evidence.
+        let requires_current_attachment = self.source_filter.tagged_constraints.iter().any(|constraint| {
+            matches!(constraint.tag.as_str(), "enchanted" | "equipped")
+                && constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+        }) || self.source_filter.with_attached_object.as_deref().is_some_and(|filter| filter.source);
+        if requires_current_attachment {
+            let attached = ctx.source.and_then(|source| ctx.game.object(source))
+                .filter(|source| source.zone == Zone::Battlefield && !ctx.game.is_phased_out(source.id))
+                .and_then(|source| source.attached_to)
+                .and_then(|target| target.object_id());
+            if attached != Some(damage.source) {
+                return false;
+            }
+        }
         // A resolved source target retains its exact identity rather than
         // requiring that object to remain in its old zone or combat role.
         if self.source_filter == ObjectFilter::specific(damage.source) { return true; }
@@ -256,19 +276,23 @@ impl DamageAmountReplacementMatcher {
             };
             return self.source_filter.matches(source, &filter_ctx, ctx.game);
         }
-        ctx.event_source_snapshot
+        let Some(snapshot) = ctx.event_source_snapshot
             .filter(|snapshot| snapshot.object_id == damage.source)
-            .is_some_and(|snapshot| {
-                let filter_ctx = if snapshot.zone == Zone::Stack {
-                    ctx.filter_ctx
-                        .clone()
-                        .with_caster(Some(snapshot.controller))
-                } else {
-                    ctx.filter_ctx.clone()
-                };
-                self.source_filter
-                    .matches_snapshot(snapshot, &filter_ctx, ctx.game)
-            })
+        else {
+            // A filtered replacement cannot treat absent source evidence as
+            // a known nonmatch. The checked execution scope rolls back the
+            // entire operation when this shared failure latch is set.
+            ctx.game.record_token_resource_failure(&crate::effects::ExecutionError::IncompleteEvidence(
+                "filtered damage replacement requires the exact live source or its last-known snapshot".into(),
+            ));
+            return false;
+        };
+        let filter_ctx = if snapshot.zone == Zone::Stack {
+            ctx.filter_ctx.clone().with_caster(Some(snapshot.controller))
+        } else {
+            ctx.filter_ctx.clone()
+        };
+        self.source_filter.matches_snapshot(snapshot, &filter_ctx, ctx.game)
     }
 
     fn target_matches(
@@ -365,9 +389,9 @@ impl ReplacementMatcher for DamageAmountReplacementMatcher {
         };
 
         self.condition_matches(ctx)
-            && self.source_matches(damage, ctx)
             && self.target_matches(damage, ctx)
             && self.amount_matches(damage, ctx)
+            && self.source_matches(damage, ctx)
     }
 
     fn priority(&self) -> ReplacementPriority {
@@ -390,7 +414,10 @@ impl StaticAbilityKind for ModifyDamageAmountReplacement {
         };
         let condition = super::super::describe_static_condition(condition);
         if let Some(rest) = condition.strip_prefix("as long as ")
-            && let Some(if_tail) = self.display.strip_prefix("If ")
+            && let Some(if_tail) = self
+                .display
+                .strip_prefix("If ")
+                .or_else(|| self.display.strip_prefix("if "))
         {
             return format!("As long as {rest}, if {if_tail}");
         }
@@ -4614,6 +4641,7 @@ impl StaticAbilityKind for UnsupportedParserLine {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreventMatchingDamage {
     pub spec: ironsmith_core::PreventMatchingDamageSpec,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl StaticAbilityKind for PreventMatchingDamage {
@@ -4622,7 +4650,23 @@ impl StaticAbilityKind for PreventMatchingDamage {
     }
 
     fn display(&self) -> String {
-        self.spec.display.clone()
+        // The static gate ("As long as this artifact is untapped") leads the
+        // printed prevention rule.
+        let Some(condition) = &self.condition else { return self.spec.display.clone() };
+        let condition = crate::static_abilities::continuous::describe_static_condition(condition);
+        let Some(gate) = condition.strip_prefix("as long as ") else {
+            return self.spec.display.clone();
+        };
+        format!("As long as {gate}, {}", self.spec.display)
+    }
+
+    fn with_static_condition(&self, condition: crate::ConditionExpr) -> Option<StaticAbility> {
+        let mut next = self.clone();
+        next.condition = Some(match next.condition.take() {
+            Some(old) => crate::ConditionExpr::And(Box::new(old), Box::new(condition)),
+            None => condition,
+        });
+        Some(StaticAbility::new(next))
     }
 
     fn generate_replacement_effect(
@@ -4637,7 +4681,7 @@ impl StaticAbilityKind for PreventMatchingDamage {
                 source_filter: self.spec.source_filter.clone(),
                 target_player_filter: self.spec.target_player_filter.clone(),
                 target_object_filter: self.spec.target_object_filter.clone(),
-                condition: None,
+                condition: self.condition.clone(),
                 combat_only: self.spec.combat_only,
                 noncombat_only: self.spec.noncombat_only,
                 amount_less_than: None,
@@ -4756,7 +4800,16 @@ pub struct RedirectMatchingDamage {
 }
 impl StaticAbilityKind for RedirectMatchingDamage {
     fn id(&self) -> StaticAbilityId { StaticAbilityId::RedirectMatchingDamage }
-    fn display(&self) -> String { self.spec.display.clone() }
+    fn display(&self) -> String {
+        // The static gate ("As long as this creature is untapped") is part of
+        // the printed ability, ahead of the redirection itself.
+        let Some(condition) = &self.condition else { return self.spec.display.clone() };
+        let condition = crate::static_abilities::continuous::describe_static_condition(condition);
+        let Some(gate) = condition.strip_prefix("as long as ") else {
+            return self.spec.display.clone();
+        };
+        format!("As long as {gate}, {}", self.spec.display)
+    }
     fn with_static_condition(&self, condition: crate::ConditionExpr) -> Option<StaticAbility> {
         let mut next = self.clone();
         next.condition = Some(match next.condition.take() {

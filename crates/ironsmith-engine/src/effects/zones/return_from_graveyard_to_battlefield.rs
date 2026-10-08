@@ -1,13 +1,12 @@
 //! Return from graveyard to battlefield effect implementation.
 
 use super::battlefield_entry::{
-    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_batch_with_options,
-    resolve_battlefield_entry_counters,
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, resolve_battlefield_entry_counters,
 };
 use crate::continuous::Modification;
 use crate::decisions::make_decision;
 use crate::decisions::specs::objects::ChooseObjectsSpec;
-use crate::effect::{EffectOutcome, OutcomeObjectMemory};
+use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_for_effect;
 use crate::effects::{ExecutionContext, ExecutionError};
@@ -138,103 +137,155 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::with_objects(Vec::new())); }
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let instruction = (|| -> Result<EffectOutcome, ExecutionError> {
-        if matches!(self.target.base(), ChooseSpec::Source)
-            && crate::effects::helpers::resolve_source_object_id(game, ctx).is_none()
-        {
-            return Ok(EffectOutcome::target_invalid());
-        }
-        let target_ids = match resolve_graveyard_return_targets(game, ctx, &self.target) {
-            Ok(selected) => selected,
-            Err(ExecutionError::InvalidTarget)
-                if !self.target.is_target()
-                    && matches!(self.target.base(), ChooseSpec::Object(_))
-                    && ctx.targets.iter().any(|target| matches!(target, crate::effects::ResolvedTarget::Object(_))) =>
-                return Ok(EffectOutcome::target_invalid()),
-            Err(error) => return Err(error),
-        };
-        if target_ids.is_empty() {
-            return Ok(EffectOutcome::target_invalid());
-        }
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-        let mut memories = Vec::new();
-        for target_id in &target_ids {
-            let obj = game
-                .object(*target_id)
-                .ok_or(ExecutionError::ObjectNotFound(*target_id))?;
-
-            // An ability that functions while its source is exiled ("return
-            // Cosima to the battlefield", granted to the exiled card) returns
-            // the source from exile; the source identity already proves it is
-            // the same object (CR 400.7).
-            let source_in_exile = matches!(self.target.base(), ChooseSpec::Source)
-                && obj.zone == Zone::Exile;
-            if obj.zone != Zone::Graveyard && !source_in_exile {
-                return Ok(EffectOutcome::target_invalid());
-            }
-            memories.push(OutcomeObjectMemory::from_snapshot(
-                &ObjectSnapshot::from_object(obj, game),
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::with_objects(Vec::new()),
             ));
         }
+        crate::effects::composition::execute_transaction(
+            game,
+            ctx,
+            || {
+                crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::with_objects(
+                    Vec::new(),
+                ))
+            },
+            |game, ctx| {
+                if matches!(self.target.base(), ChooseSpec::Source)
+                    && crate::effects::helpers::resolve_source_object_id(game, ctx).is_none()
+                {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::target_invalid(),
+                    ));
+                }
+                let target_ids = match resolve_graveyard_return_targets(game, ctx, &self.target) {
+                    Ok(selected) => selected,
+                    Err(ExecutionError::InvalidTarget)
+                        if !self.target.is_target()
+                            && matches!(self.target.base(), ChooseSpec::Object(_))
+                            && ctx.targets.iter().any(|target| {
+                                matches!(target, crate::effects::ResolvedTarget::Object(_))
+                            }) =>
+                    {
+                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            EffectOutcome::target_invalid(),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                };
+                if target_ids.is_empty() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::target_invalid(),
+                    ));
+                }
 
-        let attachment_target = if let Some(as_aura) = &self.as_aura {
-            match choose_aura_attachment_target(game, ctx, as_aura)? {
-                Some(target) => Some(target),
-                None => return Ok(EffectOutcome::target_invalid()),
-            }
-        } else {
-            None
-        };
+                let mut memories = Vec::new();
+                for target_id in &target_ids {
+                    let obj = game
+                        .object(*target_id)
+                        .ok_or(ExecutionError::ObjectNotFound(*target_id))?;
 
-        let requests = target_ids
-            .iter()
-            .map(|target_id| {
-                resolve_battlefield_entry_counters(
+                    // An ability that functions while its source is exiled ("return
+                    // Cosima to the battlefield", granted to the exiled card) returns
+                    // the source from exile; the source identity already proves it is
+                    // the same object (CR 400.7).
+                    let source_in_exile =
+                        matches!(self.target.base(), ChooseSpec::Source) && obj.zone == Zone::Exile;
+                    if obj.zone != Zone::Graveyard && !source_in_exile {
+                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            EffectOutcome::target_invalid(),
+                        ));
+                    }
+                    memories.push(Clone::clone(&ObjectSnapshot::from_object(obj, game)));
+                }
+
+                let attachment_target = if let Some(as_aura) = &self.as_aura {
+                    match choose_aura_attachment_target(game, ctx, as_aura)? {
+                        Some(target) => Some(target),
+                        None => {
+                            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                                EffectOutcome::target_invalid(),
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let requests = target_ids
+                    .iter()
+                    .map(|target_id| {
+                        resolve_battlefield_entry_counters(
+                            game,
+                            ctx,
+                            *target_id,
+                            &self.enters_with_counters,
+                        )
+                        .map(|initial_counters| {
+                            (
+                                *target_id,
+                                BattlefieldEntryOptions::preserve(self.tapped)
+                                    .with_initial_counters(initial_counters)
+                                    .with_entry_attachment(
+                                        attachment_target.map(AttachmentTarget::Object),
+                                    )
+                                    .with_entry_modifications(
+                                        self.as_aura
+                                            .as_ref()
+                                            .map(returned_aura_modifications)
+                                            .unwrap_or_default(),
+                                    ),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                super::execute_battlefield_entries_with_outputs(
                     game,
                     ctx,
-                    *target_id,
-                    &self.enters_with_counters,
+                    requests,
+                    false,
+                    |_, _, receipts| {
+                        let mut moved = Vec::new();
+                        let chosen_memory = memories.clone();
+                        let mut affected_memory = Vec::new();
+                        for (receipt, memory) in receipts.iter().zip(memories) {
+                            match &receipt.outcome {
+                                BattlefieldEntryOutcome::Moved(new_id) => {
+                                    moved.push(*new_id);
+                                    affected_memory.push(memory);
+                                }
+                                BattlefieldEntryOutcome::Redirected(change) => {
+                                    if !change.new_object_ids.is_empty() {
+                                        affected_memory.push(memory);
+                                    }
+                                    moved.extend(change.new_object_ids.iter().copied());
+                                }
+                                BattlefieldEntryOutcome::Prevented => {}
+                            }
+                        }
+                        Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            if moved.is_empty() {
+                                EffectOutcome::impossible()
+                            } else {
+                                EffectOutcome::with_objects(moved)
+                                    .with_affected_object_memory(affected_memory)
+                                    .with_chosen_object_memory(chosen_memory)
+                            },
+                        ))
+                    },
                 )
-                .map(|initial_counters| {
-                    (
-                        *target_id,
-                        BattlefieldEntryOptions::preserve(self.tapped)
-                            .with_initial_counters(initial_counters)
-                            .with_entry_attachment(attachment_target.map(AttachmentTarget::Object))
-                            .with_entry_modifications(
-                                self.as_aura
-                                    .as_ref()
-                                    .map(returned_aura_modifications)
-                                    .unwrap_or_default(),
-                            ),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let receipts = move_to_battlefield_batch_with_options(game, ctx, requests)?;
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::with_objects(Vec::new())); }
-        if receipts.len() != target_ids.len() {
-            return Err(ExecutionError::InternalError("graveyard return lost a battlefield entry receipt".into()));
-        }
-        let mut moved = Vec::new();
-        for receipt in &receipts {
-            match &receipt.outcome {
-                BattlefieldEntryOutcome::Moved(new_id) => moved.push(*new_id),
-                BattlefieldEntryOutcome::Redirected(change) => moved.extend(change.new_object_ids.iter().copied()),
-                BattlefieldEntryOutcome::Prevented => {}
-            }
-        }
-        let original = if moved.is_empty() { EffectOutcome::impossible() }
-            else { EffectOutcome::with_objects(moved).with_affected_object_memory(memories) };
-        super::battlefield_entry::finish_battlefield_entry_receipts(game, ctx, original, receipts)
-        })();
-        let pending = ctx.decision_maker.awaiting_choice();
-        if pending || instruction.is_err() { *game = checkpoint; context_checkpoint.restore(ctx); }
-        if pending { return instruction.map(|_| EffectOutcome::with_objects(Vec::new())); }
-        instruction
+                .map(|commit| commit.outcome)
+            },
+        )
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -642,6 +693,132 @@ mod tests {
         let effect = ReturnFromGraveyardToBattlefieldEffect::creature();
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("ReturnFromGraveyardToBattlefieldEffect"));
+    }
+
+    struct RandomOnly;
+    impl DecisionMaker for RandomOnly {
+        fn decide_objects(&mut self, _: &GameState, _: &SelectObjectsContext) -> Vec<ObjectId> {
+            panic!("random returns must not delegate object selection to a player");
+        }
+    }
+
+    fn random_return(count: crate::effect::ChoiceCount) -> ReturnFromGraveyardToBattlefieldEffect {
+        ReturnFromGraveyardToBattlefieldEffect::new(
+            ChooseSpec::Object(
+                crate::filter::ObjectFilter::creature()
+                    .in_zone(Zone::Graveyard)
+                    .owned_by(crate::target::PlayerFilter::You),
+            ).with_count(count.at_random()),
+            false,
+        )
+    }
+
+    #[test]
+    fn random_return_samples_without_replacement_and_clamps_empty_or_insufficient_pools() {
+        for dynamic in [false, true] {
+            for size in [0, 1, 4] {
+                let mut game = setup_game();
+                let alice = PlayerId(0);
+                let source = game.new_object_id();
+                for index in 0..size {
+                    create_creature_in_graveyard(&mut game, &format!("Eligible {index}"), alice);
+                }
+                let foreign = create_creature_in_graveyard(&mut game, "Foreign", PlayerId(1));
+                let before = game.irreversible_random_count();
+                let count = if dynamic { crate::effect::ChoiceCount::dynamic_x() }
+                    else { crate::effect::ChoiceCount::exactly(2) };
+                let mut dm = RandomOnly;
+                let mut ctx = ExecutionContext::new(source, alice, &mut dm).with_x(2);
+                let outcome = random_return(count).execute(&mut game, &mut ctx).unwrap();
+                assert_eq!(game.battlefield.len(), size.min(2));
+                assert_eq!(game.players[0].graveyard.len(), size.saturating_sub(2));
+                assert_eq!(game.object(foreign).unwrap().zone, Zone::Graveyard);
+                assert_eq!(game.irreversible_random_count(), before + u64::from(size > 0));
+                if size > 0 {
+                    let crate::effect::OutcomeValue::Objects(ids) = outcome.value else {
+                        panic!("expected successful return identities");
+                    };
+                    assert_eq!(ids.len(), size.min(2));
+                    assert_eq!(ids.iter().copied().collect::<std::collections::HashSet<_>>().len(), ids.len());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn random_return_rolls_back_random_authority_and_objects_on_later_value_error() {
+        let mut game = setup_game();
+        let alice = PlayerId(0);
+        let source = game.new_object_id();
+        let original = create_creature_in_graveyard(&mut game, "Eligible", alice);
+        game.queue_transcript_random_seeds([9876]);
+        let before_seed = game.random_seed();
+        let before_count = game.irreversible_random_count();
+        let before_ids = game.next_object_id_counter();
+        let effect = random_return(crate::effect::ChoiceCount::exactly(1))
+            .with_entry_counter(ironsmith_core::BattlefieldEntryCounterSpec::new(
+                crate::CounterType::PlusOnePlusOne,
+                crate::effect::Value::X,
+                ironsmith_core::BattlefieldEntryCounterSurface::Inline,
+            ));
+        let mut dm = RandomOnly;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        assert!(matches!(effect.execute(&mut game, &mut ctx), Err(ExecutionError::UnresolvableValue(_))));
+        assert_eq!(game.random_seed(), before_seed);
+        assert_eq!(game.irreversible_random_count(), before_count);
+        assert_eq!(game.next_object_id_counter(), before_ids);
+        assert_eq!(game.object(original).unwrap().zone, Zone::Graveyard);
+        assert!(game.battlefield.is_empty());
+        // A retry consumes the same queued authority, after supplying X.
+        ctx.x_value = Some(3);
+        let outcome = effect.execute(&mut game, &mut ctx).unwrap();
+        let crate::effect::OutcomeValue::Objects(ids) = outcome.value else { panic!("expected return") };
+        assert_eq!(game.random_seed(), 9876);
+        assert_eq!(game.irreversible_random_count(), before_count + 1);
+        assert_eq!(game.counter_count(ids[0], crate::CounterType::PlusOnePlusOne), 3);
+    }
+
+    #[test]
+    fn random_return_pending_entry_choice_does_not_commit_the_draw_or_move() {
+        struct PauseColor { pending: bool, pause: bool }
+        impl DecisionMaker for PauseColor {
+            fn decide_colors(&mut self, _: &GameState, _: &crate::decisions::context::ColorsContext) -> Vec<crate::color::Color> {
+                self.pending = self.pause;
+                vec![crate::color::Color::Blue]
+            }
+            fn awaiting_choice(&self) -> bool { self.pending }
+        }
+        let mut game = setup_game();
+        let alice = PlayerId(0);
+        let source = game.new_object_id();
+        let original = create_creature_in_graveyard(&mut game, "Color entrant", alice);
+        game.object_mut(original).unwrap().abilities_mut().push(crate::ability::Ability::static_ability(
+            crate::static_abilities::StaticAbility::choose_color_as_enters(None, "As this enters, choose a color.".into()),
+        ));
+        game.queue_transcript_random_seeds([4567]);
+        let before_ids = game.next_object_id_counter();
+        let before_seed = game.random_seed();
+        let before_count = game.irreversible_random_count();
+        let mut dm = PauseColor { pending: false, pause: true };
+        let effect = random_return(crate::effect::ChoiceCount::exactly(1));
+        {
+            let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+            effect.execute(&mut game, &mut ctx).unwrap();
+        }
+        assert!(dm.pending);
+        assert_eq!(game.object(original).unwrap().zone, Zone::Graveyard);
+        assert!(game.battlefield.is_empty());
+        assert_eq!(game.next_object_id_counter(), before_ids);
+        assert_eq!(game.random_seed(), before_seed);
+        assert_eq!(game.irreversible_random_count(), before_count);
+        dm.pending = false;
+        dm.pause = false;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        let outcome = effect.execute(&mut game, &mut ctx).unwrap();
+        let crate::effect::OutcomeValue::Objects(ids) = outcome.value else { panic!("expected return") };
+        assert_eq!(game.chosen_color(ids[0]), Some(crate::color::Color::Blue));
+        assert_eq!(game.random_seed(), 4567);
+        assert_eq!(game.irreversible_random_count(), before_count + 1);
     }
 
     #[test]

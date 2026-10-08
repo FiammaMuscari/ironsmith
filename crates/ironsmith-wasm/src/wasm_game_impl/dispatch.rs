@@ -2,6 +2,7 @@
 #[serde(rename_all = "camelCase")]
 struct HiddenCardMetadata {
     object_id: u64,
+    incarnation: Option<u64>,
     owner: u8,
     zone: String,
     slot: u16,
@@ -12,12 +13,41 @@ struct HiddenCardMetadata {
     origin_commitment: String,
 }
 
+// Both damage steps share Step::CombatDamage in the engine. Preserve that
+// protocol field while exposing the runner's distinction to priority-stop UI.
+fn combat_damage_step_for_runner(runner: Option<&ironsmith::turn_runner::TurnRunner>) -> Option<&'static str> {
+    use ironsmith::turn_runner::TurnState;
+    match runner?.state() {
+        TurnState::CombatDamageFirstStrike | TurnState::CombatDamageFirstStrikeAssign
+        | TurnState::CombatDamageFirstStrikeSbas | TurnState::CombatDamageFirstStrikePriority => Some("first_strike"),
+        TurnState::CombatDamageRegular | TurnState::CombatDamageRegularAssign
+        | TurnState::CombatDamageRegularSbas | TurnState::CombatDamageRegularPriority => Some("regular"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn combat_damage_snapshot_distinguishes_both_priority_windows() {
+    use ironsmith::turn_runner::{TurnRunner, TurnState};
+    for (state, expected) in [
+        (TurnState::CombatDamageFirstStrikePriority, Some("first_strike")),
+        (TurnState::CombatDamageRegularPriority, Some("regular")),
+        (TurnState::EndCombatPriority, None),
+    ] {
+        let runner = TurnRunner::from_state_for_sync(state);
+        assert_eq!(combat_damage_step_for_runner(Some(&runner)), expected);
+    }
+    assert_eq!(combat_damage_step_for_runner(None), None);
+}
+
 impl WasmGame {
     fn hidden_metadata_for_committed_object(&self, id: ObjectId) -> Option<HiddenCardMetadata> {
         let object = self.game.object(id)?;
         let info = self.game.hidden_card_info(id)?;
         Some(HiddenCardMetadata {
             object_id: id.0,
+            incarnation: info.incarnation,
             owner: info.owner.0,
             zone: sync_zone_name(object.zone).to_string(),
             slot: info.slot,
@@ -204,7 +234,8 @@ impl WasmGame {
                 .map_err(ForceFaceUpError::Execution)?;
             if dm.awaiting_choice() { return Err(ForceFaceUpError::PendingChoice); }
             if outcome.as_count() != Some(1) { return Err(ForceFaceUpError::NotTurnedFaceUp); }
-            ironsmith::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+            ironsmith::game_loop::try_drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue)
+                .map_err(ForceFaceUpError::Execution)?;
             ironsmith::put_triggers_on_stack(&mut self.game, &mut self.trigger_queue)
                 .map_err(|error| ForceFaceUpError::TriggerStack(format!("{error:?}")))?;
             Ok(())
@@ -237,7 +268,6 @@ impl WasmGame {
         let snapshot_id = self.snapshot_serial;
         let battlefield_transitions =
             battlefield_transition_snapshots(self.game.take_ui_battlefield_transitions());
-        let disclosure_view = self.payment_disclosure_view();
         let mut snap = GameSnapshot::from_game_with_object_view_cache_during_action(
             self.pending_decision_game.as_deref().unwrap_or(&self.game),
             self.perspective,
@@ -254,9 +284,8 @@ impl WasmGame {
             &self.snapshot_object_view_cache,
             self.static_library_top_visibility_window(),
         );
-        if let Some(view) = disclosure_view.as_ref() {
-            snap.include_payment_disclosure(self.pending_decision_game.as_deref().unwrap_or(&self.game), view, &self.snapshot_object_view_cache);
-        }
+        self.include_payment_disclosure_views(&mut snap);
+        snap.combat_damage_step = combat_damage_step_for_runner(self.runner.as_ref());
         snap.crypto_requirements = self.last_crypto_requirements.clone();
         insert_pending_stack_object_snapshots(&mut snap, self.pending_trigger_stack_objects());
         serde_json::to_string_pretty(&snap)
@@ -899,6 +928,7 @@ mod dispatch_tests {
     #[test]
     fn position_reveal_preserves_existing_public_hidden_identity() {
         let info = ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
             owner: ironsmith::ids::PlayerId::from_index(0),
             zone: ironsmith::zone::Zone::Hand,
             slot: 10,
@@ -919,6 +949,7 @@ mod dispatch_tests {
     #[test]
     fn position_reveal_sets_public_identity_when_none_exists() {
         let info = ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
             owner: ironsmith::ids::PlayerId::from_index(0),
             zone: ironsmith::zone::Zone::Hand,
             slot: 10,
@@ -945,6 +976,7 @@ mod dispatch_tests {
             (
                 original_slot_object,
                 ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
                     owner,
                     zone: ironsmith::zone::Zone::Hand,
                     slot: 13,
@@ -958,6 +990,7 @@ mod dispatch_tests {
             (
                 position_object,
                 ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
                     owner,
                     zone: ironsmith::zone::Zone::Library,
                     slot: 6,
@@ -1067,6 +1100,7 @@ impl WasmGame {
             self.game.turn.active_player,
             self.game.turn.phase,
             self.game.turn.step,
+            combat_damage_step_for_runner(self.runner.as_ref()),
             self.game.object_ids_in_deterministic_order().len(),
             self.game.stack.len(),
         ))
@@ -1095,6 +1129,19 @@ impl WasmGame {
             cancelable,
             undo_land_stable_id,
         }
+    }
+
+    fn preview_typed_crypto_requirements(&mut self, command: UiCommand) -> Result<Vec<CryptoRequirementView>, JsValue> {
+        // Exchange an exact local branch so speculative dispatch cannot disturb
+        // live continuations, audit state, IDs, analysis jobs or rendering caches.
+        let mut live = RuntimeSavepoint::capture(self);
+        live.exchange(self);
+        let previous_policy = std::mem::replace(&mut self.previewing_crypto_requirements, true);
+        let result = self.dispatch_typed_command(command, 0.0)
+            .map(|_| self.last_crypto_requirements.clone());
+        self.previewing_crypto_requirements = previous_policy;
+        live.exchange(self);
+        result
     }
 
     fn finish_dispatch_with_snapshot(
@@ -1167,7 +1214,11 @@ impl WasmGame {
                 *cache = Some((inventory_key, mana_activation_option_views(&self.game, &inventory_request)?));
             }
         }
-        let manual = if self.defer_mana_options { Vec::new() } else { manual_mana_ability_views(&self.game, &context.request)? };
+        let manual = if self.defer_mana_options {
+            immediate_manual_mana_ability_views(&self.game, &context.request)?
+        } else {
+            manual_mana_ability_views(&self.game, &context.request)?
+        };
         let options = if self.defer_mana_options { &[][..] } else { &cache.as_ref().unwrap().1[..] };
         // A cost/effect decision inside a manual mana activation temporarily owns
         // the payment UI. Only reuse the parent's provisional view when it matches.
@@ -1348,7 +1399,8 @@ impl WasmGame {
         // decision while priority_state still holds the staged action, so the
         // chain's remaining decision commands (synced from the actor) would no
         // longer match the pending decision and the peer would flag a cheat.
-        let mid_action_chain = self.priority_state.pending_activation.is_some()
+        let mid_action_chain = self.priority_state.has_opened_exile_play_receipt()
+            || self.priority_state.pending_activation.is_some()
             || self.priority_state.pending_cast.is_some()
             || self.pending_live_continuation.is_some();
         let recompute_decision = recompute_decision && !mid_action_chain;
@@ -1426,62 +1478,12 @@ impl WasmGame {
             .collect()
     }
 
-    /// Construct a demo game with two players.
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
+    // Keep runtime construction independent of catalog loading so native
+    // scenarios can supply just the definitions they exercise.
+    fn new_with_registry(registry: CardRegistry) -> Self {
         let priority_state = PriorityLoopState::new(2);
-        // Source-enabled hosts retain the builtin dungeon catalog, baked at
-        // build time so fresh worker creation does not invoke the compiler.
-        #[cfg(feature = "dynamic-compile")]
-        if let Err(error) = Self::register_baked_builtin_dungeons() {
-            eprintln!("[ironsmith] builtin dungeon artifacts failed to load: {error}");
-        }
-        #[cfg(test)]
-        let registry = {
-            static FIXTURE_REGISTRY: std::sync::OnceLock<CardRegistry> =
-                std::sync::OnceLock::new();
-            FIXTURE_REGISTRY
-                .get_or_init(|| {
-                    let mut registry = CardRegistry::new();
-                    ironsmith_registry_test::cards::register_builtin_handwritten_cards_if(
-                        &mut registry,
-                        |constructor| {
-                            matches!(
-                                constructor,
-                                "basic_forest"
-                                    | "basic_island"
-                                    | "basic_mountain"
-                                    | "basic_plains"
-                                    | "basic_swamp"
-                                    | "black_lotus"
-                                    | "blood_artist"
-                                    | "breaking"
-                                    | "command_tower"
-                                    | "culling_the_weak"
-                                    | "emrakul_the_promised_end"
-                                    | "entering"
-                                    | "gemstone_caverns"
-                                    | "grizzly_bears"
-                                    | "lightning_bolt"
-                                    | "ornithopter"
-                                    | "phyrexian_tower"
-                                    | "polluted_delta"
-                                    | "serum_powder"
-                                    | "sol_ring"
-                                    | "stoke_the_flames"
-                                    | "tainted_pact"
-                                    | "urzas_saga"
-                                    | "yawgmoth_thran_physician"
-                            )
-                        },
-                    );
-                    registry
-                })
-                .clone()
-        };
-        #[cfg(not(test))]
-        let registry = CardRegistry::new();
         Self {
+            previewing_crypto_requirements: false,
             runtime_identity_origin_available: true,
             game: GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20),
             registry,
@@ -1546,6 +1548,63 @@ impl WasmGame {
             defer_mana_options: false,
             mana_activation_inventory_cache: Default::default(),
         }
+    }
+
+    /// Construct a demo game with two players.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        // Source-enabled hosts retain the builtin dungeon catalog, baked at
+        // build time so fresh worker creation does not invoke the compiler.
+        #[cfg(feature = "dynamic-compile")]
+        if let Err(error) = Self::register_baked_builtin_dungeons() {
+            eprintln!("[ironsmith] builtin dungeon artifacts failed to load: {error}");
+        }
+        #[cfg(test)]
+        let registry = {
+            static FIXTURE_REGISTRY: std::sync::OnceLock<CardRegistry> =
+                std::sync::OnceLock::new();
+            FIXTURE_REGISTRY
+                .get_or_init(|| {
+                    let mut registry = CardRegistry::new();
+                    ironsmith_registry_test::cards::register_builtin_handwritten_cards_if(
+                        &mut registry,
+                        |constructor| {
+                            matches!(
+                                constructor,
+                                "basic_forest"
+                                    | "basic_island"
+                                    | "basic_mountain"
+                                    | "basic_plains"
+                                    | "basic_swamp"
+                                    | "black_lotus"
+                                    | "blood_artist"
+                                    | "breaking"
+                                    | "command_tower"
+                                    | "culling_the_weak"
+                                    | "emrakul_the_promised_end"
+                                    | "entering"
+                                    | "gemstone_caverns"
+                                    | "grizzly_bears"
+                                    | "lightning_bolt"
+                                    | "ornithopter"
+                                    | "phyrexian_tower"
+                                    | "polluted_delta"
+                                    | "serum_powder"
+                                    | "sol_ring"
+                                    | "stoke_the_flames"
+                                    | "tainted_pact"
+                                    | "urzas_saga"
+                                    | "yawgmoth_thran_physician"
+                            )
+                        },
+                    );
+                    registry
+                })
+                .clone()
+        };
+        #[cfg(not(test))]
+        let registry = CardRegistry::new();
+        Self::new_with_registry(registry)
     }
 
     #[wasm_bindgen(js_name = setAutoChooseSingleObjectDecisions)]
@@ -2604,6 +2663,7 @@ impl WasmGame {
             input.position_commitment.as_deref(),
         );
         let updated_info = ironsmith::game_state::HiddenCardInfo {
+            incarnation: info.incarnation,
             owner,
             zone,
             slot: input.original_slot,
@@ -3002,68 +3062,16 @@ impl WasmGame {
 
     #[wasm_bindgen(js_name = previewCryptoRequirements)]
     pub fn preview_crypto_requirements(&mut self, command: JsValue) -> Result<JsValue, JsValue> {
+        let typed: UiCommand = serde_wasm_bindgen::from_value(command)
+            .map_err(|error| payment_disclosure_error(&format!("invalid preview command: {error}")))?;
+        if let Some(requirements) = self.blind_exile_opening_requirements(&typed)? {
+            // This action opens before any face-dependent proposal. Dispatching
+            // a placeholder to discover its requirements would be circular.
+            return serde_wasm_bindgen::to_value(&requirements)
+                .map_err(|error| payment_disclosure_error(&error.to_string()));
+        }
         let crypto_before = self.capture_crypto_audit_state();
-        let checkpoint = self.capture_replay_checkpoint();
-        let pregame = self.pregame.clone();
-        let pending_decision = self.pending_decision.clone();
-        let pending_replay_action = self.pending_replay_action.clone();
-        let pending_action_checkpoint = self.pending_action_checkpoint.clone();
-        let pending_live_action_root = self.pending_live_action_root.clone();
-        let payment_disclosure = self.payment_disclosure.clone();
-        let payment_disclosure_generation = self.payment_disclosure_generation;
-        let priority_epoch_undo_locked_by_disclosure = self.priority_epoch_undo_locked_by_disclosure;
-        let pending_live_continuation = self.pending_live_continuation.clone();
-        let runner = self.runner.clone();
-        let runner_awaiting_priority = self.runner_awaiting_priority;
-        let runner_pending_decision = self.runner_pending_decision;
-        let priority_epoch_checkpoint = self.priority_epoch_checkpoint.clone();
-        let priority_epoch_has_undoable_action = self.priority_epoch_has_undoable_action;
-        let priority_epoch_undo_locked_by_mana = self.priority_epoch_undo_locked_by_mana;
-        let priority_epoch_undo_land_stable_id = self.priority_epoch_undo_land_stable_id;
-        let active_viewed_cards = self.active_viewed_cards.clone();
-        let pending_decision_game = self.pending_decision_game.clone();
-        let active_audit_viewed_cards = self.active_audit_viewed_cards.clone();
-        let active_resolving_stack_object = self.active_resolving_stack_object.clone();
-        let snapshot_serial = self.snapshot_serial;
-        let last_snapshot_perf = self.last_snapshot_perf.clone();
-        let last_replay_execution_perf = self.last_replay_execution_perf.clone();
-        let last_advance_until_decision_perf = self.last_advance_until_decision_perf.clone();
-        let last_dispatch_perf = self.last_dispatch_perf.clone();
-
-        let preview_result = self.dispatch(command);
-        let requirements = match preview_result {
-            Ok(_) => Ok(self.last_crypto_requirements.clone()),
-            Err(err) => Err(err),
-        };
-
-        self.restore_replay_checkpoint(&checkpoint);
-        self.pregame = pregame;
-        self.pending_decision = pending_decision;
-        self.pending_replay_action = pending_replay_action;
-        self.pending_action_checkpoint = pending_action_checkpoint;
-        self.pending_live_action_root = pending_live_action_root;
-        self.payment_disclosure = payment_disclosure;
-        self.payment_disclosure_generation = payment_disclosure_generation;
-        self.priority_epoch_undo_locked_by_disclosure = priority_epoch_undo_locked_by_disclosure;
-        self.pending_live_continuation = pending_live_continuation;
-        self.runner = runner;
-        self.runner_awaiting_priority = runner_awaiting_priority;
-        self.runner_pending_decision = runner_pending_decision;
-        self.priority_epoch_checkpoint = priority_epoch_checkpoint;
-        self.priority_epoch_has_undoable_action = priority_epoch_has_undoable_action;
-        self.priority_epoch_undo_locked_by_mana = priority_epoch_undo_locked_by_mana;
-        self.priority_epoch_undo_land_stable_id = priority_epoch_undo_land_stable_id;
-        self.active_viewed_cards = active_viewed_cards;
-        self.pending_decision_game = pending_decision_game;
-        self.active_audit_viewed_cards = active_audit_viewed_cards;
-        self.active_resolving_stack_object = active_resolving_stack_object;
-        self.snapshot_serial = snapshot_serial;
-        self.last_snapshot_perf = last_snapshot_perf;
-        self.last_replay_execution_perf = last_replay_execution_perf;
-        self.last_advance_until_decision_perf = last_advance_until_decision_perf;
-        self.last_dispatch_perf = last_dispatch_perf;
-
-        let mut requirements = requirements?;
+        let mut requirements = self.preview_typed_crypto_requirements(typed)?;
         prepare_preview_public_move_openings(&mut requirements, &crypto_before);
         for requirement in &mut requirements {
             if requirement.requirement_type == "public_open" && requirement.from.is_some()
@@ -3333,6 +3341,7 @@ impl WasmGame {
                     self.game.set_hidden_card_info(
                         object_id,
                         ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
                             owner,
                             zone,
                             slot: position as u16,
@@ -3374,6 +3383,7 @@ impl WasmGame {
             self.game.set_hidden_card_info(
                 object_id,
                 ironsmith::game_state::HiddenCardInfo {
+                incarnation: Some(0),
                     owner,
                     zone,
                     origin_slot: None,
@@ -3482,6 +3492,18 @@ impl WasmGame {
         if let Some(error) = self.game.verified_hidden_library_epoch_error() {
             return Err(JsValue::from_str(&error));
         }
+        // A crypto preview needs the audit delta, not card views, menus, payment
+        // suggestions, transition consumption or JS encoding.
+        if self.previewing_crypto_requirements {
+            // Continuous permissions can introduce visibility requirements.
+            // Keep that rules boundary even when no display is requested.
+            self.prepare_snapshot_continuous_state()
+                .map_err(|error| payment_disclosure_error(&format!("crypto preview refresh failed: {error}")))?;
+            if let Some(before) = self.pending_crypto_audit_before.take() {
+                self.update_crypto_requirements_from(before);
+            }
+            return Ok(JsValue::NULL);
+        }
         let snapshot_started_at = PerfTimer::start();
         self.prepare_snapshot_continuous_state()
             .map_err(|error| JsValue::from_str(&format!("snapshot refresh failed: {error}")))?;
@@ -3523,7 +3545,6 @@ impl WasmGame {
         if let Some(before) = self.pending_crypto_audit_before.take() {
             self.update_crypto_requirements_from(before);
         }
-        let disclosure_view = self.payment_disclosure_view();
         let mut snap = GameSnapshot::from_game_with_object_view_cache_during_action(
             self.pending_decision_game.as_deref().unwrap_or(&self.game),
             self.perspective,
@@ -3540,9 +3561,8 @@ impl WasmGame {
             &self.snapshot_object_view_cache,
             self.static_library_top_visibility_window(),
         );
-        if let Some(view) = disclosure_view.as_ref() {
-            snap.include_payment_disclosure(self.pending_decision_game.as_deref().unwrap_or(&self.game), view, &self.snapshot_object_view_cache);
-        }
+        self.include_payment_disclosure_views(&mut snap);
+        snap.combat_damage_step = combat_damage_step_for_runner(self.runner.as_ref());
         snap.crypto_requirements = self.last_crypto_requirements.clone();
         let snapshot_build_ms = build_started_at.elapsed_ms();
         let pending_insert_started_at = PerfTimer::start();
@@ -4064,110 +4084,92 @@ impl WasmGame {
             }
         }
 
-        if skip_triggers {
-            if zone == Zone::Battlefield {
-                let event_record_len = self.game.turn_store.turn_history.event_records.len();
-                let staged_event_record_len =
-                    self.game.turn_store.turn_history.staged_event_records.len();
-                self.game
-                    .register_linked_face_family_from_catalog(definition, &self.registry);
+        if zone == Zone::Battlefield {
+            let registry = &self.registry;
+            let trigger_queue = &mut self.trigger_queue;
+            let mut run = |game: &mut GameState| {
+                game.register_linked_face_family_from_catalog(definition, registry);
                 let temp_id =
-                    self.game
-                        .create_object_from_definition(definition, player_id, Zone::Command);
-                let receipt = self.game.move_object_with_etb_processing_with_dm(
-                    temp_id, Zone::Battlefield, dm,
-                ).map_err(|error| error.to_string())?;
-                let result = manual_entry_original(&receipt, dm)?;
-                align_manual_add_stable_id(&mut self.game, result.new_id);
-                finish_manual_entry_receipt(&mut self.game, temp_id, player_id, receipt, dm)?;
-                self.game.take_pending_trigger_events();
-                self.game
-                    .turn_store
-                    .turn_history
-                    .event_records
-                    .truncate(event_record_len);
-                self.game
-                    .turn_store
-                    .turn_history
-                    .staged_event_records
-                    .truncate(staged_event_record_len);
-                return Ok(result.new_id.0);
-            }
-            let object_id = self.game.create_object_from_catalog_definition(
+                    game.create_object_from_definition(definition, player_id, Zone::Command);
+                let receipt = game
+                    .move_object_with_etb_processing_with_dm(temp_id, Zone::Battlefield, dm)
+                    .map_err(|error| error.to_string())?;
+                let entry = manual_entry_original(&receipt, dm)?;
+                let entered_id = entry.new_id;
+                align_manual_add_stable_id(game, entered_id);
+                if !skip_triggers
+                    && game
+                        .object(entered_id)
+                        .is_some_and(|object| object.zone == Zone::Battlefield)
+                {
+                    let provenance = game
+                        .provenance_graph_mut()
+                        .alloc_root_event(ironsmith::events::EventKind::EnterBattlefield);
+                    let mut event = ironsmith::effects::zones::battlefield_entry_observation(
+                        game,
+                        entered_id,
+                        Zone::Command,
+                        entry.enters_tapped,
+                        provenance,
+                        Vec::new(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    game.freeze_completed_entry_events(std::iter::once(&mut event))
+                        .map_err(|error| error.to_string())?;
+                    game.queue_trigger_event(provenance, event);
+                    ironsmith::game_loop::try_drain_pending_trigger_events(game, trigger_queue)
+                        .map_err(|error| error.to_string())?;
+                    ironsmith::game_loop::handle_saga_enters_battlefield(
+                        game,
+                        entered_id,
+                        trigger_queue,
+                        dm,
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                finish_manual_entry_receipt(game, temp_id, player_id, receipt, dm)?;
+                align_manual_add_stable_id(game, entered_id);
+                if !skip_triggers {
+                    ironsmith::game_loop::try_drain_pending_trigger_events(game, trigger_queue)
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(entered_id.0)
+            };
+            return if skip_triggers {
+                self.game.with_suppressed_action_observations(run)
+            } else {
+                run(&mut self.game)
+            };
+        }
+        let object_id = if skip_triggers {
+            self.game.create_object_from_catalog_definition(
                 definition,
                 &self.registry,
                 player_id,
                 zone,
-            );
-            if zone == Zone::Command {
-                self.game.set_as_commander(object_id, player_id);
-            }
-            return Ok(object_id.0);
-        }
-
-        // Create in Command zone first, then move to target zone so that
-        // zone-change triggers (ETB, etc.) fire naturally.
-        self.game
-            .register_linked_face_family_from_catalog(definition, &self.registry);
-        let temp_id = self
-            .game
-            .create_object_from_definition(definition, player_id, Zone::Command);
-        let object_id = if zone == Zone::Battlefield {
-            let receipt = self.game
-                .move_object_with_etb_processing_with_dm(temp_id, Zone::Battlefield, dm)
-                .map_err(|error| error.to_string())?;
-            let result = manual_entry_original(&receipt, dm)?;
-
-            let entered_id = result.new_id;
-            align_manual_add_stable_id(&mut self.game, entered_id);
-            let entered_tapped = result.enters_tapped;
-            let entered_battlefield = self
-                .game
-                .object(entered_id)
-                .is_some_and(|obj| obj.zone == Zone::Battlefield);
-            if entered_battlefield {
-                let etb_event_provenance = self
-                    .game
-                    .provenance_graph_mut()
-                    .alloc_root_event(ironsmith::events::EventKind::EnterBattlefield);
-                let event = if entered_tapped {
-                    ironsmith::triggers::TriggerEvent::new_with_provenance(
-                        ironsmith::events::EnterBattlefieldEvent::tapped(entered_id, Zone::Command),
-                        etb_event_provenance,
-                    )
-                } else {
-                    ironsmith::triggers::TriggerEvent::new_with_provenance(
-                        ironsmith::events::EnterBattlefieldEvent::new(entered_id, Zone::Command),
-                        etb_event_provenance,
-                    )
-                };
-                self.game.queue_trigger_event(etb_event_provenance, event);
-
-                ironsmith::game_loop::drain_pending_trigger_events(
-                    &mut self.game,
-                    &mut self.trigger_queue,
-                );
-
-                ironsmith::game_loop::handle_saga_enters_battlefield(
-                    &mut self.game,
-                    entered_id,
-                    &mut self.trigger_queue,
-                    dm,
-                ).map_err(|error| error.to_string())?;
-            }
-
-            finish_manual_entry_receipt(&mut self.game, temp_id, player_id, receipt, dm)?;
-            entered_id
+            )
         } else {
+            self.game
+                .register_linked_face_family_from_catalog(definition, &self.registry);
+            let temp_id =
+                self.game
+                    .create_object_from_definition(definition, player_id, Zone::Command);
             self.game
                 .move_object_by_effect(temp_id, zone)
                 .unwrap_or(temp_id)
         };
-        align_manual_add_stable_id(&mut self.game, object_id);
+        if !skip_triggers {
+            align_manual_add_stable_id(&mut self.game, object_id);
+        }
         if zone == Zone::Command {
             self.game.set_as_commander(object_id, player_id);
         }
-        ironsmith::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+        if !skip_triggers {
+            ironsmith::game_loop::try_drain_pending_trigger_events(
+                &mut self.game,
+                &mut self.trigger_queue,
+            ).map_err(|error| error.to_string())?;
+        }
         Ok(object_id.0)
     }
 
@@ -4950,6 +4952,20 @@ impl WasmGame {
     }
 
     fn dispatch_routed_command(&mut self, command: UiCommand, command_decode_ms: f64) -> Result<JsValue, JsValue> {
+        // Capture runner submissions before consuming their prompt or clearing
+        // its decision view. Late combat validation and snapshot construction
+        // belong to the same transaction as applying the response.
+        let before = self.runner_pending_decision.then(|| RuntimeSavepoint::capture(self));
+        let result = self.dispatch_routed_command_inner(command, command_decode_ms);
+        if result.is_err()
+            && let Some(before) = before
+        {
+            before.restore(self);
+        }
+        result
+    }
+
+    fn dispatch_routed_command_inner(&mut self, command: UiCommand, command_decode_ms: f64) -> Result<JsValue, JsValue> {
         let dispatch_started_at = PerfTimer::start();
         self.last_dispatch_perf = None;
 
@@ -5085,7 +5101,14 @@ impl WasmGame {
                 if legend_pending_context.is_some() {
                     // The probe restores the original live state before replay.
                 } else {
-                    drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+                    if let Err(error) = ironsmith::game_loop::try_drain_pending_trigger_events(
+                        &mut self.game, &mut self.trigger_queue,
+                    ) {
+                        self.restore_replay_checkpoint(&replay.checkpoint);
+                        self.pending_decision = Some(pending_ctx);
+                        self.pending_replay_action = Some(replay);
+                        return Err(JsValue::from_str(&error.to_string()));
+                    }
                     self.pending_action_checkpoint = None;
                     self.pending_replay_action = None;
                     self.pending_decision = None;
@@ -5743,7 +5766,7 @@ mod narrow_hidden_metadata_tests {
             .find(|object| object["id"].as_u64() == Some(id.0)).unwrap();
         let hidden = &object["hiddenCard"];
         let expected = serde_json::json!({
-            "objectId": id.0, "owner": hidden["owner"], "zone": object["zone"],
+            "objectId": id.0, "incarnation": hidden["incarnation"], "owner": hidden["owner"], "zone": object["zone"],
             "slot": hidden["slot"], "commitment": hidden["commitment"],
             "publicSlot": hidden["publicSlot"],
             "publicCommitment": hidden["publicCommitment"].as_str().unwrap_or_default(),
@@ -5829,5 +5852,98 @@ mod narrow_hidden_metadata_tests {
         assert!(wasm.game.object(second).is_some());
         assert!(wasm.committed_hidden_metadata(second).is_none());
         assert_eq!(wasm.committed_hidden_metadata_at_position(0, 7, "same").len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod crypto_preview_output_tests {
+    use super::*;
+
+    fn fixture() -> WasmGame {
+        let mut wasm = WasmGame::new_with_registry(CardRegistry::new());
+        wasm.initialize_empty_match(vec!["A".into(), "B".into()], 20, 1);
+        wasm.game.turn.priority_player = Some(PlayerId(0));
+        wasm.pending_decision = Some(DecisionContext::Priority(
+            ironsmith::decisions::context::PriorityContext::new(
+                &wasm.game, PlayerId(0), vec![LegalAction::PassPriority],
+            ).unwrap(),
+        ));
+        wasm
+    }
+
+    fn pass() -> UiCommand {
+        UiCommand::PriorityAction {
+            action_index: None,
+            action_ref: Some(PriorityActionRef::PassPriority),
+        }
+    }
+
+    #[test]
+    fn crypto_preview_restores_live_state_and_does_not_render() {
+        let _ids = crate::test_id_counter_guard();
+        let mut wasm = fixture();
+        if let Some(DecisionContext::Priority(ctx)) = wasm.pending_decision.as_mut() {
+            ctx.analysis_complete = false;
+        }
+        assert!(wasm.begin_priority_analysis("live-preview-job".into()));
+        let job = &**wasm.priority_analysis_job.as_ref().unwrap() as *const _;
+        let before = wasm.build_public_audit_checkpoint();
+        let decision = hash_debug_value(&wasm.pending_decision);
+        let serial = wasm.snapshot_serial;
+        let views = &*wasm.snapshot_object_view_cache as *const _;
+        for _ in 0..2 {
+            assert!(wasm.preview_typed_crypto_requirements(pass()).unwrap().is_empty());
+            assert_eq!(serde_json::to_value(wasm.build_public_audit_checkpoint()).unwrap(), serde_json::to_value(&before).unwrap());
+            assert_eq!(hash_debug_value(&wasm.pending_decision), decision);
+            assert_eq!(wasm.snapshot_serial, serial);
+            assert_eq!(&*wasm.snapshot_object_view_cache as *const _, views);
+            assert!(!wasm.previewing_crypto_requirements);
+            assert_eq!(&**wasm.priority_analysis_job.as_ref().unwrap() as *const _, job);
+        }
+        // Observe the speculative output boundary directly, before rollback:
+        // a pass executes, but no display snapshot is constructed.
+        wasm.previewing_crypto_requirements = true;
+        wasm.dispatch_typed_command(pass(), 0.0).unwrap();
+        assert_eq!(wasm.snapshot_serial, serial);
+        assert!(wasm.pending_crypto_audit_before.is_none());
+        wasm.previewing_crypto_requirements = false;
+        wasm.snapshot().unwrap();
+        assert!(wasm.snapshot_serial > serial);
+    }
+
+    #[test]
+    fn crypto_preview_error_restores_output_policy_and_live_caches() {
+        let _ids = crate::test_id_counter_guard();
+        let mut wasm = fixture();
+        wasm.pending_decision = None;
+        let views = &*wasm.snapshot_object_view_cache as *const _;
+        let before = hash_debug_value(&wasm.game);
+        assert!(wasm.preview_typed_crypto_requirements(pass()).is_err());
+        assert!(!wasm.previewing_crypto_requirements);
+        assert!(wasm.pending_decision.is_none());
+        assert_eq!(hash_debug_value(&wasm.game), before);
+        assert_eq!(&*wasm.snapshot_object_view_cache as *const _, views);
+        let serial = wasm.snapshot_serial;
+        wasm.snapshot().unwrap();
+        assert!(wasm.snapshot_serial > serial);
+    }
+
+    #[test]
+    fn crypto_preview_output_retains_hidden_move_requirements() {
+        let _ids = crate::test_id_counter_guard();
+        let mut wasm = fixture();
+        let hidden = wasm.game.create_hidden_card_placeholder(PlayerId(0), Zone::Library, 0, "preview-card".into());
+        let before = wasm.capture_crypto_audit_state();
+        wasm.game.move_object_by_effect(hidden, Zone::Hand).unwrap();
+        wasm.pending_crypto_audit_before = Some(before.clone());
+        wasm.previewing_crypto_requirements = true;
+        wasm.snapshot().unwrap();
+        let preview = serde_json::to_value(&wasm.last_crypto_requirements).unwrap();
+        assert!(!wasm.last_crypto_requirements.is_empty());
+        assert_eq!(wasm.snapshot_serial, 0);
+        wasm.previewing_crypto_requirements = false;
+        wasm.pending_crypto_audit_before = Some(before);
+        wasm.snapshot().unwrap();
+        assert_eq!(serde_json::to_value(&wasm.last_crypto_requirements).unwrap(), preview);
     }
 }

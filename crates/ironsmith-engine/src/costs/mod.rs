@@ -32,24 +32,39 @@
 //! ```
 
 mod cost_effect;
+mod discard_allocation;
+pub(crate) use discard_allocation::distinct_discard_assignment_exists;
 mod dynamic_mana;
 mod life_representation;
 mod mana;
 mod payer_trait;
+pub(crate) use payer_trait::{check_effect_cost_program, payment_event_cause};
+mod prepared_payment;
 mod processing_mode;
+pub(crate) use prepared_payment::{
+    PaymentScope, acknowledged_total_cost, execute_total_cost_program_action, prepare_total_cost,
+    prepare_total_cost_program_action, select_payable_total_cost,
+    total_cost_supports_prepared_program,
+};
 
 // Re-export the trait and context
 pub use payer_trait::{
     CostCheckContext, can_pay_with_check_context, can_potentially_pay_with_check_context,
 };
-pub use payer_trait::{CostContext, CostPayer, CostPaymentResult, PaymentReason};
+pub use payer_trait::{
+    CostContext, CostPayer, CostPaymentReceipt, CostPaymentResult, PaymentReason,
+    PotentialManaQuery,
+};
 pub use processing_mode::CostProcessingMode;
 
 // Re-export all cost implementations
 pub use cost_effect::CostEffect;
 pub use dynamic_mana::DynamicManaPaymentCost;
 pub use mana::ManaPaymentCost;
-pub(crate) use mana::{pay_mana_cost_with_choices, pay_mana_cost_with_choices_in_context};
+pub(crate) use mana::{
+    pay_mana_cost_with_choices, pay_mana_cost_with_choices_and_outputs,
+    pay_mana_cost_with_choices_in_context,
+};
 
 use crate::color::ColorSet;
 use crate::filter::ObjectFilter;
@@ -161,15 +176,17 @@ impl Cost {
 
     /// Create a cost backed by an effect executor.
     pub fn effect<E: crate::effects::CostExecutableEffect + 'static>(effect: E) -> Self {
-        let effect = crate::effect::Effect::new(effect);
-        let model = ironsmith_core::Cost::Effect(effect.clone());
-        Self::new(CostEffect { effect }).with_model(model)
+        let payer = CostEffect::new(effect);
+        let model = ironsmith_core::Cost::Effect(payer.effect().clone());
+        Self::new(payer).with_model(model)
     }
 
     /// Create a cost from an erased effect after validating cost execution support.
     pub fn try_effect(effect: crate::effect::Effect) -> Result<Self, String> {
-        let model = ironsmith_core::Cost::Effect(effect.clone());
-        CostEffect::try_new(effect).map(|payer| Self::new(payer).with_model(model))
+        CostEffect::try_new(effect).map(|payer| {
+            let model = ironsmith_core::Cost::Effect(payer.effect().clone());
+            Self::new(payer).with_model(model)
+        })
     }
 
     /// Convert a sequence of erased effects into a component-wise total cost.
@@ -539,20 +556,42 @@ impl Cost {
         game: &mut crate::game_state::GameState,
         ctx: &mut CostContext,
     ) -> Result<CostPaymentResult, crate::cost::CostPaymentError> {
-        // CR 603.2c: the objects one cost moves (exile five cards from your
-        // graveyard, sacrifice two creatures) move as one simultaneous event.
-        // Mana abilities activated while paying mana are separate actions.
-        // A sequence contains separate instructions, each of which owns its
-        // simultaneous recipients. An outer cost wrapper must not turn the
-        // whole sequence into a single simultaneous action.
-        let sequential_program = self.effect_ref().is_some_and(|effect| {
-            effect
+        self.pay_with_outputs(game, ctx)
+            .map(|receipt| receipt.result)
+    }
+
+    pub fn pay_with_outputs(
+        &self,
+        game: &mut crate::game_state::GameState,
+        ctx: &mut CostContext,
+    ) -> Result<CostPaymentReceipt, crate::cost::CostPaymentError> {
+        self.with_payment_action_scope(game, |game| self.0.pay_with_outputs(game, ctx))
+    }
+
+    /// One cost action owns its simultaneous recipients and pending choices.
+    /// A sequence's authored children own separate action identities, including
+    /// when a transparent tag/result/source wrapper surrounds that sequence.
+    pub(crate) fn with_payment_action_scope<T>(
+        &self,
+        game: &mut crate::game_state::GameState,
+        body: impl FnOnce(&mut crate::game_state::GameState) -> T,
+    ) -> T {
+        let mut effect = self.effect_ref();
+        let sequential_program = loop {
+            let Some(current) = effect else {
+                break false;
+            };
+            if current
                 .downcast_ref::<crate::effects::SequenceEffect>()
                 .is_some()
-        });
+            {
+                break true;
+            }
+            effect = current.0.transparent_child_effect();
+        };
         let opened_batch =
             !self.is_mana_cost() && !sequential_program && game.open_simultaneous_action();
-        let result = self.0.pay(game, ctx);
+        let result = body(game);
         game.close_simultaneous_action(opened_batch);
         result
     }
@@ -767,6 +806,10 @@ mod tests {
 
     #[test]
     fn try_effect_accepts_cost_executable_effects() {
+        let draw = Cost::try_effect(crate::effect::Effect::draw(1))
+            .expect("draw action payments are used by cumulative upkeep");
+        assert!(draw.effect_ref().is_some());
+
         let cost = Cost::try_effect(crate::effect::Effect::lose_life(2))
             .expect("lose-life effect should be usable as a cost");
         assert_eq!(cost.life_amount(), Some(2));
@@ -790,10 +833,6 @@ mod tests {
 
     #[test]
     fn try_effect_rejects_non_cost_effects() {
-        let err = Cost::try_effect(crate::effect::Effect::draw(1))
-            .expect_err("draw effect should not be usable as a cost");
-        assert!(err.contains("effect is not marked as cost-executable"));
-
         let err = Cost::try_effect(crate::effect::Effect::destroy(
             crate::target::ChooseSpec::Source,
         ))
@@ -820,7 +859,7 @@ mod tests {
 
         let err = Cost::try_effects(vec![
             crate::effect::Effect::lose_life(2),
-            crate::effect::Effect::draw(1),
+            crate::effect::Effect::destroy(crate::target::ChooseSpec::Source),
         ])
         .expect_err("one non-cost effect should reject the whole total cost");
         assert!(err.contains("effect is not marked as cost-executable"));
@@ -997,8 +1036,19 @@ pub(crate) fn legal_discard_cost_cards(
     source: crate::ids::ObjectId,
     filter: &crate::filter::ObjectFilter,
 ) -> Vec<crate::ids::ObjectId> {
-    use crate::filter::ObjectFilterExt;
     let ctx = crate::filter::FilterContext::new(player).with_source(source);
+    legal_discard_cost_cards_with_filter_context(game, player, source, filter, &ctx)
+}
+
+/// Eligible selected-discard subjects, using the actual payment input scope.
+fn legal_discard_cost_cards_with_filter_context(
+    game: &crate::game_state::GameState,
+    player: crate::ids::PlayerId,
+    source: crate::ids::ObjectId,
+    filter: &crate::filter::ObjectFilter,
+    ctx: &crate::filter::FilterContext,
+) -> Vec<crate::ids::ObjectId> {
+    use crate::filter::ObjectFilterExt;
     let hand: Vec<crate::ids::ObjectId> = game
         .player(player)
         .map(|p| p.hand.iter().copied().collect())
@@ -1008,7 +1058,7 @@ pub(crate) fn legal_discard_cost_cards(
     // discarded card is opened (it becomes public) and then checked.
     let placeholders = if game.hand_choice_depends_on_hidden_identity(filter, hand.iter().copied())
     {
-        game.hidden_hand_placeholder_candidates(filter, &ctx, hand.iter().copied())
+        game.hidden_hand_placeholder_candidates(filter, ctx, hand.iter().copied())
     } else {
         Vec::new()
     };
@@ -1018,7 +1068,7 @@ pub(crate) fn legal_discard_cost_cards(
                 && (placeholders.contains(id)
                     || game
                         .object(*id)
-                        .is_some_and(|object| filter.matches(object, &ctx, game)))
+                        .is_some_and(|object| filter.matches(object, ctx, game)))
         })
         .collect()
 }
@@ -1031,10 +1081,19 @@ pub(crate) fn legal_discard_cost_cards_in_context(
     ctx: &crate::costs::CostContext<'_>,
     filter: &crate::filter::ObjectFilter,
 ) -> Vec<crate::ids::ObjectId> {
-    legal_discard_cost_cards(game, ctx.payer, ctx.source, filter)
-        .into_iter()
-        .filter(|id| !ctx.replacement.entry_reserved_objects.contains(id))
-        .collect()
+    let bindings = ctx.execution_bindings();
+    let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+    let execution = bindings.execution_context(&mut decision_maker);
+    legal_discard_cost_cards_with_filter_context(
+        game,
+        ctx.payer,
+        ctx.source,
+        filter,
+        &execution.filter_context(game),
+    )
+    .into_iter()
+    .filter(|id| !ctx.replacement.entry_reserved_objects.contains(id))
+    .collect()
 }
 
 #[cfg(test)]

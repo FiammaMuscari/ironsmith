@@ -43,6 +43,8 @@
 #[cfg(test)]
 extern crate self as ironsmith;
 
+pub mod linked_exile;
+pub mod source_numbers;
 pub mod ability;
 pub mod alternative_cast;
 #[cfg(feature = "bench-support")]
@@ -299,6 +301,7 @@ pub use events::{
     PutCountersEvent,
     RegenerationShieldMatcher,
     RemoveCountersEvent,
+    RemovePlayerCountersEvent,
     ReplacementMatcher,
     ReplacementPriority as NewReplacementPriority,
     SacrificeEvent,

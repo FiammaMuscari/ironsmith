@@ -8,8 +8,10 @@ use ironsmith_compiler::ir::RewriteSemanticDocument;
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct RewriteNormalizationState {
+    spell_has_announced_x: bool,
     latest_spell_exports: ReferenceExports,
     latest_additional_cost_exports: ReferenceExports,
+    source_number_domain: Option<(u32, Option<u32>)>,
 }
 
 impl RewriteNormalizationState {
@@ -37,11 +39,43 @@ impl RewriteNormalizationState {
                 tag.clone(),
             ));
         }
-        if !additional_cost_imports.is_empty() {
-            return additional_cost_imports;
-        }
-        self.latest_spell_exports.to_imports()
+        // A cost's X binding alone must not displace an earlier statement's
+        // object/result antecedents when choosing which references to import.
+        let additional_cost_has_announced_x = additional_cost_imports.has_announced_x;
+        additional_cost_imports.has_announced_x = false;
+        let mut imports = if !additional_cost_imports.is_empty() {
+            additional_cost_imports
+        } else {
+            self.latest_spell_exports.to_imports()
+        };
+        imports.has_announced_x |= self.spell_has_announced_x
+            || self.latest_spell_exports.has_announced_x
+            || additional_cost_has_announced_x;
+        imports
     }
+}
+
+fn spell_costs_have_announced_x(items: &[ParsedCardItem]) -> bool {
+    fn chunk_has_x(chunk: &LineAst) -> bool {
+        match chunk {
+            LineAst::Multiple(chunks) => chunks.iter().any(chunk_has_x),
+            LineAst::OptionalCost(cost)
+            | LineAst::GiftKeyword { cost, .. }
+            | LineAst::OptionalCostWithCastTrigger { cost, .. } => {
+                crate::model::costs::cost_has_announced_x(&cost.cost)
+            }
+            LineAst::AlternativeCastingMethod(method) => {
+                method.mana_cost().is_some_and(crate::mana::ManaCost::has_x)
+                    || method.total_cost().is_some_and(crate::model::costs::cost_has_announced_x)
+            }
+            // A separate ability has its own X scope, even on an X spell.
+            _ => false,
+        }
+    }
+    items.iter().any(|item| match item {
+        ParsedCardItem::Line(line) => line.chunks.iter().any(chunk_has_x),
+        _ => false,
+    })
 }
 
 fn materialize_optional_cost(
@@ -75,20 +109,10 @@ fn materialize_alternative_casting_method(
 fn normalize_parsed_ability(
     mut parsed: ParsedAbility,
 ) -> Result<NormalizedParsedAbility, CardTextError> {
-    fn cost_removes_source_counters(cost: &crate::model::CompilerCost) -> bool {
-        matches!(cost, crate::model::CompilerCost::RemoveCounters { .. })
+    if let crate::model::CompilerAbilityKindCore::Activated(activated) = parsed.kind() {
+        let has_announced_x = crate::model::costs::cost_has_announced_x(&activated.mana_cost);
+        parsed.reference_imports.has_announced_x |= has_announced_x;
     }
-
-    fn total_cost_removes_source_counters(
-        cost: &ironsmith_core::TotalCost<crate::model::CompilerCost>,
-    ) -> bool {
-        cost.as_all()
-            .is_some_and(|costs| costs.iter().any(cost_removes_source_counters))
-            || cost
-                .as_one_of()
-                .is_some_and(|branches| branches.iter().any(total_cost_removes_source_counters))
-    }
-
     let runtime_payload_present = match parsed.kind() {
         crate::model::CompilerAbilityKindCore::Activated(activated) => {
             !activated.effects.is_empty() || !activated.choices.is_empty()
@@ -104,12 +128,6 @@ fn normalize_parsed_ability(
     )
     .then(|| parsed.trigger_spec.as_deref().cloned())
     .flatten();
-    let activated_removes_source_counters = match parsed.kind() {
-        crate::model::CompilerAbilityKindCore::Activated(activated) => {
-            total_cost_removes_source_counters(&activated.mana_cost)
-        }
-        _ => false,
-    };
     let prepared = if parsed.effects_ast.is_none() || runtime_payload_present {
         None
     } else {
@@ -130,12 +148,6 @@ fn normalize_parsed_ability(
             parsed.kind(),
             crate::model::CompilerAbilityKindCore::Activated(_)
         ) {
-            let mut effects = effects;
-            if activated_removes_source_counters {
-                super::super::lowering_support::replace_pending_removed_counter_metrics_with_x(
-                    &mut effects,
-                );
-            }
             Some(NormalizedPreparedAbility::Activated(
                 stage_effects_with_trigger_context_for_lowering(
                     None,
@@ -151,6 +163,46 @@ fn normalize_parsed_ability(
     Ok(NormalizedParsedAbility { parsed, prepared })
 }
 
+/// An entry numeric producer owns the source's persistent slot. A later
+/// matching upkeep reselection is linked to that domain; local spell and
+/// activated number choices continue to use only their execution receipt.
+fn retain_source_number_choices(
+    effects: &mut [EffectAst],
+    required_domain: Option<(u32, Option<u32>)>,
+    discovered: &mut Option<(u32, Option<u32>)>,
+) {
+    for effect in effects {
+        if let EffectAst::SubjectVerb(subject) = effect {
+            if let crate::cards::builders::SubjectVerbActionAst::Choices(
+                crate::cards::builders::ChoiceActionAst::ChooseNumber { min, max, source_owned },
+            ) = &mut subject.action {
+                let domain = (*min, *max);
+                if required_domain.is_none_or(|required| required == domain) {
+                    *source_owned = true;
+                    *discovered = Some(domain);
+                }
+            }
+        }
+        ironsmith_compiler_semantic::model::visit::for_each_nested_effects_mut(effect, true, |nested| {
+            retain_source_number_choices(nested, required_domain, discovered);
+        });
+    }
+}
+
+fn own_upkeep(trigger:&TriggerSpec)->bool{
+    match trigger {
+        TriggerSpec::WithIntro{trigger,..}|TriggerSpec::ConditionQualified{trigger,..}=>own_upkeep(trigger),
+        TriggerSpec::BeginningOfUpkeep(ironsmith_core::PlayerFilter::You)=>true,
+        _=>false,
+    }
+}
+fn retain_entry_numeric_choices(chunk:&mut LineAst,domain:&mut Option<(u32,Option<u32>)>){
+    match chunk {
+        LineAst::Multiple(chunks)=>for chunk in chunks {retain_entry_numeric_choices(chunk,domain);},
+        LineAst::Statement{effects}=>retain_source_number_choices(effects,None,domain),
+        _=>{},
+    }
+}
 fn normalize_line_ast(
     info: crate::model::facts::LineInfo,
     chunks: Vec<LineAst>,
@@ -164,7 +216,10 @@ fn normalize_line_ast(
         .as_enters_effect_program
         .as_ref()
         .is_some_and(|facts| facts.source_reference_enters_with_counter_surface);
-    for chunk in chunks {
+    for mut chunk in chunks {
+        if semantic_facts.statement.as_enters_effect_program.is_some() {
+            retain_entry_numeric_choices(&mut chunk,&mut state.source_number_domain);
+        }
         normalize_line_chunk(
             chunk,
             state,
@@ -216,12 +271,24 @@ fn normalize_line_chunk(
         LineAst::Abilities(actions) => NormalizedLineChunk::Abilities(actions),
         LineAst::StaticAbility(ability) => NormalizedLineChunk::StaticAbility(ability),
         LineAst::StaticAbilities(abilities) => NormalizedLineChunk::StaticAbilities(abilities),
-        LineAst::Ability(parsed) => NormalizedLineChunk::Ability(normalize_parsed_ability(parsed)?),
+        LineAst::Ability(mut parsed) => {
+            if parsed.trigger_spec.as_deref().is_some_and(own_upkeep) {
+                if let (Some(domain),Some(effects))=(state.source_number_domain,parsed.effects_ast.as_mut()) {
+                    retain_source_number_choices(effects,Some(domain),&mut None);
+                }
+            }
+            NormalizedLineChunk::Ability(normalize_parsed_ability(parsed)?)
+        },
         LineAst::Triggered {
             trigger,
-            effects,
+            mut effects,
             max_triggers_per_turn,
         } => {
+            if own_upkeep(&trigger) {
+                if let Some(domain) = state.source_number_domain {
+                    retain_source_number_choices(&mut effects, Some(domain), &mut None);
+                }
+            }
             let (trigger, prepared) = stage_owned_triggered_effects_for_lowering(
                 trigger,
                 effects,
@@ -396,19 +463,30 @@ fn resolve_as_enters_source_counter_grants(effects: &mut [EffectAst]) {
     }
 }
 
-fn normalize_modal_ast(modal: ParsedModalAst) -> Result<NormalizedModalAst, CardTextError> {
+fn normalize_modal_ast(
+    modal: ParsedModalAst,
+    spell_has_announced_x: bool,
+) -> Result<NormalizedModalAst, CardTextError> {
+    let imports = ReferenceImports {
+        has_announced_x: if let Some(activated) = modal.header.activated.as_ref() {
+            crate::model::costs::cost_has_announced_x(&activated.mana_cost)
+        } else {
+            modal.header.trigger.is_none() && spell_has_announced_x
+        },
+        ..Default::default()
+    };
     let prepared_prefix = if modal.header.prefix_effects_ast.is_empty() {
         None
     } else if modal.header.trigger.is_some() || modal.header.activated.is_some() {
         Some(stage_effects_with_trigger_context_for_lowering(
             modal.header.trigger.as_ref(),
             &modal.header.prefix_effects_ast,
-            ReferenceImports::default(),
+            imports.clone(),
         )?)
     } else {
         Some(stage_effects_for_lowering(
             &modal.header.prefix_effects_ast,
-            ReferenceImports::default(),
+            imports.clone(),
         )?)
     };
 
@@ -418,17 +496,22 @@ fn normalize_modal_ast(modal: ParsedModalAst) -> Result<NormalizedModalAst, Card
         Some(stage_effects_with_trigger_context_for_lowering(
             modal.header.trigger.as_ref(),
             &modal.header.common_prefix_effects_ast,
-            ReferenceImports::default(),
+            imports.clone(),
         )?)
     } else {
         Some(stage_effects_for_lowering(
             &modal.header.common_prefix_effects_ast,
-            ReferenceImports::default(),
+            imports.clone(),
         )?)
     };
 
     let mut modes = Vec::with_capacity(modal.modes.len());
     for mode in modal.modes {
+        let mut mode_imports = imports.clone();
+        mode_imports.has_announced_x |= mode
+            .additional_mana_cost
+            .as_ref()
+            .is_some_and(crate::mana::ManaCost::has_x);
         // A triggered mode's pronouns ("• Put a +1/+1 counter on that
         // creature", "• It gains double strike") name the trigger's event
         // object exactly like an unmoded trigger body does.
@@ -436,10 +519,10 @@ fn normalize_modal_ast(modal: ParsedModalAst) -> Result<NormalizedModalAst, Card
             stage_effects_with_trigger_context_for_lowering(
                 Some(trigger),
                 &mode.effects_ast,
-                ReferenceImports::default(),
+                mode_imports,
             )?
         } else {
-            stage_effects_for_lowering(&mode.effects_ast, ReferenceImports::default())?
+            stage_effects_for_lowering(&mode.effects_ast, mode_imports)?
         };
         modes.push(NormalizedModalModeAst {
             info: mode.info,
@@ -469,7 +552,10 @@ fn normalized_item_from_parsed_item(
             line.semantic_facts,
             state,
         )?)),
-        ParsedCardItem::Modal(modal) => Ok(NormalizedCardItem::Modal(normalize_modal_ast(modal)?)),
+        ParsedCardItem::Modal(modal) => Ok(NormalizedCardItem::Modal(normalize_modal_ast(
+            modal,
+            state.spell_has_announced_x,
+        )?)),
         ParsedCardItem::LevelAbility(level) => Ok(NormalizedCardItem::LevelAbility(level)),
     }
 }
@@ -510,8 +596,15 @@ pub fn normalize_parsed_card_ast_for_lowering(
         &symbols,
         document_scope,
     );
+    let initial_state = RewriteNormalizationState {
+        // Alternative/optional costs can be printed after the resolution
+        // text, so establish their X binding before preparing any statement.
+        spell_has_announced_x: card.mana_cost_ref().is_some_and(crate::mana::ManaCost::has_x)
+            || spell_costs_have_announced_x(&items),
+        ..Default::default()
+    };
     let overload_branch = if let Some(branch) = overload_branch {
-        let mut state = RewriteNormalizationState::default();
+        let mut state = initial_state.clone();
         let mut items = Vec::new();
         for item in branch.items {
             items.push(normalized_item_from_parsed_item(item, &mut state)?);
@@ -521,7 +614,7 @@ pub fn normalize_parsed_card_ast_for_lowering(
         None
     };
     let cleave_branch = if let Some(branch) = cleave_branch {
-        let mut state = RewriteNormalizationState::default();
+        let mut state = initial_state.clone();
         let mut items = Vec::new();
         for item in branch.items {
             items.push(normalized_item_from_parsed_item(item, &mut state)?);
@@ -530,7 +623,7 @@ pub fn normalize_parsed_card_ast_for_lowering(
     } else {
         None
     };
-    let mut state = RewriteNormalizationState::default();
+    let mut state = initial_state;
     let mut normalized_items = Vec::new();
     for item in items {
         normalized_items.push(normalized_item_from_parsed_item(item, &mut state)?);

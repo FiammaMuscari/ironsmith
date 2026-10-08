@@ -15,10 +15,9 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
         crate::lexer::parser_token_word_refs(tokens).as_slice(),
         ["defending", "player"] | ["the", "defending", "player"]
     ) {
-        return Ok(TargetAst::Player(
-            PlayerFilter::Defending,
-            token_slice_span(tokens),
-        ));
+        // "defending player" names the combat's defender; it is never a
+        // target declaration.
+        return Ok(TargetAst::Player(PlayerFilter::Defending, None));
     }
 
     // `each` is a set quantifier rather than part of the object filter. Let
@@ -775,6 +774,30 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
         ));
     }
 
+    if matches!(remaining_words.as_slice(),
+        ["this", "card" | "creature" | "permanent", "from",
+            "its" | "his" | "her" | "their", "owner" | "owners" | "owner's", "graveyard"]
+    ) {
+        // The source's graveyard owner is independent of the player who will
+        // receive it. Retain the exact source-zone restriction through delayed
+        // registration and never let the actor supply a replacement owner.
+        if crate::util::trim_edge_punctuation_tokens(remaining).iter()
+            .any(|token| token.as_word().is_none())
+        {
+            return Err(CardTextError::ParseError("unsupported token in source-owned graveyard reference".into()));
+        }
+        // A card in a graveyard is always in its owner's graveyard (CR 400.3),
+        // so the zone alone retains the owner restriction.
+        let mut source_filter = ObjectFilter::source().in_zone(Zone::Graveyard);
+        if let Some(surface) = source_reference_surface_for_words(&remaining_words[..2])
+            .or_else(|| this_source_surface_for_words(&remaining_words[..2]))
+        {
+            source_filter = source_filter.with_source_surface(surface);
+        }
+        return Ok(wrap_target_count(
+            TargetAst::Object(source_filter, target_span, None), target_count,
+        ));
+    }
     if reference_shapes::is_source_from_your_graveyard(&remaining_words) {
         let mut source_filter = ObjectFilter::source().in_zone(Zone::Graveyard);
         source_filter.owner = Some(PlayerFilter::You);
@@ -986,9 +1009,19 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
         ));
     }
 
-    if let Some(union) = parse_object_or_player_union_target(remaining)
-        && let Ok(mut filter) = parse_object_filter(union.object_tokens, other)
-    {
+    if let Some(union) = parse_object_or_player_union_target(remaining) {
+        // Once the mixed domain is recognized, every object-arm token must
+        // validate. Falling through on a malformed qualifier can otherwise
+        // reinterpret only a shorter player/object prefix.
+        let mut filter = if remaining.first().is_some_and(|token| {
+            token.is_any_word(&["player", "players", "opponent", "opponents"])
+        }) {
+            crate::grammar::filters::parse_complete_mixed_target_object_filter(
+                union.object_tokens, other,
+            )?
+        } else {
+            parse_object_filter(union.object_tokens, other)?
+        };
         filter.other = other;
         let player_filter = match union.player_kind {
             TrailingPlayerTargetKind::Any => PlayerFilter::Any,

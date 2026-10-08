@@ -1,3 +1,5 @@
+import { buildOpponentDecisionCommand } from "@/lib/opponent-decision.js";
+import { COMBAT_STEPS, createPriorityStops } from "@/lib/priority-stops";
 import { usePaymentOptions } from "@/hooks/usePaymentOptions";
 import { ManaPaymentEditorProvider } from "@/context/ManaPaymentEditorContext";
 import { improvePayment } from "@/lib/payment-analysis.js";
@@ -16,6 +18,7 @@ import { startTransition, useContext, useState, useCallback, useRef, useMemo, us
 import { useGameSnapshot } from "@/hooks/useGameSnapshot";
 import { useWasmGame } from "@/hooks/useWasmGame";
 import { usePeerLobby } from "@/hooks/usePeerLobby";
+import { assertCurrentAuditReplayProtocol } from "@/lib/multiplayer-audit";
 import {
   applyAuditReplayActionWithGame,
   replayAuditTranscriptWithGame,
@@ -200,7 +203,9 @@ function decodeAttackTargetChoice(choice) {
     if ("Player" in choice) return { kind: "player", player: Number(choice.Player) };
     if ("Planeswalker" in choice)
       return { kind: "planeswalker", object: Number(choice.Planeswalker) };
+    if ("Battle" in choice) return { kind: "battle", object: Number(choice.Battle) };
     if (choice.kind === "player") return { kind: "player", player: Number(choice.player) };
+    if (choice.kind === "battle") return { kind: "battle", object: Number(choice.object) };
     if (choice.kind === "planeswalker")
       return { kind: "planeswalker", object: Number(choice.object) };
   }
@@ -212,7 +217,7 @@ function defaultOpponentAttackerDeclarations(decision) {
   for (const option of decision.attacker_options || []) {
     if (!option.must_attack) continue;
     const firstTarget = (option.valid_targets || [])[0];
-    if (!firstTarget) continue;
+    if (firstTarget == null) continue;
     declarations.push({
       creature: Number(option.creature),
       target: decodeAttackTargetChoice(firstTarget),
@@ -520,9 +525,11 @@ function resolveSyncedCommand(command) {
         syncedCommand.object_stable_id = stableId;
       }
     }
-    const hiddenRef = normalizeSelectObjectHiddenRef(
-      command.object_hidden_ref ?? command.objectHiddenRef
-    );
+    const rawHiddenRef = command.object_hidden_ref ?? command.objectHiddenRef;
+    // Opaque commands must reach the paired-identity checker unchanged. The
+    // legacy normalizer may complete partial fields or discard a supplied pair.
+    const hiddenRef = ["open_exiled_card_for_play", "cast_exiled_card_face_down"].includes(command.action_ref?.kind)
+      ? rawHiddenRef : normalizeSelectObjectHiddenRef(rawHiddenRef);
     if (hiddenRef) {
       syncedCommand.object_hidden_ref = hiddenRef;
     }
@@ -823,7 +830,15 @@ export function GameProvider({ children }) {
   const [status, setStatusRaw] = useState({ msg: "Loading WASM...", isError: false });
   const [autoPassEnabled, setAutoPassEnabled] = useState(true);
   const [autoResolveEnabled, setAutoResolveEnabled] = useState(false);
+  const [phasePassing, setPhasePassing] = useState(false);
   const [holdRule, setHoldRule] = useState("never");
+  const [priorityStops] = useState(createPriorityStops);
+  const priorityStopsState = useSyncExternalStore(priorityStops.subscribe, priorityStops.getSnapshot);
+  const cyclePriorityStop = useCallback(key => priorityStops.cycleStop(key, stateRef.current), [priorityStops, stateRef]);
+  const holdPostActionPriority = useCallback(() => priorityStops.hold(stateRef.current), [priorityStops, stateRef]);
+  useEffect(() => subscribeState(priorityStops.observe), [subscribeState, priorityStops]);
+  useEffect(() => { priorityStops.reset(); }, [game, priorityStops]);
+  const [surrenderRequested, setSurrenderRequested] = useState(false);
   const [fixedStartingBoard, setFixedStartingBoard] = useState(readFixedStartingBoard);
   const [uiFont, setUiFont] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_UI_FONT;
@@ -845,6 +860,14 @@ export function GameProvider({ children }) {
   const multiplayerActiveRef = useRef(false);
   const multiplayerAutomationAttemptRef = useRef("");
   const multiplayerSubmitInFlightRef = useRef(false);
+  const [multiplayerSubmissionRevision, setMultiplayerSubmissionRevision] = useState(0);
+  const finishMultiplayerSubmission = useCallback(() => {
+    if (!multiplayerSubmitInFlightRef.current) return;
+    multiplayerSubmitInFlightRef.current = false;
+    // The next decision can render while this guard is still held. Releasing
+    // a ref alone cannot wake the automation effect that skipped that render.
+    setMultiplayerSubmissionRevision(revision => revision + 1);
+  }, []);
   const stickyViewedCardsRef = useRef(null);
   const stickyGameOverRef = useRef(null);
   const queuedSyncedCancelRef = useRef(false);
@@ -1080,6 +1103,7 @@ export function GameProvider({ children }) {
 
   const opponentHoldReason = useCallback(
     (decision, currentState) => (
+      priorityStops.observe(currentState),
       priorityHoldReason({
         autoPassEnabled,
         holdRule,
@@ -1088,12 +1112,12 @@ export function GameProvider({ children }) {
         perspectiveMode: "opponent",
       })
     ),
-    [autoPassEnabled, holdRule]
+    [autoPassEnabled, holdRule, priorityStops]
   );
 
   const localTurnHoldReason = useCallback(
     (decision, currentState) => (
-      priorityHoldReason({
+      priorityStops.stopReason(currentState) || priorityHoldReason({
         autoPassEnabled,
         holdRule,
         decision,
@@ -1103,12 +1127,12 @@ export function GameProvider({ children }) {
         manualResolveOnLocalStack: true,
       })
     ),
-    [autoPassEnabled, holdRule]
+    [autoPassEnabled, holdRule, priorityStops]
   );
 
   const localOffTurnHoldReason = useCallback(
     (decision, currentState) => (
-      priorityHoldReason({
+      priorityStops.stopReason(currentState) || priorityHoldReason({
         autoPassEnabled,
         holdRule,
         decision,
@@ -1117,7 +1141,7 @@ export function GameProvider({ children }) {
         manualResolveOnLocalStack: true,
       })
     ),
-    [autoPassEnabled, holdRule]
+    [autoPassEnabled, holdRule, priorityStops]
   );
 
   const settleLocalStackPriority = useCallback(
@@ -1236,7 +1260,18 @@ export function GameProvider({ children }) {
           if (st.decision.kind === "priority") {
             const isLocalOffTurnPriority = samePlayerId(st.decision.player, st.perspective);
             const passAction = (st.decision.actions || []).find((a) => a.kind === "pass_priority");
-            if (!passAction) { holdReason = "no pass action available"; break; }
+            if (!passAction) {
+              if (isLocalOffTurnPriority) { holdReason = "no pass action available"; break; }
+              if (autoPasses >= maxAutoPasses) { holdReason = "auto-pass safety limit reached"; break; }
+              const command = await buildOpponentDecisionCommand(st, currentGame);
+              if (!command) { holdReason = "no automatic priority response available"; break; }
+              const decisionBefore = summarizeDecision(st.decision);
+              st = await currentGame.dispatch(command);
+              autoPasses += 1;
+              trace.push({ kind: "opponent_required_priority_choice", decision_before: decisionBefore,
+                decision_after: summarizeDecision(st?.decision || null) });
+              continue;
+            }
             const isCustomPassAction = !!passAction.label && passAction.label !== "Pass priority";
             if (!isLocalOffTurnPriority && isCustomPassAction) {
               if (autoPasses >= maxAutoPasses) { holdReason = "auto-pass safety limit reached"; break; }
@@ -1283,12 +1318,19 @@ export function GameProvider({ children }) {
             });
             continue;
           }
+          if (samePlayerId(st.decision.player, st.perspective)) {
+            holdReason = "local decision requires input";
+            break;
+          }
           if (autoDeclares >= 40) { holdReason = "auto-declare safety limit reached"; break; }
           if (st.decision.kind === "attackers") {
-            const declarations = defaultOpponentAttackerDeclarations(st.decision);
+            const command = currentGame.getDefaultSelectionCommand
+              ? await currentGame.getDefaultSelectionCommand()
+              : { type: "declare_attackers", declarations: defaultOpponentAttackerDeclarations(st.decision) };
+            if (!command) { holdReason = "no legal attacker response available"; break; }
             const stepStartedAt = performance.now();
             const decisionBefore = summarizeDecision(st?.decision || null);
-            st = await currentGame.dispatch({ type: "declare_attackers", declarations });
+            st = await currentGame.dispatch(command);
             autoDeclares += 1;
             const elapsedMs = performance.now() - stepStartedAt;
             const workerPerf = readDispatchPerf(st);
@@ -1305,7 +1347,11 @@ export function GameProvider({ children }) {
           if (st.decision.kind === "blockers") {
             const stepStartedAt = performance.now();
             const decisionBefore = summarizeDecision(st?.decision || null);
-            st = await currentGame.dispatch({ type: "declare_blockers", declarations: [] });
+            const command = currentGame.getDefaultSelectionCommand
+              ? await currentGame.getDefaultSelectionCommand()
+              : { type: "declare_blockers", declarations: [] };
+            if (!command) { holdReason = "no legal blocker response available"; break; }
+            st = await currentGame.dispatch(command);
             autoDeclares += 1;
             const elapsedMs = performance.now() - stepStartedAt;
             const workerPerf = readDispatchPerf(st);
@@ -1319,8 +1365,16 @@ export function GameProvider({ children }) {
             });
             continue;
           }
-          holdReason = "opponent has non-priority decision";
-          break;
+          const command = await buildOpponentDecisionCommand(st, currentGame);
+          if (!command) { holdReason = "no automatic response available"; break; }
+          const decisionBefore = summarizeDecision(st.decision);
+          st = command.type === "cancel_decision"
+            ? await currentGame.cancelDecision()
+            : await currentGame.dispatch(command);
+          autoDeclares += 1;
+          trace.push({ kind: "opponent_effect_decision", decision_before: decisionBefore,
+            decision_after: summarizeDecision(st?.decision || null) });
+          continue;
         }
         if (holdReason) break;
         if (!st || st.game_over || st.decision) break;
@@ -1474,6 +1528,7 @@ export function GameProvider({ children }) {
     ) => {
       const finalizeStartedAt = performance.now();
       let st = currentState;
+      priorityStops.observe(st);
       const settleStartedAt = performance.now();
       const autoResult = allowOpponentAutomation
         ? await settlePriorityAutomation(currentGame, st)
@@ -1572,6 +1627,7 @@ export function GameProvider({ children }) {
       autoResolveTrivialDecisions,
       settleNoop,
       settlePriorityAutomation,
+      priorityStops,
       setStatus,
     ]
   );
@@ -1817,11 +1873,13 @@ export function GameProvider({ children }) {
       multiplayerAutomationAttemptRef.current = "";
       return;
     }
-    if (multiplayer.submittingAction || multiplayerSubmitInFlightRef.current) return;
+    if (phasePassing || multiplayer.submittingAction || multiplayerSubmitInFlightRef.current) return;
     if (stateRef.current !== state) return;
 
     const currentState = state;
     const forcedObjects = localForcedObjectSelectionCommand(currentState);
+    if (!forcedObjects && (priorityStops.stopReason(currentState)
+      || (Number(currentState?.stack_size || 0) > 0 && !autoResolveEnabled))) return;
     const result = forcedObjects ? { command: forcedObjects } : buildMultiplayerSmartAutoPass({
       autoPassEnabled,
       holdRule,
@@ -1872,13 +1930,19 @@ export function GameProvider({ children }) {
         console.error(err);
       })
       .finally(() => {
-        multiplayerSubmitInFlightRef.current = false;
+        finishMultiplayerSubmission();
       });
   }, [
     autoPassEnabled,
+    autoResolveEnabled,
+    phasePassing,
+    priorityStops,
+    priorityStopsState,
+    finishMultiplayerSubmission,
     holdRule,
     multiplayer.matchStarted,
     multiplayer.submittingAction,
+    multiplayerSubmissionRevision,
     setStatus,
     state,
     stateRef,
@@ -2055,9 +2119,11 @@ export function GameProvider({ children }) {
           }
           if (!backgroundIsCurrent()) return;
           let multiplayerTraceId = null;
+          let priorityCheckpoint = null;
           try {
             if (isTargetSubmit) armTargetSubmitDebounce();
             const syncedCommand = serializeMultiplayerCommand(command, currentState);
+            priorityCheckpoint = priorityStops.beforeCommand(command, currentState);
             multiplayerSubmitInFlightRef.current = true;
             multiplayerTraceId = beginActionTrace({
               label: describeCommandLabel(command),
@@ -2079,16 +2145,17 @@ export function GameProvider({ children }) {
                 );
               }
             } finally {
-              multiplayerSubmitInFlightRef.current = false;
+              finishMultiplayerSubmission();
             }
             if (isTargetSubmit) settleTargetSubmitDebounce();
           } catch (err) {
-            multiplayerSubmitInFlightRef.current = false;
+            finishMultiplayerSubmission();
             if (isTargetSubmit) clearTargetSubmitDebounce();
             completeActionTrace(multiplayerTraceId, {
               outcome: "failed",
               meta: { error: err instanceof Error ? err.message : String(err) },
             });
+            priorityStops.rollbackAction(priorityCheckpoint, stateRef.current);
             emitSyncFailureNotice(
               "Sync failed",
               err instanceof Error ? err.message : String(err)
@@ -2107,6 +2174,7 @@ export function GameProvider({ children }) {
           mode: "local",
         });
 
+        let priorityCheckpoint = null;
         try {
           console.debug("[ironsmith] dispatch:start", {
             command: commandSummary,
@@ -2116,6 +2184,7 @@ export function GameProvider({ children }) {
 
           const dispatchStartedAt = performance.now();
           if (isTargetSubmit) armTargetSubmitDebounce();
+          priorityCheckpoint = priorityStops.beforeCommand(command, stateRef.current);
           let st = await game.dispatch(command);
           st = await finishExplicitCastingMethod(st, castingAction, (nextCommand) => game.dispatch(nextCommand));
           const workerRoundTripMs = performance.now() - dispatchStartedAt;
@@ -2175,6 +2244,7 @@ export function GameProvider({ children }) {
             });
           }
         } catch (err) {
+          priorityStops.rollbackAction(priorityCheckpoint, stateRef.current);
           const errorMessage = err instanceof Error ? err.message : String(err);
           let decisionAfterError = null;
           if (isTargetSubmit) clearTargetSubmitDebounce();
@@ -2220,6 +2290,8 @@ export function GameProvider({ children }) {
       applyStickyViewedCards,
       clearTargetSubmitDebounce,
       finalizeState,
+      priorityStops,
+      finishMultiplayerSubmission,
       game,
       multiplayer.matchStarted,
       multiplayer.role,
@@ -2234,6 +2306,49 @@ export function GameProvider({ children }) {
     if (state?.decision?.kind !== "mana_payment") manuallyControlledPaymentRef.current = null;
   }, [state?.decision?.kind]);
 
+  // The visual drain and this deadline share the same origin. Only submit a
+  // normal local pass, and revalidate authoritative state after any input/sync.
+  useEffect(() => {
+    const window = priorityStopsState.window;
+    if (!window) return;
+    // Start the two seconds once the authoritative priority snapshot is drawn.
+    if (window.startedAt === null) {
+      if (state === stateRef.current && isSnapshotRendered() && priorityStops.windowFor(state)) priorityStops.armWindow(window.id);
+      return;
+    }
+    if (!autoPassEnabled || holdRule === "always") {
+      priorityStops.hold(stateRef.current);
+      return;
+    }
+    let timer;
+    const passWhenReady = () => {
+      const current = stateRef.current;
+      priorityStops.observe(current);
+      if (priorityStops.getSnapshot().window?.id !== window.id) return;
+      const remaining = window.startedAt + window.duration - performance.now();
+      if (remaining > 0) {
+        timer = setTimeout(passWhenReady, Math.ceil(remaining));
+        return;
+      }
+      if (wasmInteractionGateRef.current.isBlocked() || !isSnapshotRendered()
+        || multiplayer.submittingAction || multiplayerSubmitInFlightRef.current) {
+        timer = setTimeout(passWhenReady, 25);
+        return;
+      }
+      const pass = findPassPriorityAction(current?.decision);
+      if (!pass || (pass.label && pass.label !== "Pass priority")) {
+        priorityStops.hold(current);
+        return;
+      }
+      if (priorityStops.expire(window.id, current)) {
+        void dispatch(priorityCommandForAction(pass), "Passed priority");
+      }
+    };
+    timer = setTimeout(passWhenReady, Math.max(0, Math.ceil(window.startedAt + window.duration - performance.now())));
+    return () => clearTimeout(timer);
+  }, [priorityStops, priorityStopsState.window, autoPassEnabled, holdRule, dispatch,
+    isSnapshotRendered, multiplayer.submittingAction, stateRef, state]);
+
   // "Resolve all": keep passing the local player's priority while the stack
   // drains. It stops once the stack is empty, the turn changes, the pass is a
   // custom action, or an opponent puts something new on the stack (so they
@@ -2243,11 +2358,23 @@ export function GameProvider({ children }) {
   const resolveAllRef = useRef(null);
   const stopResolveAll = useCallback(() => {
     resolveAllRef.current = null;
+    setPhasePassing(false);
   }, []);
+  const pausePassing = useCallback(() => {
+    stopResolveAll();
+    // A phase pause ends automation, including the independent stack resolver.
+    // Consuming the stop with a manual action must not restart either path.
+    setAutoPassEnabled(false);
+    setAutoResolveEnabled(false);
+  }, [stopResolveAll]);
   const startResolveAll = useCallback(() => {
     const current = stateRef.current;
     const stackSize = Number(current?.stack_size || 0);
     if (stackSize <= 0) return;
+    const pass = findPassPriorityAction(current?.decision);
+    if (pass && samePlayerId(current?.decision?.player, current?.perspective)) {
+      priorityStops.beforeCommand(priorityCommandForAction(pass), current);
+    }
     resolveAllRef.current = {
       turn: current?.turn_number ?? null,
       stackSize,
@@ -2255,8 +2382,34 @@ export function GameProvider({ children }) {
       inFlight: false,
       dispatchedFrom: null,
     };
+    setPhasePassing(false);
     setResolveAllTick((tick) => tick + 1);
-  }, [stateRef]);
+  }, [stateRef, priorityStops]);
+
+  const togglePhasePassing = useCallback(() => {
+    if (resolveAllRef.current?.phases) {
+      stopResolveAll();
+      return;
+    }
+    const current = stateRef.current;
+    if (!current || current.game_over
+      || !samePlayerId(current.active_player, current.perspective)
+      || current.decision?.kind === "mana_payment") return;
+    // Explicitly resume automation, but leave phase/step stops intact.
+    priorityStops.resume(current);
+    setAutoPassEnabled(true);
+    setHoldRule("never");
+    resolveAllRef.current = {
+      phases: true,
+      turn: current.turn_number ?? null,
+      stackSize: Number(current.stack_size || 0),
+      passes: 0,
+      inFlight: false,
+      dispatchedFrom: null,
+    };
+    setPhasePassing(true);
+    setResolveAllTick(tick => tick + 1);
+  }, [stateRef, stopResolveAll, priorityStops]);
 
   useEffect(() => {
     const run = resolveAllRef.current;
@@ -2265,7 +2418,7 @@ export function GameProvider({ children }) {
     if (
       !state
       || state.game_over
-      || stackSize <= 0
+      || (stackSize <= 0 && !run?.phases)
       || (run && (state.turn_number ?? null) !== run.turn)
       || (run && run.passes >= 200)
     ) {
@@ -2273,16 +2426,34 @@ export function GameProvider({ children }) {
       return;
     }
     const top = Array.isArray(state.stack_objects) ? state.stack_objects[0] : null;
-    if (run && stackSize > run.stackSize && top && !samePlayerId(top.controller, state.perspective)) {
+    if (run && !run.phases && stackSize > run.stackSize && top && !samePlayerId(top.controller, state.perspective)) {
       stopResolveAll();
       return;
     }
     if (run) run.stackSize = stackSize;
     const decision = state.decision;
-    if (decision?.kind !== "priority" || !samePlayerId(decision.player, state.perspective)) return;
+    if (!samePlayerId(decision?.player, state.perspective)) return;
+    const passCombat = run?.phases && decision?.kind === "attackers";
+    if (decision?.kind !== "priority" && !passCombat) return;
+    if (passCombat && (
+      (decision.attacker_options || []).some(option => option.must_attack)
+      || priorityStopsState.stops['phase:Combat']
+      || COMBAT_STEPS.some(step => priorityStopsState.stops[`step:${step}`])
+    )) {
+      // A combat stop also opts out of declaring no attackers automatically:
+      // otherwise that declaration would remove the later blocking window.
+      pausePassing();
+      return;
+    }
     if (run?.dispatchedFrom === state) return;
+    const stopReason = priorityStops.stopReason(state);
+    if (stopReason || holdRule === "always") {
+      if (run?.phases || stopReason?.startsWith("stop at ")) pausePassing();
+      return;
+    }
+    if (run?.phases && state.viewed_cards && !state.viewed_cards.inspector_only && !state.viewed_cards.inspectorOnly) return;
     const passAction = findPassPriorityAction(decision);
-    if (!passAction || (passAction.label && passAction.label !== "Pass priority")) {
+    if (!passCombat && (!passAction || (passAction.label && passAction.label !== "Pass priority"))) {
       stopResolveAll();
       return;
     }
@@ -2305,8 +2476,9 @@ export function GameProvider({ children }) {
         run.passes += 1;
       }
       Promise.resolve(dispatch(
-        { type: "priority_action", action_index: passAction.index, action_ref: passAction.action_ref },
-        passAction.label
+        passCombat ? { type: "declare_attackers", declarations: [] }
+          : { type: "priority_action", action_index: passAction.index, action_ref: passAction.action_ref },
+        passCombat ? "No attackers declared" : passAction.label
       ))
         .catch(() => {
           stopResolveAll();
@@ -2319,7 +2491,7 @@ export function GameProvider({ children }) {
     }, 25);
     return () => clearTimeout(timer);
   }, [autoResolveEnabled, dispatch, isSnapshotRendered, multiplayer.submittingAction,
-    resolveAllTick, state, stateRef, stopResolveAll]);
+    resolveAllTick, phasePassing, state, stateRef, stopResolveAll, pausePassing, priorityStops, priorityStopsState, holdRule]);
 
   // Ranking is read-only and sliced. Only a finished, still-current suggestion
   // becomes an ordinary synchronized command; manual input wins every race.
@@ -2359,8 +2531,21 @@ export function GameProvider({ children }) {
       }
     } catch (error) {
       console.warn("Background payment analysis failed:", error);
+      if (isCurrent()) {
+        const next = { ...stateRef.current, mana_payment: { ...stateRef.current.mana_payment,
+          planning_complete: true, planning_error: String(error?.message || error) } };
+        stateRef.current = next;
+        setState(next);
+      }
     }
   }, [dispatch, game, setState, stateRef]);
+
+  useEffect(() => {
+    if (surrenderRequested && (!multiplayer.matchStarted || state?.game_over)) {
+      const timer = setTimeout(() => setSurrenderRequested(false), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [surrenderRequested, multiplayer.matchStarted, state?.game_over]);
 
   const cancelDecision = useCallback(
     async ({ waitForPaymentReady = false } = {}) => {
@@ -2380,6 +2565,7 @@ export function GameProvider({ children }) {
         }
         : runWasmInteraction;
       return runCancel(async () => {
+        priorityStops.cancelAction();
         if (multiplayer.matchStarted) {
           const currentState = stateRef.current;
           if (!currentState?.decision) {
@@ -2513,6 +2699,7 @@ export function GameProvider({ children }) {
       if (!transcript || typeof transcript !== "object") {
         throw new Error("Missing audit transcript");
       }
+      assertCurrentAuditReplayProtocol(transcript);
       const prepared = {
         transcript: cloneJson(transcript),
         sourceLabel,
@@ -2544,6 +2731,7 @@ export function GameProvider({ children }) {
       if (!prepared?.transcript || typeof prepared.transcript !== "object") {
         throw new Error("Missing audit transcript");
       }
+      assertCurrentAuditReplayProtocol(prepared.transcript);
       setAuditReplayState((current) => ({
         ...current,
         available: true,
@@ -2798,6 +2986,7 @@ export function GameProvider({ children }) {
       state: state
         ? {
             snapshot_id: state.snapshot_id,
+            game_over: state.game_over || null,
             perspective: state.perspective,
             turn_number: state.turn_number,
             active_player: state.active_player,
@@ -2933,6 +3122,10 @@ export function GameProvider({ children }) {
       setAutoResolveEnabled,
       holdRule,
       setHoldRule,
+      priorityStops: priorityStopsState.stops,
+      postActionPriorityWindow: priorityStops.windowFor(state) ? priorityStopsState.window : null,
+      cyclePriorityStop,
+      holdPostActionPriority,
       fixedStartingBoard,
       setFixedStartingBoard,
       uiFont,
@@ -2967,12 +3160,16 @@ export function GameProvider({ children }) {
       beginAuditReplaySession,
       setAuditReplayPosition,
       exitAuditReplaySession,
+      surrenderRequested,
+      setSurrenderRequested,
       submitMultiplayerCommand,
       sendLobbyChat,
       submitMultiplayerAddCardCheat,
       cancelBackgroundDispatch,
       setExternalAutoPassGate,
       startResolveAll,
+      phasePassing,
+      togglePhasePassing,
     }),
     [
       setState,
@@ -2989,6 +3186,7 @@ export function GameProvider({ children }) {
       setStatus,
       runWasmInteraction,
       dispatch, dispatchInBackground, cancelBackgroundDispatch, cancelDecision, refresh, autoPassEnabled, autoResolveEnabled, holdRule, uiFont,
+      priorityStopsState, cyclePriorityStop, holdPostActionPriority,
       playerAccentOverrides, setPlayerAccentOverride, inspectorDebug, fixedStartingBoard,
       activeEffectOrderingState, moveEffectOrderingItem,
       semanticThreshold, setSemanticThreshold, cardsMeetingThreshold,
@@ -3002,11 +3200,15 @@ export function GameProvider({ children }) {
       beginAuditReplaySession,
       setAuditReplayPosition,
       exitAuditReplaySession,
+      surrenderRequested,
+      setSurrenderRequested,
       submitMultiplayerCommand,
       sendLobbyChat,
       submitMultiplayerAddCardCheat,
       setExternalAutoPassGate,
       startResolveAll,
+      phasePassing,
+      togglePhasePassing,
     ]
   );
 

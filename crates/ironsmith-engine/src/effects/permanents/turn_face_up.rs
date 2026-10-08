@@ -19,10 +19,7 @@ impl EffectExecutor for TurnFaceUpEffect {
         _game: &GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, ExecutionError> {
-        Ok(Box::new(crate::effects::DeferredPlayerActionProposal {
-            effect: crate::effect::Effect::new(self.clone()),
-            iterated_player: ctx.iteration.iterated_player,
-        }))
+        Ok(prepare_face_up_instruction(self.clone(), ctx))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -34,74 +31,34 @@ impl EffectExecutor for TurnFaceUpEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-        game.clear_pending_decision_controllers();
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let result = (|| {
-            game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
-            let targets = crate::effects::helpers::resolve_objects_for_effect(game, ctx, &self.target)?;
-            if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-            if targets.is_empty() {
-                return Ok(EffectOutcome::target_invalid());
-            }
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-            let mut turned = 0;
-            let mut completed = Vec::new();
-            for object_id in targets {
-                let Some(object) = game.object(object_id) else {
-                    continue;
-                };
-                if !game.is_face_down(object_id) {
-                    continue;
-                }
-                let on_battlefield = object.zone == Zone::Battlefield;
-                game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
-                if !game.set_face_up(object_id).map_err(ExecutionError::ContinuousDiscovery)? {
-                    continue;
-                }
-                game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
-                turned += 1;
-                if on_battlefield {
-                    // CR 708.11: "As this is turned face up" abilities apply
-                    // whatever turns the permanent face up, and a characteristic
-                    // choice made "as it enters or is turned face up" (Aquamorph
-                    // Entity) is made now, as in the special-action path.
-                    let controller = game.current_controller(object_id).unwrap_or(ctx.controller);
-                    game.execute_as_enters_effect_programs_for_turn_face_up(
-                        object_id,
-                        controller,
-                        &mut *ctx.decision_maker,
-                    )?;
-                    if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-                    game.apply_power_toughness_choice_as_enters_or_turns_face_up(
-                        object_id,
-                        controller,
-                        &mut *ctx.decision_maker,
-                    );
-                    if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-                    let event_provenance = game.alloc_child_event_provenance(
-                        ctx.provenance,
-                        crate::events::EventKind::TurnedFaceUp,
-                    );
-                    completed.push(TriggerEvent::new_with_provenance(
-                        crate::events::TurnedFaceUpEvent::new(object_id, ctx.controller),
-                        event_provenance,
-                    ));
-                }
-            }
-
-            // One instruction changes all selected permanents before any of
-            // its event filters observe the completed characteristics.
-            crate::events::other::freeze_completed_lifecycle_events(game, &mut completed)?;
-            for event in completed { game.queue_trigger_event(ctx.provenance, event); }
-            Ok(EffectOutcome::count(turned))
-        })();
-        if result.is_err() || ctx.decision_maker.awaiting_choice() {
-            game.restore_execution_checkpoint(checkpoint, result.is_ok() && ctx.decision_maker.awaiting_choice());
-            context_checkpoint.restore(ctx);
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(0),
+            ));
         }
-        result
+        game.clear_pending_decision_controllers();
+        crate::effects::composition::execute_transaction(
+            game,
+            ctx,
+            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+            |game, ctx| {
+                crate::effects::composition::complete_prepared_original_with_outputs(
+                    prepare_face_up_instruction(self.clone(), ctx),
+                    game,
+                    ctx,
+                    false,
+                )
+            },
+        )
     }
 
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
@@ -110,6 +67,415 @@ impl EffectExecutor for TurnFaceUpEffect {
 
     fn target_description(&self) -> &'static str {
         "card to turn face up"
+    }
+}
+
+#[derive(Debug)]
+enum FaceUpInstructionState {
+    Selection,
+    Selected(Vec<crate::ids::ObjectId>),
+    Ready(Vec<crate::ids::ObjectId>),
+    Finished(EffectOutcome),
+}
+
+#[derive(Debug)]
+struct PreparedFaceUpInstruction {
+    effect: TurnFaceUpEffect,
+    iterated_player: Option<crate::ids::PlayerId>,
+    state: FaceUpInstructionState,
+}
+
+fn prepare_face_up_instruction(
+    effect: TurnFaceUpEffect,
+    ctx: &ExecutionContext,
+) -> Box<dyn crate::effects::SimultaneousEffectProposal> {
+    Box::new(PreparedFaceUpInstruction {
+        effect,
+        iterated_player: ctx.iteration.iterated_player,
+        state: FaceUpInstructionState::Selection,
+    })
+}
+
+fn authenticate_face_up_targets(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    targets: &[crate::ids::ObjectId],
+) -> Result<bool, ExecutionError> {
+    // Turning a selected face-down exile card face up is public, but
+    // it is not the Reveal keyword action. Use the existing exact
+    // owner-opening protocol without creating CardRevealed events.
+    for index in 0..game.players.len() {
+        let owner = crate::ids::PlayerId::from_index(index as u8);
+        let exiled: Vec<_> = targets
+            .iter()
+            .copied()
+            .filter(|id| {
+                game.object(*id)
+                    .is_some_and(|object| object.owner == owner && object.zone == Zone::Exile)
+                    && game.is_face_down(*id)
+            })
+            .collect();
+        if exiled.is_empty() {
+            continue;
+        }
+        let private: Vec<_> = exiled
+            .iter()
+            .copied()
+            .filter(|id| game.hidden_identity_is_private(*id))
+            .collect();
+        let Some(opened) = game.reveal_private_hidden_cards_publicly(
+            &mut *ctx.decision_maker,
+            owner,
+            ctx.source,
+            &exiled,
+            "Turn selected exiled cards face up",
+            false,
+        ) else {
+            return Ok(false);
+        };
+        if private
+            .iter()
+            .any(|id| !opened.contains(id) && !game.is_publicly_revealed_hidden_card(*id))
+            || exiled.iter().any(|id| game.is_hidden_card_placeholder(*id))
+        {
+            return Err(ExecutionError::IncompleteEvidence(
+                "turning exiled cards face up lacks an authenticated selected identity".into(),
+            ));
+        }
+    }
+
+    Ok(!ctx.decision_maker.awaiting_choice())
+}
+
+impl crate::effects::SimultaneousEffectProposal for PreparedFaceUpInstruction {
+    fn has_simultaneous_originals(&self) -> bool {
+        matches!(&self.state, FaceUpInstructionState::Ready(targets) if targets.len() > 1)
+    }
+
+    fn prepare_selection(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        if !matches!(self.state, FaceUpInstructionState::Selection)
+            || ctx.decision_maker.awaiting_choice()
+        {
+            return Ok(());
+        }
+        ctx.with_temp_iterated_player(self.iterated_player, |ctx| {
+            game.clear_pending_decision_controllers();
+            game.refresh_continuous_state()
+                .map_err(ExecutionError::ContinuousDiscovery)?;
+            let targets = crate::effects::helpers::resolve_objects_for_effect(
+                game,
+                ctx,
+                &self.effect.target,
+            )?;
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(());
+            }
+            self.state = if targets.is_empty() {
+                FaceUpInstructionState::Finished(EffectOutcome::target_invalid())
+            } else {
+                FaceUpInstructionState::Selected(targets)
+            };
+            Ok(())
+        })
+    }
+
+    fn prepare_original(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        self.prepare_selection(game, ctx)?;
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(());
+        }
+        if let FaceUpInstructionState::Selected(targets) = &self.state {
+            let ready = ctx.with_temp_iterated_player(self.iterated_player, |ctx| {
+                authenticate_face_up_targets(game, ctx, targets)
+            })?;
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(());
+            }
+            if !ready {
+                self.state = FaceUpInstructionState::Finished(EffectOutcome::count(0));
+            } else {
+                let FaceUpInstructionState::Selected(targets) =
+                    std::mem::replace(&mut self.state, FaceUpInstructionState::Selection)
+                else {
+                    unreachable!()
+                };
+                self.state = FaceUpInstructionState::Ready(targets);
+            }
+        }
+        Ok(())
+    }
+
+    fn commit_original_with_outputs(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<
+        crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
+        ExecutionError,
+    > {
+        ctx.with_temp_iterated_player(self.iterated_player, |ctx| {
+            let targets = match self.state {
+                FaceUpInstructionState::Finished(outcome) => {
+                    return Ok(crate::effects::SimultaneousEffectCommit::finished(
+                        crate::effects::CompletedEffectOutputs::aggregate_only(outcome),
+                    ));
+                }
+                FaceUpInstructionState::Ready(targets) => targets,
+                _ => {
+                    return Err(ExecutionError::InternalError(
+                        "face-up original committed before selection and authentication".into(),
+                    ));
+                }
+            };
+            let ((turned, completed, children), observations) =
+                crate::effects::with_action_observations(game, |game| {
+                    let mut turned = 0;
+                    let mut completed = Vec::new();
+                    let mut children = Vec::new();
+                    for object_id in targets {
+                        if !game.is_face_down(object_id) {
+                            continue;
+                        }
+                        let Some(transition) = super::turn_face_up_with_choices(
+                            game,
+                            object_id,
+                            super::FaceUpChoiceController::CurrentOr(ctx.controller),
+                            &mut *ctx.decision_maker,
+                        )?
+                        else {
+                            continue;
+                        };
+                        turned += 1;
+                        children.extend(transition.outputs);
+                        if ctx.decision_maker.awaiting_choice() {
+                            return Ok((turned, completed, children));
+                        }
+                        if transition.was_on_battlefield {
+                            let event_provenance = game.alloc_child_event_provenance(
+                                ctx.provenance,
+                                crate::events::EventKind::TurnedFaceUp,
+                            );
+                            let mut event = TriggerEvent::new_with_provenance(
+                                crate::events::TurnedFaceUpEvent::new(object_id, ctx.controller),
+                                event_provenance,
+                            );
+                            if let Some(batch) = game.simultaneous_action_batch() {
+                                event = event.with_simultaneous_batch(batch);
+                            }
+                            completed.push(event);
+                        }
+                    }
+
+                    Ok((turned, completed, children))
+                })?;
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(crate::effects::SimultaneousEffectCommit::finished(
+                    crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+                ));
+            }
+            let mut outputs = crate::effects::CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(turned),
+            );
+            outputs.retain_published_children(children);
+            Ok(crate::effects::SimultaneousEffectCommit {
+                outcome: outputs,
+                completion: Some(Box::new(FaceUpInstructionCompletion {
+                    events: completed,
+                    observations,
+                    provenance: ctx.provenance,
+                    frozen: false,
+                    observed: false,
+                })),
+            })
+        })
+    }
+
+    fn commit(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        let receipt = self.commit_original_with_outputs(game, ctx)?;
+        crate::effects::composition::complete_standalone_original_with_outputs(game, ctx, receipt)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
+}
+
+/// Lifecycle observation belongs after every sibling physical original and
+/// before any completion programme. Immediate characteristic choices stay in
+/// the original transition; this owner never repeats them.
+struct FaceUpInstructionCompletion {
+    events: Vec<TriggerEvent>,
+    observations: Vec<TriggerEvent>,
+    provenance: crate::provenance::ProvNodeId,
+    frozen: bool,
+    observed: bool,
+}
+
+impl crate::effects::SimultaneousEffectCompletion for FaceUpInstructionCompletion {
+    fn original_phase_status(&self) -> crate::effects::OriginalPhaseStatus {
+        crate::effects::OriginalPhaseStatus::Complete
+    }
+
+    fn freeze(&mut self, game: &mut GameState) -> Result<(), ExecutionError> {
+        if self.frozen {
+            return Err(ExecutionError::InternalError(
+                "face-up completion frozen twice".into(),
+            ));
+        }
+        crate::events::other::retain_departed_lifecycle_snapshots(
+            game,
+            &mut self.events,
+            &self.observations,
+        );
+        crate::events::other::freeze_completed_lifecycle_events(game, &mut self.events)?;
+        self.frozen = true;
+        Ok(())
+    }
+
+    fn observe_original(
+        &mut self,
+        game: &mut GameState,
+        _ctx: &mut ExecutionContext,
+        _original: &mut EffectOutcome,
+    ) -> Result<(), ExecutionError> {
+        if self.observed {
+            return Ok(());
+        }
+        if !self.frozen {
+            return Err(ExecutionError::InternalError(
+                "face-up completion observed before freezing originals".into(),
+            ));
+        }
+        crate::effects::observe_lifecycle_completions(game, &mut self.events)?;
+        for event in &self.events {
+            game.queue_trigger_event(self.provenance, event.clone());
+        }
+        self.observed = true;
+        Ok(())
+    }
+
+    fn complete(
+        mut self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+        mut original: EffectOutcome,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        self.observe_original(game, ctx, &mut original)?;
+        Ok(original)
+    }
+}
+
+#[cfg(test)]
+mod exile_opening_tests {
+    use super::*;
+    use crate::decision::DecisionMaker;
+    use crate::decisions::context::{SelectObjectsContext, SelectionRevealPolicy};
+    use crate::ids::{CardId, ObjectId, PlayerId};
+    use crate::snapshot::ObjectSnapshot;
+    use crate::target::ChooseSpec;
+
+    struct Opening { pause: bool, pending: bool, requested: Vec<Vec<ObjectId>> }
+    impl DecisionMaker for Opening {
+        fn decide_objects(&mut self, _: &GameState, context: &SelectObjectsContext) -> Vec<ObjectId> {
+            assert_eq!(context.player, PlayerId::from_index(0));
+            assert_eq!(context.reveal_policy, SelectionRevealPolicy::Public);
+            let cards: Vec<_> = context.candidates.iter().map(|candidate| candidate.id).collect();
+            assert_eq!(context.min, cards.len());
+            assert_eq!(context.max, Some(cards.len()));
+            self.requested.push(cards.clone()); self.pending = self.pause; cards
+        }
+        fn awaiting_choice(&self) -> bool { self.pending }
+    }
+
+    #[test]
+    fn locally_known_exile_faces_still_require_a_complete_owner_opening() {
+        struct Incomplete(usize);
+        impl DecisionMaker for Incomplete {
+            fn decide_objects(&mut self, _: &GameState, context: &SelectObjectsContext) -> Vec<ObjectId> {
+                match self.0 {
+                    0 => vec![],
+                    1 => vec![context.candidates[0].id],
+                    _ => vec![ObjectId::from_raw(9_999_999)],
+                }
+            }
+        }
+        let alice = PlayerId::from_index(0);
+        let definition = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(120_071), "Known private exile card")
+            .card_types(vec![crate::types::CardType::Artifact]).build();
+        for answer in 0..3 {
+            let mut game = crate::tests::test_helpers::setup_two_player_game();
+            let cards: Vec<_> = (0..2).map(|slot|
+                game.create_hidden_card_placeholder(alice, Zone::Exile, slot, format!("malformed-{slot}"))).collect();
+            for id in &cards { game.reveal_hidden_card_with_definition(*id, &definition).unwrap(); game.set_face_down(*id); }
+            let snapshots = cards.iter().map(|id| ObjectSnapshot::from_object(game.object(*id).unwrap(), &game)).collect();
+            let source = game.new_object_id();
+            let mut dm = Incomplete(answer);
+            let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+            ctx.set_tagged_objects("pile", snapshots);
+            let result = TurnFaceUpEffect { target: ChooseSpec::tagged("pile") }.execute(&mut game, &mut ctx);
+            assert!(matches!(result, Err(ExecutionError::IncompleteEvidence(_))));
+            assert!(cards.iter().all(|id| game.is_face_down(*id) && !game.is_hidden_card_placeholder(*id)));
+            assert!(game.publicly_revealed_hidden_cards().is_empty());
+            assert!(game.take_pending_trigger_events().is_empty());
+        }
+    }
+
+    #[test]
+    fn turning_an_exile_group_face_up_uses_exact_openings_without_reveal_events() {
+        let alice = PlayerId::from_index(0);
+        let definition = crate::cards::CardDefinitionBuilder::new(CardId::from_raw(120_070), "Exile identity")
+            .card_types(vec![crate::types::CardType::Artifact]).build();
+        for known in [false, true] {
+            for pause in [false, true] {
+                let mut game = crate::tests::test_helpers::setup_two_player_game();
+                let cards: Vec<_> = (0..4).map(|slot|
+                    game.create_hidden_card_placeholder(alice, Zone::Exile, slot, format!("pile-{slot}"))).collect();
+                if known {
+                    for card in &cards[..2] { game.reveal_hidden_card_with_definition(*card, &definition).unwrap(); }
+                }
+                for card in &cards { game.set_face_down(*card); }
+                let source = game.new_object_id();
+                let selected = cards[..2].iter().map(|id| ObjectSnapshot::from_object(game.object(*id).unwrap(), &game)).collect();
+                let mut dm = Opening { pause, pending: false, requested: vec![] };
+                let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+                ctx.set_tagged_objects("selected_pile", selected);
+                let effect = TurnFaceUpEffect { target: ChooseSpec::tagged("selected_pile") };
+                let result = effect.execute(&mut game, &mut ctx);
+                if pause || !known {
+                    assert!(cards.iter().all(|id| game.is_face_down(*id)));
+                    assert!(game.publicly_revealed_hidden_cards().is_empty());
+                    if !pause { assert!(matches!(result, Err(ExecutionError::IncompleteEvidence(_)))); }
+                } else {
+                    assert_eq!(result.unwrap().count_or_zero(), 2);
+                    assert!(cards[..2].iter().all(|id| !game.is_face_down(*id)));
+                }
+                assert!(cards[2..].iter().all(|id| game.is_face_down(*id) && game.is_hidden_card_placeholder(*id)));
+                assert!(game.take_pending_trigger_events().is_empty(), "no reveal or battlefield turn-up event for exile cards");
+                drop(ctx);
+                assert_eq!(dm.requested, vec![cards[..2].to_vec()]);
+                if pause || !known {
+                    if !known { for card in &cards[..2] { game.reveal_hidden_card_with_definition(*card, &definition).unwrap(); } }
+                    dm.pause = false; dm.pending = false;
+                    let selected = cards[..2].iter().map(|id| ObjectSnapshot::from_object(game.object(*id).unwrap(), &game)).collect();
+                    let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+                    ctx.set_tagged_objects("selected_pile", selected);
+                    let result = effect.execute(&mut game, &mut ctx).unwrap();
+                    assert_eq!(result.count_or_zero(), 2);
+                    assert!(result.events.is_empty());
+                    assert!(cards[..2].iter().all(|id| !game.is_face_down(*id)));
+                    assert!(cards[2..].iter().all(|id| game.is_face_down(*id) && game.is_hidden_card_placeholder(*id)));
+                }
+            }
+        }
     }
 }
 

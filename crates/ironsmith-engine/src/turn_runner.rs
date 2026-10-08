@@ -14,12 +14,12 @@ use crate::game_loop::{
     apply_attack_mana_ability_window_response, apply_attacker_declarations_with_dm,
     apply_blocker_mana_ability_window_response, attack_mana_ability_window_context,
     begin_attack_declaration_transaction, begin_blocker_declaration_transaction,
-    blocker_mana_ability_window_context, drain_pending_trigger_events,
+    blocker_mana_ability_window_context, try_drain_pending_trigger_events,
     finish_attack_declaration_transaction,
     finish_blocker_declaration_transaction_deferring_triggers, generate_and_queue_step_triggers,
     get_declare_attackers_decision, get_declare_blockers_decision,
     preview_attack_cost_needs_mana_window, preview_optional_attack_cost_prompts,
-    queue_block_declaration_events, queue_combat_damage_triggers,
+    queue_block_declaration_events, try_queue_combat_damage_triggers,
 };
 use crate::game_state::{
     AddedStepPlacement, GameState, Phase, ScheduledStep, Step, TurnScheduleDestination,
@@ -28,7 +28,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::rules::combat::deals_first_strike_damage_with_game;
 use crate::rules::state_based::check_state_based_actions;
 use crate::triggers::TriggerQueue;
-use crate::turn::{execute_cleanup_step, execute_untap_step_with};
+use crate::turn::execute_cleanup_step;
 
 /// What the caller should do next after calling [`TurnRunner::advance`].
 #[derive(Debug)]
@@ -270,7 +270,6 @@ struct PendingCleanupDiscard {
 struct PendingTurnDraw {
     player: PlayerId,
     count: usize,
-    previous_draws: u32,
     choices: PendingUntapChoices,
 }
 
@@ -790,6 +789,9 @@ pub struct TurnRunner {
     pending_attacking_bands: Option<Vec<Vec<ObjectId>>>,
     /// Mandatory choices for permanents that may remain tapped this untap step.
     pending_untap_choices: Option<PendingUntapChoices>,
+    /// Original occurrence boundary while optional untap choices suspend a
+    /// lane. Retried actions use this receipt rather than newly registered state.
+    pending_untap_boundary: Option<crate::turn::UntapStepBoundary>,
     pending_attraction_choices: Option<PendingUntapChoices>,
     /// Choices made while a restart's deferred cards enter (CR 726.4).
     pending_restart_entry_choices: Option<PendingUntapChoices>,
@@ -866,6 +868,7 @@ impl TurnRunner {
             pending_attackers: None,
             pending_attacking_bands: None,
             pending_untap_choices: None,
+            pending_untap_boundary: None,
             pending_attraction_choices: None,
             pending_restart_entry_choices: None,
             pending_attacker_optional_costs: None,
@@ -936,6 +939,29 @@ impl TurnRunner {
         game: &mut GameState,
         tq: &mut TriggerQueue,
     ) -> Result<TurnAction, GameLoopError> {
+        let retrying_untap_choice = self.has_pending_untap_continuation();
+        let runner_checkpoint = self.clone();
+        let game_checkpoint = game.clone();
+        let queue_checkpoint = tq.clone();
+        let result = self.advance_inner(game, tq);
+        if (retrying_untap_choice && result.is_err())
+            || matches!(&result, Err(GameLoopError::ExecutionFailed(error)) if error.is_incomplete_execution())
+        {
+            // Retain the accepted prefix and submitted response together with
+            // the original untap boundary. A replacement error must not turn
+            // a resumed step into a fresh optional-choice collection.
+            *self = runner_checkpoint;
+            game.restore_execution_checkpoint(game_checkpoint, false);
+            *tq = queue_checkpoint;
+        }
+        result
+    }
+
+    fn advance_inner(
+        &mut self,
+        game: &mut GameState,
+        tq: &mut TriggerQueue,
+    ) -> Result<TurnAction, GameLoopError> {
         if game.turn_store.end_combat_phase_procedure_pending {
             // CR 724.2a: external entries triggered before the procedure cease
             // to exist. Events produced during stack exile remain staged in
@@ -954,7 +980,7 @@ impl TurnRunner {
         }
         let active_player = game.turn.active_player;
         let skipped_state = match self.state {
-            TurnState::Untap => Some((Step::Untap, false)),
+            TurnState::Untap if self.pending_untap_boundary.is_none() => Some((Step::Untap, false)),
             TurnState::Upkeep => Some((Step::Upkeep, false)),
             TurnState::Draw => Some((Step::Draw, true)),
             TurnState::BeginCombat => Some((Step::BeginCombat, false)),
@@ -1045,6 +1071,7 @@ impl TurnRunner {
                 }
 
                 self.pending_untap_choices = None;
+                self.pending_untap_boundary = None;
                 self.pending_boolean = None;
                 if let Some(prompt) = self.run_untap_step_with_choices(game, Vec::new())? {
                     self.state = TurnState::Untap;
@@ -1091,6 +1118,8 @@ impl TurnRunner {
                     return Ok(TurnAction::Decision(prompt));
                 }
                 if phase == Phase::Combat {
+                    self.sync_combat_from_game(game);
+                    game.retain_ending_combat(&self.combat);
                     crate::combat_state::end_combat(&mut self.combat);
                     game.combat = Some(self.combat.clone());
                     game.cleanup_effects_end_of_combat();
@@ -1132,7 +1161,7 @@ impl TurnRunner {
                     game.mark_upkeep_began(player);
                 }
                 game.reset_priority_for_new_window();
-                drain_pending_trigger_events(game, tq);
+                try_drain_pending_trigger_events(game, tq)?;
                 generate_and_queue_step_triggers(game, tq);
 
                 self.state = TurnState::UpkeepPriority;
@@ -1186,7 +1215,7 @@ impl TurnRunner {
                     RunnerProgress::Complete(draw_events) => draw_events,
                     RunnerProgress::NeedsDecision(ctx) => return Ok(TurnAction::Decision(ctx)),
                 };
-                crate::game_loop::drain_pending_trigger_events(game, tq);
+                crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
                 generate_and_queue_step_triggers(game, tq);
 
                 // Queue triggers for each drawn card (Miracle, etc.)
@@ -1332,6 +1361,12 @@ impl TurnRunner {
             }
 
             TurnState::DeclareAttackersDecision => {
+                // An added declaration step can share the same combat phase.
+                // Synchronize live combat, then invalidate only step evidence;
+                // phase-wide melee history and existing attackers remain intact.
+                self.sync_combat_from_game(game);
+                self.combat.last_attack_declaration_step_players = None;
+                game.combat = Some(self.combat.clone());
                 game.turn.step = Some(Step::DeclareAttackers);
                 game.reset_priority_for_new_window();
                 self.pending_attacker_optional_costs = None;
@@ -1544,7 +1579,7 @@ impl TurnRunner {
                 if let Some(bands) = self.pending_attacking_bands.take() {
                     record_declared_attacking_bands(&mut self.combat, bands);
                 }
-                crate::game_loop::drain_pending_trigger_events(game, tq);
+                crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
                 // The caller's priority loop puts these triggers on the stack
                 // with its interactive decision maker. Stacking here with the
                 // default chooser silently selects modes, targets, and order.
@@ -1901,6 +1936,8 @@ impl TurnRunner {
                 if let Some(prompt) = self.empty_mana_pools_with_choices(game)? {
                     return Ok(TurnAction::Decision(prompt));
                 }
+                self.sync_combat_from_game(game);
+                game.retain_ending_combat(&self.combat);
                 crate::combat_state::end_combat(&mut self.combat);
                 game.combat = Some(self.combat.clone());
                 game.mark_continuous_state_dirty();
@@ -1929,6 +1966,8 @@ impl TurnRunner {
                         if let Some(prompt) = self.empty_mana_pools_with_choices(game)? {
                             return Ok(TurnAction::Decision(prompt));
                         }
+                        self.sync_combat_from_game(game);
+                        game.retain_ending_combat(&self.combat);
                         crate::combat_state::end_combat(&mut self.combat);
                         game.combat = Some(self.combat.clone());
                         game.cleanup_effects_end_of_combat();
@@ -2022,6 +2061,8 @@ impl TurnRunner {
                         if let Some(prompt) = self.empty_mana_pools_with_choices(game)? {
                             return Ok(TurnAction::Decision(prompt));
                         }
+                        self.sync_combat_from_game(game);
+                        game.retain_ending_combat(&self.combat);
                         crate::combat_state::end_combat(&mut self.combat);
                         if let Some(combat) = game.combat.as_mut() {
                             crate::combat_state::end_combat(combat);
@@ -2069,14 +2110,14 @@ impl TurnRunner {
                 // CR 603.2: the cleanup discard triggers against the game
                 // before damage is removed and "until end of turn" effects
                 // end (CR 514.2).
-                drain_pending_trigger_events(game, tq);
+                try_drain_pending_trigger_events(game, tq)?;
                 execute_cleanup_step(game);
                 self.state = TurnState::CleanupRecursiveCheck;
                 Ok(TurnAction::Continue)
             }
 
             TurnState::CleanupRecursiveCheck => {
-                drain_pending_trigger_events(game, tq);
+                try_drain_pending_trigger_events(game, tq)?;
                 let triggers_fired = !tq.is_empty();
                 let sbas_happened = !check_state_based_actions(game).is_empty();
 
@@ -2178,6 +2219,12 @@ impl TurnRunner {
     /// skipped phase's exact continuation. Native savepoints retain both.
     pub fn has_pending_mana_loss_continuation(&self) -> bool {
         self.pending_mana_loss_choices.is_some() || self.skipped_phase_boundary.is_some()
+    }
+
+    /// An actual untap occurrence is suspended with a retained prompt/prefix.
+    /// Hosts use this owner to keep a failed response retryable as one command.
+    pub fn has_pending_untap_continuation(&self) -> bool {
+        self.pending_untap_boundary.is_some() && self.pending_untap_choices.is_some()
     }
 
     /// True while a turn-based operation is waiting on a nested player choice.
@@ -2687,8 +2734,10 @@ impl TurnRunner {
             return Ok(Some(prompt));
         }
         let events = result.map_err(|error| GameLoopError::InvalidState(error.to_string()))?;
+        let mut hypothetical_triggers = tq.clone();
+        try_queue_combat_damage_triggers(&mut hypothetical, &events, &mut hypothetical_triggers)?;
         *game = hypothetical;
-        queue_combat_damage_triggers(game, &events, tq);
+        *tq = hypothetical_triggers;
         Ok(None)
     }
 
@@ -2907,11 +2956,9 @@ impl TurnRunner {
         {
             return Ok(RunnerProgress::Complete(Vec::new()));
         }
-        let previous_draws = game
-            .turn_store
-            .turn_history
-            .cards_drawn_by_player(active_player);
-        if !game.can_draw_extra_cards(active_player) && previous_draws > 0 {
+        let has_drawn = game.turn_store.turn_history.has_drawn_cards_this_turn(active_player)
+            .map_err(GameLoopError::ExecutionFailed)?;
+        if !game.can_draw_extra_cards(active_player) && has_drawn {
             return Ok(RunnerProgress::Complete(Vec::new()));
         }
         self.run_turn_draw_with_choices(
@@ -2919,7 +2966,6 @@ impl TurnRunner {
             PendingTurnDraw {
                 player: active_player,
                 count: 1,
-                previous_draws,
                 choices: PendingUntapChoices {
                     answers: Vec::new(),
                     prompt: None,
@@ -2959,7 +3005,7 @@ impl TurnRunner {
                 pending.player,
             )
         }
-        .map_err(|error| GameLoopError::ResolutionFailed(error.to_string()))?;
+        .map_err(GameLoopError::ExecutionFailed)?;
         if let Some(prompt) = dm.pending_prompt.take() {
             pending.choices.prompt = Some(prompt.clone());
             self.pending_turn_draw = Some(pending);
@@ -2979,7 +3025,7 @@ impl TurnRunner {
         active_player: PlayerId,
         drawn: Vec<ObjectId>,
         current_draws: u32,
-    ) -> RunnerProgress<Vec<crate::triggers::TriggerEvent>> {
+    ) -> Result<RunnerProgress<Vec<crate::triggers::TriggerEvent>>, GameLoopError> {
         if !drawn.is_empty() {
             let draw_event_provenance = game
                 .provenance_graph_mut()
@@ -2989,7 +3035,7 @@ impl TurnRunner {
                 active_player,
                 &drawn,
                 current_draws,
-            );
+            ).map_err(GameLoopError::ExecutionFailed)?;
             return self.finish_pending_draw_reveal_choices(
                 game,
                 PendingDrawRevealChoice {
@@ -3005,7 +3051,7 @@ impl TurnRunner {
         }
 
         game.reset_priority_for_new_window();
-        RunnerProgress::Complete(Vec::new())
+        Ok(RunnerProgress::Complete(Vec::new()))
     }
 
     /// Apply a restart's deferred battlefield entries (CR 726.4) on a clone
@@ -3098,9 +3144,14 @@ impl TurnRunner {
         answers: Vec<AttackCostAnswer>,
     ) -> Result<Option<DecisionContext>, GameLoopError> {
         let mut hypothetical = game.clone();
+        if self.pending_untap_boundary.is_none() {
+            self.pending_untap_boundary = Some(crate::turn::capture_untap_step_boundary(&mut hypothetical)
+                .map_err(|error| GameLoopError::ResolutionFailed(error.to_string()))?);
+        }
         let mut dm = QueuedAttackCostDecisionMaker::new(answers.clone());
-        execute_untap_step_with(&mut hypothetical, &mut dm)
-            .map_err(|error| GameLoopError::ResolutionFailed(error.to_string()))?;
+        crate::turn::execute_untap_step_with_boundary(
+            &mut hypothetical, &mut dm, self.pending_untap_boundary.as_ref().unwrap(),
+        ).map_err(|error| GameLoopError::ResolutionFailed(error.to_string()))?;
         if let Some(prompt) = dm.pending_prompt.take() {
             self.pending_untap_choices = Some(PendingUntapChoices {
                 answers,
@@ -3110,6 +3161,7 @@ impl TurnRunner {
             return Ok(Some(prompt));
         }
         *game = hypothetical;
+        self.pending_untap_boundary = None;
         Ok(None)
     }
 
@@ -3154,9 +3206,8 @@ impl TurnRunner {
         &mut self,
         game: &mut GameState,
         mut pending: PendingDrawRevealChoice,
-    ) -> RunnerProgress<Vec<crate::triggers::TriggerEvent>> {
+    ) -> Result<RunnerProgress<Vec<crate::triggers::TriggerEvent>>, GameLoopError> {
         use crate::events::other::CardsDrawnEvent;
-        use crate::triggers::TriggerEvent;
 
         let (is_during_players_draw_step, cards_previously_drawn_this_draw_step) =
             game.draw_step_context_for_player(pending.active_player);
@@ -3172,6 +3223,7 @@ impl TurnRunner {
             if game.hidden_identity_is_private(candidate.card_id) {
                 game.defer_hidden_automatic_draw_reveal(
                     crate::effects::cards::pending_hidden_automatic_draw_reveal(&candidate),
+                    pending.draw_event_provenance,
                 );
                 pending.next_candidate_index += 1;
                 continue;
@@ -3181,9 +3233,9 @@ impl TurnRunner {
                     answer
                 } else {
                     self.pending_draw_reveal = Some(pending);
-                    return RunnerProgress::NeedsDecision(DecisionContext::Boolean(
+                    return Ok(RunnerProgress::NeedsDecision(DecisionContext::Boolean(
                         crate::effects::cards::automatic_draw_reveal_boolean_context(&candidate),
-                    ));
+                    )));
                 }
             } else {
                 true
@@ -3203,11 +3255,12 @@ impl TurnRunner {
             pending.next_candidate_index += 1;
         }
 
-        let event = TriggerEvent::new_with_provenance(
-            CardsDrawnEvent::new_with_step_context(
-                pending.active_player,
-                pending.drawn,
-                pending.is_first_draw,
+        let event = crate::effects::cards::draw_observation(
+            game,
+            pending.active_player,
+            pending.drawn,
+            pending.is_first_draw,
+            (
                 is_during_players_draw_step,
                 cards_previously_drawn_this_draw_step,
             ),
@@ -3228,7 +3281,7 @@ impl TurnRunner {
         }
 
         game.reset_priority_for_new_window();
-        RunnerProgress::Complete(draw_events)
+        Ok(RunnerProgress::Complete(draw_events))
     }
 
     /// CR 509.1: queue every defending player's block events as the one
@@ -3257,7 +3310,7 @@ impl TurnRunner {
             // removing loyalty counters, the previous check's actions) trigger
             // against the game as it was then. Match them before this check's
             // actions put anything into a graveyard.
-            crate::game_loop::drain_pending_trigger_events(game, tq);
+            crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
             // Every applied SBA can change which static effects exist. Refresh
             // at the fixed-point boundary; this is a no-op while state is clean.
             game.refresh_continuous_state()
@@ -3317,7 +3370,7 @@ impl TurnRunner {
                         &pending.creatures,
                         &pending.choices,
                     );
-                    crate::game_loop::drain_pending_trigger_events(game, tq);
+                    crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
                     continue;
                 }
 
@@ -3452,7 +3505,7 @@ impl TurnRunner {
                 // since the previous one (regeneration / umbra armor survivors
                 // must not be destroyed again by the next pass).
                 game.clear_deathtouch_damage_since_sba();
-                crate::game_loop::drain_pending_trigger_events(game, tq);
+                crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
                 if !applied {
                     self.pending_boolean = None;
                     self.pending_commander_choice = None;
@@ -3487,7 +3540,7 @@ impl TurnRunner {
                     } else {
                         game.decline_commander_command_zone_move(obj_id);
                     }
-                    crate::game_loop::drain_pending_trigger_events(game, tq);
+                    crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
                     continue;
                 }
                 Some(other) => {
@@ -4018,6 +4071,7 @@ mod tests {
             .abilities_mut()
             .push(Ability {
                 kind: AbilityKind::Activated(ActivatedAbility {
+                    keyword: None,
                     mana_cost: crate::cost::TotalCost::from_cost(crate::costs::Cost::tap()),
                     effects: crate::resolution::ResolutionProgram::default(),
                     choices: vec![],
@@ -6195,7 +6249,7 @@ mod tests {
         );
         let result = runner.advance(&mut game, &mut queue);
         assert!(
-            matches!(result, Err(GameLoopError::ResolutionFailed(_))),
+            matches!(result, Err(GameLoopError::ExecutionFailed(crate::effects::ExecutionError::UnresolvableValue(_)))),
             "a draw-step replacement failure must not become a successful priority window"
         );
         assert_eq!(game.player(alice).unwrap().life, 20);
@@ -6518,7 +6572,7 @@ mod tests {
                     .is_none()
             );
         } else {
-            assert!(matches!(action, Err(GameLoopError::ResolutionFailed(_))));
+            assert!(matches!(action, Err(GameLoopError::ExecutionFailed(crate::effects::ExecutionError::UnresolvableValue(_)))));
             assert!(matches!(runner.state(), TurnState::Draw));
         }
     }
@@ -6567,7 +6621,7 @@ mod tests {
         runner.respond_options(vec![usize::MAX]);
         let result = runner.advance(&mut game, &mut queue);
         assert!(
-            matches!(result, Err(GameLoopError::ResolutionFailed(_))),
+            matches!(result, Err(GameLoopError::ExecutionFailed(crate::effects::ExecutionError::InternalError(_)))),
             "an invalid answer must not select the first offered replacement"
         );
         assert_eq!(
@@ -6848,7 +6902,7 @@ mod replacement_turn_draw_expansion_contract_tests {
             Ok(_) => panic!("added draw error must propagate"),
         };
         assert!(
-            matches!(&error, GameLoopError::ResolutionFailed(message) if message.contains("Cannot resolve value"))
+            matches!(&error, GameLoopError::ExecutionFailed(crate::effects::ExecutionError::UnresolvableValue(_)))
         );
         assert!(game.player(alice).unwrap().hand.is_empty());
         assert_eq!(

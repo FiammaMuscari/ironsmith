@@ -4,6 +4,8 @@ use ironsmith_compiled_artifact::{
 };
 use ironsmith_compiler as compiler;
 #[cfg(test)]
+mod remove_any_source_counter_payload_tests;
+#[cfg(test)]
 use ironsmith_runtime_catalog::CardRegistryArtifactExt as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,6 +241,11 @@ impl ironsmith::effect_model_interpreter::EffectModelInterpreterHooks<CompilerEf
             max_plays: spec.max_plays,
             cast_this_way_filter: spec.cast_this_way_filter,
             on_use_effects: spec.on_use_effects.into_iter().map(runtime_effect_from_core_model).collect::<Result<_, _>>()?,
+            requires_linked_exile_pair: spec.requires_linked_exile_pair,
+            may_look_at_linked_exile: spec.may_look_at_linked_exile,
+            cast_mana_spend_mode: spec.cast_mana_spend_mode,
+            linked_exile_pair: spec.linked_exile_pair,
+            linked_exile_class_level: spec.linked_exile_class_level,
             source_exiled_surface: spec.source_exiled_surface,
             filtered_zone_surface: spec.filtered_zone_surface,
             top_card_only: spec.top_card_only,
@@ -526,6 +533,11 @@ fn combine_level_ability_statics(
 const CLASS_LEVEL_MARKER_PREFIX: &str = "__ironsmith_class_level:";
 
 fn class_level_marker(ability: &ironsmith::ability::ActivatedAbility) -> Option<u32> {
+    if let Some(ironsmith_core::ActivatedAbilityKeyword::ClassLevel(level)) = ability.keyword {
+        return Some(level);
+    }
+    // Previously admitted definitions retain their legacy runtime route. New
+    // definition-local pairing consumes only the typed keyword above.
     ability
         .additional_restrictions
         .iter()

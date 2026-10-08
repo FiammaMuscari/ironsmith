@@ -2143,11 +2143,11 @@ fn prepare_and_apply_state_based_actions(
         return Ok(false);
     }
 
-    let legend_plans = legend_keeps
-        .iter()
-        .flat_map(|(keep, group)| legend_zone_plans(game, *keep, group))
-        .collect::<Vec<_>>();
-    let lookback = game.trigger_source_lookback_snapshots();
+    let mut legend_plans = Vec::new();
+    for (keep, group) in legend_keeps {
+        legend_plans.extend(legend_zone_plans(game, *keep, group)?);
+    }
+    let lookback = game.try_trigger_source_lookback_snapshots()?;
     let mut simultaneous_zone_changes: HashMap<ObjectId, Zone> = HashMap::new();
     for action in &actions {
         match action {
@@ -2180,17 +2180,15 @@ fn prepare_and_apply_state_based_actions(
         .iter()
         .filter_map(|id| {
             game.object(*id).map(|object| {
-                (
-                    *id,
-                    ObjectSnapshot::from_object_with_calculated_characteristics_and_effects(
-                        object,
-                        game,
-                        all_effects,
-                    ),
+                ObjectSnapshot::try_from_object_with_calculated_characteristics_and_effects(
+                    object,
+                    game,
+                    all_effects,
                 )
+                .map(|snapshot| (*id, snapshot))
             })
         })
-        .collect();
+        .collect::<Result<_, crate::effects::ExecutionError>>()?;
     let damage_destroyed_object_ids: HashSet<ObjectId> = {
         let view = crate::derived_view::DerivedGameView::from_effects(game, all_effects.to_vec());
         actions
@@ -2217,6 +2215,43 @@ fn prepare_and_apply_state_based_actions(
     // source dies in the same check. Apply loss replacements first, while
     // every object is still in place, and commit unreplaced losses after the
     // check's other actions.
+    // Prepare all would-remove events in the original SBA world, while their
+    // replacement sources and the affected incarnations are still present.
+    let mut counter_requests = Vec::new();
+    for action in &other_actions {
+        match action {
+            StateBasedAction::CountersAnnihilate { permanent, count } => {
+                for kind in [CounterType::PlusOnePlusOne, CounterType::MinusOneMinusOne] {
+                    counter_requests.push((*permanent, kind, *count));
+                }
+            }
+            StateBasedAction::CountersExceedMaximum {
+                permanent,
+                counter_type,
+                count,
+            } => {
+                counter_requests.push((*permanent, *counter_type, *count));
+            }
+            _ => {}
+        }
+    }
+    let controller = game.turn.active_player;
+    let mut prepared_counters = Vec::new();
+    {
+        let mut ctx =
+            crate::effects::ExecutionContext::new(ObjectId(0), controller, &mut *decision_maker)
+                .with_cause(crate::events::cause::EventCause::from_sba());
+        for (object, kind, count) in counter_requests {
+            let event = crate::events::Event::remove_counters(object, kind, count)
+                .with_provenance(ctx.provenance);
+            prepared_counters.push(crate::effects::counters::prepare_game_rule_counter_removal(
+                game, &mut ctx, event,
+            )?);
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(false);
+            }
+        }
+    }
     let mut loss_receipts = Vec::new();
     for action in &player_losses {
         let StateBasedAction::PlayerLoses { player, .. } = action else {
@@ -2240,6 +2275,21 @@ fn prepare_and_apply_state_based_actions(
             return Ok(false);
         }
         any_applied = true;
+    }
+    // Select every loss replacement in the original loss world, then commit
+    // their programmes before preparing departures, as in the native SBA order.
+    {
+        let mut ctx =
+            crate::effects::ExecutionContext::new(ObjectId(0), controller, &mut *decision_maker)
+                .with_cause(crate::events::cause::EventCause::from_sba());
+        crate::events::processing::commit_player_loss_replacement_originals(
+            game,
+            &mut ctx,
+            &mut loss_receipts,
+        )?;
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(false);
+        }
     }
     let mut zone_plans = legend_plans.clone();
     for action in &other_actions {
@@ -2273,6 +2323,25 @@ fn prepare_and_apply_state_based_actions(
     let mut prepared_zones = prepare_sba_zone_plans(game, zone_plans, decision_maker, &lookback)?;
     if decision_maker.awaiting_choice() {
         return Ok(false);
+    }
+    // Counter originals precede departures so simultaneous removals have
+    // receipts even when the affected permanent leaves in this same check.
+    // Dying objects' LKI remains the pre-captured, pre-SBA snapshot above.
+    let mut counter_receipts = Vec::new();
+    {
+        let mut ctx =
+            crate::effects::ExecutionContext::new(ObjectId(0), controller, &mut *decision_maker)
+                .with_cause(crate::events::cause::EventCause::from_sba());
+        for prepared in prepared_counters {
+            counter_receipts.push(
+                crate::effects::counters::commit_prepared_counter_removal_original_with_outputs(
+                    game, &mut ctx, prepared,
+                )?,
+            );
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(false);
+            }
+        }
     }
     let mut committed_zones = Vec::new();
     let mut destroy_receipts = Vec::new();
@@ -2318,31 +2387,100 @@ fn prepare_and_apply_state_based_actions(
         any_applied = true;
     }
     crate::events::processing::commit_player_loss_receipts(game, &mut loss_receipts)?;
+    let sibling_additions = committed_zones
+        .iter()
+        .any(|(_, receipt)| !receipt.programs.is_empty())
+        || destroy_receipts
+            .iter()
+            .any(|receipt| receipt.has_deferred_programs())
+        || loss_receipts
+            .iter()
+            .any(|receipt| receipt.has_deferred_programs());
     // Freeze both event families before any addition can move another arrival.
-    let frozen_zones = crate::effects::zones::freeze_zone_change_receipts(game, committed_zones);
-    let frozen_destroy = crate::events::processing::freeze_destroy_receipts(game, destroy_receipts);
+    let zone_originals_have_work = !prepared_zones.draws.draws.0.is_empty();
     let controller = game.turn.active_player;
     let mut ctx = crate::effects::ExecutionContext::new(ObjectId(0), controller, decision_maker)
         .with_cause(crate::events::cause::EventCause::from_sba());
-    let outcome = crate::events::processing::finish_destroy_receipts_frozen(
+    let (mut zone_original, mut zone_completion) = prepared_zones.draws.finish_original(
+        crate::effect::EffectOutcome::resolved(),
+        committed_zones,
+        &ctx,
+    );
+    crate::effects::SimultaneousEffectCompletion::freeze(zone_completion.as_mut(), game)?;
+    let frozen_destroy = crate::events::processing::freeze_destroy_receipts(game, destroy_receipts);
+    crate::effects::SimultaneousEffectCompletion::observe_original(
+        zone_completion.as_mut(),
         game,
         &mut ctx,
-        crate::effect::EffectOutcome::resolved(),
+        &mut zone_original,
+    )?;
+    if zone_originals_have_work {
+        // Retain counter qualification before a sibling replacement tail changes sources.
+        crate::effects::capture_triggers_before_added_program(
+            game,
+            &mut ctx,
+            None,
+            counter_receipts
+                .iter_mut()
+                .flat_map(|receipt| receipt.outcome.outcome.events.iter_mut()),
+        )?;
+        for receipt in &mut counter_receipts {
+            receipt.outcome.synchronize_observations();
+        }
+    }
+    let mut completed_zones =
+        zone_completion.complete_original_with_outputs(game, &mut ctx, zone_original)?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(false);
+    }
+    let counter_outcomes =
+        crate::effects::composition::execute_simultaneous_originals_with_outputs(
+            game,
+            &mut ctx,
+            false,
+            |_, _| Ok(counter_receipts),
+            |game, ctx, receipts| {
+                if !sibling_additions && !zone_originals_have_work {
+                    return Ok(crate::effects::composition::OriginalTriggerObservation::Capture);
+                }
+                // Counter originals must be observed before any sibling's added
+                // program, even when no counter removal has its own continuation.
+                crate::effects::capture_triggers_before_added_program(
+                    game,
+                    ctx,
+                    None,
+                    receipts
+                        .iter_mut()
+                        .flat_map(|receipt| receipt.outcome.outcome.events.iter_mut()),
+                )?;
+                Ok(crate::effects::composition::OriginalTriggerObservation::OwnerPublished)
+            },
+        )?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(false);
+    }
+    // Carry the actual original packets through each completion owner. Scalar
+    // projection belongs at the native publication boundary, after additions.
+    let outcome = crate::events::processing::finish_destroy_receipts_frozen_with_outputs(
+        game,
+        &mut ctx,
+        crate::effects::CompletedEffectOutputs::with_primary_result(
+            crate::effect::EffectOutcome::resolved(),
+            counter_outcomes
+                .into_iter()
+                .chain(std::iter::once(completed_zones.outputs)),
+        ),
         frozen_destroy,
     )?;
     if ctx.decision_maker.awaiting_choice() {
         return Ok(false);
     }
-    let outcome = crate::effects::zones::finish_zone_change_receipts_frozen(
-        game,
-        &mut ctx,
-        outcome,
-        frozen_zones,
-    )?;
+    completed_zones.outputs = outcome;
+    let outcome = completed_zones.complete_added_programs_with_outputs(game, &mut ctx)?;
     if ctx.decision_maker.awaiting_choice() {
         return Ok(false);
     }
-    let mut outcome = crate::events::processing::finish_player_loss_receipts(
+    let outputs = crate::events::processing::finish_player_loss_receipts_with_outputs(
         game,
         &mut ctx,
         outcome,
@@ -2351,6 +2489,7 @@ fn prepare_and_apply_state_based_actions(
     if ctx.decision_maker.awaiting_choice() {
         return Ok(false);
     }
+    let mut outcome = outputs.into_outcome();
     crate::effects::retain_unmatched_outcome_events(game, &mut outcome.events);
     for event in outcome.events {
         game.queue_trigger_event(event.provenance(), event);
@@ -2376,7 +2515,7 @@ pub(crate) fn apply_state_based_actions_with_legend_choices(
         return Ok(false);
     }
     let checkpoint = game.clone();
-    let lookback = game.trigger_source_lookback_snapshots();
+    let lookback = game.try_trigger_source_lookback_snapshots()?;
     game.set_simultaneous_event_lookback(Some(lookback));
     let result =
         prepare_and_apply_state_based_actions(game, actions, all_effects, dm, legend_keeps);
@@ -2503,9 +2642,9 @@ pub fn apply_legend_rule_choice_from_group_with_decision_maker(
     }
     let checkpoint = game.clone();
     let result = (|| {
-        let plans = legend_zone_plans(game, keep, candidates);
+        let plans = legend_zone_plans(game, keep, candidates)?;
         let ids = plans.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
-        let lookback = game.trigger_source_lookback_snapshots();
+        let lookback = game.try_trigger_source_lookback_snapshots()?;
         let mut prepared = prepare_sba_zone_plans(game, plans, dm, &lookback)?;
         if dm.awaiting_choice() {
             return Ok(());
@@ -2517,7 +2656,7 @@ pub fn apply_legend_rule_choice_from_group_with_decision_maker(
                 return Ok(());
             }
         }
-        finish_sba_zone_receipts(game, committed, dm)
+        finish_sba_zone_receipts(game, committed, prepared.draws, dm)
     })();
     if result.is_err() || dm.awaiting_choice() {
         *game = checkpoint;
@@ -2527,6 +2666,12 @@ pub fn apply_legend_rule_choice_from_group_with_decision_maker(
 
 type SbaPreparedZone =
     crate::events::processing::PreparedEventOutcome<crate::events::processing::PreparedZoneChange>;
+#[derive(Default)]
+struct SbaPreparedZones {
+    proposals: HashMap<ObjectId, SbaPreparedZone>,
+    draws: crate::effects::zones::ZoneInstructionDraws,
+}
+
 type SbaCommittedZone = (
     ObjectId,
     crate::events::processing::PreparedEventOutcome<crate::effects::zones::AppliedZoneChange>,
@@ -2541,42 +2686,53 @@ fn legend_zone_plans(
     game: &GameState,
     keep: ObjectId,
     candidates: &[ObjectId],
-) -> Vec<SbaZonePlan> {
+) -> Result<Vec<SbaZonePlan>, crate::effects::ExecutionError> {
     if !candidates.contains(&keep) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let view = crate::derived_view::DerivedGameView::new(game);
     let Some(chars) = view.calculated_characteristics(keep) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    chars
+        .validate_numeric_range()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     if !chars.supertypes.contains(&Supertype::Legendary) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut seen = HashSet::new();
-    candidates
+    let mut plans = Vec::new();
+    for id in candidates
         .iter()
         .copied()
         .filter(|id| *id != keep && seen.insert(*id))
-        .filter_map(|id| {
-            let candidate = view.calculated_characteristics(id)?;
-            if candidate.controller != chars.controller
-                || candidate.name != chars.name
-                || !candidate.supertypes.contains(&Supertype::Legendary)
-            {
-                return None;
-            }
-            let object = game.object(id)?;
-            Some((
-                id,
-                crate::events::cause::EventCause::from_legend_rule(chars.controller),
-                Some(ObjectSnapshot::from_object_with_known_characteristics(
-                    object,
-                    game,
-                    Some(&candidate),
-                )),
-            ))
-        })
-        .collect()
+    {
+        let Some(candidate) = view.calculated_characteristics(id) else {
+            continue;
+        };
+        candidate
+            .validate_numeric_range()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+        if candidate.controller != chars.controller
+            || candidate.name != chars.name
+            || !candidate.supertypes.contains(&Supertype::Legendary)
+        {
+            continue;
+        }
+        let Some(object) = game.object(id) else {
+            continue;
+        };
+        plans.push((
+            id,
+            crate::events::cause::EventCause::from_legend_rule(chars.controller),
+            Some(ObjectSnapshot::try_from_object_with_known_characteristics(
+                object,
+                game,
+                Some(&candidate),
+            )?),
+        ));
+    }
+    Ok(plans)
 }
 
 fn prepare_sba_zone_plans(
@@ -2584,13 +2740,14 @@ fn prepare_sba_zone_plans(
     plans: Vec<SbaZonePlan>,
     dm: &mut dyn crate::decision::DecisionMaker,
     lookback: &[ObjectSnapshot],
-) -> Result<HashMap<ObjectId, SbaPreparedZone>, crate::effects::ExecutionError> {
-    let mut prepared = HashMap::new();
+) -> Result<SbaPreparedZones, crate::effects::ExecutionError> {
+    let mut prepared = SbaPreparedZones::default();
     for (id, cause, snapshot) in plans {
-        if prepared.contains_key(&id) {
+        if prepared.proposals.contains_key(&id) {
             continue;
         }
-        let receipt = crate::events::processing::prepare_zone_change_scoped(
+        let start = prepared.draws.draws.0.len();
+        let receipt = crate::events::processing::prepare_zone_change_scoped_with_draws(
             game,
             id,
             Zone::Battlefield,
@@ -2602,11 +2759,13 @@ fn prepare_sba_zone_plans(
             None,
             Vec::new(),
             Some(lookback),
+            Some(&mut prepared.draws.draws),
         )?;
         if dm.awaiting_choice() {
-            return Ok(HashMap::new());
+            return Ok(SbaPreparedZones::default());
         }
-        prepared.insert(id, receipt);
+        prepared.draws.record(id, start);
+        prepared.proposals.insert(id, receipt);
     }
     Ok(prepared)
 }
@@ -2614,17 +2773,24 @@ fn prepare_sba_zone_plans(
 fn commit_sba_zone(
     game: &mut GameState,
     id: ObjectId,
-    prepared: &mut HashMap<ObjectId, SbaPreparedZone>,
+    prepared: &mut SbaPreparedZones,
     committed: &mut Vec<SbaCommittedZone>,
     dm: &mut dyn crate::decision::DecisionMaker,
 ) -> Result<bool, crate::effects::ExecutionError> {
-    let Some(proposal) = prepared.remove(&id) else {
+    let Some(proposal) = prepared.proposals.remove(&id) else {
         return Ok(false);
     };
+    prepared.draws.commit_pending_replacement(game, id, dm)?;
+    if dm.awaiting_choice() {
+        return Ok(false);
+    }
     // A prior action's replacement can already have removed this identity.
     // Its later SBA has no original battlefield departure left to commit.
     // Retain captured replacement instructions for the owner's finish phase.
-    if !game
+    if matches!(
+        &proposal.original,
+        crate::events::processing::EventOutcome::Proceed(_)
+    ) && !game
         .object(id)
         .is_some_and(|object| object.zone == Zone::Battlefield)
     {
@@ -2649,17 +2815,17 @@ fn commit_sba_zone(
 fn finish_sba_zone_receipts(
     game: &mut GameState,
     receipts: Vec<SbaCommittedZone>,
+    draws: crate::effects::zones::ZoneInstructionDraws,
     dm: &mut dyn crate::decision::DecisionMaker,
 ) -> Result<(), crate::effects::ExecutionError> {
     let controller = game.turn.active_player;
     let mut ctx = crate::effects::ExecutionContext::new(ObjectId(0), controller, dm)
         .with_cause(crate::events::cause::EventCause::from_sba());
-    let mut outcome = crate::effects::zones::finish_zone_change_receipts(
-        game,
-        &mut ctx,
-        crate::effect::EffectOutcome::resolved(),
-        receipts,
-    )?;
+    let original = draws.finish(crate::effect::EffectOutcome::resolved(), receipts, &ctx);
+    let mut outcome = crate::effects::composition::complete_standalone_original_with_outputs(
+        game, &mut ctx, original,
+    )?
+    .into_outcome();
     if ctx.decision_maker.awaiting_choice() {
         return Ok(());
     }
@@ -2714,7 +2880,7 @@ fn apply_single_sba_with_snapshots(
     damage_destroyed_object_ids: &HashSet<ObjectId>,
     simultaneous_zone_changes: &HashMap<ObjectId, Zone>,
     decision_maker: &mut dyn crate::decision::DecisionMaker,
-    prepared_zones: &mut HashMap<ObjectId, SbaPreparedZone>,
+    prepared_zones: &mut SbaPreparedZones,
     committed_zones: &mut Vec<SbaCommittedZone>,
     destroy_receipts: &mut Vec<crate::events::processing::DestroyExecutionReceipt>,
 ) -> Result<(), crate::effects::ExecutionError> {
@@ -2870,9 +3036,9 @@ fn apply_single_sba_with_snapshots(
             // replacement-aware legend-rule path (CR 704.5j, 614.6).
             let _ = player;
             if let Some(&keep) = permanents.first() {
-                let plans = legend_zone_plans(game, keep, &permanents);
+                let plans = legend_zone_plans(game, keep, &permanents)?;
                 let ids = plans.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
-                let lookback = game.trigger_source_lookback_snapshots();
+                let lookback = game.try_trigger_source_lookback_snapshots()?;
                 let mut prepared = prepare_sba_zone_plans(game, plans, decision_maker, &lookback)?;
                 if decision_maker.awaiting_choice() {
                     return Ok(());
@@ -2883,6 +3049,9 @@ fn apply_single_sba_with_snapshots(
                         return Ok(());
                     }
                 }
+                prepared_zones
+                    .draws
+                    .append_committed_originals(prepared.draws)?;
             }
         }
 
@@ -2916,26 +3085,10 @@ fn apply_single_sba_with_snapshots(
             }
         }
 
-        StateBasedAction::CountersAnnihilate { permanent, count } => {
-            for counter_type in [CounterType::PlusOnePlusOne, CounterType::MinusOneMinusOne] {
-                if let Some((_, event)) =
-                    game.remove_counters(permanent, counter_type, count, None, None)
-                {
-                    game.queue_trigger_event(event.provenance(), event);
-                }
-            }
-        }
-
-        StateBasedAction::CountersExceedMaximum {
-            permanent,
-            counter_type,
-            count,
-        } => {
-            if let Some((_, event)) =
-                game.remove_counters(permanent, counter_type, count, None, None)
-            {
-                game.queue_trigger_event(event.provenance(), event);
-            }
+        StateBasedAction::CountersAnnihilate { .. }
+        | StateBasedAction::CountersExceedMaximum { .. } => {
+            // Prepared/committed by the shared removal owner in the enclosing
+            // simultaneous SBA check; deferred programs complete after originals.
         }
 
         // Note: Undying/Persist are handled as triggered abilities,

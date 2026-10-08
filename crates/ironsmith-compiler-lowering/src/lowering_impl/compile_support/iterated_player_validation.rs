@@ -448,6 +448,7 @@ fn anthem_count_mentions_iterated_player(count: &ironsmith_core::AnthemCountExpr
         AnthemCountExpression::CommanderCastCount(player)
         | AnthemCountExpression::PlayerSpeed(player)
         | AnthemCountExpression::TotalUnspentMana(player)
+        | AnthemCountExpression::PlayerCounters(player, _)
         | AnthemCountExpression::UnspentMana { player, .. } => player.mentions_iterated_player(),
         AnthemCountExpression::GraveyardsWithAtLeastCards { .. } => false,
         _ => false,
@@ -577,6 +578,7 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | ActivateTapAbilitiesOf(filter)
         | ActivateNonManaAbilitiesOf(filter)
         | MustAttack(filter)
+        | MustBlock(filter)
         | Attack(filter)
         | AttackAlone(filter)
         | Block(filter)
@@ -587,6 +589,8 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | BeDestroyed(filter)
         | BeRegenerated(filter)
         | BeSacrificed(filter)
+        | BecomeSuspected(filter)
+        | MaximumBlockers { filter, .. }
         | HaveCountersPlaced(filter)
         | HaveCounterTypePlaced(filter, _)
         | BeTargeted(filter)
@@ -608,7 +612,7 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
             object_filter_mentions_iterated_player(blockers)
                 || object_filter_mentions_iterated_player(attacker)
         }
-        BeTargetedPlayerFrom(player, source) => {
+        BeTargetedPlayerFrom(player, source) | PlayerHexproofFrom(player, source) => {
             player.mentions_iterated_player() || object_filter_mentions_iterated_player(source)
         }
         PreventDamageFrom { sources, .. } => object_filter_mentions_iterated_player(sources),

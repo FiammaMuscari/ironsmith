@@ -31,12 +31,12 @@ impl EffectExecutor for LoseTheGameEffect {
 
     fn prepare_simultaneous_player_action(
         &self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, ExecutionError> {
-        Ok(Box::new(crate::effects::DeferredPlayerActionProposal {
-            effect: crate::effect::Effect::new(self.clone()),
-            iterated_player: ctx.iteration.iterated_player,
+        Ok(Box::new(PlayerLossProposal {
+            player: resolve_player_filter(game, &self.player, ctx)?,
+            receipt: None,
         }))
     }
 
@@ -45,30 +45,111 @@ impl EffectExecutor for LoseTheGameEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let result = (|| {
-            let player_id = resolve_player_filter(game, &self.player, ctx)?;
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
 
-            let Some((_, outcome)) = crate::events::processing::process_player_loss_with_context(
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(0),
+            ));
+        }
+        crate::effects::composition::execute_result_checkpoint_transaction(
+            game,
+            ctx,
+            |game, ctx| {
+                let player_id = resolve_player_filter(game, &self.player, ctx)?;
+
+                let Some((_, outcome)) =
+                    crate::events::processing::process_player_loss_with_context_and_outputs(
+                        game,
+                        player_id,
+                        ctx,
+                        &std::collections::HashMap::new(),
+                    )?
+                else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                };
+                Ok(outcome)
+            },
+        )
+    }
+}
+
+/// Replacement selection precedes sibling commits; additions follow them.
+#[derive(Debug)]
+struct PlayerLossProposal {
+    player: crate::ids::PlayerId,
+    receipt: Option<crate::events::processing::PlayerLossReceipt>,
+}
+impl crate::effects::SimultaneousEffectProposal for PlayerLossProposal {
+    fn prepare_original(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        if self.receipt.is_none() {
+            self.receipt = crate::events::processing::prepare_player_loss_scoped(
                 game,
-                player_id,
+                self.player,
                 ctx,
                 &std::collections::HashMap::new(),
-            )?
-            else {
-                return Ok(EffectOutcome::count(0));
-            };
-            Ok(outcome)
-        })();
-        if result.is_err() || ctx.decision_maker.awaiting_choice() {
-            *game = checkpoint;
-            context_checkpoint.restore(ctx);
+            )?;
         }
-        result
+        Ok(())
+    }
+    fn seal_original(
+        &mut self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<(), ExecutionError> {
+        self.prepare_original(game, ctx)
+    }
+    fn commit_original_with_outputs(
+        mut self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<
+        crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
+        ExecutionError,
+    > {
+        let receipt = self.receipt.take().ok_or_else(|| {
+            ExecutionError::InternalError("loss original was not sealed before commitment".into())
+        })?;
+        Ok(
+            crate::events::processing::commit_prepared_player_loss_original_with_outputs(
+                game, ctx, receipt,
+            )?
+            .map(|(_, committed)| committed)
+            .unwrap_or_else(|| {
+                crate::effects::SimultaneousEffectCommit::finished(
+                    crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+                )
+            }),
+        )
+    }
+    fn commit_original(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::SimultaneousEffectCommit, ExecutionError> {
+        self.commit_original_with_outputs(game, ctx)
+            .map(crate::effects::SimultaneousEffectCommit::into_aggregate)
+    }
+    fn commit(
+        self: Box<Self>,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        crate::effects::composition::complete_prepared_original_with_outputs(self, game, ctx, false)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
     }
 }
 

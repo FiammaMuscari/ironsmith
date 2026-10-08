@@ -944,7 +944,7 @@ pub(super) fn officious_interrogation_runtime_counts_only_the_targeted_players_c
     assert_eq!(
         game.battlefield
             .iter()
-            .filter(|&&id| game.object(id).is_some_and(|object| object.name == "Clue"))
+            .filter(|&&id| game.object(id).is_some_and(|object| object.name == "Clue Token"))
             .count(),
         2,
         "Alice's untargeted creature must not contribute to the investigate count"
@@ -2217,6 +2217,9 @@ pub(super) fn heavy_fog_cast_restriction_requires_declare_attackers_after_you_we
         .expect("combat should be present")
         .attackers[0]
         .target = crate::combat_state::AttackTarget::Player(alice);
+    // This fixture hand-builds combat, so explicitly retain its declaration event.
+    game.combat.as_mut().unwrap().last_attack_declaration_step_players =
+        Some([alice].into_iter().collect());
 
     let spell = game.object(spell_id).expect("Heavy Fog should be in hand");
     assert!(

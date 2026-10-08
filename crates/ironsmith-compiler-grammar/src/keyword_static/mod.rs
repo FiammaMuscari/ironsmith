@@ -5,7 +5,13 @@ use crate::cards::builders::SourcePredicateAst;
 use crate::cards::builders::TurnEventPredicateAst;
 use characteristic_assertions::parse_supertype_assertion_line;
 mod blocking_permissions;
+mod combat_requirements;
+pub use combat_requirements::{
+    parse_self_combat_requirement_line, parse_combat_requirement_static_line,
+    parse_source_owned_flying_block_limit_line,
+};
 mod dynamic_anthem_values;
+mod dynamic_characteristic_statics;
 pub use blocking_permissions::parse_blocking_capacity_static_line;
 mod alternative_prices;
 mod costs_replacements_and_permissions;
@@ -16,7 +22,7 @@ pub use damage_redirection::parse_scoped_damage_redirection_line;
 pub(crate) use damage_redirection::redirection_recipient_filters;
 mod life_change_replacements;
 mod prevention_follow_ups;
-pub use damage_prevention::parse_filtered_damage_prevention_line;
+pub use damage_prevention::{parse_filtered_damage_prevention_line, parse_permanent_self_damage_prevention_line, parse_persistent_filtered_damage_prevention_line};
 pub use life_change_replacements::parse_if_you_would_gain_life_replacement_line;
 pub use prevention_follow_ups::{
     parse_prevention_amount_follow_up_line, parse_prevention_proposed_amount_follow_up_line,
@@ -458,7 +464,9 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
         "parse_enchant_attachment_restriction_line" => {
             vec![StaticAbilityLineHeadHint::Single("enchant")]
         }
-        "parse_characteristic_defining_pt_line" => Vec::new(),
+        "parse_characteristic_defining_pt_line"
+        | "parse_combat_requirement_static_line"
+        | "parse_source_owned_flying_block_limit_line" => Vec::new(),
         // The complete assignment suffix proves its grammar; its source,
         // filtered-set and leading-condition subjects have no single head.
         "parse_filtered_toughness_assignment_line" => Vec::new(),
@@ -506,6 +514,17 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
             StaticAbilityLineHeadHint::Single("players"),
             StaticAbilityLineHeadHint::Single("as"),
             StaticAbilityLineHeadHint::Pair("the", "chosen"),
+        ],
+        "parse_base_pt_and_blocker_restriction_line" => vec![
+            StaticAbilityLineHeadHint::Single("this"),
+            StaticAbilityLineHeadHint::Single("equipped"),
+            StaticAbilityLineHeadHint::Single("enchanted"),
+            StaticAbilityLineHeadHint::Single("creatures"),
+            StaticAbilityLineHeadHint::Single("as"),
+            StaticAbilityLineHeadHint::Single("during"),
+        ],
+        "parse_conditional_no_defender_and_unblockable_line" => vec![
+            StaticAbilityLineHeadHint::Pair("as", "long"),
         ],
         "parse_can_be_attached_only_to_line" => vec![
             StaticAbilityLineHeadHint::Single("this"),
@@ -676,7 +695,8 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
         "parse_opponents_must_target_flagbearers_line" => {
             vec![StaticAbilityLineHeadHint::Pair("while", "an")]
         }
-        "parse_prevent_all_damage_to_you_line" => {
+        "parse_prevent_all_damage_to_you_line" | "parse_permanent_self_damage_prevention_line"
+        | "parse_persistent_filtered_damage_prevention_line" => {
             vec![StaticAbilityLineHeadHint::Pair("prevent", "all")]
         }
         "parse_if_you_would_gain_life_replacement_line"
@@ -837,10 +857,14 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
         "parse_lose_game_replacement_line" | "parse_token_creation_templates_line" => {
             vec![StaticAbilityLineHeadHint::Single("if")]
         }
+        // The rule name describes the changed characteristic, not the
+        // authored subject. "Enchanted land" must reach its complete tail.
+        "parse_land_type_addition_line" => Vec::new(),
         // "Each nonland permanent you control is all colors." (Leyline of the
         // Guildpact) and the older "All creatures are ..." lines share one
         // color-identity grammar whose subject can start with any object noun.
         "parse_all_creatures_are_color_line" => vec![
+            StaticAbilityLineHeadHint::Single("this"),
             StaticAbilityLineHeadHint::Single("all"),
             StaticAbilityLineHeadHint::Single("each"),
             StaticAbilityLineHeadHint::Single("creatures"),
@@ -1395,6 +1419,8 @@ macro_rules! multi_static_ability_ast_passthrough_rule {
 
 fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
     static RULES: &[StaticAbilityLineRuleDef] = &[
+        multi_static_ability_ast_passthrough_rule!(parse_combat_requirement_static_line),
+        single_static_ability_ast_passthrough_rule!(parse_source_owned_flying_block_limit_line),
         single_static_ability_ast_passthrough_rule!(parse_enchant_attachment_restriction_line),
         multi_static_ability_ast_passthrough_rule!(parse_soulbond_shared_line),
         single_static_ability_ast_rule!(parse_ward_static_ability_line),
@@ -1443,6 +1469,8 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         ),
         single_static_ability_ast_rule!(parse_prevent_damage_to_you_from_source_filter_line),
         single_static_ability_ast_rule!(parse_filtered_damage_prevention_line),
+        single_static_ability_ast_rule!(parse_permanent_self_damage_prevention_line),
+        single_static_ability_ast_rule!(parse_persistent_filtered_damage_prevention_line),
         single_static_ability_ast_rule!(parse_prevention_amount_follow_up_line),
         single_static_ability_ast_rule!(parse_prevention_proposed_amount_follow_up_line),
         single_static_ability_ast_rule!(parse_damage_prevention_with_owner_shuffle_line),
@@ -1501,6 +1529,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
             parse_filter_is_pt_creature_in_addition_and_has_line
         ),
         multi_static_ability_ast_passthrough_rule!(parse_filter_is_pt_creature_in_addition_line),
+        multi_static_ability_ast_passthrough_rule!(parse_conditional_copular_creature_line),
         multi_static_ability_ast_passthrough_rule!(
             parse_has_base_power_toughness_and_type_color_addition_static_line
         ),
@@ -1512,6 +1541,8 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         ),
         multi_static_ability_ast_passthrough_rule!(parse_subject_color_and_granted_ability_line),
         multi_static_ability_ast_passthrough_rule!(parse_anthem_and_no_defender_line),
+        multi_static_ability_ast_passthrough_rule!(parse_base_pt_and_blocker_restriction_line),
+        multi_static_ability_ast_passthrough_rule!(parse_conditional_no_defender_and_unblockable_line),
         multi_static_ability_ast_passthrough_rule!(
             parse_subject_is_subtype_with_base_pt_and_granted_abilities_line
         ),
@@ -1571,6 +1602,8 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
             parse_subject_are_card_types_in_addition_to_their_other_types_line
         ),
         single_static_ability_ast_rule!(parse_subject_is_card_types_line),
+        single_static_ability_ast_rule!(parse_subject_is_also_subtypes_line),
+        single_static_ability_ast_rule!(parse_subject_is_chosen_color_line),
         single_static_ability_ast_rule!(parse_all_permanents_colorless_line),
         single_static_ability_ast_rule!(parse_all_cards_spells_permanents_colorless_line),
         multi_static_ability_ast_rule!(parse_all_are_pt_color_type_addition_line),
@@ -1684,6 +1717,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_passthrough_rule!(
             parse_source_can_attack_as_though_no_defender_as_long_as_line
         ),
+        multi_static_ability_ast_passthrough_rule!(parse_self_combat_requirement_line),
         single_static_ability_ast_passthrough_rule!(parse_attacks_each_combat_if_able_line),
         single_static_ability_ast_rule!(parse_source_must_be_blocked_if_able_line),
         multi_static_ability_ast_passthrough_rule!(parse_composed_anthem_effects_line),
@@ -2074,10 +2108,60 @@ fn parse_complete_attached_restriction_quoted_activation(
 pub fn parse_static_ability_ast_line_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    crate::clause_support::validate_protection_static_line(tokens)?;
     if let Some(abilities) = parse_complete_attached_restriction_quoted_activation(tokens)? {
         return Ok(Some(abilities));
     }
+    if let Some(abilities) = parse_attached_subtype_and_predicate_static_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     parse_static_ability_ast_line_lexed_unstacked(tokens)
+}
+
+/// "Enchanted creature is a Spirit and can't attack or block." (Fog on the
+/// Barrow-Downs): a creature-type setting and a second predicate of the same
+/// attached subject are two independent static abilities.
+fn parse_attached_subtype_and_predicate_static_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if !tokens
+        .first()
+        .is_some_and(|token| token.is_any_word(&["enchanted", "equipped"]))
+    {
+        return Ok(None);
+    }
+    let Some(is_idx) = tokens.iter().position(|token| token.is_word("is")) else {
+        return Ok(None);
+    };
+    let article = tokens.get(is_idx + 1);
+    let and = tokens.get(is_idx + 3);
+    // The verb follows the bare attached subject ("enchanted creature is"),
+    // and the set word is a type, not the first of a color pair ("is a green
+    // and white Citizen creature").
+    if is_idx != 2
+        || tokens.get(is_idx + 2).is_some_and(|token| {
+            token.is_any_word(&["white", "blue", "black", "red", "green", "colorless"])
+        })
+        || !article.is_some_and(|token| token.is_any_word(&["a", "an"]))
+        || !and.is_some_and(|token| token.is_word("and"))
+        || tokens.len() <= is_idx + 4
+    {
+        return Ok(None);
+    }
+    let mut type_line = tokens[..is_idx + 3].to_vec();
+    if let Some(period) = tokens.last().filter(|token| token.is_period()) {
+        type_line.push(period.clone());
+    }
+    let mut predicate_line = tokens[..is_idx].to_vec();
+    predicate_line.extend_from_slice(&tokens[is_idx + 4..]);
+    let Ok(Some(mut abilities)) = parse_static_ability_ast_line_lexed_unstacked(&type_line) else {
+        return Ok(None);
+    };
+    let Ok(Some(predicate)) = parse_static_ability_ast_line_lexed_unstacked(&predicate_line) else {
+        return Ok(None);
+    };
+    abilities.extend(predicate);
+    Ok(Some(abilities))
 }
 
 /// "Nonlegendary creatures enchanted player controls have base power and
@@ -2294,6 +2378,11 @@ fn parse_static_ability_ast_line_lexed_unstacked(
     if let Some(abilities) = parse_filtered_toughness_assignment_line(tokens)? {
         return Ok(Some(abilities));
     }
+    // Keep optional-size/additive artifact-creature semantics and attached
+    // pronouns ahead of the older generic card-type identity wrapper.
+    if let Some(abilities) = parse_conditional_copular_creature_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     // Bound the condition before reading the characteristic-setting subject.
     // Otherwise a permissive subject suffix can absorb the condition words.
     if let Some(spec) = split_as_long_as_condition_prefix_lexed(tokens)
@@ -2483,6 +2572,12 @@ mod single_line_readings;
 fn parse_static_ability_ast_line_lexed_single(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if let Some(ability) = dynamic_characteristic_statics::parse_timed_source_pt(tokens)? {
+        return Ok(Some(vec![ability.into()]));
+    }
+    if let Some(ability) = dynamic_characteristic_statics::parse_bound_base_pt(tokens)? {
+        return Ok(Some(vec![ability.into()]));
+    }
     if let Some(split) = split_as_long_as_condition_prefix_lexed(tokens)
         && let Some(ability) = parse_characteristic_defining_pt_line(split.remainder_tokens)?
     {
@@ -3571,10 +3666,16 @@ pub fn parse_composed_anthem_effects_line(
 
     if comma_segments.len() == 2 {
         let where_tail = trim_commas(&comma_segments[1]);
-        if keyword_static_lines::parse_where_x_value_prefix_tokens(&where_tail).is_some()
-            && let Some(ability) = parse_anthem_line(tokens)?
-        {
-            return Ok(Some(vec![ability.into()]));
+        if keyword_static_lines::parse_where_x_value_prefix_tokens(&where_tail).is_some() {
+            // The comma introduces a value binding, not a second predicate.
+            // Keep every distributive subject when this route and the
+            // multi-subject route recognize the same complete line.
+            if let Some(abilities) = parse_multi_subject_anthem_line(tokens)? {
+                return Ok(Some(abilities.into_iter().map(StaticAbilityAst::from).collect()));
+            }
+            if let Some(ability) = parse_anthem_line(tokens)? {
+                return Ok(Some(vec![ability.into()]));
+            }
         }
     }
 
@@ -3751,9 +3852,9 @@ pub fn parse_static_text_marker_line(tokens: &[OwnedLexToken]) -> Option<StaticA
             }
             keyword_static_lines::StaticTextMarkerKind::YouHaveHexproof => {
                 StaticAbility::restriction(
-                    crate::effect::Restriction::be_targeted_player_from(
+                    crate::effect::Restriction::player_hexproof_from(
                         PlayerFilter::You,
-                        ObjectFilter::default().controlled_by(PlayerFilter::Opponent),
+                        ObjectFilter::default(),
                     ),
                     "You have hexproof".to_string(),
                 )
@@ -3786,9 +3887,8 @@ pub fn parse_static_text_marker_line(tokens: &[OwnedLexToken]) -> Option<StaticA
         return Some(keyword_static_marker(tokens));
     }
 
-    if is_protection_mana_value_marker_line_lexed(tokens) {
-        return Some(keyword_static_marker(tokens));
-    }
+    // Mana-value parity protection is a complete typed protection quality.
+    // It is owned by the keyword grammar, not an unsupported marker.
 
     if is_mana_group_slash_marker_line_lexed(tokens) {
         return Some(keyword_static_marker(tokens));
@@ -4836,11 +4936,19 @@ pub fn parse_double_damage_from_sources_you_control_of_chosen_type_line(
         return Ok(None);
     }
 
-    Ok(Some(
-        StaticAbility::double_damage_from_sources_you_control_of_chosen_type(
-            "Double all damage that sources you control of the chosen type would deal.".to_string(),
-        ),
-    ))
+    // Use the common typed multiplier owner, including source LKI support.
+    // No permanent/creature domain is implied by "sources": Kindred spells
+    // with the chosen subtype can deal damage too.
+    let mut source_filter = ObjectFilter::default().controlled_by(PlayerFilter::You);
+    source_filter.chosen_creature_type = true;
+    Ok(Some(StaticAbility::multiply_damage_amount_replacement(
+        source_filter,
+        Some(PlayerFilter::Any),
+        Some(ObjectFilter::default()),
+        2,
+        false,
+        "Double all damage that sources you control of the chosen type would deal.".to_string(),
+    )))
 }
 
 pub fn parse_damage_amount_replacement_line(
@@ -4979,6 +5087,9 @@ pub fn parse_prevent_half_damage_replacement_line(
 pub fn parse_double_damage_amount_replacement_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
+    if let Some(ability) = parse_double_damage_from_sources_you_control_of_chosen_type_line(tokens)? {
+        return Ok(Some(ability));
+    }
     let tokens = trim_edge_punctuation(tokens);
     let Some(spec) = keyword_static_lines::parse_damage_multiplier_tokens(&tokens) else {
         return Ok(None);
@@ -5110,7 +5221,31 @@ fn damage_source_filter_from_shape(
     } else {
         None
     };
-    let mut filter = if let Some(union) = articled_union {
+    let source_words = parser_token_word_refs(shape.filter_tokens);
+    let trailing_words = parser_token_word_refs(shape.trailing_filter_tokens);
+    let mut filter = if !shape.source_noun && is_source_reference_words(&source_words) {
+        let mut source = ObjectFilter::source();
+        source.source_surface = source_reference_surface_for_words(&source_words);
+        source
+    } else if !shape.source_noun && matches!(source_words.as_slice(),
+        ["creatures", "it's", "blocking"] | ["creatures", "its", "blocking"])
+    {
+        let mut creatures = ObjectFilter::creature();
+        creatures.blocked_by_source = true;
+        creatures
+    } else if shape.source_noun && shape.filter_tokens.is_empty()
+        && trailing_words.as_slice() == ["of", "the", "chosen", "color"]
+    {
+        let mut sources = ObjectFilter::default();
+        sources.chosen_color = true;
+        sources
+    } else if shape.source_noun && shape.filter_tokens.is_empty()
+        && trailing_words.as_slice() == ["with", "the", "chosen", "name"]
+    {
+        let mut sources = ObjectFilter::default();
+        sources.name = Some("{chosen name}".into());
+        sources
+    } else if let Some(union) = articled_union {
         union
     } else if shape.filter_tokens.is_empty() && shape.trailing_filter_tokens.is_empty() {
         ObjectFilter::default()
@@ -5148,6 +5283,15 @@ fn damage_source_filter_from_shape(
             parse_object_filter_lexed(&combined, false)?
         }
     };
+    // A subtype noun by itself denotes permanents (CR 109.2): "Deserts"
+    // is not "Desert cards" or "Desert sources". The shared filter grammar
+    // also serves card-selection contexts, so establish this event-source
+    // domain here without inventing a card type or changing explicit zones.
+    if !shape.source_noun && filter.zone.is_none() && !filter.has_explicit_card_noun()
+        && (!filter.subtypes.is_empty() || !filter.all_subtypes.is_empty())
+    {
+        filter.zone = Some(Zone::Battlefield);
+    }
     // "Creature sources" includes creature cards and spells in any zone.
     // Discard only the battlefield default inferred from a type noun, while
     // retaining an authored battlefield/permanent restriction.
@@ -5164,6 +5308,9 @@ fn damage_source_filter_from_shape(
     match shape.controller {
         keyword_static_lines::DamageSourceControllerKind::None => {}
         keyword_static_lines::DamageSourceControllerKind::You => filter = filter.you_control(),
+        keyword_static_lines::DamageSourceControllerKind::NotYou => {
+            filter = filter.controlled_by(PlayerFilter::NotYou);
+        }
         keyword_static_lines::DamageSourceControllerKind::Opponent => {
             filter = filter.controlled_by(PlayerFilter::Opponent);
         }
@@ -5609,19 +5756,29 @@ pub fn parse_enter_as_copy_as_enters_line(
                 // addition to his other types": a name exception followed by
                 // a characteristic exception in one clause.
                 let mut exceptions = vec![exception];
-                if matches!(
-                    exceptions[0],
-                    keyword_static_lines::CopyExceptionShape::Name { .. }
-                ) && let Some(and_index) = exception_tokens.windows(2).position(|pair| {
-                    pair[0].is_word("and") && pair[1].is_any_word(&["it's", "it’s", "it"])
-                }) && let Some(
-                    characteristics @ keyword_static_lines::CopyExceptionShape::Characteristics {
-                        ..
-                    },
-                ) = keyword_static_lines::parse_copy_exception_tokens(
-                    &exception_tokens[and_index + 1..],
-                ) {
-                    exceptions.push(characteristics);
+                if let keyword_static_lines::CopyExceptionShape::Name { remainder_tokens, .. } = &exceptions[0] {
+                    let remainder = trim_lexed_commas(*remainder_tokens);
+                    if !remainder.is_empty() {
+                        let remainder = if remainder[0].is_word("and") {
+                            trim_lexed_commas(&remainder[1..])
+                        } else {
+                            return Err(CardTextError::ParseError(
+                                "unsupported complete enters-as-copy name exception tail".into(),
+                            ));
+                        };
+                        // A name exception must not discard a second exception.
+                        // Only the already supported complete characteristic
+                        // suffix may accompany it; other compound bodies stay
+                        // unsupported instead of merely retaining their prose.
+                        let Some(characteristics @ keyword_static_lines::CopyExceptionShape::Characteristics { .. }) =
+                            keyword_static_lines::parse_copy_exception_tokens(remainder)
+                        else {
+                            return Err(CardTextError::ParseError(
+                                "unsupported complete enters-as-copy name exception tail".into(),
+                            ));
+                        };
+                        exceptions.push(characteristics);
+                    }
                 }
                 for exception in exceptions {
                     match exception {
@@ -5691,6 +5848,7 @@ pub fn parse_enter_as_copy_as_enters_line(
                         keyword_static_lines::CopyExceptionShape::Name {
                             name_tokens,
                             use_named_subject,
+                            ..
                         } => {
                             if use_named_subject {
                                 name_override = named_copy_subject.clone();
@@ -5964,6 +6122,28 @@ mod enter_as_copy_added_color_tests {
     use super::*;
 
     #[test]
+    fn copy_name_exception_never_drops_unmodeled_compound_tails() {
+        for tail in [
+            "and it has flying",
+            "and it can't block",
+            ", it's legendary in addition to its other types",
+        ] {
+            let text = format!("You may have Mirror enter as a copy of any creature on the battlefield, except its name is Mirror {tail}.");
+            let tokens = crate::lexer::lex_line(&text, 0).unwrap();
+            assert!(parse_enter_as_copy_as_enters_line(&tokens).is_err(), "{text}");
+        }
+        let text = "You may have Mirror enter as a copy of any creature on the battlefield, except its name is Mirror and it's a 4/4 Spider Human Hero in addition to its other types.";
+        let tokens = crate::lexer::lex_line(text, 0).unwrap();
+        let ability = parse_enter_as_copy_as_enters_line(&tokens).unwrap().unwrap();
+        let ironsmith_core::StaticAbilityPayload::EnterAsCopyAsEnters { spec, .. } = ability.payload else {
+            panic!("copy model");
+        };
+        assert_eq!(spec.name_override.as_deref(), Some("Mirror"));
+        assert_eq!(spec.set_base_power_toughness, Some((4, 4)));
+        assert_eq!(spec.added_subtypes, [Subtype::Spider, Subtype::Human, Subtype::Hero]);
+    }
+
+    #[test]
     fn copy_exception_adds_a_color_alongside_types_subtypes_and_fixed_pt() {
         let text = "You may have this creature enter as a copy of any creature card in a graveyard except it's a 4/4 black Zombie in addition to its other colors and types.";
         let tokens = crate::lexer::lex_line(text, 0).expect("copy exception should lex");
@@ -6166,7 +6346,9 @@ pub fn parse_characteristic_defining_pt_line(
 ) -> Result<Option<StaticAbility>, CardTextError> {
     // Conditional characteristic assignments must retain their predicate;
     // the enclosing static parser owns the prefix and wraps the body.
-    if split_as_long_as_condition_prefix_lexed(tokens).is_some() {
+    if split_as_long_as_condition_prefix_lexed(tokens).is_some()
+        || anthem_grant_grammar::parse_fixed_prefix_condition_shape(tokens).is_some()
+    {
         return Ok(None);
     }
     let sentence_tokens = trim_edge_punctuation(tokens);
@@ -6277,12 +6459,12 @@ pub fn parse_characteristic_defining_pt_line(
             )));
         }
 
-        let value = parse_characteristic_defining_stat_value(&value_tokens)
-            .or_else(|| {
-                previous_value.as_ref().and_then(|base| {
-                    parse_characteristic_defining_relative_value(&value_tokens, base)
-                })
-            })
+        // "that number" back-references the previous axis; resolve it before
+        // the shared value grammar reads it as a chosen-number metric.
+        let value = previous_value
+            .as_ref()
+            .and_then(|base| parse_characteristic_defining_relative_value(&value_tokens, base))
+            .or_else(|| parse_characteristic_defining_stat_value(&value_tokens))
             .ok_or_else(|| {
                 CardTextError::ParseError(format!(
                     "unsupported characteristic defining {} value (value: '{}')",
@@ -6319,6 +6501,15 @@ fn parse_characteristic_defining_relative_value(
     tokens: &[OwnedLexToken],
     base: &Value,
 ) -> Option<Value> {
+    let words = crate::lexer::token_word_refs(tokens);
+    if words.len() == 4 && words[1..] == ["minus", "that", "number"] {
+        if let Some((constant, used)) = crate::util::parse_number(tokens) {
+            if used == 1 {
+                return Some(Value::Add(Box::new(Value::Fixed(i32::try_from(constant).ok()?)),
+                    Box::new(Value::Scaled(Box::new(base.clone()), -1))));
+            }
+        }
+    }
     match keyword_static_lines::parse_characteristic_relative_value_tokens(tokens)? {
         keyword_static_lines::CharacteristicRelativeValue::Same => Some(base.clone()),
         keyword_static_lines::CharacteristicRelativeValue::Plus(amount) => Some(Value::Add(
@@ -6381,6 +6572,9 @@ fn parse_characteristic_defining_stat_value(tokens: &[OwnedLexToken]) -> Option<
         return None;
     }
 
+    if words.word_refs().as_slice() == ["the", "last", "chosen", "number"] {
+        return Some(Value::SourceChosenNumber { if_unset: Some(0), pair: None });
+    }
     if let Some(kind) = keyword_static_lines::parse_characteristic_source_value_tokens(trimmed) {
         return Some(match kind {
             keyword_static_lines::CharacteristicSourceValueKind::Power => Value::SourcePower,
@@ -7213,3 +7407,7 @@ mod entry_copy_exception_root_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "compound_static_body_tests.rs"]
+mod compound_static_body_tests;

@@ -26,7 +26,8 @@ enum ManaPipCommit {
 struct SpentManaUnitCommit {
     symbol: crate::mana::ManaSymbol,
     restriction: Option<crate::ability::RestrictedManaUnit>,
-    provenance: Option<crate::player::ManaSourceProvenance>,
+    mana_source: ObjectId,
+    source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
 }
 
 impl GameState {
@@ -290,12 +291,15 @@ impl GameState {
 
         self.battlefield_flags_mut().controller_at_last_refresh = controllers;
         self.remember_face_down_exile_source_controllers();
+        self.remember_linked_exile_inspection_entitlements();
         for &id in &changed {
             self.clear_soulbond_pair(id);
             self.set_summoning_sick(id);
         }
-        self.reconcile_combat_membership(&changed);
+        // Preserve previous destination actors before retiring attackers in
+        // the same simultaneous control/type transition.
         self.reconcile_attacked_permanents(&previous_controllers);
+        self.reconcile_combat_membership(&changed);
     }
 
     /// CR 506.4 / 506.4e: a planeswalker or battle that's being attacked is
@@ -313,37 +317,40 @@ impl GameState {
         use crate::combat_state::AttackTarget;
         use crate::types::CardType;
 
-        let Some(combat) = self.combat.as_ref() else {
-            return;
-        };
-        if !combat
-            .attackers
-            .iter()
-            .any(|info| info.target.attacked_permanent().is_some())
-        {
-            return;
+        let mut attacked = Vec::new();
+        for combat in self.combat_lanes() {
+            for info in &combat.attackers {
+                let Some(permanent) = info.target.attacked_permanent() else {
+                    continue;
+                };
+                let as_battle = matches!(info.target, AttackTarget::Battle(_));
+                let types = combat
+                    .attacked_permanent_types
+                    .get(&permanent)
+                    .copied()
+                    .unwrap_or(crate::combat_state::AttackedPermanentTypes {
+                        planeswalker: !as_battle
+                            || self.object_has_card_type(permanent, CardType::Planeswalker),
+                        battle: as_battle || self.object_has_card_type(permanent, CardType::Battle),
+                    });
+                attacked.push((permanent, as_battle, types));
+            }
         }
-        // Permanents that began being attacked outside a declaration (e.g.
-        // entering attacking) are recorded the first time they're seen.
-        let mut combat = self.combat.take().expect("combat checked above");
-        combat.record_attacked_permanent_types(self);
-        let mut attacked = combat
-            .attackers
-            .iter()
-            .filter_map(|info| {
-                let permanent = info.target.attacked_permanent()?;
-                Some((
-                    permanent,
-                    matches!(info.target, AttackTarget::Battle(_)),
+        self.mutate_combat_lanes(|combat| {
+            for (permanent, _, types) in &attacked {
+                if combat
+                    .attackers
+                    .iter()
+                    .any(|info| info.target.attacked_permanent() == Some(*permanent))
+                {
                     combat
                         .attacked_permanent_types
-                        .get(&permanent)
-                        .copied()
-                        .unwrap_or_default(),
-                ))
-            })
-            .collect::<Vec<_>>();
-        self.combat = Some(combat);
+                        .entry(*permanent)
+                        .or_insert(*types);
+                }
+            }
+            false
+        });
         attacked.sort_by_key(|(id, as_battle, _)| (id.0, *as_battle));
         attacked.dedup_by_key(|(id, as_battle, _)| (*id, *as_battle));
         for (permanent, as_battle, attacked_as) in attacked {
@@ -410,13 +417,14 @@ impl GameState {
                     (true, true) => continue,
                 }
             };
-            if let Some(combat) = self.combat.as_mut() {
+            self.mutate_combat_lanes(|combat| {
                 for info in &mut combat.attackers {
                     if info.target.attacked_permanent() == Some(permanent) {
                         info.target = retarget.clone();
                     }
                 }
-            }
+                true
+            });
         }
     }
 
@@ -424,18 +432,16 @@ impl GameState {
     /// or if it's an attacking or blocking creature that stops being a
     /// creature or becomes a battle.
     fn reconcile_combat_membership(&mut self, controller_changed: &[ObjectId]) {
-        let Some(combat) = self.combat.as_ref() else {
-            return;
-        };
-        let mut combatants = combat
-            .attackers
-            .iter()
-            .map(|attacker| attacker.creature)
-            .collect::<Vec<_>>();
-        for blockers in combat.blockers.values() {
-            for blocker in blockers {
-                if !combatants.contains(blocker) {
-                    combatants.push(*blocker);
+        let mut combatants = Vec::new();
+        for combat in self.combat_lanes() {
+            for id in combat
+                .attackers
+                .iter()
+                .map(|attacker| attacker.creature)
+                .chain(combat.blockers.values().flatten().copied())
+            {
+                if !combatants.contains(&id) {
+                    combatants.push(id);
                 }
             }
         }
@@ -579,8 +585,28 @@ impl GameState {
         payer: PlayerId,
         source: Option<ObjectId>,
     ) -> crate::player::ManaSpendPolicy {
+        self.mana_spend_policy_for_selection(payer, source, false, None)
+    }
+
+    pub(crate) fn mana_spend_policy_for_selection(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        exact: bool,
+        selection: Option<&crate::grant_registry::GrantPermissionIdentity>,
+    ) -> crate::player::ManaSpendPolicy {
         let mut policy = crate::player::ManaSpendPolicy::default();
         for permission in &self.effect_store.mana_spend_effects.permissions {
+            if exact
+                && permission
+                    .play_permission_identities
+                    .as_ref()
+                    .is_some_and(|identities| {
+                        selection.is_none_or(|selection| !identities.contains(selection))
+                    })
+            {
+                continue;
+            }
             if !permission.allows(self, payer, source) {
                 continue;
             }
@@ -593,6 +619,118 @@ impl GameState {
                 permission.permission.other_mana_only_as_colorless;
         }
         policy
+    }
+
+    /// Casting-only conversion belongs to the frozen selected permission,
+    /// never to an unrelated payment made by the same spell/source object.
+    pub fn mana_spend_policy_for_cast(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+    ) -> crate::player::ManaSpendPolicy {
+        match self.try_mana_spend_policy_for_cast(payer, source) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.record_token_resource_failure(&error);
+                self.mana_spend_policy_for_selection(payer, source, true, None)
+            }
+        }
+    }
+
+    pub fn try_mana_spend_policy_for_cast(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+    ) -> Result<crate::player::ManaSpendPolicy, crate::effects::ExecutionError> {
+        let Some(object) = source
+            .and_then(|source| self.object(source))
+            .filter(|object| object.zone == Zone::Stack)
+        else {
+            return Ok(self.mana_spend_policy(payer, source));
+        };
+        let mut policy = if let Some(receipt) = object.cast_play_permission.as_deref() {
+            self.mana_spend_policy_for_selection(
+                payer,
+                source,
+                true,
+                (receipt.player == payer).then_some(&receipt.identity),
+            )
+        } else {
+            self.mana_spend_policy(payer, source)
+        };
+        if let Some(receipt) = object.cast_play_permission.as_deref() {
+            let complete = receipt
+                .origin_method
+                .as_deref()
+                .is_some_and(|origin| match origin {
+                    crate::alternative_cast::CastingMethod::PlayFrom { source, zone, .. }
+                    | crate::alternative_cast::CastingMethod::SplitOtherHalfPlayFrom {
+                        source,
+                        zone,
+                        ..
+                    }
+                    | crate::alternative_cast::CastingMethod::FaceDownPlayFrom { source, zone } => {
+                        *source == receipt.source && *zone == receipt.zone
+                    }
+                    _ => false,
+                })
+                && object.cast_grant_usage_identity.as_deref() == Some(&receipt.identity)
+                && object.cast_play_from_constraints.as_deref().is_some_and(
+                    |(source, zone, constraints)| {
+                        *source == receipt.source
+                            && *zone == receipt.zone
+                            && *constraints == receipt.constraints
+                    },
+                )
+                && self
+                    .cast_origin_snapshot(object.id)
+                    .is_some_and(|snapshot| {
+                        snapshot.object_id == receipt.origin && snapshot.zone == receipt.zone
+                    });
+            if !complete {
+                return Err(crate::effects::ExecutionError::IncompleteEvidence(
+                    "permission-local casting mana lost its frozen authority".into(),
+                ));
+            }
+            if receipt.player == payer {
+                policy.allow_mode(receipt.constraints.cast_mana_spend_mode);
+            }
+        } else if object
+            .cast_play_from_constraints
+            .as_deref()
+            .is_some_and(|(_, _, constraints)| !constraints.cast_mana_spend_mode.is_normal())
+        {
+            return Err(crate::effects::ExecutionError::IncompleteEvidence(
+                "permission-local casting mana has no selected-permission receipt".into(),
+            ));
+        }
+        Ok(policy)
+    }
+
+    pub fn try_mana_spend_policy_for_reason(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        reason: crate::costs::PaymentReason,
+    ) -> Result<crate::player::ManaSpendPolicy, crate::effects::ExecutionError> {
+        if reason == crate::costs::PaymentReason::CastSpell {
+            self.try_mana_spend_policy_for_cast(payer, source)
+        } else {
+            Ok(self.mana_spend_policy(payer, source))
+        }
+    }
+
+    pub fn mana_spend_policy_for_reason(
+        &self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        reason: crate::costs::PaymentReason,
+    ) -> crate::player::ManaSpendPolicy {
+        if reason == crate::costs::PaymentReason::CastSpell {
+            self.mana_spend_policy_for_cast(payer, source)
+        } else {
+            self.mana_spend_policy(payer, source)
+        }
     }
 
     pub fn can_spend_mana_as_any_color_from_mana_source(
@@ -844,6 +982,7 @@ impl GameState {
         match modification {
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
+            | Modification::RewriteText(_)
             | Modification::SetTextBox(_) => true,
             Modification::AddAbility(static_ability) => {
                 Self::is_cast_or_activate_payment_restriction(static_ability)
@@ -953,6 +1092,7 @@ impl GameState {
         match modification {
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
+            | Modification::RewriteText(_)
             | Modification::SetTextBox(_)
             | Modification::SetAbilities(_)
             | Modification::CopyStaticAbilityVariants { .. }
@@ -1093,6 +1233,7 @@ impl GameState {
         match modification {
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
+            | Modification::RewriteText(_)
             | Modification::SetTextBox(_) => true,
             Modification::AddAbility(static_ability) => static_ability.id() == ability_id,
             Modification::AddAbilityGeneric(ability) => {
@@ -1395,14 +1536,20 @@ impl GameState {
             .filter_context_for(controller, Some(unit.source))
             .with_caster(Some(controller));
         let mut stack_filter = filter.clone();
-        if stack_filter.zone == Some(Zone::Battlefield) {
+        if let Some(zone) = stack_filter.zone {
+            if !matches!(zone, Zone::Stack | Zone::Battlefield)
+                && !self
+                    .cast_origin_snapshot(source_id)
+                    .is_some_and(|origin| origin.zone == zone)
+            {
+                return false;
+            }
             stack_filter.zone = Some(Zone::Stack);
         }
         stack_filter.stack_kind = Some(crate::filter::StackObjectKind::Spell);
+        // Origin evidence establishes only the origin zone, never the
+        // printed face's color/type/keyword for another selected spell face.
         stack_filter.matches(source_obj, &filter_ctx, self)
-            || self
-                .cast_origin_snapshot(source_id)
-                .is_some_and(|origin| filter.matches_snapshot(origin, &filter_ctx, self))
     }
 
     fn activate_ability_source_filter_matches_payment_source(
@@ -1480,6 +1627,30 @@ impl GameState {
                     .unwrap_or_else(|| self.controller_of(source_obj));
                 let filter_ctx = self.filter_context_for(controller, Some(unit.source));
                 filter.matches(source_obj, &filter_ctx, self)
+            }
+            crate::ability::ManaPaymentPredicate::ActivatedAbilityKeyword(keyword) => {
+                matches!(reason, crate::costs::PaymentReason::ActivateAbilityWithKeyword { keyword: actual, .. } if actual == *keyword)
+            }
+            crate::ability::ManaPaymentPredicate::TurnFaceUpMethod(method) => {
+                reason == crate::costs::PaymentReason::TurnFaceUpWithMethod(*method)
+            }
+            crate::ability::ManaPaymentPredicate::SourceManifested => {
+                payment_source.is_some_and(|id| {
+                    self.is_manifested(id)
+                        && self.is_face_down(id)
+                        && !self.is_phased_out(id)
+                        && self.object(id).is_some_and(|o| o.zone == Zone::Battlefield)
+                })
+            }
+            crate::ability::ManaPaymentPredicate::DisturbCost => {
+                reason == crate::costs::PaymentReason::CastSpell
+                    && payment_source
+                        .and_then(|id| self.object(id))
+                        .is_some_and(|object| {
+                            object.zone == Zone::Stack
+                                && matches!(object.cast_alternative_method.as_deref(),
+                            Some(crate::alternative_cast::AlternativeCastingMethod::Disturb { .. }))
+                        })
             }
             crate::ability::ManaPaymentPredicate::CostContains(symbol) => effective_cost
                 .is_some_and(|cost| cost.pips().iter().any(|pip| pip.contains(symbol))),
@@ -1603,11 +1774,7 @@ impl GameState {
                         spell_filter,
                         payment_source,
                     ))
-                    || (matches!(
-                        reason,
-                        crate::costs::PaymentReason::ActivateAbility
-                            | crate::costs::PaymentReason::ActivateManaAbility
-                    ) && self.activate_ability_source_filter_matches_payment_source(
+                    || (reason.is_ability() && self.activate_ability_source_filter_matches_payment_source(
                         unit,
                         ability_source_filter,
                         payment_source,
@@ -1622,7 +1789,7 @@ impl GameState {
                         spell_filter,
                         payment_source,
                     ))
-                    || (reason == crate::costs::PaymentReason::TurnFaceUp
+                    || (reason.mana_payment_purpose() == crate::ability::ManaPaymentPurpose::TurnFaceUp
                         && payment_source.is_some_and(|source_id| {
                             self.object(source_id)
                                 .is_some_and(|source_obj| source_obj.zone == Zone::Battlefield)
@@ -1634,11 +1801,7 @@ impl GameState {
                         }))
             }
             crate::ability::ManaUsageRestriction::ActivateAbility => {
-                matches!(
-                    reason,
-                    crate::costs::PaymentReason::ActivateAbility
-                        | crate::costs::PaymentReason::ActivateManaAbility
-                ) && payment_source.is_some_and(|source_id| {
+                reason.is_ability() && payment_source.is_some_and(|source_id| {
                     self.object(source_id)
                         .is_some_and(|source_obj| source_obj.zone != Zone::Stack)
                 })
@@ -1911,6 +2074,7 @@ impl GameState {
     ) -> Vec<Vec<crate::mana::ManaSymbol>> {
         use crate::mana::ManaSymbol;
 
+        let x_value = cost.payment_x_value(x_value);
         let mut pips = Vec::new();
         for pip in cost.pips() {
             if pip.len() == 1 {
@@ -2252,7 +2416,13 @@ impl GameState {
         life_options: Option<(bool, bool, bool)>,
         accept: &mut dyn FnMut(&[PayableManaUnit], &ManaPaymentPlan) -> bool,
     ) -> Option<(Vec<PayableManaUnit>, ManaPaymentPlan)> {
-        let default_policy = self.mana_spend_policy(payer, source);
+        let default_policy = match self.try_mana_spend_policy_for_reason(payer, source, reason) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.record_token_resource_failure(&error);
+                return None;
+            }
+        };
         let policy = policy_override.unwrap_or(&default_policy);
         let engine_allows_black_life = crate::decision::mana_cost_has_black_symbol(cost)
             && self.player_can_pay_black_with_life_for_reason(payer, source, reason);
@@ -2523,7 +2693,7 @@ impl GameState {
         let checked = self
             .continuous_query_snapshot()
             .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-        let policy = checked.mana_spend_policy(payer, source);
+        let policy = checked.try_mana_spend_policy_for_reason(payer, source, reason)?;
         self.try_pay_mana_cost_with_policy(payer, source, cost, x_value, reason, &policy)
     }
 
@@ -2539,7 +2709,7 @@ impl GameState {
         let checked = self
             .continuous_query_snapshot()
             .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-        let policy = checked.mana_spend_policy(payer, source);
+        let policy = checked.try_mana_spend_policy_for_reason(payer, source, reason)?;
         self.try_pay_mana_cost_with_payment_options_and_dm(
             payer,
             source,
@@ -2639,6 +2809,40 @@ impl GameState {
         decision_maker: &mut dyn crate::decision::DecisionMaker,
         execution: Option<&crate::effects::ExecutionContextCheckpoint>,
     ) -> Result<bool, crate::effects::ExecutionError> {
+        self.try_pay_mana_cost_with_payment_options_and_outputs(
+            payer,
+            source,
+            cost,
+            x_value,
+            reason,
+            policy,
+            allow_life_payment,
+            allow_black_life,
+            prefer_life_payment,
+            decision_maker,
+            execution,
+        )
+        .map(|paid| paid.is_some())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_pay_mana_cost_with_payment_options_and_outputs(
+        &mut self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        cost: &crate::mana::ManaCost,
+        x_value: u32,
+        reason: crate::costs::PaymentReason,
+        policy: &crate::player::ManaSpendPolicy,
+        allow_life_payment: bool,
+        allow_black_life: bool,
+        prefer_life_payment: bool,
+        decision_maker: &mut dyn crate::decision::DecisionMaker,
+        execution: Option<&crate::effects::ExecutionContextCheckpoint>,
+    ) -> Result<Option<Vec<crate::effects::CompletedEffectOutputs>>, crate::effects::ExecutionError>
+    {
+        self.try_mana_spend_policy_for_reason(payer, source, reason)?;
+
         let checkpoint = self.clone();
         let result = (|| {
             self.refresh_continuous_state()
@@ -2652,9 +2856,9 @@ impl GameState {
                 Some(policy),
                 Some((allow_life_payment, prefer_life_payment, allow_black_life)),
             ) else {
-                return Ok(false);
+                return Ok(None);
             };
-            self.commit_mana_payment_plan_with_dm(
+            self.commit_mana_payment_plan_with_dm_and_outputs(
                 payer,
                 source,
                 reason,
@@ -2664,7 +2868,7 @@ impl GameState {
                 execution,
             )
         })();
-        if !matches!(result, Ok(true)) {
+        if !matches!(&result, Ok(Some(_))) {
             self.restore_execution_checkpoint(
                 checkpoint,
                 result.is_ok() && decision_maker.awaiting_choice(),
@@ -2701,11 +2905,34 @@ impl GameState {
         decision_maker: &mut dyn crate::decision::DecisionMaker,
         execution: Option<&crate::effects::ExecutionContextCheckpoint>,
     ) -> Result<bool, crate::effects::ExecutionError> {
+        self.commit_mana_payment_plan_with_dm_and_outputs(
+            payer,
+            source,
+            reason,
+            units,
+            plan,
+            decision_maker,
+            execution,
+        )
+        .map(|paid| paid.is_some())
+    }
+
+    fn commit_mana_payment_plan_with_dm_and_outputs(
+        &mut self,
+        payer: PlayerId,
+        source: Option<ObjectId>,
+        reason: crate::costs::PaymentReason,
+        units: &[PayableManaUnit],
+        plan: &ManaPaymentPlan,
+        decision_maker: &mut dyn crate::decision::DecisionMaker,
+        execution: Option<&crate::effects::ExecutionContextCheckpoint>,
+    ) -> Result<Option<Vec<crate::effects::CompletedEffectOutputs>>, crate::effects::ExecutionError>
+    {
         let checkpoint = self.clone();
         let result = (|| {
             self.refresh_continuous_state()
                 .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-            self.commit_mana_payment_plan_inner(
+            self.commit_mana_payment_plan_inner_with_outputs(
                 payer,
                 source,
                 reason,
@@ -2715,7 +2942,7 @@ impl GameState {
                 execution,
             )
         })();
-        if !matches!(result, Ok(true)) {
+        if !matches!(&result, Ok(Some(_))) {
             self.restore_execution_checkpoint(
                 checkpoint,
                 result.is_ok() && decision_maker.awaiting_choice(),
@@ -2724,7 +2951,7 @@ impl GameState {
         result
     }
 
-    fn commit_mana_payment_plan_inner(
+    fn commit_mana_payment_plan_inner_with_outputs(
         &mut self,
         payer: PlayerId,
         source: Option<ObjectId>,
@@ -2733,9 +2960,10 @@ impl GameState {
         plan: &ManaPaymentPlan,
         decision_maker: &mut dyn crate::decision::DecisionMaker,
         execution: Option<&crate::effects::ExecutionContextCheckpoint>,
-    ) -> Result<bool, crate::effects::ExecutionError> {
+    ) -> Result<Option<Vec<crate::effects::CompletedEffectOutputs>>, crate::effects::ExecutionError>
+    {
         let Some(player) = self.player(payer) else {
-            return Ok(false);
+            return Ok(None);
         };
         let original_pool = player.mana_pool.clone();
         let original_restricted = player.restricted_mana.clone();
@@ -2756,20 +2984,19 @@ impl GameState {
             .filter(|payment| matches!(payment, ManaPipCommit::ManaUnit { .. }))
             .count();
         if selected.len() != selected_count {
-            return Ok(false);
+            return Ok(None);
         }
         let spent_units = selected
             .iter()
-            .map(|unit| SpentManaUnitCommit {
-                symbol: unit.symbol,
-                restriction: unit
-                    .restricted_index
-                    .and_then(|index| original_restricted.get(index))
-                    .cloned(),
-                provenance: unit
-                    .provenance_index
-                    .and_then(|index| original_provenance.get(index))
-                    .cloned(),
+            .map(|unit| {
+                self.prepare_spent_mana_unit(
+                    unit.symbol,
+                    unit.restricted_index
+                        .and_then(|index| original_restricted.get(index))
+                        .cloned(),
+                    unit.provenance_index
+                        .and_then(|index| original_provenance.get(index)),
+                )
             })
             .collect::<Vec<_>>();
         let mut restricted_indices = selected
@@ -2784,6 +3011,14 @@ impl GameState {
         restricted_indices.dedup();
         provenance_indices.sort_unstable();
         provenance_indices.dedup();
+        // Freeze the selected production-time evidence in original bank order.
+        // Life-payment additions may replenish equivalent provenance before
+        // the cast tags publish; that does not undo these original spends.
+        let spent_source_snapshots = provenance_indices
+            .iter()
+            .filter_map(|index| original_provenance.get(*index))
+            .filter_map(|unit| unit.snapshot.clone())
+            .collect::<Vec<_>>();
 
         let committed = if let Some(player) = self.player_mut(payer) {
             let mut removed_all = true;
@@ -2803,6 +3038,7 @@ impl GameState {
         } else {
             false
         };
+        let mut outputs = Vec::new();
         let life_paid = if committed && plan.life_to_pay > 0 {
             let mut ctx = crate::effects::ExecutionContext::new(
                 source.unwrap_or(ObjectId::from_raw(0)),
@@ -2813,8 +3049,14 @@ impl GameState {
                 execution.restore_ref(&mut ctx);
             }
             ctx.mana.payment_reason = Some(reason);
-            self.pay_life_with_context(payer, plan.life_to_pay, &mut ctx)?
-                .is_some()
+            if let Some(paid) =
+                self.pay_life_with_context_and_outputs(payer, plan.life_to_pay, &mut ctx)?
+            {
+                outputs.push(paid);
+                true
+            } else {
+                false
+            }
         } else {
             committed
         };
@@ -2824,7 +3066,7 @@ impl GameState {
                 player.restricted_mana = original_restricted;
                 player.mana_source_provenance = original_provenance;
             }
-            return Ok(false);
+            return Ok(None);
         }
 
         if reason == crate::costs::PaymentReason::CastSpell
@@ -2836,43 +3078,67 @@ impl GameState {
             spell.mana_spent_on_x = Some(allocation);
         }
 
-        self.publish_spent_mana_units(payer, source, reason, spent_units);
-        self.record_bulk_mana_sources_spent_to_cast(payer, source, reason, &original_provenance);
-        Ok(true)
+        outputs.extend(self.publish_spent_mana_units_with_outputs(
+            payer,
+            source,
+            reason,
+            execution.map(crate::effects::ExecutionContextCheckpoint::provenance),
+            spent_units,
+        ));
+        self.record_captured_mana_sources_spent_to_cast(source, reason, spent_source_snapshots);
+        Ok(Some(outputs))
     }
 
-    fn publish_spent_mana_units(
+    /// Freeze selected unit inputs before pool removal and payment additions.
+    /// Retained production evidence takes precedence. For legacy units without
+    /// it, capture the source at spending preparation rather than publication.
+    fn prepare_spent_mana_unit(
+        &self,
+        symbol: crate::mana::ManaSymbol,
+        restriction: Option<crate::ability::RestrictedManaUnit>,
+        provenance: Option<&crate::player::ManaSourceProvenance>,
+    ) -> SpentManaUnitCommit {
+        let mana_source = restriction
+            .as_ref()
+            .map(|unit| unit.source)
+            .or_else(|| provenance.map(|unit| unit.source))
+            .unwrap_or_else(|| ObjectId::from_raw(0));
+        let source_snapshot = provenance
+            .and_then(|unit| unit.snapshot.clone())
+            .or_else(|| {
+                self.object(mana_source)
+                    .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, self))
+            });
+        SpentManaUnitCommit {
+            symbol,
+            restriction,
+            mana_source,
+            source_snapshot,
+        }
+    }
+
+    fn publish_spent_mana_units_with_outputs(
         &mut self,
         payer: PlayerId,
         payment_source: Option<ObjectId>,
         reason: crate::costs::PaymentReason,
+        payment_owner: Option<crate::provenance::ProvNodeId>,
         spent_units: Vec<SpentManaUnitCommit>,
-    ) {
+    ) -> Vec<crate::effects::CompletedEffectOutputs> {
+        let mut outputs = Vec::new();
         for spent in spent_units {
-            let mana_source = spent
-                .restriction
-                .as_ref()
-                .map(|unit| unit.source)
-                .or_else(|| spent.provenance.as_ref().map(|unit| unit.source))
-                .unwrap_or_else(|| ObjectId::from_raw(0));
-            let source_snapshot = spent
-                .provenance
-                .as_ref()
-                .and_then(|unit| unit.snapshot.clone())
-                .or_else(|| {
-                    self.object(mana_source)
-                        .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, self))
-                });
-            self.publish_spent_mana_unit(
+            outputs.push(self.publish_spent_mana_unit_with_outputs(
                 payer,
                 payment_source,
                 reason,
+                payment_owner,
                 spent.symbol,
-                mana_source,
-                source_snapshot,
+                spent.mana_source,
+                spent.source_snapshot,
                 spent.restriction,
-            );
+            ));
         }
+        outputs
     }
 
     fn apply_cast_spell_mana_bonus(
@@ -2932,11 +3198,11 @@ impl GameState {
                     counter_type,
                     count,
                 );
-                if let Some(spell) = self.object_mut(spell_id) {
-                    spell
-                        .abilities_mut()
-                        .push(crate::ability::Ability::static_ability(ability));
-                }
+                self.install_authored_object_ability(
+                    spell_id,
+                    crate::ability::Ability::static_ability(ability),
+                    AuthoredAbilityDuplicatePolicy::PreserveAll,
+                );
             }
             for (ability, duration) in granted_abilities {
                 match duration {
@@ -2957,11 +3223,11 @@ impl GameState {
             for keyword in granted_keywords {
                 match keyword {
                     crate::ability::ManaSpendGrantedKeyword::Riot => {
-                        if let Some(spell) = self.object_mut(spell_id) {
-                            spell
-                                .abilities_mut()
-                                .push(crate::cards::builders::riot_ability());
-                        }
+                        self.install_authored_object_ability(
+                            spell_id,
+                            crate::cards::builders::riot_ability(),
+                            AuthoredAbilityDuplicatePolicy::PreserveAll,
+                        );
                     }
                 }
             }
@@ -2969,16 +3235,17 @@ impl GameState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn publish_spent_mana_unit(
+    pub(crate) fn publish_spent_mana_unit_with_outputs(
         &mut self,
         payer: PlayerId,
         payment_source: Option<ObjectId>,
         reason: crate::costs::PaymentReason,
+        payment_owner: Option<crate::provenance::ProvNodeId>,
         symbol: crate::mana::ManaSymbol,
         mana_source: ObjectId,
         source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
         restriction: Option<crate::ability::RestrictedManaUnit>,
-    ) {
+    ) -> crate::effects::CompletedEffectOutputs {
         // Preserve the production-time snow property and the actual color of
         // each spent unit; later changes to the mana source cannot alter it.
         if reason == crate::costs::PaymentReason::CastSpell
@@ -3000,6 +3267,7 @@ impl GameState {
                 player: payer,
                 mana_source,
                 payment_source,
+                payment_owner,
                 symbol,
                 purpose: reason.mana_payment_purpose(),
                 source_snapshot: source_snapshot.clone(),
@@ -3009,7 +3277,9 @@ impl GameState {
         self.queue_trigger_event(event_provenance, event.clone());
 
         let Some(restriction) = restriction else {
-            return;
+            return crate::effects::CompletedEffectOutputs::aggregate_only(
+                crate::effect::EffectOutcome::count(1).with_events(vec![event]),
+            );
         };
         self.apply_cast_spell_mana_bonus(payer, payment_source, reason, &restriction);
         for payload in restriction
@@ -3051,6 +3321,8 @@ impl GameState {
                 );
             }
             self.defer_trigger_entries([crate::triggers::TriggeredAbilityEntry {
+                linked_exile_owner: None,
+                source_number_owner: None,
                 source: mana_source,
                 controller: source_snapshot
                     .as_ref()
@@ -3076,39 +3348,23 @@ impl GameState {
                 trigger_identity,
             }]);
         }
+        crate::effects::CompletedEffectOutputs::aggregate_only(
+            crate::effect::EffectOutcome::count(1).with_events(vec![event]),
+        )
     }
 
-    fn record_bulk_mana_sources_spent_to_cast(
+    fn record_captured_mana_sources_spent_to_cast(
         &mut self,
-        payer: PlayerId,
         source: Option<ObjectId>,
         reason: crate::costs::PaymentReason,
-        before: &[crate::player::ManaSourceProvenance],
+        spent: Vec<crate::snapshot::ObjectSnapshot>,
     ) {
-        if reason != crate::costs::PaymentReason::CastSpell || before.is_empty() {
+        if reason != crate::costs::PaymentReason::CastSpell || spent.is_empty() {
             return;
         }
         let Some(spell_id) = source else {
             return;
         };
-        let mut remaining = self
-            .player(payer)
-            .map(|player| player.mana_source_provenance.clone())
-            .unwrap_or_default();
-        let spent = before
-            .iter()
-            .filter_map(|unit| {
-                if let Some(index) = remaining.iter().position(|candidate| candidate == unit) {
-                    remaining.remove(index);
-                    None
-                } else {
-                    unit.snapshot.clone()
-                }
-            })
-            .collect::<Vec<_>>();
-        if spent.is_empty() {
-            return;
-        }
         let Some(spell) = self.object_mut(spell_id) else {
             return;
         };
@@ -3141,7 +3397,7 @@ impl GameState {
                 .iter()
                 .any(|component| component.mana_cost_ref().is_some_and(|cost| cost == mana))
         }
-        if reason != crate::costs::PaymentReason::ActivateAbility {
+        if !reason.is_non_mana_ability() {
             return None;
         }
 
@@ -3833,6 +4089,15 @@ impl GameState {
         object: &Object,
         effects: &[ContinuousEffect],
     ) -> ObjectSnapshot {
+        self.try_cached_object_snapshot_with_calculated_characteristics_and_effects(object, effects)
+            .expect("legacy snapshot cache caller requires complete evidence")
+    }
+
+    pub(crate) fn try_cached_object_snapshot_with_calculated_characteristics_and_effects(
+        &self,
+        object: &Object,
+        effects: &[ContinuousEffect],
+    ) -> Result<ObjectSnapshot, crate::effects::ExecutionError> {
         let mutation_revision = self.mutation_revision;
         let effect_revision = self.effect_store.continuous_effects.revision();
         {
@@ -3845,47 +4110,75 @@ impl GameState {
                 cache.effect_revision = effect_revision;
             }
             if let Some(snapshot) = cache.entries.get(&object.id) {
-                return snapshot.as_ref().clone();
+                return Ok(snapshot.as_ref().clone());
             }
         }
-
         let snapshot = Arc::new(
-            ObjectSnapshot::from_object_with_calculated_characteristics_and_effects(
+            ObjectSnapshot::try_from_object_with_calculated_characteristics_and_effects(
                 object, self, effects,
-            ),
+            )?,
         );
         let mut cache = self.runtime_cache.object_snapshot_cache.borrow_mut();
         if cache.mutation_revision == mutation_revision && cache.effect_revision == effect_revision
         {
             cache.entries.insert(object.id, Arc::clone(&snapshot));
         }
-        snapshot.as_ref().clone()
+        Ok(snapshot.as_ref().clone())
     }
 
     pub(crate) fn cached_object_snapshot_with_calculated_characteristics(
         &self,
         object: &Object,
     ) -> ObjectSnapshot {
-        let all_effects = self.all_continuous_effects();
-        self.cached_object_snapshot_with_calculated_characteristics_and_effects(
-            object,
-            &all_effects,
+        self.try_cached_object_snapshot_with_calculated_characteristics(object)
+            .expect("legacy snapshot cache caller requires complete evidence")
+    }
+
+    pub(crate) fn try_cached_object_snapshot_with_calculated_characteristics(
+        &self,
+        object: &Object,
+    ) -> Result<ObjectSnapshot, crate::effects::ExecutionError> {
+        let effects = self
+            .try_all_continuous_effects_arc()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+        self.try_cached_object_snapshot_with_calculated_characteristics_and_effects(
+            object, &effects,
         )
     }
 
     pub(crate) fn trigger_source_lookback_snapshots(&self) -> Vec<ObjectSnapshot> {
+        self.try_trigger_source_lookback_snapshots()
+            .inspect_err(|error| self.record_token_resource_failure(error))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn try_trigger_source_lookback_snapshots(
+        &self,
+    ) -> Result<Vec<ObjectSnapshot>, crate::effects::ExecutionError> {
         if let Some(lookback) = self.simultaneous_event_lookback() {
-            return lookback.to_vec();
+            return Ok(lookback.to_vec());
         }
-        self.current_trigger_source_snapshots()
+        self.try_current_trigger_source_snapshots()
     }
 
     pub(crate) fn current_trigger_source_snapshots(&self) -> Vec<ObjectSnapshot> {
-        let all_effects = self.all_continuous_effects();
-        let ability_effects_can_add_triggers = all_effects
+        self.try_current_trigger_source_snapshots()
+            .inspect_err(|error| self.record_token_resource_failure(error))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn try_current_trigger_source_snapshots(
+        &self,
+    ) -> Result<Vec<ObjectSnapshot>, crate::effects::ExecutionError> {
+        let effects = self
+            .try_all_continuous_effects_arc()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+        let ability_effects_can_add_triggers = effects
             .iter()
             .any(|effect| Self::modification_can_change_triggered_abilities(&effect.modification));
-        self.objects_in_deterministic_order()
+        let mut snapshots = Vec::new();
+        for object in self
+            .objects_in_deterministic_order()
             .into_iter()
             .filter(|object| !self.is_phased_out(object.id))
             .filter(|object| {
@@ -3894,18 +4187,20 @@ impl GameState {
                         Self::ability_is_trigger_lookback_relevant(ability, object.zone)
                     })
             })
-            .map(|object| {
-                self.cached_object_snapshot_with_calculated_characteristics_and_effects(
-                    object,
-                    &all_effects,
-                )
-            })
-            .filter(|snapshot| {
-                snapshot.abilities.iter().any(|ability| {
-                    Self::ability_is_trigger_lookback_relevant(ability, snapshot.zone)
-                })
-            })
-            .collect()
+        {
+            let snapshot = self
+                .try_cached_object_snapshot_with_calculated_characteristics_and_effects(
+                    object, &effects,
+                )?;
+            if snapshot
+                .abilities
+                .iter()
+                .any(|ability| Self::ability_is_trigger_lookback_relevant(ability, snapshot.zone))
+            {
+                snapshots.push(snapshot);
+            }
+        }
+        Ok(snapshots)
     }
 
     /// Triggered abilities, plus the statics that make other abilities
@@ -3935,6 +4230,7 @@ impl GameState {
             // existing list even when it only sets static abilities.
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
+            | Modification::RewriteText(_)
             | Modification::SetTextBox(_)
             | Modification::SetAbilities(_)
             | Modification::CopyTriggeredAbilities { .. }

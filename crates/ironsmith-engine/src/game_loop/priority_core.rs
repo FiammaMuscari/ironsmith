@@ -288,8 +288,14 @@ pub fn analyze_priority_context(
     }
     actions.extend(commander_actions);
 
-    Ok(crate::decisions::context::PriorityContext::new(game, priority_player, actions)
-        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?)
+    let mut ctx = crate::decisions::context::PriorityContext::new(game, priority_player, actions)
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    for player in game.priority_team_players() {
+        ctx.presentation_actions.extend(crate::decision::compute_actions_assuming_mana_for_presentation(
+            game, player, None,
+        )?);
+    }
+    Ok(ctx)
 }
 
 pub(super) fn priority_actor_for_action(
@@ -307,8 +313,15 @@ pub(super) fn priority_actor_for_action(
                 Err(_) => continue,
             }
         }
-        if crate::decision::compute_actions_for_source(game, player,
-            crate::decision::legal_action_source(action))?.contains(action) { return Ok(Some(player)); }
+        let candidates = if matches!(action, LegalAction::CastSpell { .. }
+            | LegalAction::ActivateAbility { .. } | LegalAction::ActivateManaAbility { .. }) {
+            crate::decision::compute_actions_assuming_mana_for_presentation(game, player,
+                crate::decision::legal_action_source(action))?
+        } else {
+            crate::decision::compute_actions_for_source(game, player,
+                crate::decision::legal_action_source(action))?
+        };
+        if candidates.contains(action) { return Ok(Some(player)); }
     }
     Ok(None)
 }

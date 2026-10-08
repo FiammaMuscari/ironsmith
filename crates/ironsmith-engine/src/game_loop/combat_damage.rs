@@ -7,6 +7,7 @@ use super::*;
 /// Combat damage event for trigger processing.
 #[derive(Debug, Clone)]
 pub struct CombatDamageEvent {
+    pub defending_player_reference: Option<crate::combat_state::DefendingPlayerReference>,
     /// Exact completed damage notification, including batch totals and proof
     /// when observers were captured before replacement/prevention additions.
     pub damage_receipt: Option<TriggerEvent>,
@@ -303,6 +304,7 @@ fn apply_combat_damage_step_with_dm_and_first_step_snapshot(
 
 #[derive(Debug)]
 struct PlannedCombatDamage {
+    defending_player_reference: Option<crate::combat_state::DefendingPlayerReference>,
     source: ObjectId,
     source_snapshot: crate::snapshot::ObjectSnapshot,
     target: EventDamageTarget,
@@ -438,6 +440,9 @@ fn plan_general_combat_damage(
                 ),
             };
             planned.push(PlannedCombatDamage {
+                defending_player_reference: Some(
+                    game.retain_combat_damage_role(combat, attacker_id),
+                ),
                 source: attacker_id,
                 source_snapshot:
                     crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
@@ -520,6 +525,9 @@ fn plan_general_combat_damage(
                 continue;
             }
             planned.push(PlannedCombatDamage {
+                defending_player_reference: Some(
+                    game.retain_combat_damage_role(combat, blocker_id),
+                ),
                 source: blocker_id,
                 source_snapshot:
                     crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
@@ -567,6 +575,29 @@ fn attack_target_damage_recipient(
     }
 }
 
+/// Combat owns original mutation too. Retain Instead intents while returning
+/// prevention follow-ups to the step's already-open deferral scope.
+fn prepare_combat_damage_processing(
+    game: &mut GameState,
+    events: &[crate::events::processing::SimultaneousDamageEvent],
+    dm: &mut dyn crate::decision::DecisionMaker,
+) -> Result<
+    Vec<crate::events::processing::ProcessedDamageResult>,
+    crate::events::processing::DamageProcessingError,
+> {
+    let scope = crate::effects::ReplacementExecutionContext::default();
+    let scopes = vec![&scope; events.len()];
+    let (results, follow_ups) =
+        crate::events::processing::prepare_simultaneous_damage_assignments_with_scopes(
+            game, events, dm, &scopes,
+        )?
+        .into_parts();
+    for follow_up in follow_ups {
+        follow_up.requeue(game);
+    }
+    Ok(results)
+}
+
 fn execute_general_combat_damage_batch_path(
     game: &mut GameState,
     combat: &CombatState,
@@ -597,10 +628,7 @@ fn execute_general_combat_damage_batch_path(
             },
         )
         .collect::<Vec<_>>();
-    let processed =
-        crate::events::processing::process_simultaneous_damage_assignments_with_event_with_dm(
-            game, &batch, dm,
-        )
+    let processed = prepare_combat_damage_processing(game, &batch, dm)
         .map_err(CombatDamageAssignmentError::from)?;
     if dm.awaiting_choice() {
         game.turn_store.combat_damage_assignments = assignments_checkpoint;
@@ -978,6 +1006,7 @@ fn plan_unblocked_player_damage(
 
 fn unblocked_plan_as_general(planned: PlannedUnblockedPlayerDamage) -> PlannedCombatDamage {
     PlannedCombatDamage {
+        defending_player_reference: None,
         source: planned.source,
         source_snapshot: planned.source_snapshot,
         target: EventDamageTarget::Player(planned.target),
@@ -995,10 +1024,13 @@ fn execute_unblocked_player_damage_fast_path(
     first_step_strikers: Option<&std::collections::HashSet<ObjectId>>,
     dm: &mut dyn crate::decision::DecisionMaker,
 ) -> Result<Vec<CombatDamageEvent>, CombatDamageAssignmentError> {
-    let planned = plan_unblocked_player_damage(game, combat, first_strike, first_step_strikers)
+    let mut planned = plan_unblocked_player_damage(game, combat, first_strike, first_step_strikers)
         .into_iter()
         .map(unblocked_plan_as_general)
         .collect::<Vec<_>>();
+    for plan in &mut planned {
+        plan.defending_player_reference = Some(game.retain_combat_damage_role(combat, plan.source));
+    }
     let processed = planned
         .iter()
         .map(|plan| {
@@ -1012,6 +1044,7 @@ fn execute_unblocked_player_damage_fast_path(
                 }],
                 replacement_prevented: false,
                 payload_outcome: None,
+                original_payloads: Vec::new(),
                 programs: Vec::new(),
             }
         })
@@ -1030,6 +1063,9 @@ fn execute_unblocked_player_damage_batch_path(
         .into_iter()
         .map(unblocked_plan_as_general)
         .collect::<Vec<_>>();
+    for plan in &mut planned {
+        plan.defending_player_reference = Some(game.retain_combat_damage_role(combat, plan.source));
+    }
     let proposals = planned
         .iter()
         .map(|plan| crate::events::processing::SimultaneousDamageEvent {
@@ -1042,10 +1078,7 @@ fn execute_unblocked_player_damage_batch_path(
             source_snapshot: Some(plan.source_snapshot.clone()),
         })
         .collect::<Vec<_>>();
-    let processed =
-        crate::events::processing::process_simultaneous_damage_assignments_with_event_with_dm(
-            game, &proposals, dm,
-        )
+    let processed = prepare_combat_damage_processing(game, &proposals, dm)
         .map_err(CombatDamageAssignmentError::from)?;
     if dm.awaiting_choice() {
         return Ok(Vec::new());
@@ -1183,12 +1216,7 @@ fn combat_damage_source_snapshot(
                 object, game,
             )
         })
-        .or_else(|| {
-            game.turn_store
-                .turn_history
-                .departed_object_snapshot(source)
-                .cloned()
-        })
+        .or_else(|| game.source_last_known_snapshot(source).cloned())
         .unwrap_or_else(|| proposed_snapshot.clone())
 }
 
@@ -1322,7 +1350,7 @@ type CombatLifelinkReceipt = (
     PlayerId,
     usize,
     Option<crate::snapshot::ObjectSnapshot>,
-    crate::effects::SimultaneousEffectCommit,
+    crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
 );
 
 fn commit_prepared_combat_lifelink(
@@ -1335,10 +1363,11 @@ fn commit_prepared_combat_lifelink(
         let mut ctx = crate::effects::ExecutionContext::new(source, controller, &mut *dm);
         ctx.source_snapshot = snapshot.clone();
         ctx.cause = crate::events::cause::EventCause::from_combat_damage(source, controller);
-        let receipt = crate::effects::life::life_change::commit_prepared_life_original(
-            game, &mut ctx, prepared,
-        )
-        .map_err(|error| CombatDamageAssignmentError::execution(source, error))?;
+        let receipt =
+            crate::effects::life::life_change::commit_prepared_life_original_with_outputs(
+                game, &mut ctx, prepared,
+            )
+            .map_err(|error| CombatDamageAssignmentError::execution(source, error))?;
         if ctx.decision_maker.awaiting_choice() {
             return Ok(Vec::new());
         }
@@ -1357,17 +1386,14 @@ fn complete_combat_lifelink(
         let mut ctx = crate::effects::ExecutionContext::new(source, controller, &mut *dm);
         ctx.source_snapshot = snapshot;
         ctx.cause = crate::events::cause::EventCause::from_combat_damage(source, controller);
-        let outcome = if let Some(completion) = receipt.completion {
-            completion
-                .complete(game, &mut ctx, receipt.outcome)
-                .map_err(|error| CombatDamageAssignmentError::execution(source, error))?
-        } else {
-            receipt.outcome
-        };
+        let outputs = crate::effects::composition::complete_committed_original_with_outputs(
+            game, &mut ctx, receipt,
+        )
+        .map_err(|error| CombatDamageAssignmentError::execution(source, error))?;
         if ctx.decision_maker.awaiting_choice() {
             return Ok(());
         }
-        events[index].lifelink_outcome = Some(outcome);
+        events[index].lifelink_outcome = Some(outputs.into_outcome());
     }
     Ok(())
 }
@@ -2369,6 +2395,50 @@ mod tests {
                 ReplacementAction::Modify(EventModification::Multiply(2)),
             ),
         );
+    }
+
+    #[test]
+    fn redirected_combat_branch_prevention_keeps_the_original_remainder_and_lifelink() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let attacker = create_creature(
+            &mut game, "Lifelink attacker", 3, 3, alice, vec![StaticAbility::lifelink()],
+        );
+        let recipient = create_creature(&mut game, "Protected redirect recipient", 2, 5, bob, vec![]);
+        game.effect_store.replacement_effects.add_resolution_effect(
+            ReplacementEffect::with_matcher(
+                recipient, bob,
+                crate::events::damage::matchers::DamageToObjectMatcher::new(ObjectFilter::specific(recipient)),
+                ReplacementAction::PreventDamage,
+            ),
+        );
+        let redirect = game.effect_store.replacement_effects.add_one_shot_effect(
+            ReplacementEffect::with_matcher(
+                recipient, bob,
+                crate::events::damage::matchers::DamageToPlayerMatcher::new(
+                    crate::target::PlayerFilter::Specific(bob),
+                ),
+                ReplacementAction::RedirectDamageAmount {
+                    target: crate::replacement::RedirectTarget::ToObject(recipient),
+                    which: crate::replacement::RedirectWhich::First,
+                    amount: 1,
+                },
+            ),
+        );
+        let combat = CombatState {
+            attackers: vec![crate::combat_state::AttackerInfo {
+                creature: attacker, target: AttackTarget::Player(bob),
+            }],
+            ..CombatState::default()
+        };
+        let events = execute_combat_damage_step(&mut game, &combat, false);
+        assert_eq!(game.player(bob).unwrap().life, 18);
+        assert_eq!(game.player(alice).unwrap().life, 22);
+        assert_eq!(game.damage_on(recipient), 0);
+        assert_eq!(events.iter().map(|event| event.amount).sum::<u32>(), 2);
+        assert!(events.iter().filter(|event| event.amount > 0).all(|event| event.source == attacker));
+        assert!(game.effect_store.replacement_effects.get_effect(redirect).is_none());
     }
 
     fn add_fiery_emancipation_like_effect(

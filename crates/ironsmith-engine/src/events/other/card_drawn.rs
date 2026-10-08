@@ -4,8 +4,81 @@ use std::any::Any;
 
 use crate::events::traits::{EventKind, GameEventType};
 use crate::game_state::{GameState, Target};
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::snapshot::ObjectSnapshot;
+
+/// One linked Miracle instance. Equal costs from different grants remain
+/// independent choices; an alternative's changing registry index is not its identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MiracleInstanceIdentity {
+    Intrinsic { alternative_index: usize },
+    Granted(crate::grant_registry::GrantPermissionIdentity),
+}
+
+/// Draw-time price evidence, captured after an owner reveals a hidden identity
+/// and before any replacement-added program can change the card or its granter.
+/// X and colored/hybrid symbols remain symbols. A missing mana cost is known
+/// unpayable, not a free cost. A spell with a castable linked face uses that face's price.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnMiracleInstance {
+    pub identity: MiracleInstanceIdentity,
+    pub granting_source: ObjectId,
+    pub price: DrawnMiraclePrice,
+}
+
+/// CR 702.1b: a granted keyword's cost recipe is reevaluated for the spell
+/// being cast, including its selected split half and announced X. Its reduction
+/// applies to this alternative base cost, before ordinary additions or taxes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DrawnMiraclePrice {
+    Fixed(crate::mana::ManaCost),
+    ReducedManaCost {
+        mana_cost: Option<crate::mana::ManaCost>,
+        other_face_mana_cost: Option<crate::mana::ManaCost>,
+        generic_reduction: u32,
+    },
+}
+
+/// The first draw's reveal entitlement is separate from the later permission
+/// to cast. The reveal owner independently chooses which linked instances to use.
+#[derive(Debug, Clone)]
+pub(crate) struct MiracleDrawOpportunity {
+    pub card: ObjectId,
+    pub stable_id: StableId,
+    pub player: PlayerId,
+    pub instances: Vec<DrawnMiracleInstance>,
+}
+
+/// A reveal that actually happened using one exact Miracle instance. The draw
+/// event transports this proof into that instance's trigger; a card which leaves
+/// hand, a new draw, or another player cannot inherit this casting instruction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevealedMiracle {
+    pub drawn_snapshot: ObjectSnapshot,
+    pub card: ObjectId,
+    pub stable_id: StableId,
+    pub player: PlayerId,
+    pub instance: DrawnMiracleInstance,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MiracleDrawDecision {
+    Declined,
+    Revealed(RevealedMiracle),
+    /// Independent accepted instances of the same first draw. The original
+    /// singleton spelling remains valid for existing retained native notices.
+    RevealedMany(Vec<RevealedMiracle>),
+}
+
+impl MiracleDrawDecision {
+    pub fn revealed_instances(&self) -> &[RevealedMiracle] {
+        match self {
+            Self::Declined => &[],
+            Self::Revealed(proof) => std::slice::from_ref(proof),
+            Self::RevealedMany(proofs) => proofs,
+        }
+    }
+}
 
 /// A player drew one or more cards event.
 ///
@@ -19,15 +92,24 @@ pub struct CardsDrawnEvent {
     pub player: PlayerId,
     /// The cards that were drawn (in hand after drawing)
     pub cards: Vec<ObjectId>,
+    pub snapshots: Vec<ObjectSnapshot>,
     /// Whether this draw action started as the first draw this turn
     pub is_first_this_turn: bool,
     /// Whether this draw happened during the drawing player's draw step.
     pub is_during_players_draw_step: bool,
     /// How many cards that player had already drawn in that draw step before this event.
     pub cards_previously_drawn_this_draw_step: u32,
+    /// None preserves legacy explicitly constructed intrinsic-Miracle events.
+    /// Real draw producers record the completed reveal decision here.
+    pub miracle: Option<MiracleDrawDecision>,
 }
 
 impl CardsDrawnEvent {
+    pub fn with_snapshots(mut self, snapshots: Vec<ObjectSnapshot>) -> Self {
+        self.snapshots = snapshots;
+        self
+    }
+
     /// Create a new cards drawn event.
     pub fn new(player: PlayerId, cards: Vec<ObjectId>, is_first_this_turn: bool) -> Self {
         Self::new_with_step_context(player, cards, is_first_this_turn, false, 0)
@@ -44,10 +126,17 @@ impl CardsDrawnEvent {
         Self {
             player,
             cards,
+            snapshots: Vec::new(),
             is_first_this_turn,
             is_during_players_draw_step,
             cards_previously_drawn_this_draw_step,
+            miracle: None,
         }
+    }
+
+    pub(crate) fn with_miracle_decision(mut self, decision: Option<MiracleDrawDecision>) -> Self {
+        self.miracle = decision;
+        self
     }
 
     /// Create a cards drawn event for a single card.

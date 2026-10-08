@@ -1,10 +1,12 @@
 //! Exile top cards of library effect implementation.
 
-use crate::effects::zones::apply_zone_change_with_context_and_additional_effects;
 use crate::effect::{EffectOutcome, Value};
+use crate::effects::CompletedEffectOutputs;
 use crate::effects::helpers::{
     resolve_player_filter, resolve_value, view_hidden_candidate_objects,
 };
+use crate::effects::zones::apply_zone_change_with_context_and_additional_effects;
+use crate::effects::zones::movement_instruction::{SelectedZoneMovement, ZoneMovementInstruction};
 use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::effects::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -79,10 +81,29 @@ impl EffectExecutor for ExileTopOfLibraryEffect {
         _game: &GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, ExecutionError> {
-        Ok(Box::new(crate::effects::DeferredPlayerActionProposal {
-            effect: crate::effect::Effect::new(self.clone()),
-            iterated_player: ctx.iteration.iterated_player,
-        }))
+        Ok(
+            crate::effects::zones::movement_instruction::prepare_movement_instruction(
+                self.clone(),
+                ctx,
+            ),
+        )
+    }
+
+    fn supports_replacement_draw_continuation(&self) -> bool {
+        true
+    }
+
+    fn prepare_replacement_draw_continuation_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::SimultaneousEffectCommit<CompletedEffectOutputs>, ExecutionError>
+    {
+        crate::effects::zones::movement_instruction::prepare_movement_draw_continuation(
+            self.clone(),
+            game,
+            ctx,
+        )
     }
 
     fn execute(
@@ -90,22 +111,51 @@ impl EffectExecutor for ExileTopOfLibraryEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-        let checkpoint = game.clone();
-        let context_checkpoint = crate::effects::ExecutionContextCheckpoint::capture(ctx);
-        let result = (|| {
+        self.execute_with_outputs(game, ctx)
+            .map(CompletedEffectOutputs::into_outcome)
+    }
+
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<CompletedEffectOutputs, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(0),
+            ));
+        }
+        crate::effects::zones::movement_instruction::execute_movement_instruction(
+            self.clone(),
+            game,
+            ctx,
+        )
+    }
+}
+
+impl ZoneMovementInstruction for ExileTopOfLibraryEffect {
+    fn select(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<SelectedZoneMovement, ExecutionError> {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
         for tag in &self.moved_tags {
-            ctx.clear_object_tag(tag.as_str());
+            ctx.set_tagged_objects(tag.clone(), Vec::new());
         }
 
         let top_cards = game
             .player(player_id)
             .map(|p| {
-                let mut cards = p.library.iter().rev()
+                let mut cards = p
+                    .library
+                    .iter()
+                    .rev()
                     .filter(|id| !ctx.replacement.entry_reserved_objects.contains(id))
-                    .take(count).copied().collect::<Vec<_>>();
+                    .take(count)
+                    .copied()
+                    .collect::<Vec<_>>();
                 // Preserve the existing bottom-to-top processing order within
                 // the selected top group while skipping simultaneous entrants.
                 cards.reverse();
@@ -113,73 +163,64 @@ impl EffectExecutor for ExileTopOfLibraryEffect {
             })
             .unwrap_or_default();
 
-        let mut moved_ids = Vec::new();
-        let mut receipts = Vec::new();
-        for card_id in top_cards {
-            // CR 614.1: exiling from the library is an ordinary zone change,
-            // so replacement effects apply to it (as for mill and surveil).
-            let additional_effects = ctx.additional_replacement_effects_snapshot();
-            let receipt = crate::effects::zones::apply_zone_change_with_context_and_additional_effects(
-    game,
-    card_id,
-    Zone::Library,
-    Zone::Exile,
-    ctx.cause.clone(),
-    ctx,
-    &additional_effects
-)?;
-            if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-            let exiled_id = match &receipt.original {
-                crate::events::processing::EventOutcome::Proceed(change) if change.final_zone == Zone::Exile => {
-                    change.new_object_id
-                }
-                _ => None,
-            };
-            if let Some(exiled_id) = exiled_id {
-                game.add_exiled_with_source_link(ctx.source, exiled_id);
-                if self.face_down {
-                    game.set_face_down(exiled_id);
-                }
-                if (!self.moved_tags.is_empty() || !self.accumulated_tags.is_empty())
-                    && let Some(obj) = game.object(exiled_id)
-                {
-                    let snapshot = ObjectSnapshot::from_object(obj, game);
-                    for tag in &self.moved_tags {
-                        ctx.tag_object(tag.clone(), snapshot.clone());
+        let moves = top_cards
+            .into_iter()
+            .map(|id| {
+                crate::effects::zones::PreparedZoneMove::capture(
+                    game,
+                    id,
+                    Zone::Library,
+                    Zone::Exile,
+                    ctx.cause.clone(),
+                    None,
+                )
+            })
+            .collect();
+        let effect = self.clone();
+        Ok(SelectedZoneMovement::moves(
+            moves,
+            move |game, ctx, receipts, _pending_start| {
+                let mut moved_ids = Vec::new();
+                for (_, receipt) in receipts {
+                    if let crate::events::processing::EventOutcome::Proceed(change) =
+                        &receipt.original
+                        && change.final_zone == Zone::Exile
+                        && let Some(id) = change.new_object_id
+                    {
+                        if let Some(owner) = &ctx.linked_exile_owner {
+                            game.add_linked_exile_pair_member(owner.clone(), id);
+                        }
+                        game.add_exiled_with_source_link(ctx.source, id);
+                        if effect.face_down {
+                            game.set_face_down(id);
+                        }
+                        if let Some(snapshot) = ObjectSnapshot::from_object_id(game, id) {
+                            for tag in effect.moved_tags.iter().chain(&effect.accumulated_tags) {
+                                ctx.tag_object(tag.clone(), snapshot.clone());
+                            }
+                        }
+                        moved_ids.push(id);
                     }
-                    for tag in &self.accumulated_tags {
-                        ctx.tag_object(tag.clone(), snapshot.clone());
-                    }
                 }
-                moved_ids.push(exiled_id);
-            }
-            receipts.push((card_id, receipt));
-        }
-
-        if !self.face_down {
-            view_hidden_candidate_objects(
-                game,
-                ctx,
-                player_id,
-                &moved_ids,
-                "Reveal exiled library cards",
-                true,
-            );
-        }
-
-        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
-        let original_outcome = EffectOutcome::with_objects(moved_ids.clone())
-            .with_affected_objects_from_game(game, moved_ids);
-        // Face-down state, links, tags and public reveal belong to the original
-        // instruction. The additions observe those finished results.
-        crate::effects::zones::finish_zone_change_receipts(game, ctx, original_outcome, receipts)
-        })();
-        if result.is_err() || ctx.decision_maker.awaiting_choice() {
-            *game = checkpoint;
-            context_checkpoint.restore(ctx);
-        }
-        if ctx.decision_maker.awaiting_choice() { return result.map(|_| EffectOutcome::count(0)); }
-        result
+                // Exiled cards are public by their destination. This visibility
+                // synchronization does not add an authored reveal action.
+                if !effect.face_down {
+                    view_hidden_candidate_objects(
+                        game,
+                        ctx,
+                        player_id,
+                        &moved_ids,
+                        "Reveal exiled library cards",
+                        true,
+                    );
+                }
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(EffectOutcome::count(0));
+                }
+                Ok(EffectOutcome::with_objects(moved_ids.clone())
+                    .with_affected_objects_from_game(game, moved_ids))
+            },
+        ))
     }
 }
 
@@ -386,7 +427,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod additional_owner_contract_tests {
     use super::*;
@@ -474,7 +514,12 @@ mod additional_owner_contract_tests {
         let stack = game.stack.iter().map(|e| e.object_id).collect::<Vec<_>>();
         let parent_tag = ObjectSnapshot::from_object(game.object(source).unwrap(), &game);
         let mut dm = ObserveOriginal { owner, alice, source, pause: mode == 2, pending: false, questions: 0 };
+        let linked_owner = crate::linked_exile::LinkedExileOwner::capture(source,
+            Some(ironsmith_core::LinkedExilePair {
+                definition: ironsmith_core::LinkedExileDefinition([33; 32]), pair: 0,
+            }), Some(&crate::continuous::AbilityOrigin::Printed(0))).unwrap();
         let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        if owner == 0 { ctx.linked_exile_owner = Some(linked_owner.clone()); }
         for name in ["it", "original_exiles", "accumulated"] { ctx.set_tagged_objects(name, vec![parent_tag.clone()]); }
         let result = run_owner(owner, &mut game, &mut ctx);
         if mode == 1 { assert!(matches!(result, Err(ExecutionError::UnresolvableValue(_)))); }
@@ -507,6 +552,10 @@ mod additional_owner_contract_tests {
             assert_eq!(ctx.get_tagged_all("accumulated").unwrap().len(), 1);
         }
         drop(ctx);
+        if owner == 0 {
+            assert_eq!(game.linked_exile_pair_members(&linked_owner).unwrap().len(),
+                if mode == 1 || mode == 2 { 0 } else { 2 });
+        }
         assert_eq!(game.player(alice).unwrap().life, 20);
         if mode == 1 || mode == 2 {
             assert_eq!(game.player(alice).unwrap().library, library); assert_eq!(game.player(alice).unwrap().hand, hand);
@@ -522,7 +571,9 @@ mod additional_owner_contract_tests {
             assert_eq!(dm.questions, 1);
             let mut dm = ObserveOriginal { owner, alice, source, pause: false, pending: false, questions: 0 };
             let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+            if owner == 0 { ctx.linked_exile_owner = Some(linked_owner.clone()); }
             let outcome = run_owner(owner, &mut game, &mut ctx).unwrap(); assert!(!ctx.decision_maker.awaiting_choice()); drop(ctx);
+            if owner == 0 { assert_eq!(game.linked_exile_pair_members(&linked_owner).unwrap().len(), 2); }
             assert_original(owner, &outcome); assert_eq!(dm.questions, 1); assert_eq!(game.player(bob).unwrap().life, 27);
             assert!(game.effect_store.replacement_effects.get_effect(shield).is_none());
             assert_eq!(outcome.events.iter().filter_map(|e| e.downcast::<crate::events::LifeGainEvent>()).map(|e| e.amount).collect::<Vec<_>>(), vec![3,4]);

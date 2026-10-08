@@ -276,6 +276,11 @@ fn legacy_enter_step(game: &mut GameState, step: Step) -> Result<(), TurnError> 
             legacy_finish_step(game, step, TurnScheduleDestination::Step(next))
         }
     } else {
+        if step == Step::DeclareAttackers {
+            if let Some(combat) = game.combat.as_mut() {
+                combat.last_attack_declaration_step_players = None;
+            }
+        }
         game.reset_priority_for_new_window();
         Ok(())
     }
@@ -585,15 +590,59 @@ pub fn execute_untap_step(game: &mut GameState) {
     execute_untap_step_with(game, &mut dm).expect("untap step execution failed");
 }
 
-/// Executes the untap step for the active player with an explicit decision maker.
-///
-/// This variant prompts for optional "you may choose not to untap ..." abilities.
+/// Exact facts at an untap occurrence's beginning. A suspended lane retains
+/// these even if other lanes create effects or change a land's controller.
+#[derive(Debug, Clone)]
+pub(crate) struct UntapStepBoundary {
+    started_at: (u32, u64),
+    beginning_expirations: Vec<crate::continuous::ContinuousEffectId>,
+}
+
+pub(crate) fn capture_untap_step_boundary(
+    game: &mut GameState,
+) -> Result<UntapStepBoundary, crate::effects::ExecutionError> {
+    use crate::effect::Until;
+    let started_at = (game.turn.turn_number, game.effect_store.continuous_effects.current_timestamp());
+    game.refresh_continuous_state()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    let active_players = game.turn_players();
+    let beginning_expirations = game.effect_store.continuous_effects.effects().iter()
+        .filter_map(|effect| {
+            let Until::UntilControllersNextUntapStep {
+                object: ironsmith_core::ContinuousDurationObject::Specific(object),
+            } = &effect.duration else { return None; };
+            let controller = game.object(*object)
+                .filter(|object| object.zone == crate::zone::Zone::Battlefield)
+                .map(|object| game.controller_of(object));
+            controller.is_some_and(|player| active_players.contains(&player)).then_some(effect.id)
+        })
+        .collect();
+    Ok(UntapStepBoundary { started_at, beginning_expirations })
+}
+
+/// Executes one actual untap occurrence with transactional optional choices.
 pub fn execute_untap_step_with(
     game: &mut GameState,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<(), crate::effects::ExecutionError> {
     let checkpoint = game.clone();
-    let result = execute_untap_step_inner(game, decision_maker);
+    let result = capture_untap_step_boundary(game)
+        .and_then(|boundary| execute_untap_step_inner(game, decision_maker, &boundary));
+    if result.is_err() || decision_maker.awaiting_choice() {
+        *game = checkpoint;
+    }
+    result
+}
+
+/// Resume the same occurrence, retaining its original registration cutoff and
+/// beginning-expiry decisions while fresh game facts remain available to actions.
+pub(crate) fn execute_untap_step_with_boundary(
+    game: &mut GameState,
+    decision_maker: &mut impl DecisionMaker,
+    boundary: &UntapStepBoundary,
+) -> Result<(), crate::effects::ExecutionError> {
+    let checkpoint = game.clone();
+    let result = execute_untap_step_inner(game, decision_maker, boundary);
     if result.is_err() || decision_maker.awaiting_choice() {
         *game = checkpoint;
     }
@@ -603,6 +652,7 @@ pub fn execute_untap_step_with(
 fn execute_untap_step_inner(
     game: &mut GameState,
     decision_maker: &mut impl DecisionMaker,
+    boundary: &UntapStepBoundary,
 ) -> Result<(), crate::effects::ExecutionError> {
     use crate::decisions::context::BooleanContext;
     use crate::effect::Until;
@@ -617,6 +667,16 @@ fn execute_untap_step_inner(
     // characteristics check entirely.
     game.refresh_continuous_state()
         .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    game.turn_store.untap_step_started_at = Some(boundary.started_at);
+    // CR 500.4 expires `until this step` before phasing. Membership was
+    // frozen at the original beginning, not recomputed after a suspended choice.
+    if !boundary.beginning_expirations.is_empty() {
+        for &id in &boundary.beginning_expirations {
+            game.effect_store.continuous_effects.remove_effect(id);
+        }
+        game.refresh_continuous_state()
+            .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    }
     game.update_cant_effects();
     game.establish_turn_start_continuous_control();
 
@@ -656,6 +716,17 @@ fn execute_untap_step_inner(
     game.refresh_continuous_state()
         .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     game.update_cant_effects();
+    // Freeze which existing exact restrictions this completed step consumes.
+    // Replacement additions during untapping cannot create or retarget one of
+    // these next-step occurrences retroactively.
+    let consumed_untap_restrictions = game.effect_store.restriction_effects.iter()
+        .filter(|effect| matches!(effect.duration, Until::ControllersNextUntapStep | Until::YourNextUntapStep
+            | Until::PlayersNextUntapStep { .. })
+            && (!matches!(effect.duration, Until::PlayersNextUntapStep { .. })
+                || effect.is_active(game, game.turn.turn_number))
+            && effect.untap_step_player(game).is_some_and(|player| active_players.contains(&player)))
+        .map(|effect| effect.timestamp)
+        .collect::<std::collections::HashSet<_>>();
     let may_have_untap_static_abilities = game_may_have_untap_static_abilities(game);
     let has_cant_untap_restrictions = !game.effect_store.cant_effects.cant_untap.is_empty();
 
@@ -765,32 +836,78 @@ fn execute_untap_step_inner(
         return Ok(());
     }
 
-    // Untapping itself never changes continuous-control eligibility.
+    // Every replacement choice precedes the simultaneous original untaps.
+    // CR 502.3 / 122.1d includes stun-counter replacement. There is no
+    // priority here; published events wait for the upkeep trigger drain.
     let before = crate::events::other::before_tap_state_snapshots(game);
-    let mut untap_events = Vec::new();
+    let mut prepared = Vec::new();
     for id in permanents {
-        // Only untap if the permanent doesn't have DoesntUntap
-        if should_untap.contains(&id) {
-            // CR 502.3 untaps go through replacement effects, including the
-            // stun-counter rule (CR 122.1d).
-            // CR 502.3 / 603.2: the permanent "becomes untapped" (Inspired).
-            // No player gets priority in the untap step, so the event waits
-            // for the upkeep trigger drain (CR 502.4).
-            let actor = before
-                .get(&id)
-                .map(|snapshot| snapshot.controller)
-                .unwrap_or(game.turn.active_player);
-            let mut ctx = crate::effects::ExecutionContext::new(id, actor, &mut *decision_maker);
-            let outcome = crate::events::processing::process_untap_with_execution_context(
-                game, id, &mut ctx,
-            )?;
-            if decision_maker.awaiting_choice() {
-                return Ok(());
-            }
-            untap_events.extend(outcome.events);
+        if !should_untap.contains(&id) {
+            continue;
         }
+        let actor = before
+            .get(&id)
+            .map(|snapshot| snapshot.controller)
+            .unwrap_or(game.turn.active_player);
+        game.clear_pending_decision_controllers();
+        let mut ctx = crate::effects::ExecutionContext::new(id, actor, &mut *decision_maker);
+        let original =
+            crate::events::processing::prepare_untap_with_execution_context(game, id, &mut ctx)?;
+        if ctx.decision_maker.awaiting_choice() {
+            return Ok(());
+        }
+        prepared.push((id, actor, original));
     }
-
+    let mut ctx = crate::effects::ExecutionContext::new(
+        crate::ids::ObjectId::from_raw(0),
+        game.turn.active_player,
+        &mut *decision_maker,
+    );
+    let outputs = crate::effects::composition::execute_simultaneous_originals_with_outputs(
+        game,
+        &mut ctx,
+        true,
+        |game, ctx| {
+            let mut receipts = Vec::new();
+            for (id, actor, original) in prepared {
+                let mut child =
+                    crate::effects::ExecutionContext::new(id, actor, &mut *ctx.decision_maker);
+                let receipt = crate::events::processing::commit_prepared_untap_with_outputs(
+                    game, &mut child, original,
+                )?;
+                let receipt =
+                    crate::effects::composition::with_original_execution_context(receipt, &child);
+                receipts.push(receipt);
+                if child.decision_maker.awaiting_choice() {
+                    return Ok(Vec::new());
+                }
+            }
+            Ok(receipts)
+        },
+        |game, _, receipts| {
+            let mut observed: Vec<_> = receipts
+                .iter()
+                .flat_map(|receipt| receipt.outcome.outcome.events.iter().cloned())
+                .collect();
+            crate::events::other::bind_before_tap_state_snapshots(&mut observed, &before);
+            crate::events::other::group_tap_state_events(game, &mut observed, Default::default());
+            for receipt in receipts {
+                crate::effects::composition::inherit_original_observations(
+                    &mut receipt.outcome.outcome,
+                    &observed,
+                );
+                receipt.outcome.synchronize_observations();
+            }
+            Ok(crate::effects::composition::OriginalTriggerObservation::Capture)
+        },
+    )?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(());
+    }
+    let mut untap_events: Vec<_> = outputs
+        .into_iter()
+        .flat_map(|output| output.outcome.events)
+        .collect();
     crate::events::other::bind_before_tap_state_snapshots(&mut untap_events, &before);
     crate::events::other::group_tap_state_events(game, &mut untap_events, Default::default());
     for event in untap_events {
@@ -798,9 +915,7 @@ fn execute_untap_step_inner(
     }
 
     for effect in &mut game.effect_store.restriction_effects {
-        if matches!(effect.duration, Until::ControllersNextUntapStep)
-            && active_players.contains(&effect.controller)
-        {
+        if consumed_untap_restrictions.contains(&effect.timestamp) {
             effect.consumed_next_untap = true;
         }
     }
@@ -953,6 +1068,7 @@ fn modification_may_affect_untap(modification: &crate::continuous::Modification)
         // Text rewrites can introduce arbitrary static abilities.
         Modification::CopyOf { .. }
         | Modification::ChangeText { .. }
+        | Modification::RewriteText(_)
         | Modification::SetTextBox(_) => true,
         // Materializes StaticAbility::doesnt_untap() in calculated
         // characteristics (see apply path in continuous.rs).
@@ -987,9 +1103,11 @@ fn static_ability_may_affect_untap(
 /// Executes the draw step for the active player.
 /// Active player draws a card.
 ///
-/// Returns a list of TriggerEvents for cards that were drawn, which can be used
-/// to check for card-draw triggers (including Miracle).
-pub fn execute_draw_step(game: &mut GameState) -> Vec<crate::triggers::TriggerEvent> {
+/// Returns the completed draw observations, or the typed execution failure after
+/// restoring the draw-step checkpoint. No resource meter is required by callers.
+pub fn execute_draw_step(
+    game: &mut GameState,
+) -> Result<Vec<crate::triggers::TriggerEvent>, crate::effects::ExecutionError> {
     let mut dm = crate::decision::AutoPassDecisionMaker;
     execute_draw_step_with(game, &mut dm)
 }
@@ -998,11 +1116,11 @@ pub fn execute_draw_step(game: &mut GameState) -> Vec<crate::triggers::TriggerEv
 pub fn execute_draw_step_with(
     game: &mut GameState,
     decision_maker: &mut dyn DecisionMaker,
-) -> Vec<crate::triggers::TriggerEvent> {
+) -> Result<Vec<crate::triggers::TriggerEvent>, crate::effects::ExecutionError> {
     let active_players = game.turn_players();
     if active_players.is_empty() {
         game.reset_priority_for_new_window();
-        return Vec::new();
+        return Ok(Vec::new());
     }
     if active_players
         .iter()
@@ -1010,26 +1128,34 @@ pub fn execute_draw_step_with(
         || game.consume_step_skip(game.turn.active_player, Step::Draw)
     {
         game.reset_priority_for_new_window();
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
+    let checkpoint = game.clone();
     let mut events = Vec::new();
     for player in active_players {
-        events.extend(execute_draw_step_for_player_with(
-            game,
-            player,
-            decision_maker,
-        ));
+        match execute_draw_step_for_player_with(game, player, decision_maker) {
+            Ok(drawn) => events.extend(drawn),
+            Err(error) => {
+                game.restore_execution_checkpoint(checkpoint, false);
+                game.record_token_resource_failure(&error);
+                return Err(error);
+            }
+        }
+        if decision_maker.awaiting_choice() {
+            game.restore_execution_checkpoint(checkpoint, true);
+            return Ok(Vec::new());
+        }
     }
     game.reset_priority_for_new_window();
-    events
+    Ok(events)
 }
 
 fn execute_draw_step_for_player_with(
     game: &mut GameState,
     active_player: PlayerId,
     decision_maker: &mut dyn DecisionMaker,
-) -> Vec<crate::triggers::TriggerEvent> {
+) -> Result<Vec<crate::triggers::TriggerEvent>, crate::effects::ExecutionError> {
     use crate::events::other::CardsDrawnEvent;
     use crate::triggers::TriggerEvent;
 
@@ -1038,29 +1164,26 @@ fn execute_draw_step_for_player_with(
         .is_some_and(|player| player.is_in_game())
     {
         game.reset_priority_for_new_window();
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let (is_during_players_draw_step, cards_previously_drawn_this_draw_step) =
         game.draw_step_context_for_player(active_player);
     if game.should_skip_first_turn_draw(active_player) {
         game.reset_priority_for_new_window();
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     // Check if player can draw (the draw step draw is the first draw of the turn)
-    let current_draws = game
+    let is_first_draw = !game
         .turn_store
         .turn_history
-        .cards_drawn_by_player(active_player);
-
-    // Track if this is the first draw of the turn (before drawing)
-    let is_first_draw = current_draws == 0;
+        .has_drawn_cards_this_turn(active_player)?;
 
     // Check for "can't draw extra cards" restriction (e.g., Narset)
     // The draw step draw is only blocked if they've already drawn this turn
     let can_draw = if !game.can_draw_extra_cards(active_player) {
         // Only allow if they haven't drawn yet this turn
-        current_draws == 0
+        is_first_draw
     } else {
         true
     };
@@ -1068,20 +1191,34 @@ fn execute_draw_step_for_player_with(
     let mut draw_events = Vec::new();
 
     if can_draw {
-        let drawn = game.draw_cards_with_dm(active_player, 1, decision_maker);
+        let draw_event_provenance = game
+            .provenance_graph_mut()
+            .alloc_root_event(crate::events::EventKind::CardsDrawn);
+        let completed = crate::effects::cards::draw_cards_with_miracle_window(
+            game,
+            active_player,
+            1,
+            is_first_draw,
+            decision_maker,
+            draw_event_provenance,
+        )?;
+        if decision_maker.awaiting_choice() {
+            return Ok(Vec::new());
+        }
+        let drawn = completed.cards;
 
         // Create a single CardsDrawnEvent if any cards were drawn
         if !drawn.is_empty() {
-            let draw_event_provenance = game
-                .provenance_graph_mut()
-                .alloc_root_event(crate::events::EventKind::CardsDrawn);
             let event = CardsDrawnEvent::new_with_step_context(
                 active_player,
                 drawn,
                 is_first_draw,
                 is_during_players_draw_step,
                 cards_previously_drawn_this_draw_step,
-            );
+            )
+            .with_miracle_decision(completed.miracle);
+            let miracle_reveal =
+                crate::effects::cards::miracle_reveal_event(game, &event, draw_event_provenance);
             let event = TriggerEvent::new_with_provenance(event, draw_event_provenance);
             if let Some(drawn_event) = event.downcast::<CardsDrawnEvent>() {
                 game.record_cards_drawn_in_current_draw_step(active_player, drawn_event.amount());
@@ -1089,28 +1226,18 @@ fn execute_draw_step_for_player_with(
             game.stage_turn_history_event(&event);
             game.note_hidden_draw_for_reveal_window(&event);
             draw_events.push(event);
-            let cards = draw_events
-                .last()
-                .and_then(|evt| evt.downcast::<CardsDrawnEvent>())
-                .map(|evt| evt.cards.clone())
-                .unwrap_or_default();
-            for reveal_event in crate::effects::cards::automatic_reveal_events_for_draw(
-                game,
-                active_player,
-                &cards,
-                current_draws,
-                decision_maker,
-                draw_event_provenance,
-                // The draw step cannot pause mid-step for the owner's answer.
-                crate::effects::cards::HiddenDrawRevealMode::Defer,
-            ) {
+            for reveal in miracle_reveal {
+                game.stage_turn_history_event(&reveal);
+                draw_events.push(reveal);
+            }
+            for reveal_event in completed.automatic_reveals {
                 game.stage_turn_history_event(&reveal_event);
                 draw_events.push(reveal_event);
             }
         }
     }
 
-    draw_events
+    Ok(draw_events)
 }
 
 /// Checks if the active player needs to discard during cleanup.
@@ -1177,7 +1304,7 @@ fn apply_cleanup_discard_inner(
     cards_to_discard: &[crate::ids::ObjectId],
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<Vec<crate::ids::ObjectId>, crate::effects::ExecutionError> {
-    use crate::effects::{ExecutionContext, ExecutionError};
+    use crate::effects::ExecutionContext;
     use crate::events::cause::EventCause;
     if cards_to_discard.is_empty() {
         return Ok(Vec::new());
@@ -1194,66 +1321,34 @@ fn apply_cleanup_discard_inner(
     let provenance = game
         .provenance_graph_mut()
         .alloc_root_event(crate::events::EventKind::Discard);
-    let mut receipts = Vec::new();
-    let mut successful = Vec::new();
-    let mut madness_cards = Vec::new();
-    for &card_id in cards_to_discard {
-        let receipt = crate::events::processing::execute_discard_with_scope(
-            game,
-            card_id,
-            player,
-            cause.clone(),
-            false,
-            provenance,
-            decision_maker,
-            &crate::effects::ReplacementExecutionContext::default(),
-            None,
-        )?;
-        if decision_maker.awaiting_choice() {
-            return Ok(Vec::new());
-        }
-        if !receipt.result.prevented && receipt.result.new_id.is_some() {
-            let event = receipt.resolved_event.as_ref().ok_or_else(|| {
-                ExecutionError::InternalError("cleanup discard has no resolved event".into())
-            })?;
-            if event.player != player || event.card != card_id || event.cause != cause {
-                return Err(ExecutionError::InternalError(
-                    "cleanup discard changed an unsupported batch identity".into(),
-                ));
-            }
-            successful.push((
-                event.card,
-                receipt.discarded_snapshot.clone(),
-                receipt.result.final_zone,
-                receipt.result.new_id,
-            ));
-        }
-        if let Some(id) = receipt.result.new_id
-            && game.is_madness_exiled(id)
-        {
-            madness_cards.push(id);
-        }
-        receipts.push(receipt);
-    }
-    let count = i32::try_from(successful.len())
-        .map_err(|_| ExecutionError::InternalError("cleanup discard count overflow".into()))?;
-    let events = crate::effects::cards::completed_discard_events(
-        game,
-        player,
-        cause.clone(),
-        provenance,
-        successful,
-    );
+    // Cleanup chooses the complete hand subset before replacement preparation.
+    // Keep its rule-caused original source policy, then restore completion evidence.
     let mut ctx = ExecutionContext::new(source, player, decision_maker)
         .with_cause(cause)
         .with_provenance(provenance);
-    ctx.source_snapshot = source_snapshot;
-    let mut outcome = crate::effects::cards::finish_discard_receipts(
+    let Some(prepared) = crate::effects::cards::prepare_selected_discard_batch(
         game,
         &mut ctx,
-        crate::effect::EffectOutcome::count(count).with_events(events),
-        receipts,
-    )?;
+        player,
+        cards_to_discard.to_vec(),
+        None,
+        true,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    ctx.source_snapshot = source_snapshot;
+    let committed = crate::effects::cards::commit_selected_discard_batch(game, &mut ctx, prepared)?;
+    if ctx.decision_maker.awaiting_choice() {
+        return Ok(Vec::new());
+    }
+    let Some(originals) = committed.prepare_completion_with_outputs(game, &mut ctx)? else {
+        return Ok(Vec::new());
+    };
+    let madness_cards = originals.madness_cards.clone();
+    let mut outcome = originals
+        .complete_added_programs_with_outputs(game, &mut ctx)?
+        .into_outcome();
     if ctx.decision_maker.awaiting_choice() {
         return Ok(Vec::new());
     }
@@ -2076,7 +2171,7 @@ mod tests {
         game.set_as_commander(commander_id, alice);
 
         let mut dm = AlwaysYesDecisionMaker;
-        let events = execute_draw_step_with(&mut game, &mut dm);
+        let events = execute_draw_step_with(&mut game, &mut dm).unwrap();
 
         assert!(
             events.is_empty(),
@@ -2105,7 +2200,7 @@ mod tests {
         game.set_as_commander(commander_id, alice);
 
         let mut dm = AlwaysNoDecisionMaker;
-        let events = execute_draw_step_with(&mut game, &mut dm);
+        let events = execute_draw_step_with(&mut game, &mut dm).unwrap();
 
         assert_eq!(
             events.len(),
@@ -2139,14 +2234,14 @@ mod tests {
         game.turn.active_player = alice;
 
         let mut dm = AlwaysNoDecisionMaker;
-        assert!(execute_draw_step_with(&mut game, &mut dm).is_empty());
+        assert!(execute_draw_step_with(&mut game, &mut dm).unwrap().is_empty());
         assert!(game.player(alice).expect("Alice exists").hand.is_empty());
 
         game.set_current_controller(source, bob)
             .expect("finite controller fixture must refresh successfully");
         assert!(!game.player_skips_draw_step(alice));
         assert!(game.player_skips_draw_step(bob));
-        assert_eq!(execute_draw_step_with(&mut game, &mut dm).len(), 1);
+        assert_eq!(execute_draw_step_with(&mut game, &mut dm).unwrap().len(), 1);
         assert_eq!(game.player(alice).expect("Alice exists").hand.len(), 1);
 
         let bob_card = CardBuilder::new(CardId::from_raw(9101), "Bob Draw")
@@ -2154,12 +2249,12 @@ mod tests {
             .build();
         game.create_object_from_card(&bob_card, bob, Zone::Library);
         game.turn.active_player = bob;
-        assert!(execute_draw_step_with(&mut game, &mut dm).is_empty());
+        assert!(execute_draw_step_with(&mut game, &mut dm).unwrap().is_empty());
         assert!(game.player(bob).expect("Bob exists").hand.is_empty());
 
         game.move_object_by_effect(source, Zone::Graveyard);
         assert!(!game.player_skips_draw_step(bob));
-        assert_eq!(execute_draw_step_with(&mut game, &mut dm).len(), 1);
+        assert_eq!(execute_draw_step_with(&mut game, &mut dm).unwrap().len(), 1);
         assert_eq!(game.player(bob).expect("Bob exists").hand.len(), 1);
     }
 
@@ -2173,7 +2268,7 @@ mod tests {
         let _card_id = game.create_object_from_card(&card, alice, Zone::Library);
 
         let mut dm = AlwaysNoDecisionMaker;
-        let events = execute_draw_step_with(&mut game, &mut dm);
+        let events = execute_draw_step_with(&mut game, &mut dm).unwrap();
 
         assert!(
             events.is_empty(),
@@ -2202,7 +2297,7 @@ mod tests {
         let _card_id = game.create_object_from_card(&card, alice, Zone::Library);
 
         let mut dm = AlwaysNoDecisionMaker;
-        let events = execute_draw_step_with(&mut game, &mut dm);
+        let events = execute_draw_step_with(&mut game, &mut dm).unwrap();
 
         // CR 103.8a: a two-player Commander game is a two-player game, so the
         // starting player skips their first draw.
@@ -2234,7 +2329,7 @@ mod tests {
         game.create_object_from_card(&card, alice, Zone::Library);
 
         let mut dm = AlwaysNoDecisionMaker;
-        let events = execute_draw_step_with(&mut game, &mut dm);
+        let events = execute_draw_step_with(&mut game, &mut dm).unwrap();
 
         assert_eq!(
             events.len(),
@@ -2270,9 +2365,44 @@ mod draw_step_ordinal_tests {
         game
     }
     #[test]
+    fn public_draw_adapters_return_missing_history_without_a_manual_meter() {
+        for explicit_decision_maker in [false, true] {
+            let mut game = setup();
+            let player = game.turn.active_player;
+            let library = game.player(player).unwrap().library.to_vec();
+            let ids = game.next_object_id_counter();
+            let step = game.draw_step_context_for_player(player);
+            game.turn_store.turn_history.draw_occurrences = None;
+            assert!(game.token_resource_failure().is_none());
+            let result = if explicit_decision_maker {
+                execute_draw_step_with(&mut game, &mut crate::decision::AutoPassDecisionMaker)
+            } else {
+                execute_draw_step(&mut game)
+            };
+            assert!(matches!(result, Err(crate::effects::ExecutionError::IncompleteEvidence(_))));
+            assert_eq!(game.player(player).unwrap().library.as_slice(), library.as_slice());
+            assert!(game.player(player).unwrap().hand.is_empty());
+            assert_eq!(game.next_object_id_counter(), ids);
+            assert_eq!(game.draw_step_context_for_player(player), step);
+            assert!(game.turn_store.turn_history.draw_occurrences.is_none());
+            assert!(game.token_resource_failure().is_none(), "the Result owns the failure without a meter");
+
+            game.next_turn();
+            game.turn.phase = Phase::Beginning;
+            game.turn.step = Some(Step::Draw);
+            let player = game.turn.active_player;
+            let completed = execute_draw_step(&mut game).unwrap();
+            let draw = completed.iter().find_map(|event| event.downcast::<CardsDrawnEvent>()).unwrap();
+            assert_eq!(draw.player, player);
+            assert!(draw.is_first_this_turn);
+            assert_eq!(game.player(player).unwrap().hand.len(), 1);
+        }
+    }
+
+    #[test]
     fn turn_draw_retains_ordinal_through_priority_and_resets_for_adjacent_extra_step() {
         let mut game = setup();
-        let events = execute_draw_step(&mut game);
+        let events = execute_draw_step(&mut game).unwrap();
         let draw = events
             .iter()
             .find_map(|event| event.downcast::<CardsDrawnEvent>())
@@ -2285,7 +2415,7 @@ mod draw_step_ordinal_tests {
         advance_step(&mut game).unwrap();
         assert_eq!(game.turn.step, Some(Step::Draw));
         assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 0));
-        execute_draw_step(&mut game);
+        execute_draw_step(&mut game).unwrap();
         assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (true, 1));
         advance_step(&mut game).unwrap();
         assert_eq!(game.draw_step_context_for_player(PlayerId(0)), (false, 0));
@@ -2302,7 +2432,7 @@ mod draw_step_ordinal_tests {
             PlayerId(1),
         )
         .unwrap();
-        execute_draw_step(&mut game);
+        execute_draw_step(&mut game).unwrap();
         for player in [PlayerId(0), PlayerId(1)] {
             assert_eq!(game.draw_step_context_for_player(player), (true, 1));
         }
@@ -2318,7 +2448,7 @@ mod draw_step_ordinal_tests {
     fn ending_the_turn_clears_draw_ordinals_at_the_cleanup_jump() {
         use crate::effects::EffectExecutor;
         let mut game = setup();
-        execute_draw_step(&mut game);
+        execute_draw_step(&mut game).unwrap();
         let source = game.new_object_id();
         let mut dm = crate::decision::SelectFirstDecisionMaker;
         let mut ctx = crate::effects::EffectContext::new(source, PlayerId(0), &mut dm);

@@ -989,6 +989,11 @@ pub fn parse_top_cards_put_any_matching_to_zone_rest_bottom(
     else {
         return Ok(None);
     };
+    if crate::grammar::effects::control_copy_attach_shapes::has_relative_collection_entry_controller(&second_tokens) {
+        return Err(CardTextError::ParseError(
+            "contextual-controller looked collection entry requires an actor-owned selection program".into(),
+        ));
+    }
     let chooser = effect_sentences::leading_may_actor_to_player(action_match.actor, player);
     let Some((
         mut choice_count,
@@ -1439,6 +1444,11 @@ pub fn parse_look_at_top_may_put_with_counter_then_rest_bottom(
     else {
         return Ok(None);
     };
+    if crate::grammar::effects::control_copy_attach_shapes::has_relative_collection_entry_controller(&second_tokens) {
+        return Err(CardTextError::ParseError(
+            "contextual-controller looked collection entry requires an actor-owned selection program".into(),
+        ));
+    }
     let chooser = effect_sentences::leading_may_actor_to_player(action.actor, player);
     let Some((
         selected_count,
@@ -1707,6 +1717,7 @@ pub fn parse_look_at_top_partition_face_down_then_filtered_permission(
             action:
                 SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects {
                     filter: look_filter,
+                    permit_while_exiled,
                 }),
         }),
         EffectAst::SubjectVerb(SubjectVerbEffectAst {
@@ -1745,6 +1756,7 @@ pub fn parse_look_at_top_partition_face_down_then_filtered_permission(
         PlayerAst::You,
         SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtObjects {
             filter: rebound_look_filter,
+            permit_while_exiled: *permit_while_exiled,
         }),
     ));
     effects.push(

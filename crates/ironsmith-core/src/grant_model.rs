@@ -5,6 +5,9 @@ use crate::{
     SourceReferenceSurface, ThisSpellCostCondition, Zone,
 };
 
+#[cfg(feature = "serde")]
+fn is_false(value: &bool) -> bool { !*value }
+
 pub trait GrantStaticAbility: Clone + PartialEq {
     fn grant_flash() -> Self;
     fn grant_display(&self) -> String;
@@ -138,6 +141,13 @@ pub enum GrantUsageLimit {
     DuringYourTurns,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
+pub enum SourceExiledManaRiderSurface {
+    ConditionalCast,
+    InlineCastSpells,
+}
+
 /// Oracle-facing surface for a persistent permission tied to cards exiled by
 /// the granting source. Runtime identity is carried by `SOURCE_EXILED_TAG`;
 /// this value only preserves the authored source noun and plural spell/pool
@@ -149,6 +159,10 @@ pub struct SourceExiledGrantSurface {
     pub plural_spell_subject: bool,
     pub generic_card_pool: bool,
     pub generic_cast_this_way_subject: bool,
+    /// Newly authored wording only. Absent on previously admitted carriers,
+    /// including non-Normal native/artifact grants whose old text is retained.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub mana_rider: Option<SourceExiledManaRiderSurface>,
 }
 
 impl<C: CostComponent> DerivedAlternativeCast<C> {
@@ -471,6 +485,27 @@ pub struct GrantSpec<SA, E, C, Cond> {
     pub cast_this_way_filter: Option<ObjectFilter>,
     /// Reflexive instruction triggered only when this exact permission completes a play/cast.
     pub on_use_effects: Vec<E>,
+    /// This reader belongs to the typed definition-pair admission path.
+    /// Older source-wide readers remain outside that supported scope.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub requires_linked_exile_pair: bool,
+    /// This static ability also entitles its current beneficiary to inspect
+    /// each exact paired exile member. Once entitled, that player retains
+    /// inspection subject to CR 406.3, independently of play authority.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "is_false"))]
+    pub may_look_at_linked_exile: bool,
+    /// Applies only while paying to cast through this exact permission.
+    /// A non-normal mode requires an exact permission selection/receipt.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "crate::value_model::ManaSpendMode::is_normal"))]
+    pub cast_mana_spend_mode: crate::value_model::ManaSpendMode,
+    /// Exact definition-local exile producer paired with this static reader.
+    /// Runtime membership also requires the current rules-text acquisition.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub linked_exile_pair: Option<crate::LinkedExilePair>,
+    /// A compiler-proved Class reader belongs to the enclosing rules text,
+    /// reached through the matching level's source-only static grant.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub linked_exile_class_level: Option<u32>,
     /// Presentation metadata for a persistent source-linked exile grant.
     pub source_exiled_surface: Option<SourceExiledGrantSurface>,
     /// Only the current top card of the beneficiary's library is permitted.
@@ -517,6 +552,11 @@ impl<SA, E, C, Cond> GrantSpec<SA, E, C, Cond> {
             permanent_this_way_grants: Vec::new(),
             cast_this_way_filter: None,
             on_use_effects: Vec::new(),
+            requires_linked_exile_pair: false,
+            may_look_at_linked_exile: false,
+            cast_mana_spend_mode: crate::value_model::ManaSpendMode::Normal,
+            linked_exile_pair: None,
+            linked_exile_class_level: None,
             source_exiled_surface: None,
             top_card_only: false,
             instant_timing: false,
@@ -558,6 +598,11 @@ impl<SA, E, C, Cond> GrantSpec<SA, E, C, Cond> {
                 .collect::<Result<Vec<_>, _>>()?,
             cast_this_way_filter: self.cast_this_way_filter,
             on_use_effects: self.on_use_effects.into_iter().map(&mut map_effect).collect::<Result<_, _>>()?,
+            requires_linked_exile_pair: self.requires_linked_exile_pair,
+            may_look_at_linked_exile: self.may_look_at_linked_exile,
+            cast_mana_spend_mode: self.cast_mana_spend_mode,
+            linked_exile_pair: self.linked_exile_pair,
+            linked_exile_class_level: self.linked_exile_class_level,
             source_exiled_surface: self.source_exiled_surface,
             top_card_only: self.top_card_only,
             instant_timing: self.instant_timing,
@@ -664,6 +709,11 @@ where
             permanent_this_way_grants: Vec::new(),
             cast_this_way_filter: None,
             on_use_effects: Vec::new(),
+            requires_linked_exile_pair: false,
+            may_look_at_linked_exile: false,
+            cast_mana_spend_mode: crate::value_model::ManaSpendMode::Normal,
+            linked_exile_pair: None,
+            linked_exile_class_level: None,
             source_exiled_surface: None,
             top_card_only: false,
             instant_timing: false,
@@ -747,6 +797,11 @@ where
             permanent_this_way_grants: Vec::new(),
             cast_this_way_filter: None,
             on_use_effects: Vec::new(),
+            requires_linked_exile_pair: false,
+            may_look_at_linked_exile: false,
+            cast_mana_spend_mode: crate::value_model::ManaSpendMode::Normal,
+            linked_exile_pair: None,
+            linked_exile_class_level: None,
             source_exiled_surface: None,
             top_card_only: false,
             instant_timing: false,
@@ -765,7 +820,17 @@ where
 {
     /// Get a display string for this grant specification.
     pub fn display(&self) -> String {
-        if let Some(surface) = &self.filtered_zone_surface { return surface.clone(); }
+        if let Some(surface) = &self.filtered_zone_surface {
+            // A rider attached after the permission sentence was captured
+            // ("If you do, it enters with a finality counter on it").
+            if self.cast_this_way_grants.is_empty()
+                || surface.contains(" this way")
+                || surface.contains("If you do")
+            {
+                return surface.clone();
+            }
+            return self.display_base();
+        }
         let text = self.display_base();
         if self.instant_timing {
             format!("{text}. If you cast a spell this way, you may cast it as though it had flash")
@@ -1031,6 +1096,10 @@ where
 
         fn graveyard_cast_cost_text<C: CostComponent>(additional_costs: &[C]) -> String {
             fn cost_text<C: CostComponent>(cost: &C) -> Option<String> {
+                // "by foraging in addition to paying their other costs".
+                if cost.display().trim().trim_end_matches('.').eq_ignore_ascii_case("forage") {
+                    return Some("foraging".to_string());
+                }
                 if let Some(amount) = cost.life_amount() {
                     return Some(format!("paying {amount} life"));
                 }
@@ -1474,7 +1543,7 @@ where
         {
             return format!("{may_prefix} play a card you own from outside the game");
         }
-        let cast_this_way_suffix = || {
+        let cast_this_way_ability_suffix = || {
             if self.cast_this_way_grants.is_empty() {
                 return String::new();
             }
@@ -1497,10 +1566,13 @@ where
                 cast_filter
             };
             let cast_spell_text = || {
-                if self
-                    .source_exiled_surface
-                    .as_ref()
-                    .is_some_and(|surface| surface.generic_cast_this_way_subject)
+                // An authored permission sentence already names what may be
+                // cast; its rider reads "If you cast a spell this way".
+                if self.filtered_zone_surface.is_some()
+                    || self
+                        .source_exiled_surface
+                        .as_ref()
+                        .is_some_and(|surface| surface.generic_cast_this_way_subject)
                 {
                     "a spell".to_string()
                 } else {
@@ -1544,7 +1616,7 @@ where
                     .or_else(|| grants[0].strip_prefix("enters the battlefield with "))
             {
                 let spell_text = cast_spell_text();
-                if self.filter == ObjectFilter::source() {
+                if self.filter.source {
                     return format!(". If you do, it enters with {rest}");
                 }
                 if let Some(subject) = cast_this_way_entered_object_subject(entered_object_filter) {
@@ -1556,7 +1628,36 @@ where
             }
             format!(". Spells cast this way gain {}", grants.join(" and "))
         };
+        // A rider attached after the permission sentence was captured
+        // ("If you do, it enters with a finality counter on it").
+        if let Some(surface) = &self.filtered_zone_surface {
+            return format!("{surface}{}", cast_this_way_ability_suffix());
+        }
+        let cast_this_way_suffix = || {
+            let mut suffix = cast_this_way_ability_suffix();
+            let Some(surface) = self.source_exiled_surface.as_ref().and_then(|surface| surface.mana_rider)
+                else { return suffix; };
+            let noun = match self.cast_mana_spend_mode {
+                crate::value_model::ManaSpendMode::Normal => return suffix,
+                crate::value_model::ManaSpendMode::AnyColor => "color",
+                crate::value_model::ManaSpendMode::AnyType => "type",
+            };
+            suffix.push_str(&match surface {
+                SourceExiledManaRiderSurface::ConditionalCast => format!(". If you cast a spell this way, you may spend mana as though it were mana of any {noun} to cast it"),
+                SourceExiledManaRiderSurface::InlineCastSpells => format!(", and you may spend mana as though it were mana of any {noun} to cast those spells"),
+            });
+            suffix
+        };
 
+        // Costless Mayhem (Oscorp Industries): play this card from your
+        // graveyard if you discarded it this turn.
+        if matches!(self.grantable, Grantable::PlayFrom)
+            && self.zone == Zone::Graveyard
+            && self.filter
+                == ObjectFilter::source().discarded_or_cycled_this_turn_by(PlayerFilter::You)
+        {
+            return "Mayhem".to_string();
+        }
         if matches!(self.grantable, Grantable::PlayFrom)
             && self.zone == Zone::Graveyard
             && self.filter == ObjectFilter::source()
@@ -1582,6 +1683,14 @@ where
             && let Some(surface) = self.source_exiled_surface.as_ref()
             && is_source_exiled_card_pool(&self.filter)
         {
+            if self.may_look_at_linked_exile {
+                return format!("You may look at cards exiled with {}, and you may play lands and cast spells from among those cards{}",
+                    surface.source.display_text(), cast_this_way_suffix());
+            }
+            if surface.plural_spell_subject {
+                return format!("{may_prefix} play lands and cast spells from among cards exiled with {}{}",
+                    surface.source.display_text(), cast_this_way_suffix());
+            }
             return format!(
                 "{may_prefix} play cards exiled with {}{}",
                 surface.source.display_text(),
@@ -1728,13 +1837,51 @@ where
         }
         if let Grantable::AlternativeCast(method) = &self.grantable
             && self.zone == Zone::Hand
-            && self.filter == ObjectFilter::nonland()
+            && (self.filter == ObjectFilter::nonland()
+                || self.filter == ObjectFilter::nonland().in_zone(Zone::Hand))
             && method.cast_from_zone() == Zone::Hand
             && method.mana_cost().is_none()
             && method.non_mana_costs().is_empty()
         {
             return format!(
                 "{may_prefix} cast spells from your hand without paying their mana costs"
+            );
+        }
+        // "You may cast Dragon spells without paying their mana costs."
+        if let Grantable::AlternativeCast(method) = &self.grantable
+            && self.zone == Zone::Hand
+            && self.filter.zone.is_none()
+            && self.filter != ObjectFilter::default()
+            && method.cast_from_zone() == Zone::Hand
+            && method.mana_cost().is_none()
+            && method.non_mana_costs().is_empty()
+            && method.cast_condition().is_none()
+        {
+            return format!(
+                "{may_prefix} cast {} without paying their mana costs",
+                pluralize_castable_spell_subject(castable_filter_description(&self.filter))
+            );
+        }
+        // "You may cast spells with mana value less than or equal to the
+        // number of creatures you control from your hand without paying their
+        // mana costs." (Omnipresence)
+        if let Grantable::AlternativeCast(method) = &self.grantable
+            && self.zone == Zone::Hand
+            && self.filter.zone == Some(Zone::Hand)
+            && method.cast_from_zone() == Zone::Hand
+            && method.mana_cost().is_none()
+            && method.non_mana_costs().is_empty()
+            && method.cast_condition().is_none()
+        {
+            let mut spell_filter = self.filter.clone();
+            spell_filter.zone = None;
+            let spells = if spell_filter == ObjectFilter::nonland() {
+                "spells".to_string()
+            } else {
+                pluralize_castable_spell_subject(castable_filter_description(&spell_filter))
+            };
+            return format!(
+                "{may_prefix} cast {spells} from your hand without paying their mana costs"
             );
         }
         if let Grantable::AlternativeCast(method @ AlternativeCastingMethod::Composed { .. }) =

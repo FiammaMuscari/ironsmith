@@ -605,6 +605,7 @@ pub const POST_CONDITIONAL_SUBJECT_VERB_PRIMITIVES: &[SubjectVerbPrimitive] = &[
         "cant-effect",
         370,
         PostDiagnostic,
+        // The typed Restriction head also dispatches through this family key.
         &[LexRuleHeadHint::Single("cant")],
         parse_sentence_cant_effect
     ),
@@ -797,7 +798,7 @@ pub const POST_CONDITIONAL_SUBJECT_VERB_PRIMITIVES: &[SubjectVerbPrimitive] = &[
         "same-name-gets-fanout",
         710,
         PostDiagnostic,
-        &[LexRuleHeadHint::Single("target")],
+        &[LexRuleHeadHint::Single("target"), LexRuleHeadHint::Single("this")],
         parse_sentence_same_name_gets_fanout
     ),
     primitive!(

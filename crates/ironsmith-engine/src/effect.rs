@@ -19,14 +19,17 @@
 //! Effects can be labeled with `EffectId` using `Effect::with_id`, and later effects
 //! can reference those results using `Effect::if_` with an `EffectPredicate`.
 
+#[cfg(test)]
 use crate::color::ColorSet;
 use crate::effects::{EffectExecutionCategory, EffectExecutor};
 use crate::filter::{ObjectFilterExt as _, PlayerFilterExt as _};
 use crate::game_state::GameState;
-use crate::ids::{ObjectId, PlayerId, StableId};
+#[cfg(test)]
+use crate::ids::StableId;
+use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
-use crate::snapshot::ObjectSnapshot;
+pub use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 use crate::target::{ChooseSpec, ObjectFilter, ObjectRef, PlayerFilter};
 use crate::types::{CardType, Subtype};
@@ -146,176 +149,8 @@ impl OutcomeValue {
 // Effect Outcome (result + events)
 // ============================================================================
 
-/// Non-triggerable metadata emitted during effect execution.
-///
-/// These facts complement domain events: they capture control-flow-relevant
-/// resolution details that are not game events and should not be fed into the
-/// trigger or replacement systems.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub struct OutcomeObjectMemory {
-    pub object_id: ObjectId,
-    pub stable_id: StableId,
-    pub name: String,
-    pub controller: PlayerId,
-    pub owner: PlayerId,
-    pub zone: Zone,
-    pub power: Option<i32>,
-    pub toughness: Option<i32>,
-    pub mana_value: i32,
-    pub card_types: Vec<CardType>,
-    pub colors: ColorSet,
-    pub subtypes: Vec<Subtype>,
-    pub is_token: bool,
-}
-
-impl OutcomeObjectMemory {
-    pub fn from_snapshot(snapshot: &ObjectSnapshot) -> Self {
-        Self {
-            object_id: snapshot.object_id,
-            stable_id: snapshot.stable_id,
-            // Compact memory must retain both names of a split card even if
-            // no current object survives to enrich its later snapshot.
-            name: snapshot
-                .split_other_half_name()
-                .filter(|other| !crate::filter::names_match(&snapshot.name, other))
-                .map(|other| format!("{} // {other}", snapshot.name))
-                .unwrap_or_else(|| snapshot.name.clone()),
-            controller: snapshot.controller,
-            owner: snapshot.owner,
-            zone: snapshot.zone,
-            power: snapshot.power,
-            toughness: snapshot.toughness,
-            mana_value: snapshot.mana_value() as i32,
-            card_types: snapshot.card_types.clone(),
-            colors: snapshot.colors,
-            subtypes: snapshot.subtypes.clone(),
-            is_token: snapshot.is_token,
-        }
-    }
-
-    pub fn from_object_id(game: &GameState, object_id: ObjectId) -> Option<Self> {
-        game.object(object_id).map(|obj| {
-            let snapshot = ObjectSnapshot::from_object_with_calculated_characteristics(obj, game);
-            Self::from_snapshot(&snapshot)
-        })
-    }
-
-    /// Rebuild a filterable snapshot while preserving captured LKI fields.
-    ///
-    /// If the object still exists, its full snapshot supplies fields that the
-    /// compact memory does not retain. Captured identity, zone, controller,
-    /// owner, and characteristics always win so prior-effect queries never
-    /// silently observe post-effect state.
-    pub fn to_snapshot(&self, game: &GameState) -> ObjectSnapshot {
-        self.to_snapshot_with_fallback(game, None)
-    }
-
-    /// Enrich compact result memory with a matching full pre-effect snapshot.
-    /// Captured memory fields remain authoritative; full LKI retains copyable
-    /// values, abilities and other fields that compact memory does not encode.
-    pub(crate) fn to_snapshot_with_fallback(
-        &self,
-        game: &GameState,
-        fallback: Option<&ObjectSnapshot>,
-    ) -> ObjectSnapshot {
-        let mut snapshot = fallback
-            .filter(|snapshot| {
-                snapshot.object_id == self.object_id && snapshot.stable_id == self.stable_id
-            })
-            .cloned()
-            .or_else(|| {
-                game.object(self.object_id).map(|object| {
-                    ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
-                })
-            })
-            .unwrap_or_else(|| ObjectSnapshot {
-                chosen_subtype: None,
-                secret_chosen_subtype: None,
-                noted_life_total: None,
-                chosen_object: None,
-                object_id: self.object_id,
-                stable_id: self.stable_id,
-                kind: if self.is_token {
-                    crate::object::ObjectKind::Token
-                } else {
-                    crate::object::ObjectKind::Card
-                },
-                card: None,
-                controller: self.controller,
-                owner: self.owner,
-                name: self.name.clone(),
-                first_printed_set_name: None,
-                mana_cost: None,
-                colors: self.colors,
-                supertypes: Vec::new(),
-                card_types: self.card_types.clone(),
-                subtypes: self.subtypes.clone(),
-                compiled_card_text: String::new(),
-                ability_labels: Vec::new(),
-                other_face: None,
-                other_face_name: None,
-                linked_face_layout: crate::card::LinkedFaceLayout::None,
-                linked_face_mana_value: None,
-                power: self.power,
-                toughness: self.toughness,
-                base_power: self.power,
-                base_toughness: self.toughness,
-                loyalty: None,
-                defense: None,
-                abilities: Arc::new(Vec::new()),
-                aura_attach_filter: None,
-                copiable_values: crate::snapshot::CopiableValues::default(),
-                x_value: None,
-                cast_order_this_turn: None,
-                mana_spent_to_cast: crate::player::ManaPool::default(),
-                caster_mana_spent_to_cast: None,
-                mana_spent_on_x: None,
-                snow_mana_spent_to_cast: crate::player::ManaPool::default(),
-                mana_sources_spent_to_cast: Vec::new(),
-                optional_costs_paid: crate::cost::OptionalCostsPaid::default(),
-                counters: std::collections::BTreeMap::new(),
-                is_token: self.is_token,
-                tapped: false,
-                attacking: false,
-                goaded: None,
-                ring_bearer: None,
-                flipped: false,
-                face_down: false,
-                transform_count: 0,
-                attached_to: None,
-                attachments: Vec::new(),
-                attachment_snapshots: Vec::new(),
-                was_enchanted: false,
-                is_monstrous: false,
-                is_prepared: false,
-                is_commander: false,
-                zone: self.zone,
-            });
-
-        snapshot.stable_id = self.stable_id;
-        snapshot.name = self.name.clone();
-        snapshot.controller = self.controller;
-        snapshot.owner = self.owner;
-        snapshot.zone = self.zone;
-        snapshot.power = self.power;
-        snapshot.toughness = self.toughness;
-        snapshot.base_power = self.power;
-        snapshot.base_toughness = self.toughness;
-        // Compact memory retains mana value even after the original object
-        // and its full mana cost disappear. Preserve that frozen value using
-        // the snapshot's mana-value override, without inventing a mana cost.
-        snapshot.linked_face_mana_value = Some(self.mana_value.max(0) as u32);
-        snapshot.card_types = self.card_types.clone();
-        snapshot.colors = self.colors;
-        snapshot.subtypes = self.subtypes.clone();
-        snapshot.is_token = self.is_token;
-        snapshot
-    }
-}
+/// Compatibility name for complete immutable original-result evidence.
+pub type OutcomeObjectMemory = ObjectSnapshot;
 
 /// Original recipient evidence for one damage instruction, before damage's
 /// life/counter consequences and independently of any redirection destination.
@@ -336,7 +171,25 @@ pub enum DamageRecipientBefore {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A retained flip from one exact instruction, independent of event draining.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct CoinFlipResult {
+    pub player: PlayerId,
+    pub face: ironsmith_core::CoinFace,
+    pub call: Option<ironsmith_core::CoinFace>,
+    pub winner: Option<PlayerId>,
+    pub loser: Option<PlayerId>,
+    pub turn_ordinal: u32,
+    pub instruction_ordinal: u32,
+    /// Opponent paired with this original retained coin, independent of who flips it.
+    pub associated_player: Option<PlayerId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(
     feature = "serialization",
     derive(serde::Serialize, serde::Deserialize)
@@ -359,14 +212,31 @@ pub enum ExecutionFact {
     /// Origin identities of creatures actually put into a graveyard from
     /// the battlefield, retained after event reporting consumes its receipts.
     ObjectsDied(Vec<ObjectId>),
-    ChosenObjectMemory(Vec<OutcomeObjectMemory>),
-    AffectedObjectMemory(Vec<OutcomeObjectMemory>),
-    PlayerAffectedObjectMemory(Vec<(PlayerId, Vec<OutcomeObjectMemory>)>),
+    /// Complete action-time snapshots; an empty vector explicitly records an empty set.
+    ActionObjects {
+        action: PriorEffectAction,
+        player: Option<PlayerId>,
+        objects: Vec<ObjectSnapshot>,
+    },
+    /// Frozen destination objects explicitly exported by this instruction.
+    ResultObjectMemory(Vec<ObjectSnapshot>),
+    ChosenObjectMemory(Vec<ObjectSnapshot>),
+    AffectedObjectMemory(Vec<ObjectSnapshot>),
+    PlayerAffectedObjectMemory(Vec<(PlayerId, Vec<ObjectSnapshot>)>),
     PlayerCounts(Vec<(PlayerId, i64)>),
     ExcessDamageDealt,
     ExcessDamage(u32),
+    /// Actual prevention, retained independently of the trigger queue.
+    PreventedDamageReceipt {
+        receipt: crate::provenance::ProvNodeId,
+        amount: u32,
+    },
     ChosenOptions(Vec<usize>),
     ChosenNumber(u32),
+    /// Quantity selected for the original instruction, before replacements.
+    /// Compound quantity owners append their total after child receipts. This
+    /// is independent of actual action metrics and auxiliary replacement work.
+    RequestedAmount(u64),
     OtherNumber(u32),
     AppliedNameSticker {
         sticker_id: u64,
@@ -390,8 +260,24 @@ pub enum ExecutionFact {
     /// This is not selection/reveal evidence and does not include draws.
     CardsPutIntoHand {
         player: PlayerId,
-        cards: Vec<OutcomeObjectMemory>,
+        cards: Vec<ObjectSnapshot>,
     },
+    /// Exact completed original sacrifice action, before replacement programs.
+    /// An empty receipt is a known prevented/substituted action, not missing
+    /// evidence. Appended after deferred additions so nested sacrifices cannot
+    /// supply the outer action's result.
+    OriginalSacrificeObjects(Vec<OutcomeObjectMemory>),
+    /// Retained results from one exact coin instruction; appended for wire stability.
+    CoinFlips(Vec<CoinFlipResult>),
+    /// Exact card arrivals from one original move instruction. Recorded before
+    /// deferred replacement programs; each memory carries the actual zone.
+    /// An empty vector is completed zero movement, not missing evidence.
+    OriginalZoneMoveCards(Vec<OutcomeObjectMemory>),
+    /// One completed local color decision, including when its source left.
+    ChosenColor(crate::color::Color),
+    /// Exact cards disclosed by this reveal instruction. Empty is a completed
+    /// empty reveal; absence is unavailable evidence.
+    RevealedCards(Vec<OutcomeObjectMemory>),
 }
 
 impl ExecutionFact {
@@ -459,10 +345,43 @@ pub struct EffectOutcome {
 }
 
 impl EffectOutcome {
-    fn object_memory_from_ids(game: &GameState, objects: &[ObjectId]) -> Vec<OutcomeObjectMemory> {
+    pub fn with_action_objects(
+        self,
+        action: PriorEffectAction,
+        player: Option<PlayerId>,
+        objects: Vec<ObjectSnapshot>,
+    ) -> Self {
+        self.with_execution_fact(ExecutionFact::ActionObjects {
+            action,
+            player,
+            objects,
+        })
+    }
+
+    pub fn coin_flip_results(&self) -> Option<&[CoinFlipResult]> {
+        self.execution_facts
+            .iter()
+            .rev()
+            .find_map(|fact| match fact {
+                ExecutionFact::CoinFlips(results) => Some(results.as_slice()),
+                _ => None,
+            })
+    }
+
+    /// Keep the terminal authored summary and the complete chronological receipts.
+    pub fn aggregate_terminal(outcomes: impl IntoIterator<Item = EffectOutcome>) -> Self {
+        Self::aggregate_with_summary(outcomes, |results| {
+            results
+                .last()
+                .cloned()
+                .unwrap_or((OutcomeStatus::Succeeded, OutcomeValue::None))
+        })
+    }
+
+    fn object_memory_from_ids(game: &GameState, objects: &[ObjectId]) -> Vec<ObjectSnapshot> {
         objects
             .iter()
-            .filter_map(|id| OutcomeObjectMemory::from_object_id(game, *id))
+            .filter_map(|id| ObjectSnapshot::from_object_id(game, *id))
             .collect()
     }
 
@@ -563,7 +482,9 @@ impl EffectOutcome {
         let mut other = Vec::new();
         let mut chosen_objects = Vec::new();
         let mut result_objects = Vec::new();
+        let mut has_result_objects = false;
         let mut affected_objects = Vec::new();
+        let mut result_memory = Vec::new();
         let mut chosen_memory = Vec::new();
         let mut affected_memory = Vec::new();
         let mut player_counts = Vec::new();
@@ -572,8 +493,12 @@ impl EffectOutcome {
         for fact in facts {
             match fact {
                 ExecutionFact::ChosenObjects(ids) => chosen_objects.extend(ids),
-                ExecutionFact::ResultObjects(ids) => result_objects.extend(ids),
+                ExecutionFact::ResultObjects(ids) => {
+                    has_result_objects = true;
+                    result_objects.extend(ids);
+                }
                 ExecutionFact::AffectedObjects(ids) => affected_objects.extend(ids),
+                ExecutionFact::ResultObjectMemory(memory) => result_memory.extend(memory),
                 ExecutionFact::ChosenObjectMemory(memory) => chosen_memory.extend(memory),
                 ExecutionFact::AffectedObjectMemory(memory) => affected_memory.extend(memory),
                 ExecutionFact::PlayerCounts(counts) => player_counts.extend(counts),
@@ -584,14 +509,35 @@ impl EffectOutcome {
             }
         }
 
+        // Selection and result sets retain identity order. Observations from
+        // different actions remain in ActionObjects; forwarding the same
+        // selected/successor identity through wrappers does not multiply it.
+        fn unique_ids(ids: &mut Vec<ObjectId>) {
+            let mut seen = std::collections::HashSet::new();
+            ids.retain(|id| seen.insert(*id));
+        }
+        fn unique_snapshots(snapshots: &mut Vec<ObjectSnapshot>) {
+            let mut seen = std::collections::HashSet::new();
+            snapshots.retain(|snapshot| seen.insert(snapshot.object_id));
+        }
+        unique_ids(&mut chosen_objects);
+        unique_ids(&mut result_objects);
+        unique_ids(&mut affected_objects);
+        unique_snapshots(&mut chosen_memory);
+        unique_snapshots(&mut result_memory);
+        unique_snapshots(&mut affected_memory);
+
         if !chosen_objects.is_empty() {
             other.push(ExecutionFact::ChosenObjects(chosen_objects));
         }
-        if !result_objects.is_empty() {
+        if has_result_objects {
             other.push(ExecutionFact::ResultObjects(result_objects));
         }
         if !affected_objects.is_empty() {
             other.push(ExecutionFact::AffectedObjects(affected_objects));
+        }
+        if !result_memory.is_empty() {
+            other.push(ExecutionFact::ResultObjectMemory(result_memory));
         }
         if !chosen_memory.is_empty() {
             other.push(ExecutionFact::ChosenObjectMemory(chosen_memory));
@@ -743,6 +689,24 @@ impl EffectOutcome {
         self.execution_facts.push(fact);
     }
 
+    /// Record this instruction's planned quantity independently of its result.
+    pub(crate) fn with_requested_amount(self, amount: impl Into<u64>) -> Self {
+        self.with_execution_fact(ExecutionFact::RequestedAmount(amount.into()))
+    }
+
+    /// The enclosing quantity owner's receipt overrides its component receipts.
+    /// Replacement payloads never supply the original instruction's quantity.
+    pub(crate) fn requested_amount(&self) -> Option<u64> {
+        self.instruction_result()
+            .execution_facts
+            .iter()
+            .rev()
+            .find_map(|fact| match fact {
+                ExecutionFact::RequestedAmount(amount) => Some(*amount),
+                _ => None,
+            })
+    }
+
     /// Add multiple execution facts to this outcome.
     pub fn with_execution_facts(mut self, facts: impl IntoIterator<Item = ExecutionFact>) -> Self {
         for fact in facts {
@@ -764,18 +728,15 @@ impl EffectOutcome {
     ///
     /// Use this when the compatibility payload must remain a count or another
     /// value, but follow-up effects need the post-effect object IDs.
+    /// An empty vector is an authoritative empty result, not absent evidence.
     pub fn with_result_objects(self, objects: Vec<ObjectId>) -> Self {
-        if objects.is_empty() {
-            self
-        } else {
-            self.with_execution_fact(ExecutionFact::ResultObjects(objects))
-        }
+        self.with_execution_fact(ExecutionFact::ResultObjects(objects))
     }
 
     /// Record affected object ids and their current object memory in one step.
     ///
     /// Effects that move objects out of their old zone should capture explicit
-    /// `OutcomeObjectMemory` before the move instead. This helper is for actions
+    /// `ObjectSnapshot` before the move instead. This helper is for actions
     /// whose affected objects are still available after resolution, such as token
     /// creation, damage to permanents, and counter changes.
     pub fn with_affected_objects_from_game(self, game: &GameState, objects: Vec<ObjectId>) -> Self {
@@ -798,7 +759,7 @@ impl EffectOutcome {
     }
 
     /// Record chosen object last-known information for later dynamic values.
-    pub fn with_chosen_object_memory(self, memory: Vec<OutcomeObjectMemory>) -> Self {
+    pub fn with_chosen_object_memory(self, memory: Vec<ObjectSnapshot>) -> Self {
         if memory.is_empty() {
             self
         } else {
@@ -807,7 +768,7 @@ impl EffectOutcome {
     }
 
     /// Record affected object last-known information for later dynamic values.
-    pub fn with_affected_object_memory(self, memory: Vec<OutcomeObjectMemory>) -> Self {
+    pub fn with_affected_object_memory(self, memory: Vec<ObjectSnapshot>) -> Self {
         if memory.is_empty() {
             self
         } else {
@@ -827,7 +788,7 @@ impl EffectOutcome {
     /// Record affected object memory partitioned by the player whose iteration produced it.
     pub fn with_player_affected_object_memory(
         self,
-        partitions: Vec<(PlayerId, Vec<OutcomeObjectMemory>)>,
+        partitions: Vec<(PlayerId, Vec<ObjectSnapshot>)>,
     ) -> Self {
         if partitions.is_empty() {
             self
@@ -892,6 +853,74 @@ impl EffectOutcome {
     /// meaningful payload when the composed outcomes agree on it.
     pub fn aggregate(outcomes: impl IntoIterator<Item = EffectOutcome>) -> Self {
         Self::aggregate_with_summary(outcomes, Self::derive_summary)
+    }
+
+    /// Preserve every child observation while projecting the enclosing
+    /// instruction's authored result. Replacement payload summaries never
+    /// become the primary instruction result by accident.
+    pub fn aggregate_with_primary_result(
+        primary: EffectOutcome,
+        children: impl IntoIterator<Item = EffectOutcome>,
+    ) -> Self {
+        let status = primary.status;
+        let value = primary.value.clone();
+        let mut outcome = Self::aggregate(std::iter::once(primary).chain(children));
+        outcome.status = status;
+        outcome.value = value.clone();
+        if let Some(original) = outcome.instruction_result.as_deref_mut() {
+            original.status = status;
+            original.value = value;
+        }
+        outcome
+    }
+
+    /// Keep the authored result frame while the action owner supplies the
+    /// authoritative chronological observations. Routing views must never be
+    /// concatenated into history alongside that owner's shared outputs.
+    pub(crate) fn with_authoritative_observations(mut self, observations: Self) -> Self {
+        if self.instruction_result.is_none() {
+            self.instruction_result = Some(Box::new(self.clone()));
+        }
+        self.events = observations.events;
+        self.execution_facts = observations.execution_facts;
+        self
+    }
+
+    /// Copy only an instruction's authored status/value, so its observations
+    /// can be supplied exactly once as a child of a composed outcome.
+    pub fn summary_projection(&self) -> Self {
+        let original = self.instruction_result();
+        let mut summary = Self::resolved();
+        summary.status = original.status;
+        summary.value = original.value.clone();
+        summary
+    }
+
+    /// Original successful objects of one action, deduplicated across
+    /// batch and per-object observations. Auxiliary replacement programs
+    /// are excluded by the instruction result boundary.
+    pub fn action_objects(
+        &self,
+        action: PriorEffectAction,
+        player: Option<PlayerId>,
+    ) -> Vec<&ObjectSnapshot> {
+        let mut seen = std::collections::HashSet::new();
+        self.instruction_result()
+            .execution_facts
+            .iter()
+            .filter_map(|fact| match fact {
+                ExecutionFact::ActionObjects {
+                    action: observed,
+                    player: actor,
+                    objects,
+                } if *observed == action && player.is_none_or(|player| *actor == Some(player)) => {
+                    Some(objects)
+                }
+                _ => None,
+            })
+            .flatten()
+            .filter(|snapshot| seen.insert(snapshot.stable_id))
+            .collect()
     }
 
     /// Aggregate repeated homogeneous outcomes into a single outcome.
@@ -961,8 +990,19 @@ impl EffectOutcome {
             })
     }
 
+    /// Access frozen destination objects exported by this instruction.
+    pub fn result_object_memory(&self) -> Option<&[ObjectSnapshot]> {
+        self.instruction_result()
+            .execution_facts
+            .iter()
+            .find_map(|fact| match fact {
+                ExecutionFact::ResultObjectMemory(memory) => Some(memory.as_slice()),
+                _ => None,
+            })
+    }
+
     /// Access chosen object last-known information captured during execution.
-    pub fn chosen_object_memory(&self) -> Option<&[OutcomeObjectMemory]> {
+    pub fn chosen_object_memory(&self) -> Option<&[ObjectSnapshot]> {
         self.instruction_result()
             .execution_facts
             .iter()
@@ -973,7 +1013,7 @@ impl EffectOutcome {
     }
 
     /// Access affected object last-known information captured during execution.
-    pub fn affected_object_memory(&self) -> Option<&[OutcomeObjectMemory]> {
+    pub fn affected_object_memory(&self) -> Option<&[ObjectSnapshot]> {
         self.instruction_result()
             .execution_facts
             .iter()
@@ -995,7 +1035,7 @@ impl EffectOutcome {
     }
 
     /// Access affected object memory partitioned by iterated player.
-    pub fn player_affected_object_memory(&self) -> Option<&[(PlayerId, Vec<OutcomeObjectMemory>)]> {
+    pub fn player_affected_object_memory(&self) -> Option<&[(PlayerId, Vec<ObjectSnapshot>)]> {
         self.instruction_result()
             .execution_facts
             .iter()
@@ -1089,7 +1129,7 @@ fn prior_result_filter_has_lki_constraints(filter: &ObjectFilter) -> bool {
         || filter.nontoken
 }
 
-fn prior_result_memory_matches_filter(memory: &OutcomeObjectMemory, filter: &ObjectFilter) -> bool {
+fn prior_result_memory_matches_filter(memory: &ObjectSnapshot, filter: &ObjectFilter) -> bool {
     if !filter.card_types.is_empty()
         && !filter
             .card_types
@@ -1217,12 +1257,19 @@ impl EffectPredicateRuntimeExt for EffectPredicate {
             // This predicate requires both the resolving player's identity
             // and the producer's per-player partitions. The context-aware
             // `IfEffect` evaluator handles it.
-            Self::PlayerAffectedObjectHasGreatestManaValue { .. } => false,
+            Self::PlayerAffectedObjectHasGreatestManaValue { .. }
+            | Self::AffectedObjectsShare { .. } => false,
             Self::PriorEffectResult(surface) => {
                 if surface.negated {
                     let mut positive = surface.clone();
                     positive.negated = false;
                     return !Self::PriorEffectResult(positive).evaluate_outcome(outcome);
+                }
+                if matches!(
+                    surface.action,
+                    crate::effect::PriorEffectAction::CountersMoved(_)
+                ) {
+                    return outcome.count_or_zero() > 0;
                 }
                 if surface.action == crate::effect::PriorEffectAction::Died {
                     let count = outcome.affected_object_memory().unwrap_or_default().iter()
@@ -1449,6 +1496,7 @@ impl RestrictionExt for Restriction {
                                         tracker.add_scoped_cant_cast_filter(
                                             player.id,
                                             crate::game_state::CastRestrictionFilter {
+                                                source_number_owner: None,
                                                 filter: resolved_filter,
                                                 source: Some(source),
                                                 controller: Some(controller),
@@ -1463,6 +1511,7 @@ impl RestrictionExt for Restriction {
                             tracker.add_scoped_cant_cast_filter(
                                 player.id,
                                 crate::game_state::CastRestrictionFilter {
+                                    source_number_owner: None,
                                     filter: spell_filter.clone(),
                                     source,
                                     controller: Some(controller),
@@ -1793,6 +1842,20 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::MaximumBlockers { filter, maximum } => {
+                for &object in &game.battlefield {
+                    if !game.is_phased_out(object)
+                        && let Some(object) = game.object(object)
+                        && filter.matches(object, &ctx, game)
+                    {
+                        tracker
+                            .maximum_blockers
+                            .entry(object.id)
+                            .and_modify(|existing| *existing = (*existing).min(*maximum))
+                            .or_insert(*maximum);
+                    }
+                }
+            }
             Restriction::MustAttack(filter) => {
                 for &object in &game.battlefield {
                     if !game.is_phased_out(object)
@@ -1800,6 +1863,16 @@ impl RestrictionExt for Restriction {
                         && filter.matches(object, &ctx, game)
                     {
                         *tracker.must_attack.entry(object.id).or_default() += 1;
+                    }
+                }
+            }
+            Restriction::MustBlock(filter) => {
+                for &object in &game.battlefield {
+                    if !game.is_phased_out(object)
+                        && let Some(object) = game.object(object)
+                        && filter.matches(object, &ctx, game)
+                    {
+                        *tracker.must_block.entry(object.id).or_default() += 1;
                     }
                 }
             }
@@ -1872,6 +1945,7 @@ impl RestrictionExt for Restriction {
             }
             Restriction::EnterBattlefield(filter) => {
                 let restriction = crate::game_state::CastRestrictionFilter {
+                    source_number_owner: None,
                     filter: filter.clone(),
                     source,
                     controller: Some(controller),
@@ -1880,6 +1954,17 @@ impl RestrictionExt for Restriction {
                 };
                 if !tracker.cant_enter_battlefield.contains(&restriction) {
                     tracker.cant_enter_battlefield.push(restriction);
+                }
+            }
+            Restriction::BecomeSuspected(filter) => {
+                for &obj_id in &game.battlefield {
+                    if !game.is_phased_out(obj_id)
+                        && game
+                            .object(obj_id)
+                            .is_some_and(|object| filter.matches(object, &ctx, game))
+                    {
+                        tracker.cant_become_suspected.insert(obj_id);
+                    }
                 }
             }
             Restriction::BeSacrificed(filter) => {
@@ -1957,6 +2042,29 @@ impl RestrictionExt for Restriction {
                         && player_matches_restriction_filter(player.id, player_filter)
                     {
                         tracker.cant_target_players_from.push(
+                            crate::game_state::PlayerCantBeTargetedFrom {
+                                player: player.id,
+                                source_filter: source_filter.clone(),
+                                controller,
+                            },
+                        );
+                    }
+                }
+            }
+            Restriction::PlayerHexproofFrom(player_filter, source_filter) => {
+                let bound_filter = source.and_then(|source| {
+                    crate::static_abilities::bind_chosen_filter_qualities(
+                        source_filter,
+                        game,
+                        source,
+                    )
+                });
+                let source_filter = bound_filter.as_ref().unwrap_or(source_filter);
+                for player in &game.players {
+                    if player.is_in_game()
+                        && player_matches_restriction_filter(player.id, player_filter)
+                    {
+                        tracker.player_hexproof_from.push(
                             crate::game_state::PlayerCantBeTargetedFrom {
                                 player: player.id,
                                 source_filter: source_filter.clone(),
@@ -2051,7 +2159,24 @@ impl RestrictionExt for Restriction {
 ///
 /// Use the helper constructors (e.g., `Effect::draw()`, `Effect::damage()`) to
 /// create effects rather than constructing directly.
-pub struct Effect(pub Arc<dyn EffectExecutor>, Option<RetainedEffectModel>);
+pub struct Effect(
+    pub Arc<dyn EffectExecutor>,
+    Option<RetainedEffectModel>,
+    Arc<TextChangeCache>,
+);
+
+/// Immutable transformed executors are memoized by original executor and
+/// directed word change. Repeated layer reads retain the same program-node
+/// identities instead of manufacturing a new acquisition on each read.
+struct TextChangeCache {
+    executor: std::sync::Weak<dyn EffectExecutor>,
+    values: std::sync::Mutex<
+        std::collections::HashMap<
+            ironsmith_core::TextChange,
+            Result<Effect, crate::continuous::text_changes::TextChangeDomainError>,
+        >,
+    >,
+}
 
 /// The canonical executable model belongs to this exact immutable executor.
 /// A direct replacement of the public executor must invalidate its model.
@@ -2070,7 +2195,7 @@ impl std::fmt::Debug for Effect {
 
 impl Clone for Effect {
     fn clone(&self) -> Self {
-        Effect(Arc::clone(&self.0), self.1.clone())
+        Effect(Arc::clone(&self.0), self.1.clone(), Arc::clone(&self.2))
     }
 }
 
@@ -2084,9 +2209,109 @@ impl PartialEq for Effect {
 }
 
 impl Effect {
+    /// Select a reached native program through the same checked input and
+    /// instruction-identity gateway as ordinary effect dispatch.
+    pub(crate) fn select_prepared_action_program(
+        &self,
+        game: &mut GameState,
+        ctx: &mut crate::effects::ExecutionContext,
+    ) -> Result<Option<Box<dyn crate::effects::ActionProgramCursor>>, crate::effects::ExecutionError>
+    {
+        crate::effects::select_reached_action_program(game, self, ctx)
+    }
+
+    /// Prepare a simultaneous instruction with the same immutable result
+    /// contract as ordinary execution, including nested result/tag wrappers.
+    pub fn prepare_simultaneous_player_action(
+        &self,
+        game: &GameState,
+        ctx: &mut crate::effects::ExecutionContext,
+    ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, crate::effects::ExecutionError>
+    {
+        let inner = self.0.prepare_simultaneous_player_action(game, ctx)?;
+        Ok(crate::effects::outcome_recording::record_proposal(
+            inner,
+            self.0.result_action(),
+        ))
+    }
+
+    /// Record a cost owner's proposal through the same authored action gateway.
+    /// Payment decorators retain their scopes while preparing payment children.
+    pub fn prepare_simultaneous_payment(
+        &self,
+        game: &GameState,
+        ctx: &mut crate::effects::ExecutionContext,
+    ) -> Result<Box<dyn crate::effects::SimultaneousEffectProposal>, crate::effects::ExecutionError>
+    {
+        let cost = self.0.as_cost_executable().ok_or_else(|| {
+            crate::effects::ExecutionError::Impossible("effect has no payment contract".into())
+        })?;
+        let inner = cost.prepare_simultaneous_payment(game, ctx)?;
+        Ok(crate::effects::outcome_recording::record_proposal(
+            inner,
+            self.0.result_action(),
+        ))
+    }
+
     /// Create a new effect from an EffectExecutor implementation.
     pub fn new<E: EffectExecutor + 'static>(executor: E) -> Self {
-        Effect(Arc::new(executor), None)
+        let executor: Arc<dyn EffectExecutor> = Arc::new(executor);
+        let cache = TextChangeCache {
+            executor: Arc::downgrade(&executor),
+            values: std::sync::Mutex::new(std::collections::HashMap::new()),
+        };
+        Effect(executor, None, Arc::new(cache))
+    }
+
+    /// Rewrite this immutable definition through typed native owners. A
+    /// caller that already captured this Effect keeps its old executor.
+    pub fn with_text_change(
+        &self,
+        change: ironsmith_core::TextChange,
+    ) -> Result<Self, crate::continuous::text_changes::TextChangeDomainError> {
+        let valid_cache = self
+            .2
+            .executor
+            .upgrade()
+            .is_some_and(|executor| Arc::ptr_eq(&executor, &self.0));
+        if valid_cache {
+            if let Some(value) = self
+                .2
+                .values
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&change)
+                .cloned()
+            {
+                return value;
+            }
+        }
+        let value =
+            match crate::continuous::text_change_programs::rewrite_effect_words(self, change) {
+                Ok(None) => return Ok(self.clone()),
+                Ok(Some(value)) => Ok(value),
+                Err(error) => Err(error),
+            };
+        if valid_cache {
+            // Do not hold this lock during recursion through child programs.
+            let mut cache = self
+                .2
+                .values
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            cache.entry(change).or_insert_with(|| value.clone()).clone()
+        } else {
+            value
+        }
+    }
+
+    pub(crate) fn from_boxed_executor(executor: Box<dyn EffectExecutor>) -> Self {
+        let executor: Arc<dyn EffectExecutor> = Arc::from(executor);
+        let cache = TextChangeCache {
+            executor: Arc::downgrade(&executor),
+            values: std::sync::Mutex::new(std::collections::HashMap::new()),
+        };
+        Effect(executor, None, Arc::new(cache))
     }
 
     /// Retain the canonical model encoded by the compiler/artifact service.
@@ -2170,7 +2395,7 @@ impl Effect {
 
     /// Return true when this effect only prepares resolution context.
     pub fn is_resolution_prelude(&self) -> bool {
-        self.0.is_resolution_prelude()
+        self.0.as_resolution_prelude().is_some()
     }
 
     /// Return true when this effect can consume X as a cost.
@@ -2547,6 +2772,10 @@ impl Effect {
     }
 
     /// Create a "bolster N" effect.
+    pub fn bolster_value(amount: Value) -> Self {
+        Self::new(crate::effects::BolsterEffect::with_value(amount))
+    }
+
     pub fn bolster(amount: u32) -> Self {
         use crate::effects::BolsterEffect;
         Self::new(BolsterEffect::new(amount))
@@ -5482,22 +5711,25 @@ mod tests {
 
     #[test]
     fn test_predicate_searched_library_uses_search_event_even_without_a_find() {
-        fn memory_in_zone(zone: Zone) -> OutcomeObjectMemory {
+        fn memory_in_zone(zone: Zone) -> ObjectSnapshot {
             let object_id = ObjectId::from_raw(1);
-            OutcomeObjectMemory {
-                object_id,
-                stable_id: StableId::from(object_id),
-                name: "Test Card".to_string(),
-                controller: PlayerId::from_index(0),
-                owner: PlayerId::from_index(0),
-                zone,
-                power: None,
-                toughness: None,
-                mana_value: 1,
-                card_types: vec![CardType::Creature],
-                colors: ColorSet::COLORLESS,
-                subtypes: Vec::new(),
-                is_token: false,
+            {
+                let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
+                    object_id,
+                    StableId::from(object_id),
+                    PlayerId::from_index(0),
+                    PlayerId::from_index(0),
+                    zone,
+                );
+                snapshot.name = "Test Card".to_string();
+                snapshot.power = None;
+                snapshot.toughness = None;
+                snapshot.linked_face_mana_value = Some((1) as u32);
+                snapshot.card_types = vec![CardType::Creature];
+                snapshot.colors = ColorSet::COLORLESS;
+                snapshot.subtypes = Vec::new();
+                snapshot.is_token = false;
+                snapshot
             }
         }
 
@@ -5527,20 +5759,23 @@ mod tests {
 
     #[test]
     fn affected_object_card_type_predicate_handles_negation() {
-        let memory = OutcomeObjectMemory {
-            object_id: ObjectId::from_raw(41),
-            stable_id: crate::ids::StableId::from_raw(41),
-            name: "Test Creature".to_string(),
-            controller: PlayerId::from_index(0),
-            owner: PlayerId::from_index(0),
-            zone: Zone::Exile,
-            power: None,
-            toughness: None,
-            mana_value: 3,
-            card_types: vec![CardType::Creature],
-            colors: ColorSet::COLORLESS,
-            subtypes: Vec::new(),
-            is_token: false,
+        let memory = {
+            let mut snapshot = crate::snapshot::ObjectSnapshot::public_placeholder(
+                ObjectId::from_raw(41),
+                crate::ids::StableId::from_raw(41),
+                PlayerId::from_index(0),
+                PlayerId::from_index(0),
+                Zone::Exile,
+            );
+            snapshot.name = "Test Creature".to_string();
+            snapshot.power = None;
+            snapshot.toughness = None;
+            snapshot.linked_face_mana_value = Some((3) as u32);
+            snapshot.card_types = vec![CardType::Creature];
+            snapshot.colors = ColorSet::COLORLESS;
+            snapshot.subtypes = Vec::new();
+            snapshot.is_token = false;
+            snapshot
         };
         let outcome = EffectOutcome::resolved().with_affected_object_memory(vec![memory]);
         assert!(

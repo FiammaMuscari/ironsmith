@@ -325,16 +325,20 @@ fn attack_unless_static_ability(tokens: &[OwnedLexToken]) -> Option<StaticAbilit
         {
             Some(StaticAbility::cant_attack_unless_condition(fact.condition, display))
         }
-        AttackUnlessScope::AttackOrBlock | AttackUnlessScope::Block => {
+        AttackUnlessScope::AttackOrBlock
+        | AttackUnlessScope::Block
+        | AttackUnlessScope::AttackAlone => {
             let crate::static_abilities::CantAttackUnlessConditionSpec::SourceCondition(condition) =
                 fact.condition
             else {
                 return None;
             };
-            let restriction = if fact.scope == AttackUnlessScope::Block {
-                crate::effect::Restriction::block(ObjectFilter::source())
-            } else {
-                crate::effect::Restriction::attack_or_block(ObjectFilter::source())
+            let restriction = match fact.scope {
+                AttackUnlessScope::Block => crate::effect::Restriction::block(ObjectFilter::source()),
+                AttackUnlessScope::AttackAlone => {
+                    crate::effect::Restriction::attack_alone(ObjectFilter::source())
+                }
+                _ => crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
             };
             Some(
                 StaticAbility::restriction(restriction, display)
@@ -790,6 +794,21 @@ fn bind_static_restriction_pronoun_to_source(mut ability: StaticAbility) -> Stat
 fn parse_cant_clauses_unbound(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    // An imperative action may carry a later negated followup. Its verb is
+    // owned by the effect sequence, not a static subject ending at "doesn't".
+    if matches!(
+        crate::grammar::semantic_lowering::parse_statement_effect_preference_tokens(tokens),
+        Some(crate::grammar::semantic_lowering::StatementEffectPreference::LeadingEffectVerb)
+    ) {
+        return Ok(None);
+    }
+    // These complete compound predicates retain the earlier stat setting or
+    // attack permission; the negated suffix alone is not a second reading.
+    if matches!(crate::keyword_static::parse_base_pt_and_blocker_restriction_line(tokens), Ok(Some(_)))
+        || matches!(crate::keyword_static::parse_conditional_no_defender_and_unblockable_line(tokens), Ok(Some(_)))
+    {
+        return Ok(None);
+    }
     if crate::word_primitives::parse_choice_sequence_complete(
         &crate::lexer::token_word_refs(tokens),
         &[

@@ -4367,6 +4367,7 @@ pub(super) fn riot_structural_keyword_accepts_permanent_haste_choice() {
 pub(super) fn inline_mana_ability_normalizes_this_source_cost_to_subject() {
     let ability = Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+            keyword: None,
             mana_cost: crate::cost::TotalCost::from_cost(
                 crate::costs::Cost::try_effect(Effect::sacrifice_source())
                     .expect("sacrifice source is a cost-executable effect"),
@@ -4456,6 +4457,7 @@ pub(super) fn granted_damage_trigger_to_effect_controller_uses_spell_caster_surf
 pub(super) fn zero_cost_loyalty_mana_ability_renders_zero_prefix() {
     let ability = Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+            keyword: None,
             mana_cost: crate::cost::TotalCost::free(),
             effects: crate::resolution::ResolutionProgram::default(),
             choices: vec![],
@@ -4484,6 +4486,7 @@ pub(super) fn zero_cost_loyalty_mana_ability_renders_zero_prefix() {
 pub(super) fn loyalty_mana_ability_keeps_usage_restriction_clause() {
     let ability = Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+            keyword: None,
             mana_cost: crate::cost::TotalCost::from_cost(crate::costs::Cost::add_counters(
                 CounterType::Loyalty,
                 1,
@@ -4524,6 +4527,7 @@ pub(super) fn loyalty_mana_ability_keeps_usage_restriction_clause() {
 pub(super) fn display_x_counter_removal_cost_preserves_x_damage_surface() {
     let ability = Ability {
         kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+            keyword: None,
             mana_cost: crate::cost::TotalCost::from_cost(
                 crate::costs::Cost::remove_any_counters_from_source(
                     Some(CounterType::Loyalty),
@@ -5017,6 +5021,20 @@ pub(super) fn typed_repeat_once_hint_preserves_the_process_surface() {
         describe_effect(&repeated),
         "Draw a card. Repeat this process once"
     );
+}
+
+#[test]
+pub(super) fn initial_plus_additional_count_renders_the_complete_process_boundary() {
+    // Independent source expectations, UNRUN. Two separate instructions ensure
+    // that the count cannot silently qualify only the last instruction.
+    for (additional, word) in [(Value::Fixed(0), "zero"), (Value::Fixed(6), "six"), (Value::X, "X")] {
+        let repeated = Effect::new(crate::effects::RepeatEffectsEffect::new(
+            Value::Add(Box::new(Value::Fixed(1)), Box::new(additional)),
+            vec![Effect::draw(1), Effect::gain_life(2)],
+        ));
+        assert_eq!(describe_effect(&repeated),
+            format!("Draw a card and gain 2 life. Repeat this process {word} more times"));
+    }
 }
 
 #[test]
@@ -5942,6 +5960,21 @@ pub(super) fn block_specific_attacker_renders_cant_be_blocked_by_filter() {
         describe_effect_list(&[tagged, cant]),
         "Target creature can't be blocked by Walls this turn"
     );
+}
+
+#[test]
+fn source_filtered_evasion_retains_its_subject_threshold_choice_and_duration() {
+    for (blockers, expected) in [
+        (ObjectFilter::creature().with_power(crate::target::Comparison::LessThanOrEqual(2)),
+            "This creature can't be blocked by creatures with power 2 or less this turn"),
+        (ObjectFilter::creature().of_chosen_color(),
+            "This creature can't be blocked by creatures of the chosen color this turn"),
+    ] {
+        let effect = Effect::new(crate::effects::CantEffect::until_end_of_turn(
+            crate::effect::Restriction::block_specific_attacker(blockers, ObjectFilter::source()),
+        ));
+        assert_eq!(describe_effect_list(&[effect]), expected);
+    }
 }
 
 #[test]

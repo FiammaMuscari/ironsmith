@@ -30,6 +30,13 @@ fn restore_other_face_after_failed_cast(
 
 /// Effect that casts the source card immediately.
 impl EffectExecutor for CastSourceEffect {
+    fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
+        Some(crate::effect::PriorEffectAction::Cast)
+    }
+    fn contains_current_source_suspend_cast(&self) -> bool {
+        self.cast_as_suspend && self.require_exile
+    }
+
     fn execute(
         &self,
         game: &mut GameState,
@@ -119,7 +126,7 @@ impl EffectExecutor for CastSourceEffect {
             obj.alternative_casts.push(
                 crate::alternative_cast::AlternativeCastingMethod::Suspend {
                     cost: crate::mana::ManaCost::new(),
-                    time: 0,
+                    time: ironsmith_core::SuspendTime::Fixed(0),
                 },
             );
         }
@@ -185,7 +192,7 @@ impl EffectExecutor for CastSourceEffect {
             ctx.controller,
             from_zone,
             ctx.provenance,
-        ))
+        )?)
     }
 }
 
