@@ -29,6 +29,9 @@ pub enum CastStage {
     /// Need to choose modes for modal spells (per 601.2b).
     /// Modes must be chosen before targets.
     ChoosingModes,
+    /// The caster chooses which of several eligible players will choose the
+    /// spell's modes ("An opponent chooses one —", CR 700.2, 601.2b).
+    ChoosingModeChooser,
     /// Need to reveal and order cards being spliced onto the spell.
     ChoosingSplices,
     /// Need to choose optional costs (kicker, buyback, etc.).
@@ -73,6 +76,7 @@ impl CastStage {
         match self {
             CastStage::Proposing => "proposing",
             CastStage::ChoosingModes => "choosing modes",
+            CastStage::ChoosingModeChooser => "choosing mode chooser",
             CastStage::ChoosingSplices => "choosing splices",
             CastStage::ChoosingX => "choosing X",
             CastStage::ChoosingCostResource => "choosing cost resource",
@@ -171,6 +175,12 @@ pub struct PendingCast {
     pub active_target_requirement_count: usize,
     /// Candidate players for an unresolved delegated target choice.
     pub pending_target_chooser_candidates: Vec<PlayerId>,
+    /// The player who chooses this spell's modes when someone other than the
+    /// caster does ("An opponent chooses one —"); bound as the spell's chosen
+    /// player so "that player" names them (CR 700.2).
+    pub mode_chooser: Option<PlayerId>,
+    /// Eligible mode choosers offered to the caster.
+    pub pending_mode_chooser_candidates: Vec<PlayerId>,
     /// The casting method (normal or alternative like flashback).
     pub casting_method: CastingMethod,
     /// Whether an effect instructs the player to cast this spell without
@@ -236,6 +246,9 @@ pub struct PendingCast {
     pub display_mana_pips: Vec<Vec<crate::mana::ManaSymbol>>,
     /// Authoritative whole-cost proposal retained until confirmation finishes.
     pub pending_mana_payment: Option<crate::mana_payment::PendingManaPayment>,
+    /// Actual completed funding/cost children for this native action, retained
+    /// after individual payment proposals finish and through checkpoint clones.
+    pub(crate) completed_outputs: crate::effects::CompletedActionPrefix,
     /// Remaining non-mana spell costs to pay, in player-chosen order.
     pub remaining_cost_steps: Vec<ActivationCostStep>,
     /// Tagged object snapshots captured while paying spell costs.
@@ -299,6 +312,8 @@ impl PendingCast {
             remaining_requirements,
             active_target_requirement_count: 0,
             pending_target_chooser_candidates: Vec::new(),
+            mode_chooser: None,
+            pending_mode_chooser_candidates: Vec::new(),
             casting_method,
             base_mana_cost_waived: false,
             effect_mana_cost_reduction: None,
@@ -328,6 +343,7 @@ impl PendingCast {
             mana_cost_to_pay: None,
             display_mana_pips: Vec::new(),
             pending_mana_payment: None,
+            completed_outputs: Default::default(),
             remaining_cost_steps: Vec::new(),
             tagged_objects: std::collections::HashMap::new(),
             effect_outcomes: std::collections::HashMap::new(),
@@ -905,6 +921,9 @@ pub struct AnnouncedActivationCost {
 /// An activated ability being activated that needs decisions.
 #[derive(Debug, Clone)]
 pub struct PendingActivation {
+    /// The actual pre-cost acquisition. Mutable source observations and chosen
+    /// branch flags remain separate native inputs to notification completion.
+    pub(crate) activation_declaration: crate::events::spells::ActivationDeclaration,
     pub announced_cost: Option<AnnouncedActivationCost>,
     /// Identity reserved before target matching; the finalized ability keeps
     /// this exact ID even if its physical source leaves while paying costs.
@@ -960,6 +979,9 @@ pub struct PendingActivation {
     pub mana_ability_window_closed: bool,
     /// Authoritative whole-cost proposal retained until confirmation finishes.
     pub pending_mana_payment: Option<crate::mana_payment::PendingManaPayment>,
+    /// Actual completed funding/cost children for this native action, retained
+    /// after individual payment proposals finish and through checkpoint clones.
+    pub(crate) completed_outputs: crate::effects::CompletedActionPrefix,
     /// Mana actually spent on this activation cost, retained color-by-color
     /// for resolution-time effects that refer to that payment.
     pub mana_spent_on_activation: ManaPool,
@@ -971,7 +993,8 @@ pub struct PendingActivation {
     /// later resolution-time value lookups.
     pub tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
     /// Completed activation-cost producers, retained through native recovery.
-    pub effect_outcomes: std::collections::HashMap<crate::effect::EffectId, crate::effect::EffectOutcome>,
+    pub effect_outcomes:
+        std::collections::HashMap<crate::effect::EffectId, crate::effect::EffectOutcome>,
     /// Next `sacrifice_cost_{N}` tag index to assign for choose-and-sacrifice costs.
     pub next_sacrifice_cost_tag_index: usize,
     /// Whether this ability is once per turn (needs recording).
@@ -1011,7 +1034,6 @@ pub struct PendingActivation {
     pub announced_cost_objects: crate::cost::prospective_references::CostReferenceBindings,
     pub cost_references_ready: bool,
     pub counter_removal_declaration: Option<crate::cost::CounterRemovalDeclaration>,
-
 }
 
 impl PendingActivation {
@@ -1044,7 +1066,21 @@ impl PendingActivation {
         mana_source_chosen_creature_type: Option<crate::types::Subtype>,
         pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
     ) -> Self {
+        let activation_declaration = crate::events::spells::ActivationDeclaration::new(
+            provenance,
+            crate::events::AbilityActivatedEvent::from_effective_ability(
+                source,
+                activator,
+                false,
+                source_snapshot.abilities.get(ability_index).cloned(),
+                Some(source_snapshot.clone()),
+            )
+            .with_loyalty_ability(is_loyalty_ability)
+            .with_activation_cost_has_x(activation_cost_has_x)
+            .with_activation_cost_has_tap(activation_cost_has_tap),
+        );
         Self {
+            activation_declaration,
             announced_cost: None,
             announced_stack_ability: None,
             cost_reference_base: None,
@@ -1077,6 +1113,7 @@ impl PendingActivation {
             undo_locked_by_mana: false,
             mana_ability_window_closed: false,
             pending_mana_payment: None,
+            completed_outputs: Default::default(),
             mana_spent_on_activation: ManaPool::default(),
             remaining_cost_steps,
             tagged_objects,
@@ -1157,9 +1194,74 @@ pub enum PendingPriorityContinuation {
     ApplyDecisionContext(crate::decisions::context::DecisionContext),
 }
 
+/// Receipt channel for one effect-driven cast transaction. This state is local
+/// to its driver; it never supplies a last-result history to later actions.
+#[derive(Debug, Clone)]
+pub(crate) struct NativeCastOutputReceiver {
+    source: ObjectId,
+    caster: PlayerId,
+    provenance: ProvNodeId,
+    completed: Option<crate::effects::PublishedEffectOutputs>,
+}
+
+impl NativeCastOutputReceiver {
+    pub(crate) fn new(source: ObjectId, caster: PlayerId, provenance: ProvNodeId) -> Self {
+        Self {
+            source,
+            caster,
+            provenance,
+            completed: None,
+        }
+    }
+
+    fn validate(
+        &self,
+        source: ObjectId,
+        caster: PlayerId,
+        provenance: ProvNodeId,
+    ) -> Result<(), GameLoopError> {
+        if (self.source, self.caster, self.provenance) != (source, caster, provenance) {
+            return Err(GameLoopError::InvalidState(
+                "cast output belongs to a different action".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn accept(
+        &mut self,
+        source: ObjectId,
+        caster: PlayerId,
+        provenance: ProvNodeId,
+        outputs: crate::effects::CompletedEffectOutputs,
+    ) -> Result<(), GameLoopError> {
+        self.validate(source, caster, provenance)?;
+        if self.completed.is_some() {
+            return Err(GameLoopError::InvalidState(
+                "cast output delivered twice".into(),
+            ));
+        }
+        self.completed = Some(crate::effects::PublishedEffectOutputs::retain(outputs));
+        Ok(())
+    }
+
+    pub(crate) fn take_outputs(
+        &mut self,
+        source: ObjectId,
+        caster: PlayerId,
+        provenance: ProvNodeId,
+    ) -> Result<crate::effects::PublishedEffectOutputs, GameLoopError> {
+        self.validate(source, caster, provenance)?;
+        self.completed.take().ok_or_else(|| {
+            GameLoopError::InvalidState("completed cast has no native output receipt".into())
+        })
+    }
+}
+
 /// State for tracking the priority loop between decisions.
 #[derive(Debug, Clone)]
 pub struct PriorityLoopState {
+    pub(crate) cast_output_receiver: Option<NativeCastOutputReceiver>,
     pub(super) tracker: PriorityTracker,
     pub(super) mandatory_loop: super::mandatory_loop::MandatoryLoopTracker,
     /// A pending spell cast waiting for target selection.
@@ -1193,6 +1295,7 @@ impl PriorityLoopState {
     /// Create a new priority loop state.
     pub fn new(num_players: usize) -> Self {
         Self {
+            cast_output_receiver: None,
             tracker: PriorityTracker::new(num_players),
             mandatory_loop: super::mandatory_loop::MandatoryLoopTracker::default(),
             pending_cast: None,
@@ -1234,12 +1337,15 @@ impl PriorityLoopState {
             return false;
         };
         *game = checkpoint;
+        self.cast_output_receiver = None;
         self.pending_cast = None;
         self.pending_activation = None;
         self.pending_method_selection = None;
         self.pending_exile_play = self.opened_exile_play.clone();
         self.pending_exile_face_down = self.declared_exile_face_down.clone();
-        if self.opened_exile_play.is_some() { self.checkpoint = Some(game.clone()); }
+        if self.opened_exile_play.is_some() {
+            self.checkpoint = Some(game.clone());
+        }
         self.pending_mana_ability = None;
         self.pending_mana_parents.clear();
         self.pending_continuation = None;
@@ -1249,16 +1355,21 @@ impl PriorityLoopState {
     /// Wire snapshots without continuation programs cannot discard these
     /// receipts. Runtime savepoints preserve them through this state's Clone.
     pub fn has_announced_targeting_receipt(&self) -> bool {
-        self.pending_cast.as_ref().is_some_and(|pending|
-            pending.targeting_announcement.is_some() && !pending.chosen_targets.is_empty())
-            || self.pending_activation.as_ref().is_some_and(|pending|
-                pending.targeting_announcement.is_some() && !pending.chosen_targets.is_empty())
+        self.pending_cast.as_ref().is_some_and(|pending| {
+            pending.targeting_announcement.is_some() && !pending.chosen_targets.is_empty()
+        }) || self.pending_activation.as_ref().is_some_and(|pending| {
+            pending.targeting_announcement.is_some() && !pending.chosen_targets.is_empty()
+        })
     }
 
     /// Public/wire snapshots cannot reconstruct this native opening authority.
     pub fn has_opened_exile_play_receipt(&self) -> bool {
-        self.opened_exile_play.is_some() || self.pending_exile_play.is_some() || self.exile_play_before_opening.is_some()
-            || self.pending_exile_face_down.is_some() || self.declared_exile_face_down.is_some() || self.exile_face_down_root_queue.is_some()
+        self.opened_exile_play.is_some()
+            || self.pending_exile_play.is_some()
+            || self.exile_play_before_opening.is_some()
+            || self.pending_exile_face_down.is_some()
+            || self.declared_exile_face_down.is_some()
+            || self.exile_face_down_root_queue.is_some()
     }
 
     /// Check if there's an active action chain (pending cast or activation).

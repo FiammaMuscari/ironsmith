@@ -387,6 +387,13 @@ pub struct ThisSpellCastRestrictionKind {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub timing: Option<crate::ThisSpellCastTiming>,
+    /// Appended: a typed cast-time condition that must hold for the spell to
+    /// be cast ("You can't cast this spell unless <condition>").
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub condition: Option<Condition>,
 }
 
 impl ThisSpellCastRestrictionKind {
@@ -394,6 +401,7 @@ impl ThisSpellCastRestrictionKind {
         Self {
             label: label.into(),
             timing: None,
+            condition: None,
         }
     }
 
@@ -401,6 +409,17 @@ impl ThisSpellCastRestrictionKind {
         Self {
             label: "typed cast timing".into(),
             timing: Some(timing),
+            condition: None,
+        }
+    }
+
+    /// "You can't cast this spell unless <condition>": castable only while
+    /// the typed condition holds for the caster.
+    pub fn only_if(condition: Condition) -> Self {
+        Self {
+            label: "typed cast condition".into(),
+            timing: None,
+            condition: Some(condition),
         }
     }
 
@@ -466,6 +485,10 @@ impl ThisSpellCastRestrictionKind {
 
     pub fn if_creature_is_attacking_you() -> Self {
         Self::named("if creature is attacking you")
+    }
+
+    pub fn if_creature_died_this_turn() -> Self {
+        Self::named("if creature died this turn")
     }
 
     pub fn after_combat() -> Self {
@@ -771,6 +794,11 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
         covers_planeswalkers: bool,
         cost: TotalCost<C>,
         display: String,
+        /// "can't attack planeswalkers you control unless ..." (Onakke
+        /// Oathkeeper): only attacks on the controller's planeswalkers are
+        /// taxed, never attacks on the player (CR 508.1g-h).
+        #[cfg_attr(feature = "serde", serde(default))]
+        planeswalkers_only: bool,
     },
     BlockCost {
         blockers: ObjectFilter,
@@ -826,6 +854,9 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
     SetColors {
         filter: ObjectFilter,
         colors: ColorSet,
+        /// This color definition does not contribute to Commander color identity.
+        #[cfg_attr(feature = "serde", serde(default))]
+        exclude_from_color_identity: bool,
     },
     AddColors {
         filter: ObjectFilter,
@@ -850,6 +881,12 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
     MaxCreaturesCanAttackEachCombat(usize),
     MaxCreaturesCanAttackYouEachCombat(usize),
     MaxCreaturesCanBlockEachCombat(usize),
+    /// "No more than N creatures can attack this planeswalker each combat."
+    MaxCreaturesCanAttackSourceEachCombat(usize),
+    /// "can block as though it were untapped" (CR 509.1a).
+    CanBlockAsThoughUntapped,
+    /// Blocker-side landwalk permission (CR 702.14).
+    CanBlockAsThoughNoLandwalk,
     ChooseBasicLandTypeAsEnters(String),
     ChooseLandTypeAsEnters(String),
     Enchant(crate::AuraAttachmentFilter),
@@ -945,6 +982,11 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
         filter: ObjectFilter,
         power: i32,
     },
+    /// Layer 7b base toughness only (Maha, Its Feathers Night).
+    SetBaseToughness {
+        filter: ObjectFilter,
+        toughness: i32,
+    },
     SourceCharacteristicsOfLastExiledCreatureCard {
         filter: ObjectFilter,
         retained_subtypes: Vec<Subtype>,
@@ -999,6 +1041,10 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
     PlayerSkipsDrawStep {
         player: PlayerFilter,
     },
+    /// CR 502 / 614.1b: matching players skip their untap steps (Stasis).
+    PlayersSkipUntapStep {
+        player: PlayerFilter,
+    },
     PlayersSkipExtraTurns {
         player: PlayerFilter,
     },
@@ -1028,10 +1074,18 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
     ChooseColorAsEnters {
         excluded: Option<Color>,
         display: String,
+        /// How many different colors are chosen ("choose two colors", Seal
+        /// of the Guildpact); one for the ordinary "choose a color".
+        #[cfg_attr(feature = "serde", serde(default = "crate::static_ability_model::one_chosen_color"))]
+        count: u32,
     },
     ChoosePlayerAsEnters {
         filter: PlayerFilter,
         display: String,
+        /// How many different players are chosen ("choose two players",
+        /// Bitter Feud, Sower of Discord); one for "choose a player".
+        #[cfg_attr(feature = "serde", serde(default = "crate::static_ability_model::one_chosen_color"))]
+        count: u32,
     },
     NoteLifeTotalAsEnters(String),
     DiscardHandAsEnters(String),
@@ -1045,6 +1099,14 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
         display: String,
         reveal_opponents_hands: bool,
         require_nonland_from_revealed_opponents: bool,
+        /// "you and an opponent each choose a card name" (Null Chamber): an
+        /// opponent names a second card after you (CR 607.2b-style shared
+        /// choice record). Appended with a serde default.
+        #[cfg_attr(feature = "serde", serde(default))]
+        opponent_also_chooses: bool,
+        /// "other than a basic land card name".
+        #[cfg_attr(feature = "serde", serde(default))]
+        exclude_basic_land_names: bool,
     },
     ChooseCreatureTypeAsEnters(String),
     ChooseNamedOptionAsEnters {
@@ -1511,6 +1573,69 @@ pub enum StaticAbilityPayload<T, E, C, Cond, ICond = Condition> {
         pair: Option<crate::LinkedExilePair>,
         source: SourceReferenceSurface,
     },
+    /// "If <event> would happen, <effects> instead." (Tainted Remedy, Lich,
+    /// Delaying Shield): a replacement whose program runs in place of the
+    /// event with the replaced event as context (CR 614.1a, 614.6).
+    /// Appended to preserve published payload variant ordinals.
+    EventReplacementWithEffects {
+        event: crate::ReplacedEventSpec,
+        replacement_effects: Vec<E>,
+        display: String,
+        /// "you may <program> instead": an optional replacement; declining
+        /// it lets the event happen (CR 614.1a, 616.1).
+        #[cfg_attr(feature = "serde", serde(default))]
+        optional: bool,
+    },
+    /// "If an opponent would mill one or more cards, they mill twice that
+    /// many cards instead." (Bruvac), "If a source would deal 4 or more
+    /// damage to a permanent or player, that source deals 3 damage to that
+    /// permanent or player instead." (Divine Presence): the watched event
+    /// still happens with a modified amount (CR 614.1a, 616.1). `optional`
+    /// reads "you may" ("You may look at an additional two cards each time
+    /// you surveil"). Appended to preserve published payload variant ordinals.
+    EventAmountReplacement {
+        event: crate::AmountEventSpec,
+        modifier: crate::AmountModifierSpec,
+        optional: bool,
+        display: String,
+    },
+    /// "You may pay {0} rather than pay the echo cost for permanents you
+    /// control." (Thick-Skinned Goblin): an alternative price for the echo
+    /// upkeep payment of a matching permanent (CR 118.9, 702.30a).
+    /// Appended to preserve published payload variant ordinals.
+    EchoCostAlternative {
+        filter: ObjectFilter,
+        replacement_mana_cost: ManaCost,
+        display: String,
+    },
+    /// A keyword granted to matching spells as they are cast (CR 601.2b,
+    /// 601.2f): "Each Sliver spell you cast has replicate. The replicate cost
+    /// is equal to its mana cost." The engine discovers it while casting.
+    /// Appended to preserve published payload variant ordinals.
+    GrantSpellKeyword {
+        filter: ObjectFilter,
+        keyword: crate::GrantedSpellKeyword<C>,
+        /// Authored "Each ..." subject surface; presentation only.
+        #[cfg_attr(feature = "serde", serde(default))]
+        set_quantifier_surface: Option<SetQuantifierSurface>,
+    },    /// "You may cast creature spells from your graveyard using their sneak
+    /// abilities." (Ninja Teen): matching cards may be cast from `zone` with
+    /// their `method` alternative cost, printed or granted. Appended to
+    /// preserve published payload variant ordinals.
+    AlternativeCastFromZoneForFilter {
+        filter: ObjectFilter,
+        zone: Zone,
+        method: crate::alternative_cast_model::AlternativeCastKeyword,
+    },
+    /// "If <trigger> attacks, <required> attack if able." (Viashino Bey,
+    /// War's Toll, Magnetic Web): an attack requirement that exists only for
+    /// declarations in which a creature matching `trigger` attacks
+    /// (CR 508.1d). Both filters are read from this source's perspective.
+    /// Appended to preserve published payload variant ordinals.
+    ConditionalAttackRequirement {
+        trigger: ObjectFilter,
+        required: ObjectFilter,
+    },
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1717,6 +1842,9 @@ where
                 DerivedAlternativeCast::ManaValueAsGenericFromHand => {
                     DerivedAlternativeCast::ManaValueAsGenericFromHand
                 }
+                DerivedAlternativeCast::MadnessFromCardManaCost => {
+                    DerivedAlternativeCast::MadnessFromCardManaCost
+                }
                 DerivedAlternativeCast::LifeEqualManaValueFromHand { usage_limit } => {
                     DerivedAlternativeCast::LifeEqualManaValueFromHand { usage_limit }
                 }
@@ -1912,6 +2040,9 @@ where
                 StaticAbilityPayload::LegendRuleDoesntApplyToController { filter }
             }
             StaticAbilityPayload::GoadMatching { filter } => StaticAbilityPayload::GoadMatching { filter },
+            StaticAbilityPayload::ConditionalAttackRequirement { trigger, required } => {
+                StaticAbilityPayload::ConditionalAttackRequirement { trigger, required }
+            }
             StaticAbilityPayload::Companion(condition) => {
                 StaticAbilityPayload::Companion(condition)
             }
@@ -1935,9 +2066,55 @@ where
             StaticAbilityPayload::PlayerSkipsDrawStep { player } => {
                 StaticAbilityPayload::PlayerSkipsDrawStep { player }
             }
+            StaticAbilityPayload::PlayersSkipUntapStep { player } => {
+                StaticAbilityPayload::PlayersSkipUntapStep { player }
+            }
             StaticAbilityPayload::LookAtSourceExiledCards { pair, source } => {
                 StaticAbilityPayload::LookAtSourceExiledCards { pair, source }
             }
+            StaticAbilityPayload::EventReplacementWithEffects {
+                event,
+                replacement_effects,
+                display,
+                optional,
+            } => StaticAbilityPayload::EventReplacementWithEffects {
+                event,
+                replacement_effects: replacement_effects
+                    .into_iter()
+                    .map(&mut *map_effect)
+                    .collect::<Result<Vec<_>, _>>()?,
+                display,
+                optional,
+            },
+            StaticAbilityPayload::EventAmountReplacement {
+                event,
+                modifier,
+                optional,
+                display,
+            } => StaticAbilityPayload::EventAmountReplacement {
+                event,
+                modifier,
+                optional,
+                display,
+            },
+            StaticAbilityPayload::GrantSpellKeyword {
+                filter,
+                keyword,
+                set_quantifier_surface,
+            } => StaticAbilityPayload::GrantSpellKeyword {
+                filter,
+                keyword: keyword.try_map(&mut *map_cost)?,
+                set_quantifier_surface,
+            },
+            StaticAbilityPayload::AlternativeCastFromZoneForFilter {
+                filter,
+                zone,
+                method,
+            } => StaticAbilityPayload::AlternativeCastFromZoneForFilter {
+                filter,
+                zone,
+                method,
+            },
             StaticAbilityPayload::PlayersSkipExtraTurns { player } => {
                 StaticAbilityPayload::PlayersSkipExtraTurns { player }
             }
@@ -2200,11 +2377,19 @@ where
                     display,
                 }
             }
-            StaticAbilityPayload::AttackCost { attackers, covers_planeswalkers, cost, display } => {
-                StaticAbilityPayload::AttackCost {
-                    attackers, covers_planeswalkers, cost: map_total_cost(cost, map_cost)?, display,
-                }
-            }
+            StaticAbilityPayload::AttackCost {
+                attackers,
+                covers_planeswalkers,
+                cost,
+                display,
+                planeswalkers_only,
+            } => StaticAbilityPayload::AttackCost {
+                attackers,
+                covers_planeswalkers,
+                cost: map_total_cost(cost, map_cost)?,
+                display,
+                planeswalkers_only,
+            },
             StaticAbilityPayload::BlockCost {
                 blockers,
                 blocker_is_attached_to_source,
@@ -2264,11 +2449,20 @@ where
             StaticAbilityPayload::FirstEquipCostAlternative(display) => {
                 StaticAbilityPayload::FirstEquipCostAlternative(display)
             }
+            StaticAbilityPayload::EchoCostAlternative {
+                filter,
+                replacement_mana_cost,
+                display,
+            } => StaticAbilityPayload::EchoCostAlternative {
+                filter,
+                replacement_mana_cost,
+                display,
+            },
             StaticAbilityPayload::ControlAttachedPermanent(display) => {
                 StaticAbilityPayload::ControlAttachedPermanent(display)
             }
-            StaticAbilityPayload::SetColors { filter, colors } => {
-                StaticAbilityPayload::SetColors { filter, colors }
+            StaticAbilityPayload::SetColors { filter, colors, exclude_from_color_identity } => {
+                StaticAbilityPayload::SetColors { filter, colors, exclude_from_color_identity }
             }
             StaticAbilityPayload::AddColors { filter, colors } => {
                 StaticAbilityPayload::AddColors { filter, colors }
@@ -2297,6 +2491,15 @@ where
             }
             StaticAbilityPayload::MaxCreaturesCanBlockEachCombat(maximum) => {
                 StaticAbilityPayload::MaxCreaturesCanBlockEachCombat(maximum)
+            }
+            StaticAbilityPayload::MaxCreaturesCanAttackSourceEachCombat(maximum) => {
+                StaticAbilityPayload::MaxCreaturesCanAttackSourceEachCombat(maximum)
+            }
+            StaticAbilityPayload::CanBlockAsThoughUntapped => {
+                StaticAbilityPayload::CanBlockAsThoughUntapped
+            }
+            StaticAbilityPayload::CanBlockAsThoughNoLandwalk => {
+                StaticAbilityPayload::CanBlockAsThoughNoLandwalk
             }
             StaticAbilityPayload::ChooseBasicLandTypeAsEnters(display) => {
                 StaticAbilityPayload::ChooseBasicLandTypeAsEnters(display)
@@ -2473,6 +2676,9 @@ where
             StaticAbilityPayload::SetBasePower { filter, power } => {
                 StaticAbilityPayload::SetBasePower { filter, power }
             }
+            StaticAbilityPayload::SetBaseToughness { filter, toughness } => {
+                StaticAbilityPayload::SetBaseToughness { filter, toughness }
+            }
             StaticAbilityPayload::SourceCharacteristicsOfLastExiledCreatureCard {
                 filter,
                 retained_subtypes,
@@ -2566,12 +2772,24 @@ where
                 ability_condition,
                 display,
             },
-            StaticAbilityPayload::ChooseColorAsEnters { excluded, display } => {
-                StaticAbilityPayload::ChooseColorAsEnters { excluded, display }
-            }
-            StaticAbilityPayload::ChoosePlayerAsEnters { filter, display } => {
-                StaticAbilityPayload::ChoosePlayerAsEnters { filter, display }
-            }
+            StaticAbilityPayload::ChooseColorAsEnters {
+                excluded,
+                display,
+                count,
+            } => StaticAbilityPayload::ChooseColorAsEnters {
+                excluded,
+                display,
+                count,
+            },
+            StaticAbilityPayload::ChoosePlayerAsEnters {
+                filter,
+                display,
+                count,
+            } => StaticAbilityPayload::ChoosePlayerAsEnters {
+                filter,
+                display,
+                count,
+            },
             StaticAbilityPayload::NoteLifeTotalAsEnters(display) => {
                 StaticAbilityPayload::NoteLifeTotalAsEnters(display)
             }
@@ -2593,10 +2811,14 @@ where
                 display,
                 reveal_opponents_hands,
                 require_nonland_from_revealed_opponents,
+                opponent_also_chooses,
+                exclude_basic_land_names,
             } => StaticAbilityPayload::ChooseCardNameAsEnters {
                 display,
                 reveal_opponents_hands,
                 require_nonland_from_revealed_opponents,
+                opponent_also_chooses,
+                exclude_basic_land_names,
             },
             StaticAbilityPayload::ChooseCreatureTypeAsEnters(display) => {
                 StaticAbilityPayload::ChooseCreatureTypeAsEnters(display)
@@ -3861,6 +4083,8 @@ impl<
             "landwalk" => Self::any_landwalk(),
             "nonbasic landwalk" => Self::nonbasic_landwalk(),
             "artifact landwalk" => Self::artifact_landwalk(),
+            "legendary landwalk" => Self::legendary_landwalk(),
+            "snow landwalk" => Self::snow_any_landwalk(),
             "protection from white" => Self::protection(ProtectionFrom::Color(ColorSet::WHITE)),
             "protection from blue" => Self::protection(ProtectionFrom::Color(ColorSet::BLUE)),
             "protection from black" => Self::protection(ProtectionFrom::Color(ColorSet::BLACK)),
@@ -3911,6 +4135,14 @@ impl<
 
     pub fn must_attack() -> Self {
         Self::identified(StaticAbilityId::MustAttack, "must attack")
+    }
+
+    pub fn conditional_attack_requirement(trigger: ObjectFilter, required: ObjectFilter) -> Self {
+        Self {
+            id: Some(StaticAbilityId::ConditionalAttackRequirement),
+            label: "conditional attack requirement".into(),
+            payload: StaticAbilityPayload::ConditionalAttackRequirement { trigger, required },
+        }
     }
 
     pub fn goad_matching(filter: ObjectFilter) -> Self {
@@ -4030,6 +4262,14 @@ impl<
         }
     }
 
+    pub fn set_base_toughness(filter: ObjectFilter, toughness: i32) -> Self {
+        Self {
+            id: Some(StaticAbilityId::SetBasePowerToughnessForFilter),
+            label: "set base toughness".to_string(),
+            payload: StaticAbilityPayload::SetBaseToughness { filter, toughness },
+        }
+    }
+
     pub fn source_characteristics_of_last_exiled_creature_card(
         filter: ObjectFilter,
         retained_subtypes: Vec<Subtype>,
@@ -4062,8 +4302,16 @@ impl<
         Self {
             id: Some(StaticAbilityId::SetColors),
             label: "set colors".to_string(),
-            payload: StaticAbilityPayload::SetColors { filter, colors },
+            payload: StaticAbilityPayload::SetColors { filter, colors, exclude_from_color_identity: false },
         }
+    }
+
+    pub fn set_colors_without_color_identity(filter: ObjectFilter, colors: ColorSet) -> Self {
+        let mut ability = Self::set_colors(filter, colors);
+        if let StaticAbilityPayload::SetColors { exclude_from_color_identity, .. } = &mut ability.payload {
+            *exclude_from_color_identity = true;
+        }
+        ability
     }
 
     pub fn add_card_types(filter: ObjectFilter, card_types: Vec<CardType>) -> Self {
@@ -4155,6 +4403,22 @@ impl<
         match self.payload {
             StaticAbilityPayload::CanBlockAsThoughReachForSubtype(subtype) => Some(subtype),
             _ => None,
+        }
+    }
+
+    pub fn can_block_as_though_no_landwalk() -> Self {
+        Self {
+            id: Some(StaticAbilityId::CanBlockAsThoughNoLandwalk),
+            label: "This creature can block creatures with landwalk abilities as though they didn't have those abilities".to_string(),
+            payload: StaticAbilityPayload::CanBlockAsThoughNoLandwalk,
+        }
+    }
+
+    pub fn can_block_as_though_untapped() -> Self {
+        Self {
+            id: Some(StaticAbilityId::CanBlockAsThoughUntapped),
+            label: "This creature can block as though it were untapped".to_string(),
+            payload: StaticAbilityPayload::CanBlockAsThoughUntapped,
         }
     }
 
@@ -4361,6 +4625,22 @@ impl<
 
     pub fn artifact_landwalk() -> Self {
         Self::new(LandwalkKind::ArtifactLand)
+    }
+
+    pub fn legendary_landwalk() -> Self {
+        Self::new(LandwalkKind::LegendaryLand)
+    }
+
+    pub fn snow_any_landwalk() -> Self {
+        Self::new(LandwalkKind::SnowLand)
+    }
+
+    pub fn chosen_type_landwalk(snow: bool) -> Self {
+        Self::new(LandwalkKind::ChosenType { snow })
+    }
+
+    pub fn sacrificed_land_types_landwalk() -> Self {
+        Self::new(LandwalkKind::SacrificedLandTypes)
     }
 
     pub fn landwalk(kind: Subtype) -> Self {
@@ -4681,8 +4961,25 @@ impl<
                 covers_planeswalkers,
                 cost,
                 display,
+                planeswalkers_only: false,
             },
         }
+    }
+
+    /// Restricts an attack cost to attacks on the controller's planeswalkers
+    /// ("can't attack planeswalkers you control unless ..."). No-op for other
+    /// payloads.
+    pub fn with_attack_cost_planeswalkers_only(mut self) -> Self {
+        if let StaticAbilityPayload::AttackCost {
+            covers_planeswalkers,
+            planeswalkers_only,
+            ..
+        } = &mut self.payload
+        {
+            *covers_planeswalkers = true;
+            *planeswalkers_only = true;
+        }
+        self
     }
 
     pub fn block_cost(
@@ -5955,7 +6252,25 @@ impl<
         Self {
             id: Some(StaticAbilityId::ChooseColorAsEnters),
             label: display.clone(),
-            payload: StaticAbilityPayload::ChooseColorAsEnters { excluded, display },
+            payload: StaticAbilityPayload::ChooseColorAsEnters {
+                excluded,
+                display,
+                count: 1,
+            },
+        }
+    }
+    /// "As this enters, choose two colors." (Seal of the Guildpact): `count`
+    /// different colors are chosen and recorded together.
+    pub fn choose_colors_as_enters(count: u32, display: impl Into<String>) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::ChooseColorAsEnters),
+            label: display.clone(),
+            payload: StaticAbilityPayload::ChooseColorAsEnters {
+                excluded: None,
+                display,
+                count,
+            },
         }
     }
     pub fn choose_color_as_becomes_attached(display: impl Into<String>) -> Self {
@@ -5976,7 +6291,29 @@ impl<
         Self {
             id: Some(StaticAbilityId::ChoosePlayerAsEnters),
             label: display.clone(),
-            payload: StaticAbilityPayload::ChoosePlayerAsEnters { filter, display },
+            payload: StaticAbilityPayload::ChoosePlayerAsEnters {
+                filter,
+                display,
+                count: 1,
+            },
+        }
+    }
+    /// "As this enters, choose two players." (Bitter Feud, Sower of
+    /// Discord): `count` different players, recorded together.
+    pub fn choose_players_as_enters(
+        filter: PlayerFilter,
+        count: u32,
+        display: impl Into<String>,
+    ) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::ChoosePlayerAsEnters),
+            label: display.clone(),
+            payload: StaticAbilityPayload::ChoosePlayerAsEnters {
+                filter,
+                display,
+                count,
+            },
         }
     }
     pub fn note_life_total_as_enters(display: impl Into<String>) -> Self {
@@ -6022,6 +6359,8 @@ impl<
                 display,
                 reveal_opponents_hands: false,
                 require_nonland_from_revealed_opponents: false,
+                opponent_also_chooses: false,
+                exclude_basic_land_names: false,
             },
         }
     }
@@ -6034,6 +6373,26 @@ impl<
                 display,
                 reveal_opponents_hands: true,
                 require_nonland_from_revealed_opponents: true,
+                opponent_also_chooses: false,
+                exclude_basic_land_names: false,
+            },
+        }
+    }
+    /// "As this enters, you and an opponent each choose a card name other than
+    /// a basic land card name." (Null Chamber)
+    pub fn you_and_an_opponent_choose_nonbasic_card_names_as_enters(
+        display: impl Into<String>,
+    ) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::ChooseCardNameAsEnters),
+            label: display.clone(),
+            payload: StaticAbilityPayload::ChooseCardNameAsEnters {
+                display,
+                reveal_opponents_hands: false,
+                require_nonland_from_revealed_opponents: false,
+                opponent_also_chooses: true,
+                exclude_basic_land_names: true,
             },
         }
     }
@@ -6055,6 +6414,14 @@ impl<
             id: Some(StaticAbilityId::MaxCreaturesCanAttackYouEachCombat),
             label: format!("no more than {n} creatures can attack you each combat"),
             payload: StaticAbilityPayload::MaxCreaturesCanAttackYouEachCombat(n),
+        }
+    }
+    pub fn max_attackers_can_attack_source_each_combat(n: usize) -> Self {
+        let noun = if n == 1 { "creature" } else { "creatures" };
+        Self {
+            id: Some(StaticAbilityId::MaxCreaturesCanAttackSourceEachCombat),
+            label: format!("no more than {n} {noun} can attack this planeswalker each combat"),
+            payload: StaticAbilityPayload::MaxCreaturesCanAttackSourceEachCombat(n),
         }
     }
     pub fn max_blockers_each_combat(n: usize) -> Self {
@@ -6234,6 +6601,13 @@ impl<
             id: Some(StaticAbilityId::PlayerSkipsDrawStep),
             label: "skip your draw step".into(),
             payload: StaticAbilityPayload::PlayerSkipsDrawStep { player },
+        }
+    }
+    pub fn players_skip_untap_steps(player: PlayerFilter) -> Self {
+        Self {
+            id: Some(StaticAbilityId::PlayersSkipUntapStep),
+            label: "players skip their untap steps".into(),
+            payload: StaticAbilityPayload::PlayersSkipUntapStep { player },
         }
     }
     pub fn players_skip_extra_turns(player: PlayerFilter) -> Self {
@@ -6934,6 +7308,111 @@ impl<
                 follow_up_effects,
             },
         }
+    }
+    /// "You may pay <mana> rather than pay the echo cost for <permanents>."
+    /// (CR 118.9, 702.30a)
+    pub fn echo_cost_alternative(
+        filter: ObjectFilter,
+        replacement_mana_cost: ManaCost,
+        display: impl Into<String>,
+    ) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::EchoCostAlternative),
+            label: display.clone(),
+            payload: StaticAbilityPayload::EchoCostAlternative {
+                filter,
+                replacement_mana_cost,
+                display,
+            },
+        }
+    }
+    /// Matching cards may be cast from `zone` using their `method`
+    /// alternative cost ("... using their sneak abilities").
+    pub fn alternative_cast_from_zone_for_filter(
+        filter: ObjectFilter,
+        zone: Zone,
+        method: crate::alternative_cast_model::AlternativeCastKeyword,
+        display: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Some(StaticAbilityId::AlternativeCastFromZoneForFilter),
+            label: display.into(),
+            payload: StaticAbilityPayload::AlternativeCastFromZoneForFilter {
+                filter,
+                zone,
+                method,
+            },
+        }
+    }
+    /// A keyword granted to matching spells as they are cast (CR 601.2b).
+    pub fn grant_spell_keyword(
+        filter: ObjectFilter,
+        keyword: crate::GrantedSpellKeyword<C>,
+        set_quantifier_surface: Option<SetQuantifierSurface>,
+        display: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Some(StaticAbilityId::GrantSpellKeyword),
+            label: display.into(),
+            payload: StaticAbilityPayload::GrantSpellKeyword {
+                filter,
+                keyword,
+                set_quantifier_surface,
+            },
+        }
+    }
+    /// An amount-modifying replacement over one watched event (CR 614.1a).
+    pub fn event_amount_replacement(
+        event: crate::AmountEventSpec,
+        modifier: crate::AmountModifierSpec,
+        optional: bool,
+        display: impl Into<String>,
+    ) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::EventAmountReplacement),
+            label: display.clone(),
+            payload: StaticAbilityPayload::EventAmountReplacement {
+                event,
+                modifier,
+                optional,
+                display,
+            },
+        }
+    }
+    /// "If <event> would happen, <effects> instead." (CR 614.1a)
+    pub fn event_replacement_with_effects(
+        event: crate::ReplacedEventSpec,
+        replacement_effects: Vec<E>,
+        display: impl Into<String>,
+    ) -> Self {
+        let display = display.into();
+        Self {
+            id: Some(StaticAbilityId::EventReplacementWithEffects),
+            label: display.clone(),
+            payload: StaticAbilityPayload::EventReplacementWithEffects {
+                event,
+                replacement_effects,
+                display,
+                optional: false,
+            },
+        }
+    }
+    /// "If <event> would happen, you may <effects> instead." (Pulmonic
+    /// Sliver's granted ability): the optional form (CR 614.1a).
+    pub fn optional_event_replacement_with_effects(
+        event: crate::ReplacedEventSpec,
+        replacement_effects: Vec<E>,
+        display: impl Into<String>,
+    ) -> Self {
+        let mut ability = Self::event_replacement_with_effects(event, replacement_effects, display);
+        if let StaticAbilityPayload::EventReplacementWithEffects { optional, .. } =
+            &mut ability.payload
+        {
+            *optional = true;
+        }
+        ability
     }
     /// "If you would draw a card, instead <effects>." (Underrealm Lich)
     pub fn draw_replacement_with_effects(
@@ -7820,4 +8299,10 @@ mod cast_timing_payload_tests {
             Some(crate::ThisSpellCastTiming::DuringDeclareBlockersStep)
         );
     }
+}
+
+/// Serde default for [`StaticAbilityPayload::ChooseColorAsEnters`]'s count:
+/// payloads written before multi-color choices choose one color.
+pub fn one_chosen_color() -> u32 {
+    1
 }

@@ -181,6 +181,11 @@ impl EffectExecutor for KeywordActionCompletion {
                 .with_x_value(x_value),
             ctx.provenance,
         );
+        let event = if config.action == KeywordActionKind::Cycle {
+            event.with_lookback_source_snapshots(ctx.source_snapshot.iter()
+                .filter(|snapshot| snapshot.zone == crate::zone::Zone::Hand)
+                .cloned().collect())
+        } else { event };
         PublishKeywordActionCompletion(event).execute_child_with_outputs(game, ctx)
     }
 }
@@ -197,10 +202,21 @@ impl EffectExecutor for PublishKeywordActionCompletion {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
+        self.execute_with_outputs(game, ctx)
+            .map(crate::effects::CompletedEffectOutputs::into_outcome)
+    }
+
+    fn execute_with_outputs(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
         if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
+            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                EffectOutcome::count(0),
+            ));
         }
-        observe_keyword_action_completion(game, self.0.clone())
+        observe_keyword_action_completion_with_outputs(game, self.0.clone())
     }
 }
 

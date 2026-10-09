@@ -340,6 +340,18 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::LandwalkKind::ArtifactLand => {
                 crate::static_abilities::LandwalkKind::ArtifactLand
             }
+            ironsmith_core::LandwalkKind::LegendaryLand => {
+                crate::static_abilities::LandwalkKind::LegendaryLand
+            }
+            ironsmith_core::LandwalkKind::SnowLand => {
+                crate::static_abilities::LandwalkKind::SnowLand
+            }
+            ironsmith_core::LandwalkKind::ChosenType { snow } => {
+                crate::static_abilities::LandwalkKind::ChosenType { snow }
+            }
+            ironsmith_core::LandwalkKind::SacrificedLandTypes => {
+                crate::static_abilities::LandwalkKind::SacrificedLandTypes
+            }
         }
     }
 
@@ -617,6 +629,13 @@ impl StaticAbilityModelInterpreter {
             Model::NonManaAbility => Runtime::NonManaAbility,
             Model::LoyaltyAbility => Runtime::LoyaltyAbility,
             Model::Activator(player) => Runtime::Activator(player.clone()),
+            Model::FirstKeywordAbilityThisTurn {
+                keyword,
+                during_your_turn,
+            } => Runtime::FirstKeywordAbilityThisTurn {
+                keyword: *keyword,
+                during_your_turn: *during_your_turn,
+            },
             Model::All(conditions) => Runtime::All(
                 conditions
                     .iter()
@@ -902,6 +921,12 @@ impl StaticAbilityModelInterpreter {
     fn this_spell_cast_restriction_from_model(
         kind: &ironsmith_core::ThisSpellCastRestrictionKind,
     ) -> super::ThisSpellCastRestrictionKind {
+        if let Some(condition) = &kind.condition {
+            return super::ThisSpellCastRestrictionKind {
+                timing: kind.timing,
+                condition: Some(super::ThisSpellCastCondition::Condition(condition.clone())),
+            };
+        }
         if let Some(timing) = kind.timing {
             return super::ThisSpellCastRestrictionKind::timing(timing);
         }
@@ -949,6 +974,9 @@ impl StaticAbilityModelInterpreter {
             }
             "if creature is attacking you" => {
                 super::ThisSpellCastRestrictionKind::if_creature_is_attacking_you()
+            }
+            "if creature died this turn" => {
+                super::ThisSpellCastRestrictionKind::if_creature_died_this_turn()
             }
             "after combat" => super::ThisSpellCastRestrictionKind::after_combat(),
             "if you control snow land" => {
@@ -1027,6 +1055,12 @@ impl StaticAbilityModelInterpreter {
                 }
             }
             ironsmith_core::StaticAbilityPayload::GoadMatching { filter } => StaticAbility::new(super::combat::GoadMatching { filter: filter.clone() }),
+            ironsmith_core::StaticAbilityPayload::ConditionalAttackRequirement { trigger, required } => {
+                StaticAbility::new(super::combat::ConditionalAttackRequirement {
+                    trigger: trigger.clone(),
+                    required: required.clone(),
+                })
+            }
             ironsmith_core::StaticAbilityPayload::Anthem(anthem) => {
                 let mut converted = match &anthem.filter {
                     Some(filter) => crate::static_abilities::Anthem::new(filter.clone(), 0, 0)
@@ -1075,6 +1109,9 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::PlayerSkipsDrawStep { player } => {
                 StaticAbility::player_skips_draw_step(player.clone())
             }
+            ironsmith_core::StaticAbilityPayload::PlayersSkipUntapStep { player } => {
+                StaticAbility::players_skip_untap_steps(player.clone())
+            }
             ironsmith_core::StaticAbilityPayload::PlayersSkipExtraTurns { player } => {
                 StaticAbility::players_skip_extra_turns(player.clone())
             }
@@ -1114,9 +1151,11 @@ impl StaticAbilityModelInterpreter {
                 // A rule-modifying leaf ("This ability costs {2} less to
                 // activate if you have one or fewer cards in hand") carries
                 // the condition natively when it supports one.
-                if !converted.may_generate_continuous_effects() {
-                    return Some(converted.with_condition(combined.clone()).unwrap_or(converted));
-                }
+                // A rule-modifying leaf without a native condition ("As long
+                // as Mirri is tapped, no more than one creature can attack you
+                // each combat") must still function only while its condition
+                // holds (CR 604.2): it falls through to the conditional source
+                // grant below rather than becoming unconditional.
                 converted.with_condition(combined.clone()).unwrap_or_else(|| {
                     StaticAbility::new(
                         crate::static_abilities::GrantAbility::source(converted)
@@ -1159,6 +1198,8 @@ impl StaticAbilityModelInterpreter {
                 if copy.force_once_each_turn {
                     converted = converted.with_once_each_turn();
                 }
+                // CR 605.1a: mana abilities are excluded from the copy.
+                converted.include_mana = !copy.exclude_mana_abilities;
                 StaticAbility::copy_activated_abilities(converted)
             }
             ironsmith_core::StaticAbilityPayload::CopyStaticAbilityVariants(copy) => {
@@ -1254,6 +1295,12 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::CanBlockAsThoughNoShadow => {
                 StaticAbility::can_block_as_though_no_shadow()
             }
+            ironsmith_core::StaticAbilityPayload::CanBlockAsThoughUntapped => {
+                StaticAbility::can_block_as_though_untapped()
+            }
+            ironsmith_core::StaticAbilityPayload::CanBlockAsThoughNoLandwalk => {
+                StaticAbility::can_block_as_though_no_landwalk()
+            }
             ironsmith_core::StaticAbilityPayload::CanAttackPlayersWhoAttackedControllerLastTurnAsThoughNoDefender => {
                 StaticAbility::can_attack_players_who_attacked_controller_last_turn_as_though_no_defender()
             }
@@ -1293,9 +1340,21 @@ impl StaticAbilityModelInterpreter {
                 Self::cant_attack_unless_condition_from_model(condition),
                 display.clone(),
             ),
-            ironsmith_core::StaticAbilityPayload::AttackCost { attackers, covers_planeswalkers, cost, display } => {
-                StaticAbility::attack_cost(attackers.clone(), *covers_planeswalkers, cost.clone(), display.clone())
-            }
+            ironsmith_core::StaticAbilityPayload::AttackCost {
+                attackers,
+                covers_planeswalkers,
+                cost,
+                display,
+                planeswalkers_only,
+            } => StaticAbility::new(
+                super::AttackCost::new(
+                    attackers.clone(),
+                    *covers_planeswalkers,
+                    cost.clone(),
+                    display.clone(),
+                )
+                .with_planeswalkers_only(*planeswalkers_only),
+            ),
             ironsmith_core::StaticAbilityPayload::BlockCost {
                 blockers,
                 blocker_is_attached_to_source,
@@ -1371,14 +1430,19 @@ impl StaticAbilityModelInterpreter {
                 filter.clone(),
                 display.clone(),
             ),
+            ironsmith_core::StaticAbilityPayload::EchoCostAlternative { display, .. } => {
+                StaticAbility::new(super::misc::EchoCostAlternative::new(display.clone()))
+            }
             ironsmith_core::StaticAbilityPayload::FirstEquipCostAlternative(display) => {
                 StaticAbility::first_equip_cost_alternative(display.clone())
             }
             ironsmith_core::StaticAbilityPayload::ControlAttachedPermanent(display) => {
                 StaticAbility::control_attached_permanent(display.clone())
             }
-            ironsmith_core::StaticAbilityPayload::SetColors { filter, colors } => {
-                StaticAbility::set_colors(filter.clone(), *colors)
+            ironsmith_core::StaticAbilityPayload::SetColors { filter, colors, exclude_from_color_identity } => {
+                let mut ability = super::continuous::SetColorsForFilter::new(filter.clone(), *colors);
+                ability.exclude_from_color_identity = *exclude_from_color_identity;
+                StaticAbility::new(ability)
             }
             ironsmith_core::StaticAbilityPayload::AddColors { filter, colors } => {
                 StaticAbility::add_colors(filter.clone(), *colors)
@@ -1404,6 +1468,9 @@ impl StaticAbilityModelInterpreter {
             }
             ironsmith_core::StaticAbilityPayload::MaxCreaturesCanAttackYouEachCombat(maximum) => {
                 StaticAbility::max_attackers_can_attack_you_each_combat(*maximum)
+            }
+            ironsmith_core::StaticAbilityPayload::MaxCreaturesCanAttackSourceEachCombat(maximum) => {
+                StaticAbility::max_attackers_can_attack_source_each_combat(*maximum)
             }
             ironsmith_core::StaticAbilityPayload::MaxCreaturesCanBlockEachCombat(maximum) => {
                 StaticAbility::max_blockers_each_combat(*maximum)
@@ -1550,6 +1617,9 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::SetBasePower { filter, power } => {
                 StaticAbility::set_base_power(filter.clone(), *power)
             }
+            ironsmith_core::StaticAbilityPayload::SetBaseToughness { filter, toughness } => {
+                StaticAbility::set_base_toughness(filter.clone(), *toughness)
+            }
             ironsmith_core::StaticAbilityPayload::SourceCharacteristicsOfLastExiledCreatureCard {
                 filter,
                 retained_subtypes,
@@ -1629,11 +1699,27 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::BuybackCostReduction(amount) => {
                 StaticAbility::buyback_cost_reduction(*amount)
             }
-            ironsmith_core::StaticAbilityPayload::ChooseColorAsEnters { excluded, display } => {
-                StaticAbility::choose_color_as_enters(*excluded, display.clone())
+            ironsmith_core::StaticAbilityPayload::ChooseColorAsEnters {
+                excluded,
+                display,
+                count,
+            } => {
+                if *count > 1 {
+                    StaticAbility::choose_colors_as_enters(*count, display.clone())
+                } else {
+                    StaticAbility::choose_color_as_enters(*excluded, display.clone())
+                }
             }
-            ironsmith_core::StaticAbilityPayload::ChoosePlayerAsEnters { filter, display } => {
-                StaticAbility::choose_player_as_enters_matching(filter.clone(), display.clone())
+            ironsmith_core::StaticAbilityPayload::ChoosePlayerAsEnters {
+                filter,
+                display,
+                count,
+            } => {
+                if *count > 1 {
+                    StaticAbility::choose_players_as_enters(filter.clone(), *count, display.clone())
+                } else {
+                    StaticAbility::choose_player_as_enters_matching(filter.clone(), display.clone())
+                }
             }
             ironsmith_core::StaticAbilityPayload::NoteLifeTotalAsEnters(display) => {
                 StaticAbility::note_life_total_as_enters(display.clone())
@@ -1656,11 +1742,15 @@ impl StaticAbilityModelInterpreter {
                 display,
                 reveal_opponents_hands,
                 require_nonland_from_revealed_opponents,
+                opponent_also_chooses,
+                exclude_basic_land_names,
             } => StaticAbility::choose_card_name_as_enters_with_spec(
                 display.clone(),
                 super::ChooseCardNameAsEntersSpec {
                     reveal_opponents_hands: *reveal_opponents_hands,
                     require_nonland_from_revealed_opponents: *require_nonland_from_revealed_opponents,
+                    opponent_also_chooses: *opponent_also_chooses,
+                    exclude_basic_land_names: *exclude_basic_land_names,
                 },
             ),
             ironsmith_core::StaticAbilityPayload::ChooseCreatureTypeAsEnters(display) => {
@@ -1882,6 +1972,30 @@ impl StaticAbilityModelInterpreter {
             ironsmith_core::StaticAbilityPayload::PreventMatchingDamageWithFollowUp(spec) => {
                 StaticAbility::prevent_matching_damage_with_follow_up(spec.clone())
             }
+            ironsmith_core::StaticAbilityPayload::EventReplacementWithEffects {
+                event,
+                replacement_effects,
+                display,
+                optional,
+            } => StaticAbility::new(
+                super::EventReplacementWithEffects::new(
+                    event.clone(),
+                    replacement_effects.clone(),
+                    display.clone(),
+                )
+                .with_optional(*optional),
+            ),
+            ironsmith_core::StaticAbilityPayload::EventAmountReplacement {
+                event,
+                modifier,
+                optional,
+                display,
+            } => StaticAbility::new(super::EventAmountReplacement::new(
+                event.clone(),
+                *modifier,
+                *optional,
+                display.clone(),
+            )),
             ironsmith_core::StaticAbilityPayload::RedirectMatchingDamage(spec) => {
                 StaticAbility::redirect_matching_damage(spec.clone())
             }
@@ -2175,6 +2289,14 @@ impl StaticAbilityModelInterpreter {
                 ironsmith_core::LandwalkKind::AnyLand => StaticAbility::any_landwalk(),
                 ironsmith_core::LandwalkKind::NonbasicLand => StaticAbility::nonbasic_landwalk(),
                 ironsmith_core::LandwalkKind::ArtifactLand => StaticAbility::artifact_landwalk(),
+                ironsmith_core::LandwalkKind::LegendaryLand => StaticAbility::legendary_landwalk(),
+                ironsmith_core::LandwalkKind::SnowLand => StaticAbility::snow_any_landwalk(),
+                ironsmith_core::LandwalkKind::ChosenType { snow } => {
+                    StaticAbility::chosen_type_landwalk(*snow)
+                }
+                ironsmith_core::LandwalkKind::SacrificedLandTypes => {
+                    StaticAbility::sacrificed_land_types_landwalk()
+                }
             },
             ironsmith_core::StaticAbilityPayload::Bloodthirst(amount) => {
                 StaticAbility::bloodthirst(*amount)
@@ -2347,6 +2469,21 @@ impl StaticAbility {
         Self::from_model(CompiledStaticAbility::enchant(filter))
     }
 
+    /// A keyword granted to matching spells as they are cast (CR 601.2b).
+    pub fn grant_spell_keyword(
+        filter: crate::target::ObjectFilter,
+        keyword: ironsmith_core::GrantedSpellKeyword<crate::costs::Cost>,
+        set_quantifier_surface: Option<ironsmith_core::SetQuantifierSurface>,
+        display: impl Into<String>,
+    ) -> Self {
+        Self::from_model(CompiledStaticAbility::grant_spell_keyword(
+            filter,
+            keyword,
+            set_quantifier_surface,
+            display,
+        ))
+    }
+
     pub fn enchant_filter(&self) -> Option<&crate::object::AuraAttachmentFilter> {
         match &self.compiled_model()?.payload {
             ironsmith_core::StaticAbilityPayload::Enchant(filter) => Some(filter),
@@ -2373,6 +2510,94 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
 
     fn compiled_model(&self) -> Option<&CompiledStaticAbility> {
         Some(&self.model)
+    }
+
+    fn black_mana_may_be_paid_with_life(&self) -> bool {
+        self.leaf_static_ability()
+            .is_some_and(StaticAbility::black_mana_may_be_paid_with_life)
+    }
+
+    fn cant_be_countered(&self) -> bool {
+        self.leaf_static_ability()
+            .is_some_and(StaticAbility::cant_be_countered)
+    }
+
+    fn bands_with_other_filter(&self) -> Option<&crate::target::ObjectFilter> {
+        self.leaf_static_ability()?.bands_with_other_filter()
+    }
+
+    fn can_attack_with_attacking_group(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        attacking_creatures: &[ObjectId],
+    ) -> Option<bool> {
+        self.leaf_static_ability()?.can_attack_with_attacking_group(
+            game,
+            source,
+            controller,
+            attacking_creatures,
+        )
+    }
+
+    fn can_block_with_blocking_group(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        blocking_creatures: &[ObjectId],
+    ) -> Option<bool> {
+        self.leaf_static_ability()?
+            .can_block_with_blocking_group(game, source, blocking_creatures)
+    }
+
+    fn can_pay_attack_cost(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<bool> {
+        self.leaf_static_ability()?
+            .can_pay_attack_cost(game, source, controller)
+    }
+
+    fn generic_attack_mana_cost_for_source(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<u32> {
+        self.leaf_static_ability()?
+            .generic_attack_mana_cost_for_source(game, source, controller)
+    }
+
+    fn required_defending_player_card_type_for_unblockable(
+        &self,
+    ) -> Option<crate::types::CardType> {
+        self.leaf_static_ability()?
+            .required_defending_player_card_type_for_unblockable()
+    }
+
+    fn required_defending_player_card_types_for_unblockable(
+        &self,
+    ) -> Option<Vec<crate::types::CardType>> {
+        self.leaf_static_ability()?
+            .required_defending_player_card_types_for_unblockable()
+    }
+
+    fn max_creatures_can_attack_each_combat(&self) -> Option<usize> {
+        self.leaf_static_ability()?
+            .max_creatures_can_attack_each_combat()
+    }
+
+    fn max_creatures_can_attack_you_each_combat(&self) -> Option<usize> {
+        self.leaf_static_ability()?
+            .max_creatures_can_attack_you_each_combat()
+    }
+
+    fn max_creatures_can_block_each_combat(&self) -> Option<usize> {
+        self.leaf_static_ability()?
+            .max_creatures_can_block_each_combat()
     }
 
     fn intrinsic_starting_counter_rule(&self) -> Option<ironsmith_core::IntrinsicStartingCounter> {
@@ -2462,6 +2687,18 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         }
         if self.model.label == "Aftermath" {
             return "Aftermath".to_string();
+        }
+        // CR 601.2b: the typed grant reads as "<spells> have <keyword>".
+        if let ironsmith_core::StaticAbilityPayload::GrantSpellKeyword {
+            filter,
+            keyword,
+            set_quantifier_surface,
+        } = &self.model.payload
+        {
+            let (subject, singular) =
+                super::continuous::grant_subject_with_set_quantifier(filter, *set_quantifier_surface);
+            let verb = if singular { "has" } else { "have" };
+            return format!("{subject} {verb} {}.", keyword.display());
         }
         if let ironsmith_core::StaticAbilityPayload::Conditional { ability, .. } =
             &self.model.payload
@@ -2831,6 +3068,18 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         })
     }
 
+    fn skips_untap_step_for_player(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+        player: PlayerId,
+    ) -> bool {
+        self.leaf_static_ability().is_some_and(|ability| {
+            ability.skips_untap_step_for_player(game, source, controller, player)
+        })
+    }
+
     fn skips_extra_turn_for_player(
         &self,
         game: &GameState,
@@ -3108,6 +3357,18 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         }
     }
 
+    fn conditional_attack_requirement(
+        &self,
+    ) -> Option<(&crate::target::ObjectFilter, &crate::target::ObjectFilter)> {
+        match self.payload() {
+            ironsmith_core::StaticAbilityPayload::ConditionalAttackRequirement {
+                trigger,
+                required,
+            } => Some((trigger, required)),
+            _ => self.leaf_static_ability()?.conditional_attack_requirement(),
+        }
+    }
+
     fn legend_rule_exemption_filter(&self) -> Option<&crate::target::ObjectFilter> {
         match self.payload() {
             ironsmith_core::StaticAbilityPayload::LegendRuleDoesntApplyToController { filter } => {
@@ -3222,24 +3483,27 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
     }
 
     fn color_choice_as_enters(&self) -> Option<super::ChooseColorAsEntersSpec> {
-        let ironsmith_core::StaticAbilityPayload::ChooseColorAsEnters { excluded, .. } =
-            self.payload()
+        let ironsmith_core::StaticAbilityPayload::ChooseColorAsEnters {
+            excluded, count, ..
+        } = self.payload()
         else {
             return None;
         };
         Some(super::ChooseColorAsEntersSpec {
             excluded: *excluded,
+            count: (*count).max(1),
         })
     }
 
     fn player_choice_as_enters(&self) -> Option<super::ChoosePlayerAsEntersSpec> {
-        let ironsmith_core::StaticAbilityPayload::ChoosePlayerAsEnters { filter, .. } =
+        let ironsmith_core::StaticAbilityPayload::ChoosePlayerAsEnters { filter, count, .. } =
             self.payload()
         else {
             return None;
         };
         Some(super::ChoosePlayerAsEntersSpec {
             filter: filter.clone(),
+            count: (*count).max(1),
         })
     }
 
@@ -3264,6 +3528,8 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         let ironsmith_core::StaticAbilityPayload::ChooseCardNameAsEnters {
             reveal_opponents_hands,
             require_nonland_from_revealed_opponents,
+            opponent_also_chooses,
+            exclude_basic_land_names,
             ..
         } = self.payload()
         else {
@@ -3272,6 +3538,8 @@ impl StaticAbilityKind for StaticAbilityModelInterpreter {
         Some(super::ChooseCardNameAsEntersSpec {
             reveal_opponents_hands: *reveal_opponents_hands,
             require_nonland_from_revealed_opponents: *require_nonland_from_revealed_opponents,
+            opponent_also_chooses: *opponent_also_chooses,
+            exclude_basic_land_names: *exclude_basic_land_names,
         })
     }
 
@@ -3652,3 +3920,7 @@ mod tests {
         assert_eq!(mandatory.optional_additional_votes_while_voting(), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "model_interpreter_integration_tests.rs"]
+mod integration_tests;

@@ -93,6 +93,9 @@ pub struct ModalSpec {
     pub distinct_player_targets_per_mode: bool,
     /// Alternate range enabled by a later optional-cost choice under CR 601.4.
     pub conditional_mode_range: Option<crate::effect::ConditionalModeRange>,
+    /// The players one of whom chooses the modes while the spell is cast,
+    /// rather than its caster ("An opponent chooses one —", CR 700.2).
+    pub cast_chooser: Option<crate::target::PlayerFilter>,
 }
 
 /// The supported runtime extension categories for effects.
@@ -283,6 +286,12 @@ impl std::fmt::Debug for PublishedEffectOutputs {
 }
 
 impl PublishedEffectOutputs {
+    /// Read this producer's instruction aggregate without replaying it or
+    /// borrowing an alternative participant/shared projection.
+    pub(crate) fn instruction_outcome(&self) -> &EffectOutcome {
+        &self.0.outcome
+    }
+
     pub(crate) fn retain(outputs: CompletedEffectOutputs) -> Self {
         Self(std::sync::Arc::new(outputs))
     }
@@ -301,6 +310,50 @@ impl PublishedEffectOutputs {
                 retained.push(owner);
             }
         }
+    }
+}
+
+/// Actual completed children retained by a resumable action. Clones share the
+/// same producer handles for native checkpoints; this carrier never executes
+/// an action, reconstructs a receipt or appends chronological observations.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CompletedActionPrefix {
+    published: Vec<PublishedEffectOutputs>,
+}
+
+impl PartialEq for CompletedActionPrefix {
+    fn eq(&self, other: &Self) -> bool {
+        self.published.len() == other.published.len()
+            && self
+                .published
+                .iter()
+                .zip(&other.published)
+                .all(|(left, right)| left.same_completion(right))
+    }
+}
+impl Eq for CompletedActionPrefix {}
+
+impl CompletedActionPrefix {
+    /// Move completed producer handles across phases of the same action.
+    /// Existing aliases keep one identity; no aggregate history is replayed.
+    pub(crate) fn absorb(&mut self, previous: &mut Self) {
+        PublishedEffectOutputs::append_distinct(&mut self.published, previous.take_published());
+    }
+
+    pub(crate) fn retain_completed(
+        &mut self,
+        outputs: impl IntoIterator<Item = CompletedEffectOutputs>,
+    ) {
+        PublishedEffectOutputs::append_distinct(
+            &mut self.published,
+            outputs.into_iter().map(PublishedEffectOutputs::retain),
+        );
+    }
+
+    /// Transfer producer references to the enclosing completed action without
+    /// adding their already-published events to its aggregate again.
+    pub(crate) fn take_published(&mut self) -> Vec<PublishedEffectOutputs> {
+        std::mem::take(&mut self.published)
     }
 }
 

@@ -16,9 +16,21 @@ use crate::value_model::{PriorEffectAction, Restriction, Value};
 use crate::{Color, ColorSet, CounterType, SourceReferenceSurface};
 
 mod ascend;
+mod chosen_counter_kind;
 mod mana_damage_and_control;
+mod player_option_choice;
+mod reselect_attack;
+mod friend_or_foe;
+mod tie_break;
+mod attraction_visits;
+pub use attraction_visits::*;
 pub use ascend::*;
+pub use friend_or_foe::*;
+pub use chosen_counter_kind::*;
 pub use mana_damage_and_control::*;
+pub use player_option_choice::*;
+pub use reselect_attack::*;
+pub use tie_break::*;
 
 /// Identifier for an effect within an effect sequence.
 ///
@@ -38,6 +50,10 @@ impl EffectId {
 
     /// The unique retained counter-removal producer of one activation.
     pub const ACTIVATION_COUNTER_COST: Self = Self(u32::MAX - 2);
+
+    /// Spell copies a copy-count replacement added beyond the instruction's
+    /// own number ("plus an additional time"), for their new-target choice.
+    pub const ADDITIONAL_COPIES: Self = Self(u32::MAX - 3);
 }
 
 impl From<u32> for EffectId {
@@ -477,7 +493,10 @@ pub struct GrantPlayTaggedSurface {
     /// `GrantPlayTaggedDuration::ForAsLongAsYouControlSource`.
     pub control_source: Option<SourceReferenceSurface>,
     /// Authored source noun; the corresponding duration carries the semantics.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub battlefield_source: Option<SourceReferenceSurface>,
     /// Authored source noun in "until you exile another card with this ...".
     /// The event-bounded lifetime itself is carried by
@@ -706,7 +725,9 @@ pub enum DelayedTriggerSpec {
         during_turn: Option<PlayerFilter>,
     },
     ControlChanged(crate::trigger_model::ControlChangeTrigger),
-    PermanentBecomesUntapped { filter: ObjectFilter },
+    PermanentBecomesUntapped {
+        filter: ObjectFilter,
+    },
     PlayerDiscardsCard {
         player: PlayerFilter,
         filter: Option<ObjectFilter>,
@@ -720,6 +741,27 @@ pub enum DelayedTriggerSpec {
         attacker: PlayerFilter,
         defender: PlayerFilter,
         grouping: crate::trigger_model::PlayerAttackGrouping,
+    },
+    /// Append-only. "Whenever [object] deals damage" for the registration's
+    /// lifetime, combat or noncombat alike (CR 120.1). A registration that
+    /// watches a captured object names it with a `source` filter.
+    DealsDamage { source: ObjectFilter },
+    /// Append-only. "Whenever [object] is dealt damage by [source]" for the
+    /// registration's lifetime (CR 120.1); a watched recipient is `source`.
+    DealsDamageTo {
+        source: ObjectFilter,
+        target: ObjectFilter,
+    },
+    /// Append-only. "Whenever [creature] attacks alone" for the
+    /// registration's lifetime: the only creature declared as an attacker
+    /// (CR 506.5).
+    AttacksAlone(ObjectFilter),
+    /// "Whenever damage [from a <quality> source] is prevented this way":
+    /// the delayed ability is linked to the prevention shield created just
+    /// before it was registered (CR 603.7, 615.5); the filter qualifies the
+    /// prevented damage's source.
+    DamagePreventedThisWay {
+        source_filter: Option<ObjectFilter>,
     },
 }
 
@@ -1478,7 +1520,10 @@ impl TapEffect {
     }
 
     pub fn with_spec(target: ChooseSpec) -> Self {
-        Self { target, actor: None }
+        Self {
+            target,
+            actor: None,
+        }
     }
 
     pub fn target(target: ChooseSpec) -> Self {
@@ -1527,7 +1572,10 @@ impl UntapEffect {
     }
 
     pub fn with_spec(target: ChooseSpec) -> Self {
-        Self { target, actor: None }
+        Self {
+            target,
+            actor: None,
+        }
     }
 
     pub fn target(target: ChooseSpec) -> Self {
@@ -1556,7 +1604,10 @@ impl UntapEffect {
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct PutCountersEffect {
     /// Only this placement is capped; other abilities may exceed the total.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub maximum_total: Option<u32>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub completion_action: Option<crate::event_model::KeywordActionKind>,
@@ -1996,6 +2047,12 @@ pub struct ChooseModeEffect<E> {
     /// the token mode is used.
     #[cfg_attr(feature = "serde", serde(default))]
     pub endure: bool,
+    /// The players one of whom chooses the modes while the spell is cast
+    /// ("An opponent chooses one —", CR 700.2, 601.2b). The caster picks which
+    /// one when several are eligible; that player is the spell's chosen
+    /// player, so its modes' "that player" names them.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub cast_chooser: Option<PlayerFilter>,
 }
 
 impl<E> ChooseModeEffect<E> {
@@ -2025,7 +2082,14 @@ impl<E> ChooseModeEffect<E> {
             conditional_mode_range: None,
             presentation_label: None,
             endure: false,
+            cast_chooser: None,
         }
+    }
+
+    /// One of these players chooses the modes as the spell is cast.
+    pub fn with_cast_chooser(mut self, chooser: PlayerFilter) -> Self {
+        self.cast_chooser = Some(chooser);
+        self
     }
 
     /// Mark this two-mode choice as the endure keyword action (CR 701.63a).
@@ -2375,12 +2439,17 @@ pub struct LookAtObjectsEffect {
     pub viewer: PlayerFilter,
     pub subject: PlayerFilter,
     /// Create a durable private entitlement without requiring an immediate look.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "immediate_object_inspection"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "immediate_object_inspection")
+    )]
     pub permit_while_exiled: bool,
 }
 
 #[cfg(feature = "serde")]
-fn immediate_object_inspection(permit: &bool) -> bool { !*permit }
+fn immediate_object_inspection(permit: &bool) -> bool {
+    !*permit
+}
 
 impl LookAtObjectsEffect {
     pub fn new(filter: ObjectFilter, viewer: PlayerFilter, subject: PlayerFilter) -> Self {
@@ -2392,7 +2461,10 @@ impl LookAtObjectsEffect {
         }
     }
 
-    pub fn permit_while_exiled(mut self) -> Self { self.permit_while_exiled = true; self }
+    pub fn permit_while_exiled(mut self) -> Self {
+        self.permit_while_exiled = true;
+        self
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -3166,14 +3238,25 @@ pub struct MoveToZoneEffect {
     pub transfer_exiled_with_source_links: bool,
     /// One authored move can send disjoint captured groups to different zones.
     /// Membership is bound before the native batch prepares any replacement.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub tagged_destinations: Vec<(crate::tag::TagKey, crate::zone::Zone)>,
+    /// "put ... onto the battlefield blocking that creature" (Aetherplasm):
+    /// the attacker the entering creature blocks (CR 509.4; it was never
+    /// declared as a blocker). Appended with a serde default.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub enters_blocking: Option<ChooseSpec>,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub enum MoveToZoneAttackTargetMode {
     PlayerOrPlaneswalkerControlledBy(PlayerFilter),
+    /// "tapped and attacking that opponent" (Kaalia of the Vast): the named
+    /// player itself (CR 508.4). Appended to preserve serialized ordinals.
+    Player(PlayerFilter),
 }
 
 impl MoveToZoneEffect {
@@ -3201,7 +3284,14 @@ impl MoveToZoneEffect {
             enters_face_down: false,
             enters_transformed: false,
             transfer_exiled_with_source_links: false,
+            enters_blocking: None,
         }
+    }
+
+    /// The entering creature blocks the attacker `attacker` names.
+    pub fn blocking(mut self, attacker: ChooseSpec) -> Self {
+        self.enters_blocking = Some(attacker);
+        self
     }
 
     pub fn to_top_of_library(target: ChooseSpec) -> Self {
@@ -3312,6 +3402,10 @@ impl MoveToZoneEffect {
         )
     }
 
+    pub fn attacking_player_only(self, player: PlayerFilter) -> Self {
+        self.attack_target_mode(MoveToZoneAttackTargetMode::Player(player))
+    }
+
     pub fn face_down(mut self) -> Self {
         self.enters_face_down = true;
         self
@@ -3399,7 +3493,10 @@ impl<E> ExecuteWithSourceEffect<E> {
 pub struct RetainManaUntilEndOfTurnEffect {
     pub player: PlayerFilter,
     /// "you don't lose unspent red mana": only mana of this color is kept.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub color: Option<crate::color::Color>,
 }
 
@@ -3596,6 +3693,12 @@ pub struct ChooseObjectsEffect {
     pub description: String,
     pub is_search: bool,
     pub reveal: bool,
+    /// Present a choice from a previously revealed pool without performing
+    /// another rules reveal. Authored reveal clauses compose the Reveal owner.
+    /// None occurs only in legacy serialized selections. It is unambiguous
+    /// when reveal is false; public disclosure requires an explicit policy.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub reveal_is_presentation_only: Option<bool>,
     pub search_mode: SearchSelectionMode,
     /// Authored reference used by the reveal clause for the searched set.
     /// This is separate from `search_result_reference_surface` because Oracle
@@ -3635,6 +3738,7 @@ impl ChooseObjectsEffect {
             description: "Choose".to_string(),
             is_search: false,
             reveal: false,
+            reveal_is_presentation_only: Some(false),
             search_mode: SearchSelectionMode::Exact,
             search_reveal_reference_surface: None,
             search_result_reference_surface: None,
@@ -3730,6 +3834,15 @@ impl ChooseObjectsEffect {
 
     pub fn reveal(mut self) -> Self {
         self.reveal = true;
+        self.reveal_is_presentation_only = Some(false);
+        self
+    }
+
+    /// Keep an already revealed pool public during selection. This does not
+    /// create a second Reveal action or its observations.
+    pub fn present_revealed_choices(mut self) -> Self {
+        self.reveal = true;
+        self.reveal_is_presentation_only = Some(true);
         self
     }
 
@@ -3858,8 +3971,14 @@ impl BecomeBasicLandTypeChoiceEffect {
         }
     }
 
-    pub fn with_options(mut self, allowed_subtypes: Vec<crate::types::Subtype>, preserve_other_types: bool) -> Self {
-        self.allowed_subtypes = allowed_subtypes; self.preserve_other_types = preserve_other_types; self
+    pub fn with_options(
+        mut self,
+        allowed_subtypes: Vec<crate::types::Subtype>,
+        preserve_other_types: bool,
+    ) -> Self {
+        self.allowed_subtypes = allowed_subtypes;
+        self.preserve_other_types = preserve_other_types;
+        self
     }
 
     pub fn with_chooser(mut self, chooser: PlayerFilter) -> Self {
@@ -3942,6 +4061,9 @@ pub struct PayManaEffect {
     /// An inclusive upper bound for printed X. The paying player chooses X
     /// from the affordable values between zero and this resolved maximum.
     pub x_maximum: Option<Value>,
+    /// Choose a new payment amount, independently of the enclosing spell's X.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub independent_x_choice: bool,
 }
 
 impl PayManaEffect {
@@ -3951,11 +4073,17 @@ impl PayManaEffect {
             player,
             x_value: None,
             x_maximum: None,
+            independent_x_choice: false,
         }
     }
 
     pub fn with_x_value(mut self, x_value: Value) -> Self {
         self.x_value = Some(x_value);
+        self
+    }
+
+    pub fn with_independent_x_choice(mut self) -> Self {
+        self.independent_x_choice = true;
         self
     }
 
@@ -3975,7 +4103,9 @@ pub struct EmpowerJaceEffect {
 
 impl EmpowerJaceEffect {
     pub fn new(amount: impl Into<Value>) -> Self {
-        Self { amount: amount.into() }
+        Self {
+            amount: amount.into(),
+        }
     }
 }
 
@@ -3985,7 +4115,11 @@ pub struct CollectEvidenceEffect {
     pub amount: Value,
 }
 impl CollectEvidenceEffect {
-    pub fn new(amount: impl Into<Value>) -> Self { Self { amount: amount.into() } }
+    pub fn new(amount: impl Into<Value>) -> Self {
+        Self {
+            amount: amount.into(),
+        }
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -4347,11 +4481,74 @@ impl AmplifyEffect {
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct DevourEffect {
     pub multiplier: u32,
+    /// CR 702.82c "Devour [quality] N": the permanents that may be devoured.
+    /// `None` is the plain keyword's "creatures".
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub quality: Option<ObjectFilter>,
+    /// "Devour X, where X is the number of creatures devoured this way"
+    /// (Thromok the Insatiable): each devoured permanent is worth X counters,
+    /// so the source gets the devoured count squared.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "std::ops::Not::not")
+    )]
+    pub multiplier_is_devoured_count: bool,
 }
 
 impl DevourEffect {
     pub fn new(multiplier: u32) -> Self {
-        Self { multiplier }
+        Self {
+            multiplier,
+            quality: None,
+            multiplier_is_devoured_count: false,
+        }
+    }
+
+    pub fn with_quality(multiplier: u32, quality: ObjectFilter) -> Self {
+        Self {
+            multiplier,
+            quality: Some(quality),
+            multiplier_is_devoured_count: false,
+        }
+    }
+
+    pub fn devoured_count_squared() -> Self {
+        Self {
+            multiplier: 1,
+            quality: None,
+            multiplier_is_devoured_count: true,
+        }
+    }
+
+    /// The keyword's printed surface ("Devour 2", "Devour artifact 1",
+    /// "Devour X, where X is the number of creatures devoured this way").
+    pub fn keyword_text(&self) -> String {
+        if self.multiplier_is_devoured_count {
+            return "Devour X, where X is the number of creatures devoured this way".to_string();
+        }
+        let Some(quality) = &self.quality else {
+            return format!("Devour {}", self.multiplier);
+        };
+        let word = if let Some(subtype) = quality.subtypes.first() {
+            subtype.to_string()
+        } else if let Some(card_type) = quality.card_types.first() {
+            card_type.to_string().to_ascii_lowercase()
+        } else {
+            "permanent".to_string()
+        };
+        format!("Devour {word} {}", self.multiplier)
+    }
+
+    /// The +1/+1 counters the source gets for `devoured` permanents.
+    pub fn counters_for(&self, devoured: u32) -> u32 {
+        if self.multiplier_is_devoured_count {
+            devoured.saturating_mul(devoured)
+        } else {
+            devoured.saturating_mul(self.multiplier)
+        }
     }
 }
 
@@ -4500,6 +4697,37 @@ impl GoadEffect {
     }
 }
 
+/// "Target creature attacks <player> this turn if able" (CR 508.1d): a
+/// requirement, for this turn only, that each affected creature attacks the
+/// resolved player if able. It does not require the creature to attack at
+/// all when it can't attack that player.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, TagKeyWalk)]
+pub struct MustAttackPlayerThisTurnEffect {
+    pub target: ChooseSpec,
+    pub player: ChooseSpec,
+    /// "attacks during its controller's next combat phase if able" (Trench
+    /// Behemoth): the requirement names no player and waits for the
+    /// creature's controller's next combat phase; `player` is unused.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub controllers_next_combat: bool,
+}
+
+impl MustAttackPlayerThisTurnEffect {
+    pub fn new(target: ChooseSpec, player: ChooseSpec) -> Self {
+        Self {
+            target,
+            player,
+            controllers_next_combat: false,
+        }
+    }
+
+    pub fn with_controllers_next_combat(mut self, controllers_next_combat: bool) -> Self {
+        self.controllers_next_combat = controllers_next_combat;
+        self
+    }
+}
+
 /// Mark an exiled card as plotted. This does not perform the plot special
 /// action or emit its keyword-action event.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -4535,11 +4763,24 @@ impl SuspectEffect {
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct PrepareEffect {
     pub target: ChooseSpec,
+    /// "becomes unprepared": remove the prepared designation instead.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "std::ops::Not::not"))]
+    pub unprepare: bool,
 }
 
 impl PrepareEffect {
     pub fn new(target: ChooseSpec) -> Self {
-        Self { target }
+        Self {
+            target,
+            unprepare: false,
+        }
+    }
+
+    pub fn unprepare(target: ChooseSpec) -> Self {
+        Self {
+            target,
+            unprepare: true,
+        }
     }
 }
 
@@ -4682,7 +4923,9 @@ impl ClashEffect {
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct EarthbendEffect {
     pub target: ChooseSpec,
-    pub counters: u32,
+    /// Number of +1/+1 counters. Dynamic amounts ("earthbend X, where X is
+    /// ...") are computed once as the instruction resolves (CR 107.3a).
+    pub counters: Value,
     /// Awaken's land animation (CR 702.113a): the land also becomes an
     /// Elemental, and neither earthbend's return trigger nor its keyword
     /// action applies.
@@ -4691,20 +4934,20 @@ pub struct EarthbendEffect {
 }
 
 impl EarthbendEffect {
-    pub fn new(target: ChooseSpec, counters: u32) -> Self {
+    pub fn new(target: ChooseSpec, counters: impl Into<Value>) -> Self {
         Self {
             target,
-            counters,
+            counters: counters.into(),
             awaken: false,
         }
     }
 
     /// Awaken N: put N +1/+1 counters on target land you control, which
     /// becomes a 0/0 Elemental creature with haste (CR 702.113a).
-    pub fn awaken(target: ChooseSpec, counters: u32) -> Self {
+    pub fn awaken(target: ChooseSpec, counters: impl Into<Value>) -> Self {
         Self {
             target,
-            counters,
+            counters: counters.into(),
             awaken: true,
         }
     }
@@ -4872,7 +5115,10 @@ pub struct CreateTokenEffect<D> {
     pub token: D,
     /// Authored word roles retained by the creating instruction. Historical
     /// absence is unknown evidence, not an implicit all-authored declaration.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
     pub text_roles: Option<crate::TokenTextRoles>,
     pub count: Value,
     pub controller: PlayerFilter,
@@ -4917,25 +5163,43 @@ impl<D: std::fmt::Debug> std::fmt::Debug for CreateTokenEffect<D> {
         debug.field("token", &self.token);
         // Unstamped native trigger identities still hash effect Debug. Keep
         // absent historical evidence byte-identical to the old field order.
-        if self.text_roles.is_some() { debug.field("text_roles", &self.text_roles); }
-        debug.field("count", &self.count)
+        if self.text_roles.is_some() {
+            debug.field("text_roles", &self.text_roles);
+        }
+        debug
+            .field("count", &self.count)
             .field("controller", &self.controller)
             .field("controller_target", &self.controller_target)
             .field("use_source_chosen_color", &self.use_source_chosen_color)
-            .field("use_source_chosen_creature_type", &self.use_source_chosen_creature_type)
+            .field(
+                "use_source_chosen_creature_type",
+                &self.use_source_chosen_creature_type,
+            )
             .field("actor_surface_explicit", &self.actor_surface_explicit)
-            .field("suppress_aura_attachment_choice", &self.suppress_aura_attachment_choice)
+            .field(
+                "suppress_aura_attachment_choice",
+                &self.suppress_aura_attachment_choice,
+            )
             .field("ability_presentation", &self.ability_presentation)
             .field("enters_tapped", &self.enters_tapped)
             .field("enters_attacking", &self.enters_attacking)
             .field("attack_target_mode", &self.attack_target_mode)
             .field("enters_blocking", &self.enters_blocking)
             .field("exile_at_end_of_combat", &self.exile_at_end_of_combat)
-            .field("sacrifice_at_end_of_combat", &self.sacrifice_at_end_of_combat)
-            .field("sacrifice_at_next_end_step", &self.sacrifice_at_next_end_step)
+            .field(
+                "sacrifice_at_end_of_combat",
+                &self.sacrifice_at_end_of_combat,
+            )
+            .field(
+                "sacrifice_at_next_end_step",
+                &self.sacrifice_at_next_end_step,
+            )
             .field("exile_at_next_end_step", &self.exile_at_next_end_step)
             .field("next_end_step_player", &self.next_end_step_player)
-            .field("link_source_exiled_this_resolution", &self.link_source_exiled_this_resolution)
+            .field(
+                "link_source_exiled_this_resolution",
+                &self.link_source_exiled_this_resolution,
+            )
             .finish()
     }
 }
@@ -5187,6 +5451,12 @@ pub struct CreateTokenCopyEffect<A> {
     pub added_card_types: Vec<CardType>,
     pub added_subtypes: Vec<Subtype>,
     pub removed_supertypes: Vec<Supertype>,
+    /// CR 707.9b copy exception "except it's legendary": added supertypes.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub added_supertypes: Vec<Supertype>,
+    /// CR 707.9b copy exception "except its name is X" / "named X".
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub set_name: Option<String>,
     pub set_base_power_toughness: Option<(i32, i32)>,
     /// Dynamic copiable base power/toughness values evaluated as the token is
     /// created. This is distinct from a later continuous-effect modification:
@@ -5229,6 +5499,8 @@ impl<A> CreateTokenCopyEffect<A> {
             added_card_types: Vec::new(),
             added_subtypes: Vec::new(),
             removed_supertypes: Vec::new(),
+            added_supertypes: Vec::new(),
+            set_name: None,
             set_base_power_toughness: None,
             set_base_power_toughness_value: None,
             starting_loyalty: None,
@@ -5460,7 +5732,12 @@ pub struct GrantNextSpellAbilityEffect<A> {
 
 impl<A> GrantNextSpellAbilityEffect<A> {
     pub fn new(player: PlayerFilter, filter: ObjectFilter, ability: A) -> Self {
-        Self { player, filter, ability, mode: NextSpellGrantMode::Ability }
+        Self {
+            player,
+            filter,
+            ability,
+            mode: NextSpellGrantMode::Ability,
+        }
     }
 
     pub fn with_mode(mut self, mode: NextSpellGrantMode) -> Self {
@@ -5532,7 +5809,10 @@ pub struct ExileEffect {
     /// Looking at an object in its earlier zone does not by itself authorize
     /// inspecting this face-down exile incarnation. New paired hand-exile
     /// producers use explicit static entitlements rather than chooser memory.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "exile_keeps_prior_zone_viewers"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "exile_keeps_prior_zone_viewers")
+    )]
     pub exclude_prior_zone_viewers: bool,
     /// The exiled card grants the source permanent's current controller
     /// permission to look at it (for example, CR 702.75a Hideaway).
@@ -5545,7 +5825,9 @@ pub struct ExileEffect {
 }
 
 #[cfg(feature = "serde")]
-fn exile_keeps_prior_zone_viewers(exclude: &bool) -> bool { !*exclude }
+fn exile_keeps_prior_zone_viewers(exclude: &bool) -> bool {
+    !*exclude
+}
 
 impl ExileEffect {
     pub fn with_spec(spec: ChooseSpec) -> Self {
@@ -6384,17 +6666,41 @@ pub struct ChooseNumberEffect {
     pub max: Option<u32>,
     /// Source-owned entry/reselection choices survive this resolution. Local
     /// numeric producers remain bound by their exact execution effect id.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "number_choice_is_local"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "number_choice_is_local")
+    )]
     pub source_owned: bool,
 }
-fn number_choice_is_local(source_owned: &bool) -> bool { !*source_owned }
+fn number_choice_is_local(source_owned: &bool) -> bool {
+    !*source_owned
+}
 impl ChooseNumberEffect {
-    pub fn new(chooser: PlayerFilter, min: u32, max: u32) -> Self { Self { chooser, min, max: Some(max), source_owned: false } }
-    pub fn unbounded(chooser: PlayerFilter) -> Self { Self { chooser, min: 0, max: None, source_owned: false } }
-    pub fn with_source_retention(mut self) -> Self { self.source_owned = true; self }
+    pub fn new(chooser: PlayerFilter, min: u32, max: u32) -> Self {
+        Self {
+            chooser,
+            min,
+            max: Some(max),
+            source_owned: false,
+        }
+    }
+    pub fn unbounded(chooser: PlayerFilter) -> Self {
+        Self {
+            chooser,
+            min: 0,
+            max: None,
+            source_owned: false,
+        }
+    }
+    pub fn with_source_retention(mut self) -> Self {
+        self.source_owned = true;
+        self
+    }
 }
 
 /// One CR702.60 reveal/cast/remainder resolution transaction.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
-pub struct RippleEffect { pub amount: u32 }
+pub struct RippleEffect {
+    pub amount: u32,
+}

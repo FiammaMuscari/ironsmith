@@ -1870,6 +1870,18 @@ impl CardDefinitionBuilder {
                     crate::static_abilities::LandwalkKind::ArtifactLand => {
                         StaticAbility::artifact_landwalk()
                     }
+                    crate::static_abilities::LandwalkKind::LegendaryLand => {
+                        StaticAbility::legendary_landwalk()
+                    }
+                    crate::static_abilities::LandwalkKind::SnowLand => {
+                        StaticAbility::snow_any_landwalk()
+                    }
+                    crate::static_abilities::LandwalkKind::ChosenType { snow } => {
+                        StaticAbility::chosen_type_landwalk(snow)
+                    }
+                    crate::static_abilities::LandwalkKind::SacrificedLandTypes => {
+                        StaticAbility::sacrificed_land_types_landwalk()
+                    }
                 };
                 self.with_ability(Ability::static_ability(ability))
             }
@@ -4365,6 +4377,7 @@ impl CardDefinitionBuilder {
     pub fn flashback(mut self, cost: ManaCost) -> Self {
         self.alternative_casts
             .push(AlternativeCastingMethod::Flashback {
+                x_minimum: 0,
                 total_cost: TotalCost::mana(cost),
             });
         self
@@ -4849,7 +4862,7 @@ impl CardDefinitionBuilder {
         // mana-derived base color unchanged; gameplay applies the ability.
         for ability in &self.abilities {
             if let crate::ability::AbilityKind::Static(ability) = &ability.kind
-                && let Some(colors) = ability.characteristic_defining_colors()
+                && let Some(colors) = ability.color_identity_contribution()
             {
                 card.rules_text_color_identity = card.rules_text_color_identity.union(colors);
             }

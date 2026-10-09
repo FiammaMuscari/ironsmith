@@ -33,7 +33,9 @@ pub(crate) use player_counter_placement::execute_player_counter_placement;
 pub(crate) use player_counter_placement::execute_player_counter_placement_with_outputs;
 pub(crate) use player_counter_placement::prepare_player_counter_instruction;
 pub use proliferate::ProliferateEffect;
-pub use put_counter_of_chosen_kind::PutCounterOfChosenKindEffect;
+pub use put_counter_of_chosen_kind::{
+    PutCounterOfChosenKindEffect, PutCounterOfKindChosenFromEffect,
+};
 pub use put_counters::PutCountersEffect;
 pub use remove_any_counters_among::RemoveAnyCountersAmongEffect;
 pub use remove_any_counters_among::cost_display as remove_any_counters_among_cost_display;
@@ -130,12 +132,14 @@ pub(crate) use prepared_placement::{
 };
 
 mod placement;
-pub(crate) use placement::execute_counter_removal_cost_batch;
 pub(crate) use placement::{
     execute_counter_batch_with_outputs, execute_counter_placement_with_outputs,
     execute_counter_removal_cost, execute_counter_removal_cost_with_outputs,
     execute_counter_removal_with_outputs, execute_player_counter_removal_with_outputs,
     prepare_counter_removal_cost,
+};
+pub(crate) use placement::{
+    execute_counter_removal_cost_batch, execute_counter_removal_cost_batch_with_outputs,
 };
 
 /// Commit one transfer budget. Live transfers have independently replaceable
