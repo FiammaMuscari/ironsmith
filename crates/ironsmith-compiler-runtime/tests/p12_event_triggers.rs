@@ -15,10 +15,11 @@ fn cast_or_cycle_trigger_functions_from_the_stack_and_after_cycling() {
                 .iter()
                 .find(|ability| matches!(ability.kind, AbilityKind::Triggered(_)))
                 .expect("cast-or-cycle trigger");
-            // CR 601.2i (the spell on the stack) and CR 702.29c (the cycled
-            // card) are both observed; the union keeps either arm live.
+            // Casting observes the spell on the stack. Cycling observes the
+            // discarded card's captured hand state, independent of where the
+            // discard ultimately put it (including replacement destinations).
             assert!(trigger.functional_zones.contains(&Zone::Stack), "{name}");
-            assert!(trigger.functional_zones.contains(&Zone::Graveyard), "{name}");
+            assert!(trigger.functional_zones.contains(&Zone::Hand), "{name}");
             assert!(
                 support::effects(&definition)
                     .iter()

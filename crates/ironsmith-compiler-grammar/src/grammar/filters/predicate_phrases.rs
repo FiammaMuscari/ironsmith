@@ -885,6 +885,9 @@ fn parse_triggering_object_keyword_predicate(tokens: &[OwnedLexToken]) -> Option
     let mut filter = ObjectFilter::default();
     apply_filter_keyword_constraint(&mut filter, constraint, false);
     filter.set_trailing_candidate_ability_condition_surface(true);
+    filter.set_demonstrative_antecedent_surface(
+        demonstrative_antecedent_surface(relation.subject_clause.tokens()),
+    );
     Some(PredicateAst::ItMatches(filter))
 }
 
@@ -2552,6 +2555,10 @@ fn parse_player_controls_zero_quantity_predicate(
     }
     let result = parse_object_filter(object_clause.tokens(), false).map(|mut filter| {
         filter.controller = Some(controller);
+        if player == PlayerAst::That && filter.other {
+            filter.other = false;
+            filter = filter.not_tagged(crate::tag::CompilerReferenceTag::It.bind());
+        }
         if tagged_neither {
             filter = filter.match_tagged(
                 crate::tag::CompilerReferenceTag::It.bind(),
@@ -2564,6 +2571,9 @@ fn parse_player_controls_zero_quantity_predicate(
 }
 
 fn zero_control_subject_clause(clause: LexedClause<'_>) -> Option<(PlayerAst, PlayerFilter)> {
+    if surface::exact_any(clause, &[&["that", "player"], &["that", "opponent"]]) {
+        return Some((PlayerAst::That, PlayerFilter::IteratedPlayer));
+    }
     if surface::exact(clause, &["you"]) {
         return Some((PlayerAst::You, PlayerFilter::You));
     }
@@ -5081,6 +5091,7 @@ fn is_you_both_own_and_clause(clause: LexedClause<'_>) -> bool {
 
 fn parse_completed_die_result_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
     let words = crate::lexer::token_word_refs(tokens);
+    let triggering_roll = words.starts_with(&["you", "rolled"]);
     let (grouped, number) = if let Some(rest) = words
         .strip_prefix(&["any", "of", "those", "results", "was"])
         .or_else(|| words.strip_prefix(&["any", "of", "those", "results", "were"]))
@@ -5090,6 +5101,7 @@ fn parse_completed_die_result_predicate(tokens: &[OwnedLexToken]) -> Option<Pred
         .strip_prefix(&["the", "roll", "was"])
         .or_else(|| words.strip_prefix(&["the", "result", "is"]))
         .or_else(|| words.strip_prefix(&["the", "result", "was"]))
+        .or_else(|| words.strip_prefix(&["you", "rolled"]))
     {
         (false, rest)
     } else {
@@ -5121,6 +5133,12 @@ fn parse_completed_die_result_predicate(tokens: &[OwnedLexToken]) -> Option<Pred
             left: Value::EventValue(crate::effect::EventValueSpec::DieResultsAtLeast(value)),
             operator: crate::effect::ValueComparisonOperator::GreaterThan,
             right: Value::Fixed(0),
+        }
+    } else if triggering_roll {
+        PredicateAst::ValueComparison {
+            left: Value::EventValue(crate::effect::EventValueSpec::DieResult),
+            operator,
+            right: Value::Fixed(value),
         }
     } else {
         PredicateAst::ValueComparison {

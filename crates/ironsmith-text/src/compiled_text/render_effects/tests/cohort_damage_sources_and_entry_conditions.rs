@@ -14,8 +14,9 @@ fn creature(name: &str, power: i32, toughness: i32, text: &str) -> crate::cards:
 
 fn entered(source: ObjectId) -> crate::triggers::TriggerEvent {
     crate::triggers::TriggerEvent::new_with_provenance(
-        crate::events::zones::ZoneChangeEvent::with_cause(
+        crate::events::zones::ZoneChangeEvent::with_results(
             source,
+            vec![source],
             Zone::Stack,
             Zone::Battlefield,
             crate::events::cause::EventCause::effect(),

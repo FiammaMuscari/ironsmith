@@ -536,7 +536,7 @@ pub(super) fn rewrite_conditional_vehicle_type_identity_lowers_as_static_with_co
             "Phoenix Fleet Airship",
             "As long as you control eight or more permanents named Phoenix Fleet Airship, this Vehicle is an artifact creature.",
             &["Phoenix Fleet Airship", "comparison: GreaterThanOrEqual"][..],
-            true,
+            false,
         ),
     ] {
         let (compiled, loss) = crate::parse_loss::capture(|| {
@@ -569,13 +569,13 @@ pub(super) fn rewrite_conditional_vehicle_type_identity_lowers_as_static_with_co
                 else {
                     return None;
                 };
-                let StaticAbilityPayload::SetCardTypes { filter, card_types } = &ability.payload
+                let StaticAbilityPayload::AddCardTypes { filter, card_types } = &ability.payload
                 else {
                     return None;
                 };
                 Some((filter, card_types, condition))
             })
-            .unwrap_or_else(|| panic!("{name}: expected conditioned SetCardTypes ability"));
+            .unwrap_or_else(|| panic!("{name}: expected conditioned AddCardTypes ability: {:#?}", compiled.definition.abilities));
 
         assert!(filter.source, "{name}: {filter:#?}");
         assert_eq!(
@@ -1229,12 +1229,22 @@ pub(super) fn rewrite_destroy_unless_dynamic_life_cost_tracks_target_toughness()
 
     let parsed =
         parse_effect_sentence_lexed(&tokens).expect("dynamic destroy-unless clause should parse");
-    let debug = format!("{parsed:?}");
+    let [EffectAst::Conditionals(crate::cards::builders::ConditionalEffectAst::UnlessPays {
+        player: crate::model::PlayerAst::ItsController, cost, effects, ..
+    })] = parsed.as_slice() else { panic!("{parsed:#?}"); };
+    assert!(matches!(effects.as_slice(), [EffectAst::SubjectVerb(subject)]
+        if matches!(&subject.action, SubjectVerbActionAst::ZoneMoves(crate::cards::builders::ZoneMoveActionAst::Destroy {
+            target: crate::cards::builders::TargetAst::Object(filter, Some(_), _), ..
+        }) if filter.card_types == [CardType::Creature])));
+    let ironsmith_core::TotalCostKind::All(costs) = cost.kind() else { panic!("{cost:?}"); };
+    let [crate::model::CompilerCost::ValidatedEffect(payment)] = costs.as_slice()
+        else { panic!("{cost:?}"); };
+    assert!(matches!(payment.as_ref(), EffectAst::SubjectVerb(subject)
+        if matches!(&subject.action, SubjectVerbActionAst::LifeResources(crate::cards::builders::LifeResourceActionAst::PayLife { amount: value })
+            if matches!(value.unhinted(), Value::ToughnessOf(target)
+                if matches!(target.base(), crate::target::ChooseSpec::Tagged(tag)
+                    if tag.as_str() == "__it__")))));
 
-    assert!(debug.contains("UnlessPays"), "{debug}");
-    assert!(debug.contains("player: ItsController"), "{debug}");
-    assert!(debug.contains("ToughnessOf"), "{debug}");
-    assert!(debug.contains("Target(Object"), "{debug}");
 }
 
 #[test]

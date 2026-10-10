@@ -251,19 +251,15 @@ fn parse_return_timing_lexed<'a>(input: &mut LexStream<'a>) -> WResult<ReturnTim
     primitives::kw("beginning").parse_next(input)?;
     primitives::kw("of").parse_next(input)?;
     opt(primitives::kw("the")).parse_next(input)?;
-    let player_you = opt(primitives::kw("your")).parse_next(input)?.is_some();
+    let participant = opt(alt((
+        primitives::kw("your").value((PlayerFilter::You, PlayerAst::You)),
+        (primitives::kw("that"), alt((primitives::kw("players"), primitives::kw("player's"))))
+            .value((PlayerFilter::IteratedPlayer, PlayerAst::That)),
+    ))).parse_next(input)?.unwrap_or((PlayerFilter::Any, PlayerAst::Any));
     primitives::kw("next").parse_next(input)?;
     let timing = alt((
-        primitives::phrase(&["end", "step"]).value(if player_you {
-            ReturnTimingShape::NextEndStep(PlayerFilter::You)
-        } else {
-            ReturnTimingShape::NextEndStep(PlayerFilter::Any)
-        }),
-        primitives::kw("upkeep").value(if player_you {
-            ReturnTimingShape::NextUpkeep(PlayerAst::You)
-        } else {
-            ReturnTimingShape::NextUpkeep(PlayerAst::Any)
-        }),
+        primitives::phrase(&["end", "step"]).value(ReturnTimingShape::NextEndStep(participant.0)),
+        primitives::kw("upkeep").value(ReturnTimingShape::NextUpkeep(participant.1)),
     ))
     .parse_next(input)?;
     primitives::sentence_end().parse_next(input)?;

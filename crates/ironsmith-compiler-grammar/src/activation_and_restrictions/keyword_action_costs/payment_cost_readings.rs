@@ -94,9 +94,12 @@ fn read_explicit_zero_mana_payment(
 fn read_exile_all_owned_graveyard_payment(
     input: &PaymentClause<'_>,
 ) -> Result<Option<ironsmith_core::TotalCost<crate::model::CompilerCost>>, CardTextError> {
-    if !crate::grammar::primitives::probe_all(input.tokens,
-        crate::grammar::primitives::phrase(&["exile", "all", "cards", "from", "your", "graveyard"]),
-        "exile-all-owned-graveyard-payment").is_some() { return Ok(None); }
+    let Some((_, rest)) = crate::grammar::primitives::parse_prefix(input.tokens,
+        crate::grammar::primitives::phrase(&["exile", "all", "cards", "from", "your", "graveyard"]))
+    else { return Ok(None); };
+    if !crate::util::trim_edge_punctuation_tokens(rest).is_empty() {
+        return Err(CardTextError::ParseError("unsupported trailing text after complete graveyard exile payment".into()));
+    }
     Ok(Some(ironsmith_core::TotalCost::from_cost(
         crate::model::CompilerCost::ValidatedEffect(Box::new(EffectAst::subject_verb_exile_all(
             ObjectFilter::default().in_zone(Zone::Graveyard).owned_by(PlayerFilter::You).nontoken(), false,

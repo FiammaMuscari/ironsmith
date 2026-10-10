@@ -115,6 +115,8 @@ fn complete_katilda_grants_each_recipient_its_own_current_colors_and_resolves_wi
         let mut game = game();
         let katilda = game.create_object_from_definition(&definition, A, Zone::Battlefield);
         let human = creature(&mut game, A, Subtype::Human, ColorSet::RED.union(ColorSet::BLUE));
+        // Direct battlefield construction seeds a fixture, not an entry event.
+        game.set_summoning_sick(human);
         assert!(mana_effect(&game, katilda).is_some(), "Katilda grants herself the ability");
         assert!(mana_action(&game, A, human).is_none(), "tap mana costs obey summoning sickness");
         game.remove_summoning_sickness(human);

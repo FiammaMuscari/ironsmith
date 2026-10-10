@@ -6,7 +6,7 @@
 //! Frozen complete bodies; source-authored and UNRUN. The three sorceries'
 //! gameplay is covered by `join_forces.rs`.
 use ironsmith::effect::{Until, Value};
-use ironsmith::effects::{CollectManaPaymentsEffect, ForPlayersEffect, ModifyPowerToughnessEffect};
+use ironsmith::effects::{CollectManaPaymentsEffect, ForPlayersEffect, ApplyContinuousEffect};
 use ironsmith::target::PlayerFilter;
 
 #[path = "cf8_p08/support.rs"]
@@ -37,11 +37,13 @@ fn mana_charged_dragon_pumps_itself_by_the_collective_total() {
     for definition in support::definitions("Mana-Charged Dragon", MANA_CHARGED_DRAGON) {
         let collect = support::find_all::<CollectManaPaymentsEffect>(&definition);
         assert_eq!(collect.len(), 1);
-        let pumps = support::find_all::<ModifyPowerToughnessEffect>(&definition);
+        let pumps = support::find_all::<ApplyContinuousEffect>(&definition);
         assert_eq!(pumps.len(), 1);
-        assert_eq!(pumps[0].power, Value::X, "X is the accepted total");
-        assert_eq!(pumps[0].toughness, Value::Fixed(0));
-        assert_eq!(pumps[0].duration, Until::EndOfTurn);
+        assert!(matches!(pumps[0].runtime_modifications.as_slice(),
+            [ironsmith::effects::RuntimeModification::ModifyPowerToughness {
+                power: Value::X, toughness: Value::Fixed(0),
+            }]), "X is the accepted total");
+        assert_eq!(pumps[0].until, Until::EndOfTurn);
         assert!(support::find_all::<ForPlayersEffect>(&definition).is_empty());
     }
 }

@@ -223,6 +223,11 @@ fn compiled_effects_handle_their_own_optional_cast_choice(effects: &[Effect]) ->
 }
 
 fn effect_has_may_decider_scoped_search_followup(effect: &Effect, decider: &PlayerFilter) -> bool {
+    if effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
+        .is_some_and(|put| put.controller == *decider)
+    {
+        return true;
+    }
     if let Some(for_each) = effect.downcast_ref::<crate::effects::ForEachTaggedEffect<Effect>>() {
         return for_each.effects.iter().any(|inner| {
             inner
@@ -671,6 +676,19 @@ fn compound_optional_payment_actions(effects: &[EffectAst]) -> Option<Vec<Effect
     }
     if let [EffectAst::Sequence { effects }] = effects {
         return compound_optional_payment_actions(effects);
+    }
+    // An optional exact counter payment can only be accepted when the
+    // complete amount is available. Otherwise the choice receipt alone
+    // would incorrectly satisfy a following "when you do" trigger.
+    if let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::Counters(crate::cards::builders::CounterActionAst::RemoveUpToAnyCounters {
+            amount, counter_type: Some(_), up_to: false,
+            distributed_across_all: false, all_of_them: false, ..
+        }), ..
+    })] = effects
+        && matches!(amount.unhinted(), Value::Fixed(count) if *count > 0)
+    {
+        return Some(effects.to_vec());
     }
     let [
         EffectAst::SubjectVerb(SubjectVerbEffectAst {

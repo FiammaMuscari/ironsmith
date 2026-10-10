@@ -486,7 +486,7 @@ fn delayed_numeric_match_keeps_the_admitted_host_acquisition_and_latest_departur
         let watched=g.create_object_from_definition(&simple("Watched object","Artifact","{1}",None,""),C,Zone::Battlefield);
         g.effect_store.delayed_triggers.push(ironsmith::triggers::DelayedTrigger{
             linked_exile_owner:None,source_number_owner:Some(owner.clone()),trigger:ability.trigger.clone(),effects:ability.effects.clone(),
-            one_shot:false,x_value:None,not_before_turn:None,expires_at_turn:None,expires_before_controller_turn_after:None,
+            one_shot:false,x_value:None,not_before_turn:None,expires_at_turn:None,expires_before_controller_turn_after:None,expires_after_controller_turn_after:None,
             expires_at_end_of_combat:false,bound_extra_turn_index:None,while_any_tagged_object_in_zone:None,
             target_objects:vec![watched],ability_source:Some(source),ability_source_stable_id:Some(snapshot.stable_id),
             ability_source_name:Some(snapshot.name.clone()),ability_source_snapshot:Some(snapshot),controller:A,
@@ -621,7 +621,11 @@ fn omitted_program_numeric_pair_in_a_full_body_codec_cannot_produce_a_complete_p
         }
     }
     assert!(omit(&mut wire)>=2,"entry and upkeep program ownership was present before omission");
-    let legacy=ironsmith_compiled_artifact::CompiledCardArtifact::from_json(wire.to_string().as_bytes()).unwrap();
+    // Keep the envelope valid so this tests missing ownership evidence rather
+    // than failing earlier at the checksum integrity boundary.
+    let mut legacy: ironsmith_compiled_artifact::CompiledCardArtifact = serde_json::from_value(wire).unwrap();
+    legacy.refresh_checksum();
+    let legacy=ironsmith_compiled_artifact::CompiledCardArtifact::from_json(&legacy.to_json().unwrap()).unwrap();
     let definition=ironsmith_runtime_catalog::artifact_materializer::materialize_artifact(&legacy).unwrap();
     let mut g=game();let source=g.create_object_from_definition(&definition,A,Zone::Battlefield);
     assert!(matches!(ironsmith::source_numbers::public_proof(&g,source,true),Err(ironsmith::effects::ExecutionError::IncompleteEvidence(_))));

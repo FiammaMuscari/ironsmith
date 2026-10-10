@@ -70,6 +70,24 @@ pub fn parse_effect_sentence_lexed(
 fn parse_effect_sentence_lexed_uncached(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    if let Some(effects) = crate::effect_sentences::bundle_rules::parse_put_from_outside_game(tokens)? {
+        return Ok(effects);
+    }
+    if let Some(effects) = crate::effect_sentences::local_self_replacement::read(tokens)? {
+        return Ok(effects);
+    }
+    // A complete blocking requirement owns its subject and duration. The
+    // generic ability reader would turn a source requirement into a permanent
+    // grant to the previous tagged object instead.
+    if tokens.first().is_some_and(|token| token.is_word("this"))
+        && tokens.get(2).is_some_and(|token| token.is_word("must"))
+        && let Some(effect) = crate::effect_sentences::clause_primitives::parse_must_be_blocked_if_able_clause(tokens)?
+    {
+        return Ok(vec![effect]);
+    }
+    if crate::grammar::effects::control_copy_attach_shapes::parse_tagged_battlefield_partition_shape(tokens).is_some() {
+        return Ok(vec![crate::effect_sentences::verb_handlers::parse_put_into_hand(tokens, None)?]);
+    }
     // "This creature can't be blocked this turn except by Walls" (Varchild's
     // Crusader): the self restriction is read as a granted static rule; the
     // mid-sentence "this turn" scopes that grant to the end of the turn
@@ -364,6 +382,22 @@ fn parse_gain_all_basic_land_types_sentence(
 fn parse_effect_sentence_lexed_uncached_inner(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // A complete sacrifice/list/draw sentence owns its internal commas.
+    // Preserve the producing sacrifice before the result-dependent draw.
+    match crate::effect_sentences::subject_verb_special_recognizers::parse_sacrifice_any_number_then_draw_that_many_rule_lexed(
+        &crate::rule_engine::LexClauseView::from_tokens(tokens),
+    ) {
+        crate::recognition::ParseOutcome::Match(matched) => return Ok(matched.value),
+        crate::recognition::ParseOutcome::Error(error) => return Err(error.into_card_text_error()),
+        crate::recognition::ParseOutcome::NoMatch => {}
+    }
+    // The comma belongs to the counter-kind iterator. Splitting it as an
+    // ordinary action chain loses the holder before its counter operation.
+    if let Some(effects) = crate::effect_sentences::subject_verb_primitives::parse_sentence_for_each_counter_kind_put_or_remove(
+        crate::effect_sentences::subject_verb_primitives::SubjectVerbPrimitiveClause::new(tokens),
+    )? {
+        return Ok(effects);
+    }
     if let Some(effects) = parse_friend_or_foe_sentence(tokens)? {
         return Ok(effects);
     }

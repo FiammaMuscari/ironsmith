@@ -20,12 +20,9 @@ pub struct ZoneChangeEvent {
     /// The objects changing zones. Usually one, but can be multiple for batch
     /// operations like "discard your hand" or "mill 3".
     pub objects: Vec<ObjectId>,
-    /// The destination-zone objects created by the zone change, if different
-    /// from `objects`.
-    ///
-    /// This is used for leave-the-battlefield moves, where the triggering
-    /// event needs to remember both the old permanent that left and the new
-    /// card objects that now exist in the destination zone.
+    /// The exact destination-zone objects created by the completed move.
+    /// Entry and departure triggers retain these identities independently of
+    /// origin snapshots, even after the destination objects leave again.
     pub result_objects: Vec<ObjectId>,
     /// The zone the objects are leaving
     pub from: Zone,

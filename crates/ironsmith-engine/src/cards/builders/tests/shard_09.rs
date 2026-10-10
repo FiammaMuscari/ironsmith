@@ -1128,17 +1128,17 @@ pub(super) fn parse_multiline_spell_when_you_do_followup_stays_in_spell_effects(
 
 #[cfg(ironsmith_runtime_parser_tests)]
 #[test]
-pub(super) fn parse_fastbond_additional_land_permission_is_explicitly_unsupported() {
-    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Fastbond Variant")
+pub(super) fn parse_fastbond_additional_land_permission_is_unlimited() {
+    let definition = CardDefinitionBuilder::new(CardId::from_raw(1), "Fastbond Variant")
         .card_types(vec![CardType::Enchantment])
         .parse_text("You may play any number of lands on each of your turns.")
-        .expect_err("additional land play permission should stay unsupported");
-
-    let debug = format!("{err:?}").to_ascii_lowercase();
-    assert!(
-        debug.contains("unsupported additional-land-play permission clause"),
-        "expected explicit additional-land-play permission error, got {debug}"
-    );
+        .expect("unlimited land play permission should parse")
+        .build();
+    assert!(definition.abilities.iter().any(|ability| match &ability.kind {
+        crate::ability::AbilityKind::Static(ability) =>
+            ability.display().contains("any number of lands"),
+        _ => false,
+    }));
 }
 
 #[cfg(ironsmith_runtime_parser_tests)]

@@ -52,10 +52,7 @@ fn get_static_abilities(object: &Object) -> Vec<crate::static_abilities::StaticA
 ///
 /// Takes `GameState` to check abilities granted by continuous effects (like protection from Akroma's Will).
 pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::GameState) -> bool {
-    // Check the authoritative live restrictions before refreshing derived ones.
-    if !game.can_be_blocked(attacker.id) || !game.can_block_attacker(blocker.id, attacker.id) {
-        return false;
-    }
+    // Cached restrictions may belong to a source that has since phased out.
     if !game.continuous_state_is_clean() {
         let mut refreshed = game.clone();
         if refreshed.refresh_continuous_state().is_err() {
@@ -535,6 +532,14 @@ pub(crate) fn maximum_blockers_with_view(
 /// - Summoning sickness (unless it has haste)
 /// - "Can't attack" abilities
 pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if refreshed.refresh_continuous_state().is_err() {
+            return false;
+        }
+        let view = DerivedGameView::new(&refreshed);
+        return can_attack_with_view(creature, &refreshed, &view);
+    }
     let view = DerivedGameView::new(game);
     can_attack_with_view(creature, game, &view)
 }
@@ -588,6 +593,14 @@ pub fn can_attack_defending_player(
     defending_player: crate::ids::PlayerId,
     game: &crate::game_state::GameState,
 ) -> bool {
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if refreshed.refresh_continuous_state().is_err() {
+            return false;
+        }
+        let view = DerivedGameView::new(&refreshed);
+        return can_attack_defending_player_with_view(creature, defending_player, &refreshed, &view);
+    }
     let view = DerivedGameView::new(game);
     can_attack_defending_player_with_view(creature, defending_player, game, &view)
 }
@@ -639,6 +652,15 @@ pub fn can_attack_target(
     target: &crate::combat_state::AttackTarget,
     game: &crate::game_state::GameState,
 ) -> bool {
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if refreshed.refresh_continuous_state().is_err() {
+            return false;
+        }
+        return can_attack_target_with_view(
+            creature, defending_player, target, &refreshed, &DerivedGameView::new(&refreshed),
+        );
+    }
     can_attack_target_with_view(
         creature,
         defending_player,
@@ -698,6 +720,16 @@ pub fn must_attack(creature: &Object) -> bool {
 
 /// Check if a creature must attack this turn if able, with continuous effects applied.
 pub fn must_attack_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    // A turn change can expire a requirement while its derived restriction
+    // entry is still cached. Refresh that table along with characteristics.
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if refreshed.refresh_continuous_state().is_err() {
+            return false;
+        }
+        let view = DerivedGameView::new(&refreshed);
+        return must_attack_with_view(creature, &refreshed, &view);
+    }
     let view = DerivedGameView::new(game);
     must_attack_with_view(creature, game, &view)
 }
@@ -1327,6 +1359,7 @@ mod tests {
         game.add_object(attacker.clone());
         game.add_object(other_attacker.clone());
         game.add_object(blocker.clone());
+        game.refresh_continuous_state().unwrap();
         game.effect_store
             .cant_effects
             .cant_block_specific_attackers
@@ -1556,7 +1589,7 @@ mod tests {
 
     #[test]
     fn test_protection_from_color_blocks() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut protected = make_creature("Protected", 2, 2);
         protected
             .abilities_mut()
@@ -1569,6 +1602,10 @@ mod tests {
 
         let mut blue_blocker = make_creature("Blue", 2, 2);
         blue_blocker.color_override = Some(ColorSet::BLUE);
+
+        game.add_object(protected.clone());
+        game.add_object(red_blocker.clone());
+        game.add_object(blue_blocker.clone());
 
         // Red can't block protection from red
         assert!(!can_block(&protected, &red_blocker, &game));

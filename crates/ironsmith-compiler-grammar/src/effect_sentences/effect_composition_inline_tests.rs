@@ -159,7 +159,7 @@ fn mixed_target_collection_reuses_one_complete_consult_procedure_per_target() {
             tag: object_targets,
         },
         EffectAst::ForEach(ForEachEffectAst::ForEachPlayersFiltered {
-            sequential: false,
+            sequential: true,
             filter: PlayerFilter::AliasedTarget(player_filter),
             effects: player_body,
         }),

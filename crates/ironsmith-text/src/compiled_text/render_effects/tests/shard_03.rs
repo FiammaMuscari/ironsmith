@@ -71,7 +71,7 @@ fn comma_then_sequence_elides_the_linked_graveyard_choice() {
 
     assert_eq!(
         describe_effect(&sequence),
-        "Mill five cards, then return a creature card from your graveyard to the battlefield"
+        "Mill five cards, then you return a creature card from your graveyard to the battlefield"
     );
 }
 

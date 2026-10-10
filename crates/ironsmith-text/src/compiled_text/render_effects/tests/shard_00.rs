@@ -1514,7 +1514,7 @@ pub(super) fn joint_damage_preserves_without_flying_for_creatures_and_players() 
     let (creatures, players) = iterated_damage_pair(without_flying, None);
     assert_eq!(
         describe_joint_subject_pair(&creatures, &players).as_deref(),
-        Some("this deals X damage to each creature without flying and each player")
+        Some("Deal X damage to each creature without flying and each player")
     );
 
     let with_flying = ObjectFilter::creature()
@@ -1522,13 +1522,13 @@ pub(super) fn joint_damage_preserves_without_flying_for_creatures_and_players() 
     let (creatures, players) = iterated_damage_pair(with_flying, None);
     assert_eq!(
         describe_joint_subject_pair(&creatures, &players).as_deref(),
-        Some("this deals X damage to each creature with flying and each player")
+        Some("Deal X damage to each creature with flying and each player")
     );
 
     let (creatures, players) = iterated_damage_pair(ObjectFilter::creature(), None);
     assert_eq!(
         describe_joint_subject_pair(&creatures, &players).as_deref(),
-        Some("this deals X damage to each creature and each player")
+        Some("Deal X damage to each creature and each player")
     );
 }
 
@@ -1541,7 +1541,7 @@ pub(super) fn joint_damage_preserves_without_flying_for_creatures_and_planeswalk
         iterated_damage_pair(without_flying, Some(ObjectFilter::planeswalker()));
     assert_eq!(
         describe_joint_subject_pair(&creatures, &planeswalkers).as_deref(),
-        Some("this deals X damage to each creature without flying and each planeswalker")
+        Some("Deal X damage to each creature without flying and each planeswalker")
     );
 }
 
@@ -5033,7 +5033,7 @@ pub(super) fn initial_plus_additional_count_renders_the_complete_process_boundar
             vec![Effect::draw(1), Effect::gain_life(2)],
         ));
         assert_eq!(describe_effect(&repeated),
-            format!("Draw a card and gain 2 life. Repeat this process {word} more times"));
+            format!("Draw a card. You gain 2 life. Repeat this process {word} more times"));
     }
 }
 

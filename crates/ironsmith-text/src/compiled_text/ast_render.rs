@@ -2594,9 +2594,17 @@ fn modeled_source_keyword_grant(
 
 fn modeled_object_static_grant(
     ability: &Ability,
+) -> Option<(&ObjectFilter, Option<&Condition>, crate::static_abilities::StaticAbility)> {
+    let (filter, condition, quantifier, granted) = modeled_quantified_object_static_grant(ability)?;
+    quantifier.is_none().then_some((filter, condition, granted))
+}
+
+fn modeled_quantified_object_static_grant(
+    ability: &Ability,
 ) -> Option<(
     &ObjectFilter,
     Option<&Condition>,
+    Option<&ironsmith_core::SetQuantifierSurface>,
     crate::static_abilities::StaticAbility,
 )> {
     if ability.functional_zones.as_slice() != [Zone::Battlefield] {
@@ -2611,7 +2619,6 @@ fn modeled_object_static_grant(
         return None;
     };
     if !grant.additional_abilities.is_empty()
-        || grant.set_quantifier_surface.is_some()
         || grant.ability.functional_zones.as_slice() != [Zone::Battlefield]
     {
         return None;
@@ -2622,6 +2629,7 @@ fn modeled_object_static_grant(
     Some((
         &grant.filter,
         grant.condition.as_ref(),
+        grant.set_quantifier_surface.as_ref(),
         crate::static_abilities::StaticAbility::from_model(granted.clone()),
     ))
 }
@@ -3254,6 +3262,18 @@ mod can_block_additional_grant_tests {
 fn describe_structural_keyword_maximum_blocker_bundle(
     abilities: &[Ability],
 ) -> Option<(String, usize)> {
+    fn comparable_filter(filter: &ObjectFilter) -> ObjectFilter {
+        let mut filter = filter.clone();
+        if filter.with_attached_object.as_deref() == Some(&ObjectFilter::source())
+            && filter.tagged_constraints.iter().any(|constraint| {
+                matches!(constraint.tag.as_str(), "equipped" | "enchanted" | "fortified")
+                    && constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+            })
+        {
+            filter.with_attached_object = None;
+        }
+        filter
+    }
     let first = abilities.first()?;
     let (filter, condition, first_granted) = modeled_unquantified_object_static_grant(first)?;
     if !first_granted.is_keyword() {
@@ -3270,12 +3290,24 @@ fn describe_structural_keyword_maximum_blocker_bundle(
     let mut keywords = Vec::new();
     let mut consumed = 0usize;
     for ability in abilities {
-        let (next_filter, next_condition, granted) =
-            modeled_unquantified_object_static_grant(ability)?;
-        if next_filter != filter || next_condition != condition {
+        let (next_filter, next_condition, granted, direct_maximum) =
+            if let Some((filter, condition, granted)) = modeled_unquantified_object_static_grant(ability) {
+                (filter, condition, Some(granted), None)
+            } else {
+                let AbilityKind::Static(rule) = &ability.kind else { return None; };
+                let model = rule.compiled_model()?;
+                let ironsmith_core::StaticAbilityPayload::RuleRestriction {
+                    restriction: crate::effect::Restriction::MaximumBlockers { filter, maximum },
+                    additional_restrictions, ..
+                } = &model.payload else { return None; };
+                if !additional_restrictions.is_empty()
+                    || ability.functional_zones != first.functional_zones { return None; }
+                (filter, None, None, Some(*maximum))
+            };
+        if comparable_filter(next_filter) != comparable_filter(filter) || next_condition != condition {
             return None;
         }
-        if granted.is_keyword() {
+        if let Some(granted) = granted.as_ref().filter(|granted| granted.is_keyword()) {
             let keyword = granted
                 .display()
                 .trim()
@@ -3288,13 +3320,16 @@ fn describe_structural_keyword_maximum_blocker_bundle(
             consumed += 1;
             continue;
         }
-        let model = granted.compiled_model()?;
-        let maximum = &source_maximum_blockers(&model.payload)?;
+        let maximum = if let Some(maximum) = direct_maximum {
+            maximum
+        } else {
+            source_maximum_blockers(&granted?.compiled_model()?.payload)?
+        };
         if keywords.is_empty() {
             return None;
         }
         consumed += 1;
-        let maximum = small_number_word(*maximum as u32).unwrap_or_else(|| maximum.to_string());
+        let maximum = small_number_word(maximum as u32).unwrap_or_else(|| maximum.to_string());
         let creature = if maximum == "one" {
             "creature"
         } else {
@@ -3393,9 +3428,17 @@ fn modeled_conditioned_source_anthem(ability: &Ability) -> Option<(i32, i32, &Co
         return None;
     }
     let model = static_ability.compiled_model()?;
-    let ironsmith_core::StaticAbilityPayload::Anthem(anthem) = &model.payload else {
+    let (payload, outer_condition) = match &model.payload {
+        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } =>
+            (&ability.payload, Some(condition)),
+        payload => (payload, None),
+    };
+    let ironsmith_core::StaticAbilityPayload::Anthem(anthem) = payload else {
         return None;
     };
+    if outer_condition.is_some() && anthem.condition.is_some() {
+        return None;
+    }
     if anthem.filter.is_some()
         || anthem.set_quantifier_surface.is_some()
         || anthem.count_uses_where_x
@@ -3412,7 +3455,7 @@ fn modeled_conditioned_source_anthem(ability: &Ability) -> Option<(i32, i32, &Co
     if (*power, *toughness) == (0, 0) {
         return None;
     }
-    Some((*power, *toughness, anthem.condition.as_ref()?))
+    Some((*power, *toughness, outer_condition.or(anthem.condition.as_ref())?))
 }
 
 /// Preserve the authored combat-state negative when the typed condition says
@@ -6415,7 +6458,7 @@ mod explicit_outside_selection_gameplay_tests {
                 }
             }
             fn awaiting_choice(&self) -> bool {
-                self.pending
+                self.pending && !self.ready.get()
             }
         }
         let definition = crate::compiler_test_support::CardDefinitionBuilder::new(crate::CardId::new(), "Pending outside selection")
@@ -6523,12 +6566,12 @@ mod explicit_outside_selection_gameplay_tests {
             1,
             "exactly one reveal after retry"
         );
-        // The movement commit queues its zone notification; its outcome
-        // carries the resulting objects, while Reveal returns its event.
-        let notifications = game.take_pending_trigger_events();
-        let moves = notifications
-            .iter()
-            .filter_map(|event| event.downcast::<crate::events::ZoneChangeEvent>())
+        // Instruction boundaries already match and drain queued notifications.
+        // The committed history remains the evidence for exactly one move.
+        let moves = game.turn_store.turn_history.event_records.iter()
+            .chain(game.turn_store.turn_history.staged_event_records.iter())
+            .filter_map(|row| row.event.downcast::<crate::events::ZoneChangeEvent>().cloned())
+            .filter(|event| event.from == Zone::OutsideGame)
             .collect::<Vec<_>>();
         assert_eq!(
             moves.len(),
@@ -14274,9 +14317,8 @@ fn describe_cross_segment_treasure_look_exile_permission_window(
     let sequence_effect = match producer_segment.default_effects.as_slice() {
         [sequence] => sequence,
         [tag, sequence]
-            if tag
-                .downcast_ref::<crate::effects::TagTriggeringObjectEffect>()
-                .is_some() =>
+            if tag.downcast_ref::<crate::effects::TagTriggeringObjectEffect>().is_some()
+                || tag.downcast_ref::<crate::effects::TagTriggeringSourceEffect>().is_some() =>
         {
             sequence
         }
@@ -14410,7 +14452,7 @@ fn describe_cross_segment_treasure_look_exile_permission_window(
     let grant = structural_unwrap_render_wrappers(permission_effect)
         .downcast_ref::<crate::effects::GrantPlayTaggedEffect>()
         .filter(|permission| permission.alternative_cost.is_none())?;
-    if grant.tag.as_str() != crate::tag::SOURCE_EXILED_TAG
+    if (grant.tag.as_str() != crate::tag::SOURCE_EXILED_TAG && grant.tag != choose.tag)
         || grant.player != PlayerFilter::You
         || grant.duration != crate::effects::GrantPlayTaggedDuration::ForAsLongAsExiled
         || grant.surface.as_ref().is_some_and(|surface| {
@@ -23598,7 +23640,9 @@ fn describe_graveyard_cast_entry_counter_trigger(ability: &Ability) -> Option<St
     expected_filter.zone = Some(Zone::Battlefield);
     expected_filter.stack_kind = None;
     expected_filter.has_mana_cost = false;
-    if movement.target != ChooseSpec::Source
+    let exiles_source = matches!(movement.target.base(), ChooseSpec::Source)
+        || matches!(movement.target.base(), ChooseSpec::Object(filter) if filter.source);
+    if !exiles_source
         || movement.zone != Zone::Exile
         || register.same_stable_id_tag.as_ref() != Some(&tag.tag)
         || register.filter != expected_filter
@@ -23840,9 +23884,6 @@ fn describe_counter_removal_empty_result_otherwise_mana_program(
     let remove_with_id = remove_root.downcast_ref::<crate::effects::WithIdEffect>()?;
     let mut remove_leaf = remove_with_id.effect.as_ref();
     while let Some(nested) = remove_leaf.downcast_ref::<crate::effects::WithIdEffect>() {
-        if nested.id != remove_with_id.id {
-            return None;
-        }
         remove_leaf = nested.effect.as_ref();
     }
     let remove = remove_leaf.downcast_ref::<crate::effects::RemoveCountersEffect>()?;
@@ -28903,7 +28944,7 @@ mod target_power_fanout_graveyard_refill_tests {
                 || matches!(spec.base(), ChooseSpec::Source)));
         assert_eq!(
             describe_effect(damage_effect),
-            "that creature deals damage equal to its power to all other creatures"
+            "that creature deals damage equal to its power to each other creature"
         );
         let [conditional_effect] = conditional_segment.default_effects.as_slice() else {
             panic!("expected a single cast-origin conditional");
@@ -36337,6 +36378,13 @@ fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
                 ability_idx += 2;
                 continue;
             }
+            if let Some(text) = describe_source_line_conditional_animation_group(
+                std::slice::from_ref(ability), subject,
+            ) {
+                output.push(format!("Static ability {}: {text}", ability_idx + 1));
+                ability_idx += 1;
+                continue;
+            }
             if let AbilityKind::Activated(first) = &ability.kind
                 && first.is_mana_ability()
                 && first.effects.is_empty()
@@ -37095,7 +37143,7 @@ fn describe_source_line_free_cast_and_flash_group(abilities: &[Ability]) -> Opti
         return None;
     };
     if free.filter != flash.filter
-        || free.zone != flash.zone
+        || !(free.zone == Zone::Hand && flash.zone == Zone::Stack)
         || free.beneficiary != flash.beneficiary
     {
         return None;
@@ -37918,6 +37966,50 @@ fn describe_source_line_additive_type_loss_group(abilities: &[Ability]) -> Optio
     Some(text)
 }
 
+/// Rejoin an additive source animation only when every layer change shares
+/// the same source filter, condition, and functional zones.
+fn describe_source_line_conditional_animation_group(abilities: &[Ability], subject: &str) -> Option<String> {
+    use ironsmith_core::StaticAbilityPayload as P;
+    let zones = &abilities.first()?.functional_zones;
+    let mut condition = None;
+    let mut types = None;
+    let mut subtypes = None;
+    let mut base = None;
+    for ability in abilities {
+        if &ability.functional_zones != zones { return None; }
+        let AbilityKind::Static(ability) = &ability.kind else { return None; };
+        let (model, current_condition) = unwrapped_static_model(ability)?;
+        let current_condition = current_condition?;
+        if condition.is_some_and(|prior| prior != current_condition) { return None; }
+        condition = Some(current_condition);
+        let filter = match &model.payload {
+            P::AddCardTypes { filter, card_types } if types.is_none() => {
+                types = Some(card_types); filter
+            }
+            P::AddSubtypes { filter, subtypes: added } if subtypes.is_none() => {
+                subtypes = Some(added); filter
+            }
+            P::SetBasePowerToughness { filter, power, toughness } if base.is_none() => {
+                base = Some((*power, *toughness)); filter
+            }
+            _ => return None,
+        };
+        if filter != &ObjectFilter::source() { return None; }
+    }
+    let types = types?;
+    if !types.contains(&CardType::Creature) { return None; }
+    let descriptor = subtypes.into_iter().flatten().map(ToString::to_string)
+        .chain(types.iter().map(|kind| kind.to_string().to_ascii_lowercase()))
+        .collect::<Vec<_>>().join(" ");
+    let descriptor = match base {
+        Some((power, toughness)) => format!("a {power}/{toughness} {descriptor}"),
+        None if descriptor.starts_with("artifact") => format!("an {descriptor}"),
+        None => format!("a {descriptor}"),
+    };
+    Some(format!("As long as {}, {subject} is {descriptor} in addition to its other types",
+        describe_condition(condition?)))
+}
+
 fn describe_source_line_static_group(
     abilities: &[Ability],
     member_count: usize,
@@ -37939,7 +38031,8 @@ fn describe_source_line_static_group(
     {
         return Some(text);
     }
-    describe_source_line_attached_animation_group(members)
+    describe_source_line_conditional_animation_group(members, subject)
+        .or_else(|| describe_source_line_attached_animation_group(members))
         .or_else(|| describe_source_line_attached_subtype_and_predicate_group(members))
         .or_else(|| describe_source_line_additive_type_loss_group(members))
         .or_else(|| describe_source_line_set_type_loss_group(members))
@@ -39623,11 +39716,13 @@ fn describe_source_line_keyword_attack_dynamic_anthem_group(
     {
         return None;
     }
-    let (keyword_filter, keyword_condition, keyword) =
-        modeled_unquantified_object_static_grant(keyword_ability)?;
-    let (attack_filter, attack_condition, attack) =
-        modeled_unquantified_object_static_grant(attack_ability)?;
-    if keyword_condition.is_some()
+    let (keyword_filter, keyword_condition, keyword_quantifier, keyword) =
+        modeled_quantified_object_static_grant(keyword_ability)?;
+    let (attack_filter, attack_condition, attack_quantifier, attack) =
+        modeled_quantified_object_static_grant(attack_ability)?;
+    if !matches!(keyword_quantifier, None | Some(ironsmith_core::SetQuantifierSurface::Each))
+        || !matches!(attack_quantifier, None | Some(ironsmith_core::SetQuantifierSurface::Each))
+        || keyword_condition.is_some()
         || attack_condition.is_some()
         || keyword.id() != crate::static_abilities::StaticAbilityId::Trample
         || attack.id() != crate::static_abilities::StaticAbilityId::MustAttack
@@ -42299,13 +42394,28 @@ fn describe_source_line_attached_keyword_otherwise_prevention_group(
         ))
     };
     let (keyword_condition, keyword_display, keyword) = grant(keyword_ability)?;
-    let (prevention_condition, prevention_display, prevention) = grant(prevention_ability)?;
-    if !keyword.is_keyword()
-        || prevention.id()
-            != crate::static_abilities::StaticAbilityId::PreventAllDamageDealtByThisPermanent
-    {
-        return None;
-    }
+    let (prevention_condition, prevention_display) = if let Some((condition, display, prevention)) = grant(prevention_ability) {
+        if prevention.id() != crate::static_abilities::StaticAbilityId::PreventAllDamageDealtByThisPermanent {
+            return None;
+        }
+        (condition, display)
+    } else {
+        let AbilityKind::Static(prevention) = &prevention_ability.kind else { return None; };
+        let model = prevention.compiled_model()?;
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } = &model.payload else { return None; };
+        let ironsmith_core::StaticAbilityPayload::PreventMatchingDamage(spec) = &ability.payload else { return None; };
+        let source = ObjectFilter::creature().in_zone(Zone::Battlefield)
+            .match_tagged("enchanted", crate::target::TaggedOpbjectRelation::IsTaggedObject);
+        if spec.source_filter != source
+            || spec.target_player_filter != Some(PlayerFilter::Any)
+            || spec.target_object_filter != Some(ObjectFilter::default().in_zone(Zone::Battlefield))
+            || spec.combat_only || spec.noncombat_only || spec.maximum_damage.is_some()
+            || spec.amount != ironsmith_core::StaticDamagePreventionAmount::All {
+            return None;
+        }
+        (Some(condition.clone()), spec.display.clone())
+    };
+    if !keyword.is_keyword() { return None; }
 
     let match_filter = attached_match_filter(keyword_condition.as_ref()?)?;
     let Some(Condition::Not(prevention_inner)) = prevention_condition.as_ref() else {
@@ -42409,12 +42519,12 @@ mod attached_keyword_otherwise_prevention_tests {
             .compiled_model()
             .expect("prevention model")
             .clone();
-        let ironsmith_core::StaticAbilityPayload::AttachedAbilityGrant(prevention_grant) =
+        let ironsmith_core::StaticAbilityPayload::Conditional { condition, .. } =
             &mut prevention_model.payload
         else {
-            panic!("expected attached prevention grant");
+            panic!("expected conditional prevention rule");
         };
-        prevention_grant.condition = positive_condition;
+        *condition = positive_condition.expect("the keyword has an attachment condition");
         members[1].kind = AbilityKind::Static(crate::static_abilities::StaticAbility::from_model(
             prevention_model,
         ));
@@ -42696,10 +42806,8 @@ fn singular_subtype_word(word: &str) -> String {
     let trimmed = word.trim_matches(|ch: char| !ch.is_ascii_alphabetic());
     if trimmed.eq_ignore_ascii_case("plains") {
         "Plains".to_string()
-    } else if trimmed.ends_with('s') && trimmed.len() > 1 {
-        trimmed.trim_end_matches('s').to_string()
     } else {
-        trimmed.to_string()
+        super::merge_passes::singularize_subject_word(trimmed)
     }
 }
 
@@ -42778,32 +42886,14 @@ fn render_pt_color_type_addition_descriptor(
 fn describe_structural_pt_color_type_addition_bundle(
     abilities: &[Ability],
 ) -> Option<(String, usize)> {
-    let [
-        color_ability,
-        card_type_ability,
-        subtype_ability,
-        pt_ability,
-        ..,
-    ] = abilities
-    else {
-        return None;
-    };
-    let color_display = static_display_with_id(
-        color_ability,
-        crate::static_abilities::StaticAbilityId::SetColors,
-    )?;
-    let card_type_display = static_display_with_id(
-        card_type_ability,
-        crate::static_abilities::StaticAbilityId::AddCardTypes,
-    )?;
-    let subtype_display = static_display_with_id(
-        subtype_ability,
-        crate::static_abilities::StaticAbilityId::AddSubtypes,
-    )?;
-    let pt_display = static_display_with_id(
-        pt_ability,
-        crate::static_abilities::StaticAbilityId::SetBasePowerToughnessForFilter,
-    )?;
+    // These independent layer modifications can be lowered in either
+    // descriptor order or layer order. Match their roles within the bundle.
+    let bundle = abilities.get(..4)?;
+    let display = |id| bundle.iter().find_map(|ability| static_display_with_id(ability, id));
+    let color_display = display(crate::static_abilities::StaticAbilityId::SetColors)?;
+    let card_type_display = display(crate::static_abilities::StaticAbilityId::AddCardTypes)?;
+    let subtype_display = display(crate::static_abilities::StaticAbilityId::AddSubtypes)?;
+    let pt_display = display(crate::static_abilities::StaticAbilityId::SetBasePowerToughnessForFilter)?;
 
     let (subject, color_text) = split_static_predicate(&color_display, " are ")?;
     let (card_type_subject, card_type_tail) = split_static_predicate(&card_type_display, " are ")?;
@@ -46418,7 +46508,7 @@ mod keyword_maximum_blocker_bundle_tests {
         .expect("compound Equipment grant should parse")
         .abilities
         .into_iter()
-        .skip(1)
+        .filter(|ability| source_line_static_group_count(ability).is_none())
         .collect()
     }
 
@@ -46745,9 +46835,12 @@ mod conditioned_source_anthem_keyword_bundle_tests {
         )
         .expect("three-way delirium source modifier should parse");
 
+        let members = definition.abilities.iter()
+            .filter(|ability| source_line_static_group_count(ability).is_none())
+            .cloned().collect::<Vec<_>>();
         assert_eq!(
             describe_structural_conditioned_source_anthem_keyword_bundle(
-                &definition.abilities[1..],
+                &members,
                 "this creature",
             ),
             Some((

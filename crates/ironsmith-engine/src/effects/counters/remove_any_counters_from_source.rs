@@ -109,7 +109,7 @@ enum SourceCounterSelection {
 }
 
 /// Select quantity and types once against the pre-action world. Ordinary
-/// execution preserves its sequential removals; payment captures these inputs.
+/// execution and payment both capture these inputs before applying replacements.
 fn select_source_counter_removal(
     effect: &RemoveAnyCountersFromSourceEffect,
     game: &GameState,
@@ -173,7 +173,8 @@ fn select_source_counter_removal(
             &mut ctx.decision_maker,
             ctx.controller,
             Some(ctx.source),
-            CounterRemovalSpec::new(ctx.source, ctx.source, to_remove, available_counters),
+            CounterRemovalSpec::new(ctx.source, ctx.source, to_remove, available_counters)
+                .with_min_total(to_remove),
             FallbackStrategy::Maximum,
         )
     };
@@ -201,8 +202,7 @@ fn execute_source_counter_removal(
         } => (to_remove, selections),
     };
     let mut selected_total = 0u32;
-    let mut removed_total = 0u64;
-    let mut outcomes = Vec::new();
+    let mut events = Vec::new();
     for (counter_type, requested) in selections {
         if selected_total >= to_remove {
             break;
@@ -211,47 +211,27 @@ fn execute_source_counter_removal(
         if amount == 0 {
             continue;
         }
-        let event = crate::events::Event::remove_counters(ctx.source, counter_type, amount)
-            .with_provenance(ctx.provenance);
-        let outcome = super::execute_counter_removal_with_outputs(game, ctx, event)?;
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(CompletedEffectOutputs::aggregate_only(
-                EffectOutcome::count(0),
-            ));
-        }
-        let removed = u32::try_from(outcome.outcome.count_or_zero()).map_err(|_| {
-            ExecutionError::InternalError("counter-removal outcome has an invalid count".into())
-        })?;
-        removed_total = removed_total
-            .checked_add(u64::from(removed))
-            .ok_or_else(|| {
-                ExecutionError::InternalError(
-                    "counter-removal total exceeds the supported count range".into(),
-                )
-            })?;
-        // Replacements can change the physical amount. The chosen budget
-        // counts authored actions, while the returned result counts removals.
+        events.push(
+            crate::events::Event::remove_counters(ctx.source, counter_type, amount)
+                .with_provenance(ctx.provenance),
+        );
         selected_total += amount;
-        outcomes.push(outcome);
     }
     if selected_total != to_remove {
         return Err(ExecutionError::Impossible(
             "counter-removal selection did not fulfill the chosen amount".into(),
         ));
     }
-    let count = i64::try_from(removed_total).map_err(|_| {
-        ExecutionError::InternalError(
-            "counter-removal total exceeds the supported outcome range".into(),
-        )
-    })?;
-    let mut outcome = EffectOutcome::aggregate(outcomes.iter().map(|child| child.outcome.clone()));
-    outcome.set_value(crate::effect::OutcomeValue::Count(count));
-    let mut outputs =
-        CompletedEffectOutputs::aggregate_only(outcome.with_requested_amount(to_remove));
-    for child in outcomes {
-        outputs.retain_owned_child(child);
-    }
-    Ok(outputs)
+    // The selected kinds belong to one removal instruction. Prepare every
+    // replacement choice before committing any removal or replacement program.
+    super::remove_counters::complete_selected_counter_removal_plan(
+        game,
+        ctx,
+        super::remove_counters::SelectedCounterRemovalPlan::Groups {
+            events,
+            requested: u64::from(to_remove),
+        },
+    )
 }
 
 impl CostExecutableEffect for RemoveAnyCountersFromSourceEffect {
@@ -530,8 +510,8 @@ mod mixed_removal_transaction_tests {
         }
         fn decide_options(&mut self, game: &GameState, ctx: &crate::decisions::context::SelectOptionsContext) -> Vec<usize> {
             self.choices += 1;
-            assert_eq!(game.player(crate::ids::PlayerId::from_index(0)).unwrap().life,21,
-                "earlier replacement program must execute before the later group choice");
+            assert_eq!(game.player(crate::ids::PlayerId::from_index(0)).unwrap().life,20,
+                "all original replacement choices precede replacement programs");
             if self.pause { self.pending=true; Vec::new() }
             else { ctx.options.iter().filter(|option| option.legal).take(ctx.min).map(|option| option.index).collect() }
         }

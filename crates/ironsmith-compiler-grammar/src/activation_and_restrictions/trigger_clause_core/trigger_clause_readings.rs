@@ -245,7 +245,17 @@ fn read_while_qualified_event(
     {
         let trigger_tokens = trim_edge_punctuation(&tokens[..while_idx]);
         let condition_tokens = trim_edge_punctuation(&tokens[while_idx + 1..]);
-        let trigger = parse_trigger_clause_lexed(&trigger_tokens)?;
+        let mut trigger = parse_trigger_clause_lexed(&trigger_tokens)?;
+        // The pronoun refers to the counter-bearing source. Keep its zone in
+        // the event filter so this ability also functions outside the battlefield.
+        let condition_words = crate::lexer::token_word_refs(&condition_tokens);
+        if matches!(condition_words.as_slice(), ["its" | "it's", "exiled"] | ["it", "is", "exiled"])
+            && let TriggerSpec::CounterRemovedFrom { filter, .. } = &mut trigger
+            && filter.source
+        {
+            filter.zone = Some(Zone::Exile);
+            return Ok(Some(trigger));
+        }
         let condition = crate::grammar::structure::parse_predicate_with_grammar_entrypoint_lexed(
             &condition_tokens,
         )?;

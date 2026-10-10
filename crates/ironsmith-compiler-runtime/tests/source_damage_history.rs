@@ -2,9 +2,8 @@
 //! history of the permanent since it entered. Source-authored, deliberately unrun.
 use ironsmith::card::{CardBuilder, PowerToughness};
 use ironsmith::cards::CardDefinition;
-use ironsmith::events::cause::EventCause;
-use ironsmith::events::processing::process_damage_assignments_with_event_with_source_snapshot_opts;
-use ironsmith::events::DamageTarget;
+use ironsmith::effects::{DealDamageEffect, EffectExecutor, EffectContext};
+use ironsmith::target::ChooseSpec;
 use ironsmith::static_abilities::StaticAbilityId;
 use ironsmith::{CardId, CardType, GameState, PlayerId, Zone};
 use ironsmith_compiled_artifact::CompiledCardArtifact;
@@ -59,17 +58,9 @@ fn hexproof_until_first_damage_on_both_routes() {
                 B,
                 Zone::Battlefield,
             );
-            process_damage_assignments_with_event_with_source_snapshot_opts(
-                &mut game,
-                guardian,
-                DamageTarget::Object(victim),
-                1,
-                false,
-                false,
-                EventCause::effect(),
-                None,
-            )
-            .unwrap();
+            DealDamageEffect::new(1, ChooseSpec::SpecificObject(victim))
+                .execute(&mut game, &mut EffectContext::new_default(guardian, A))
+                .unwrap();
             assert!(game.has_dealt_damage_since_entered(guardian));
             assert!(!has_hexproof(&game), "{name}: hexproof ends once it has dealt damage");
         }

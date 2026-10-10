@@ -42,10 +42,10 @@ fn activation_conditions_preserve_existing_semantics() {
             "Activate only if there are three or more brick counters on this artifact."
         )),
         Some(PredicateAst::Source(SourcePredicateAst::SourceHasCounterAtLeast {
-            counter_type: crate::CounterType::Named(counter_name),
+            counter_type: crate::CounterType::Brick,
             count: 3,
             ..
-        })) if counter_name.as_str() == "brick"
+        }))
     ));
     assert_eq!(
         parse_activation_condition_lexed(&lex("Activate only if this permanent is a creature.")),

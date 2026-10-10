@@ -557,8 +557,9 @@ mod tests {
         );
 
         let trigger_event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::zones::ZoneChangeEvent::with_cause(
+            crate::events::zones::ZoneChangeEvent::with_results(
                 creature_id,
+                vec![creature_id],
                 Zone::Stack,
                 Zone::Battlefield,
                 crate::events::cause::EventCause::effect(),

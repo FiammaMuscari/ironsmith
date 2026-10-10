@@ -204,8 +204,7 @@ pub(crate) fn execute_land_play_program_with_outputs<'a>(
             let selected_entry_definition = if let LandPlayAuthorization::SelectedPermission { back_face, .. } = &authorization {
                 crate::special_actions::apply_land_play_face(game, card, *back_face)
             } else { None };
-            let checked = game
-                .continuous_query_snapshot()
+            let checked = crate::special_actions::land_play_query_snapshot(game, player, card)
                 .map_err(ExecutionError::ContinuousDiscovery)?;
             let legal = checked.is_active_player(player)
                 && checked

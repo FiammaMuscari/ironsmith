@@ -96,3 +96,37 @@ fn quicksilver_elemental_converts_only_blue_mana_for_its_own_activations() {
         );
     }
 }
+
+#[test]
+fn acquired_activated_abilities_are_a_resolution_snapshot_and_expire() {
+    use ironsmith::effects::{EffectContext, ResolvedTarget, execute_effect};
+    use ironsmith::decision::SelectFirstDecisionMaker;
+    for definition in routes("Quicksilver Elemental", QUICKSILVER_ELEMENTAL) {
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let recipient = game.create_object_from_definition(&definition, A, Zone::Battlefield);
+        let donor_definition = compile_to_runtime_definition("Ability donor",
+            "Type: Creature\nPower/Toughness: 2/2\nFlying\n{T}: Add {G}.\n{1}: You gain 2 life.", false).unwrap();
+        let donor = game.create_object_from_definition(&donor_definition, A, Zone::Battlefield);
+        let AbilityKind::Activated(ability) = &definition.abilities[0].kind else { panic!("copy activation"); };
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = EffectContext::new(recipient, A, &mut dm);
+        ctx.targets.push(ResolvedTarget::Object(donor));
+        for effect in ability.effects.flattened_default_effects() {
+            execute_effect(&mut game, effect, &mut ctx).unwrap();
+        }
+        game.refresh_continuous_state().unwrap();
+        let activated = |game: &GameState| game.current_abilities(recipient).unwrap().into_iter()
+            .filter(|ability| matches!(ability.kind, AbilityKind::Activated(_))).count();
+        assert_eq!(activated(&game), 3, "copy both mana and nonmana activated abilities");
+        assert!(!game.current_abilities(recipient).unwrap().iter().any(|ability|
+            matches!(&ability.kind, AbilityKind::Static(ability) if ability.id() == ironsmith::static_abilities::StaticAbilityId::Flying)),
+            "the donor's static ability is not acquired");
+        game.move_object_by_effect(donor, Zone::Graveyard).unwrap();
+        game.refresh_continuous_state().unwrap();
+        assert_eq!(activated(&game), 3, "the grant survives the donor leaving");
+        game.effect_store.continuous_effects.cleanup_end_of_turn();
+        game.next_turn();
+        game.refresh_continuous_state().unwrap();
+        assert_eq!(activated(&game), 1, "the acquired abilities expire at cleanup");
+    }
+}

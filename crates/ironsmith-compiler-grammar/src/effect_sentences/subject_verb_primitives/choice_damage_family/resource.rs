@@ -16,6 +16,25 @@ pub fn parse_sentence_unless_pays(
     };
     let unless_idx = shape.unless_token;
 
+    // Repeating the process follows the successful payment; it is not a
+    // component of the cost itself. Preserve the coordination so resolution
+    // can bind the loop continuation to the payment's outcome.
+    let tokens = crate::util::trim_edge_punctuation_tokens(clause.tokens());
+    if unless_idx > 0 && tokens.len() >= 4 {
+        let split = tokens.len() - 4;
+        if tokens[split..].iter().zip(["and", "repeat", "this", "process"])
+            .all(|(token, word)| token.is_word(word))
+            && let Some(mut effects) = parse_sentence_unless_pays(
+                SubjectVerbPrimitiveClause::new(&tokens[..split]),
+            )?
+        {
+            effects.push(EffectAst::ForEach(ForEachEffectAst::RepeatThisProcess));
+            return Ok(Some(vec![EffectAst::Coordinated {
+                effects, leading_duration: false, result_conjunction: false,
+            }]));
+        }
+    }
+
     if unless_idx == 0 {
         let Some((unless_clause, effect_clause)) = clause.split_once_on_comma() else {
             return Ok(None);

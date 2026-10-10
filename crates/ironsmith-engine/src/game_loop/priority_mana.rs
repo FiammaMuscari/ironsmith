@@ -113,11 +113,11 @@ fn pay_selected_cost_with_outputs(
     cost_ctx.effect_outcomes = effect_outcomes.clone();
     let chosen_snapshot = game.object(chosen_id).map(|obj| {
         if preserve_chosen_snapshot {
-            crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(obj, game)
+            crate::snapshot::ObjectSnapshot::try_from_object_with_calculated_characteristics(obj, game)
         } else {
-            crate::snapshot::ObjectSnapshot::from_object(obj, game)
+            Ok(crate::snapshot::ObjectSnapshot::from_object(obj, game))
         }
-    });
+    }).transpose().map_err(GameLoopError::ExecutionFailed)?;
     if let Some(tag) = effective_choice_tag.as_ref()
         && let Some(snapshot) = chosen_snapshot.clone()
     {
@@ -390,7 +390,11 @@ pub fn mana_ability_is_undo_safe(game: &GameState, source: ObjectId, ability_ind
         return false;
     }
 
-    let costs = mana_ability.mana_cost.costs();
+    // An unselected alternative does not establish which resources would
+    // have to be restored by undo. Only a fixed tap-only cost is safe here.
+    let Some(costs) = mana_ability.mana_cost.as_all() else {
+        return false;
+    };
     if costs.is_empty() || !costs.iter().all(|cost| cost.requires_tap()) {
         return false;
     }
@@ -3950,11 +3954,24 @@ fn propose_spell_cast_with_origin(
     } else {
         None
     };
+    let native_alternative_permission = match casting_method.without_exact_permission() {
+        CastingMethod::PlayFrom { source, zone, use_alternative: Some(index) }
+            if *source == spell_id => permission_game.object(spell_id).is_some_and(|card| {
+                card.alternative_casts.get(*index).is_some_and(|method| {
+                    let view = crate::derived_view::DerivedGameView::new(permission_game);
+                    crate::decision::native_alternative_cast_zone_permission(
+                        permission_game, caster, card, *zone, method, &view,
+                    )
+                })
+            }),
+        _ => false,
+    };
     if matches!(casting_method.without_exact_permission(),
         CastingMethod::PlayFrom { .. }
             | CastingMethod::SplitOtherHalfPlayFrom { .. }
             | CastingMethod::FaceDownPlayFrom { .. })
         && selected_plain_grant.is_none() && selected_grant.is_none() && !effect_authorized
+        && !native_alternative_permission
         // A priced additional-cost origin projects to PlayFrom(None), but
         // its exact derived permission has already been validated and frozen.
         && !price_route.as_ref().is_some_and(|route| route.origin.is_some())

@@ -392,6 +392,14 @@ pub fn trigger_die_event_grouped(trigger: &TriggerSpec) -> Option<bool> {
 
 /// A bare demonstrative belongs to the single quantitative restriction on a
 /// completed cast. Multiple different quantities are intentionally ambiguous.
+fn mana_value_compares_source_counters(filter: &ObjectFilter) -> bool {
+    filter.mana_value_eq_counters_on_source.is_some()
+        || matches!(&filter.mana_value, Some(crate::filter::Comparison::EqualExpr(value))
+            if matches!(value.unhinted(), ironsmith_core::Value::CountersOnSource(_))
+                || matches!(value.unhinted(), ironsmith_core::Value::CountersOn(spec, _)
+                    if matches!(spec.base(), ironsmith_core::ChooseSpec::Source)))
+}
+
 pub fn trigger_cast_event_quantity(trigger: &TriggerSpec) -> Option<ironsmith_core::CastEventQuantity> {
     use ironsmith_core::CastEventQuantity;
     match trigger {
@@ -403,7 +411,7 @@ pub fn trigger_cast_event_quantity(trigger: &TriggerSpec) -> Option<ironsmith_co
         TriggerSpec::SpellCast { filter: Some(filter), .. }
         | TriggerSpec::SpellCastSameNameCardInZone { filter: Some(filter), .. } => {
             let mut quantities = Vec::new();
-            if filter.mana_value_eq_counters_on_source.is_some() { quantities.push(CastEventQuantity::ManaValue); }
+            if mana_value_compares_source_counters(filter) { quantities.push(CastEventQuantity::ManaValue); }
             if let Some((color, _)) = filter.mana_symbol_count { quantities.push(CastEventQuantity::ManaSymbols(color)); }
             // Qualified target relations retain their separately captured subset
             // count. A bare arity counts the completed cast's distinct targets.
@@ -421,7 +429,7 @@ pub fn trigger_cast_event_quantity(trigger: &TriggerSpec) -> Option<ironsmith_co
 /// Legacy relation-qualified target counts use the matcher's captured subset.
 /// An additional quantified characteristic cannot silently win that binding.
 pub fn spell_cast_filter_binds_target_count(filter: &ObjectFilter) -> bool {
-    if filter.mana_symbol_count.is_some() || filter.mana_value_eq_counters_on_source.is_some() {
+    if filter.mana_symbol_count.is_some() || mana_value_compares_source_counters(filter) {
         return false;
     }
     filter.targets_player.is_some() || filter.targets_object.is_some()

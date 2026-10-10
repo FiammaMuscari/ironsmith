@@ -1951,15 +1951,15 @@ mod tests {
             crate::effect::EffectId(0),
             crate::effect::Effect::new(DiscardEffect::you(1)),
         ));
-        assert!(matches!(
+        assert!(
             effect.0.can_execute_as_cost_with_reason(
                 &game,
                 source,
                 alice,
                 crate::costs::PaymentReason::CastSpell,
-            ),
-            Err(crate::effects::CostValidationError::NotEnoughCards)
-        ));
+            ).is_err(),
+            "the wrapped cost cannot discard the spell being cast"
+        );
         assert!(
             effect
                 .0

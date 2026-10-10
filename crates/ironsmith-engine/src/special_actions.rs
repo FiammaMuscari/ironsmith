@@ -1082,6 +1082,9 @@ fn ignore_source_effect_mana_cost(
             actual: source.zone,
         });
     }
+    if game.is_phased_out(source_id) {
+        return Err(ActionError::NoSuchAbility);
+    }
     let ability = source
         .abilities
         .get(ability_index)
@@ -1327,6 +1330,24 @@ fn perform_roll_planar_die(game: &mut GameState, player: PlayerId) -> Result<(),
 
 // === Play Land ===
 
+/// Land permission filters inspect the face being played. A card the player
+/// may inspect in exile is still physically face down until the actual play;
+/// expose its characteristics only in this isolated legality query.
+pub(crate) fn land_play_query_snapshot(
+    game: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> Result<GameState, crate::static_ability_processor::StaticEffectDiscoveryError> {
+    if game.object(card).is_some_and(|object| object.zone == Zone::Exile)
+        && game.is_face_down(card)
+        && game.can_player_look_at_face_down_exiled_card(card, player)
+        && let Some(query) = game.hypothetical_face_up(card)?
+    {
+        return Ok(query);
+    }
+    game.continuous_query_snapshot()
+}
+
 fn can_play_land(
     game: &GameState,
     player: PlayerId,
@@ -1336,7 +1357,7 @@ fn can_play_land(
     // Direct special-action validation must preserve failed discovery, just as
     // the checked legal-action enumerator does; unknown is not "prohibited".
     let checked =
-        game.continuous_query_snapshot()
+        land_play_query_snapshot(game, player, card_id)
             .map_err(|error| ActionError::ExecutionFailure {
                 source: card_id,
                 error: crate::effects::ExecutionError::ContinuousDiscovery(error),
@@ -1512,8 +1533,7 @@ pub(crate) fn choose_land_play_permission(
     card: ObjectId,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<LandPlayPermissionReceipt, crate::effects::ExecutionError> {
-    let checked = game
-        .continuous_query_snapshot()
+    let checked = land_play_query_snapshot(game, player, card)
         .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     let object = checked
         .object(card)
@@ -3570,6 +3590,15 @@ fn check_total_cost_in_query_scope(
     }
     match cost.kind() {
         ironsmith_core::TotalCostKind::All(costs) => {
+            // Reject an impossible source tap before asking how to fund an
+            // earlier mana component. That query reserves this source untapped;
+            // when it is already tapped, repeatable producers can otherwise
+            // grow an endless search that can never satisfy the reservation.
+            // Check each All branch separately so a cost without a tap symbol
+            // in OneOf remains available.
+            if game.is_tapped(source) && costs.iter().any(|cost| cost.requires_tap()) {
+                return Err(CostPaymentError::AlreadyTapped);
+            }
             let mut speculative_tagged_objects = execution_ctx.tagged_objects.clone();
             let mut discard_slots = Vec::new();
             // Each exile-chosen material slot consumes distinct objects: one
@@ -5699,6 +5728,68 @@ mod tests {
     use crate::zone::Zone;
 
     #[test]
+    fn tapped_mana_filter_rejects_funding_but_preserves_cost_alternatives() {
+        let mana_ability = |cost, output| {
+            let mut ability = Ability::mana(crate::cost::TotalCost::free(), output);
+            let crate::ability::AbilityKind::Activated(activated) = &mut ability.kind else {
+                unreachable!();
+            };
+            activated.mana_cost = cost;
+            ability
+        };
+        let alice = PlayerId::from_index(0);
+        let mut game = setup_game();
+        let producer = CardBuilder::new(CardId::new(), "Repeatable producer")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let producer = game.create_object_from_card(&producer, alice, Zone::Battlefield);
+        game.object_mut(producer)
+            .unwrap()
+            .abilities_mut()
+            .push(mana_ability(
+                crate::cost::TotalCost::free(),
+                vec![ManaSymbol::Blue],
+            ));
+        let filter = CardBuilder::new(CardId::new(), "Tapped filter")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let filter = game.create_object_from_card(&filter, alice, Zone::Battlefield);
+        let tap_branch = crate::cost::TotalCost::from_costs(vec![
+            crate::costs::Cost::mana(ManaCost::new().add_generic(1)),
+            crate::costs::Cost::tap(),
+        ]);
+        game.object_mut(filter).unwrap().abilities_mut().push(
+            mana_ability(tap_branch.clone(), vec![ManaSymbol::Green]),
+        );
+        game.tap(filter);
+        assert!(matches!(
+            can_activate_mana_ability_check(&game, alice, filter, 0),
+            Err(ActionError::CantPayCost)
+        ));
+        let alternatives = crate::cost::TotalCost::one_of(vec![
+            tap_branch,
+            crate::cost::TotalCost::free(),
+        ]);
+        let view = crate::derived_view::DerivedGameView::new(&game);
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(filter, alice, &mut dm);
+        assert!(can_pay_total_cost_in_context_with_funding(
+            &game,
+            alice,
+            filter,
+            &alternatives,
+            crate::costs::PaymentReason::Effect,
+            &mut ctx,
+            CostQueryFunding::PotentialMana(&view, None),
+        ).is_ok());
+        assert!(game.is_tapped(filter));
+        assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
+        game.untap(filter);
+        assert!(can_activate_mana_ability_check(&game, alice, filter, 0).is_ok());
+        assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
+    }
+
+    #[test]
     fn sacrifice_protection_blocks_opponent_requested_costs_but_allows_own_costs() {
         use crate::costs::PaymentReason;
         use crate::events::cause::{
@@ -7284,7 +7375,10 @@ mod replacement_land_owner_contract_tests {
         if priority {
             crate::game_loop::apply_priority_response_with_dm(game, queue, state,
             &crate::PriorityResponse::PriorityAction(crate::decision::LegalAction::PlayLand { land_id: land }), dm)
-            .map(|_| ()).map_err(|error| matches!(error, crate::game_loop::GameLoopError::ResolutionFailed(message) if message.contains('X')))
+            .map(|_| ()).map_err(|error| matches!(error,
+                crate::game_loop::GameLoopError::ExecutionFailed(
+                    crate::effects::ExecutionError::UnresolvableValue(message)
+                ) if message.contains('X')))
         } else {
             super::perform(SpecialAction::PlayLand { card_id: land }, game, alice, dm).map_err(
                 |error| {

@@ -41,6 +41,8 @@ pub struct StatementLineSemanticFacts {
     pub replacement_surfaces: Vec<StatementReplacementSurfaceKind>,
     pub as_enters_effect_program: Option<AsEntersEffectProgramFacts>,
     pub as_transforms_effect_program: Option<AsTransformsEffectProgramFacts>,
+    /// A contextual replacement merged from a separate authored line.
+    pub replacement_starts_new_source_line: bool,
     pub presentation_label: Option<crate::ability::PresentationLabel>,
     pub creature_type_choice_buff: bool,
     pub leading_condition_intro: Option<StatementConditionIntro>,

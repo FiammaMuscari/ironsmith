@@ -34,7 +34,7 @@ fn parse_player_villainous_choice_mode_program(
     }
 }
 
-fn parse_player_villainous_choice_statement(
+pub(super) fn parse_player_villainous_choice_statement(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let shape =

@@ -21,8 +21,9 @@ fn preserves_participant_fanout_and_greatest_mana_value_ties() {
         EffectAst::Conditionals(ConditionalEffectAst::IfEffectResult {
             effect,
             predicate:
-                EffectPredicate::PlayerAffectedObjectHasGreatestManaValue {
+                EffectPredicate::PlayerActionObjectHasGreatestManaValue {
                     player: PlayerFilter::You,
+                    action: ironsmith_core::PriorEffectAction::Discarded,
                 },
             if_true,
         }),

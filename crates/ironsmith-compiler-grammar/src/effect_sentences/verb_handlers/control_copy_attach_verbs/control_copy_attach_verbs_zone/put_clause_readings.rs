@@ -319,7 +319,15 @@ fn apply_source_zone_constraint(target: &mut TargetAst, zone: Zone) {
 }
 fn apply_explicit_source_location(target: &mut TargetAst, tokens: &[OwnedLexToken]) {
     let words = crate::lexer::token_word_refs(tokens);
-    let location = if crate::word_primitives::sequence_occurs(&words, &["from", "your", "hand"]) {
+    let location = if ["owner's", "owners"].iter().any(|owner| {
+        crate::word_primitives::sequence_occurs(&words, &["from", "its", owner, "graveyard"])
+    }) {
+        // This possessive describes the moved card, independently of the
+        // player instructed to move it or its new controller.
+        Some((Zone::Graveyard, Some(PlayerFilter::OwnerOf(
+            crate::target::ObjectRef::FilterCandidate,
+        ))))
+    } else if crate::word_primitives::sequence_occurs(&words, &["from", "your", "hand"]) {
         Some((Zone::Hand, Some(PlayerFilter::You)))
     } else if crate::word_primitives::sequence_occurs(&words, &["from", "your", "graveyard"]) {
         Some((Zone::Graveyard, Some(PlayerFilter::You)))

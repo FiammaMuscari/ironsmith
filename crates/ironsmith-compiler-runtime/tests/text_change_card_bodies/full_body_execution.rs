@@ -77,7 +77,7 @@ impl DecisionMaker for Announce {
         // choice or assertion is selected by a presentation description.
         if context.min == 0 {
             return self.optional.iter().map(|index| {
-                assert!(context.options.iter().any(|option| option.index == *index && option.legal));
+                assert!(context.options.iter().any(|option| option.index == *index && option.legal), "requested optional cost {index}: {context:?}");
                 *index
             }).collect();
         }
@@ -396,12 +396,14 @@ fn cipher_encodes_real_card_casts_one_free_copy_and_keeps_the_grant_beyond_text_
         let bearer = object(&mut game, A, Zone::Battlefield, vec![CardType::Creature], vec![Subtype::Human]);
         let encoded = cast(&mut game, &definition, Zone::Hand, CastingMethod::Normal,
             &mut Announce { targets: vec![Target::Object(target)], ..Default::default() });
-        let mut encode = Resolve::color(Color::Red, Color::Blue, true);
+        // Trait Doctoring is blue. Giving this witness protection from blue
+        // would make it an illegal target for the encoded copy.
+        let mut encode = Resolve::color(Color::Red, Color::Green, true);
         encode.booleans.push_back(true);
         encode.objects = Some(bearer);
         resolve(&mut game, &mut encode);
         assert_eq!(zone(&game, encoded), Zone::Exile);
-        protection(&game, target, ColorSet::BLUE);
+        protection(&game, target, ColorSet::GREEN);
         assert_eq!(game.current_abilities(bearer).unwrap().iter().filter(|ability| matches!(ability.kind, AbilityKind::Triggered(_))).count(), 1);
         let before = game.player(A).unwrap().mana_pool.total();
         let mut cast_copy = Resolve { booleans: VecDeque::from([true]), targets: vec![Target::Object(target)], ..Default::default() };
@@ -413,11 +415,11 @@ fn cipher_encodes_real_card_casts_one_free_copy_and_keeps_the_grant_beyond_text_
             resolve(&mut game, &mut cast_copy);
             assert_eq!(game.stack.len(), 1, "resolving the granted trigger casts the encoded copy");
             assert_eq!(game.player(A).unwrap().mana_pool.total(), before);
-            let mut copy_words = Resolve::color(Color::Blue, Color::Green, true);
+            let mut copy_words = Resolve::color(Color::Green, Color::White, true);
             resolve(&mut game, &mut copy_words);
             assert!(copy_words.options.is_empty());
             assert!(game.stack.is_empty());
-            protection(&game, target, ColorSet::GREEN);
+            protection(&game, target, ColorSet::WHITE);
         }
         assert_eq!(game.exile.len(), 1, "the spell copy never asks to encode again");
         expire(&mut game);

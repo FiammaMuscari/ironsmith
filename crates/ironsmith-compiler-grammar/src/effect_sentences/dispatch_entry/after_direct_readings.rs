@@ -295,7 +295,7 @@ fn read_simple_gain_ability(
         && shape.complete
         && !shape.subject_tokens.first().is_some_and(|token| {
             token.is_any_word(&[
-                "if", "unless", "when", "whenever", "at", "as", "then", "instead",
+                "if", "unless", "when", "whenever", "at", "as", "then", "instead", "for",
             ])
         })
         && !shape

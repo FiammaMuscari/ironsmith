@@ -14,6 +14,17 @@ fn random_targets_compile_and_render() {
             assert!(debug.contains("random: true"), "{name}: {debug}");
             let text = support::rendered(&definition);
             assert!(text.contains(phrase), "{name}: {text}");
+            if name == "Witch Hunt" {
+                let trigger = definition.abilities.iter().filter_map(|ability| {
+                    match &ability.kind {
+                        ironsmith::ability::AbilityKind::Triggered(trigger)
+                            if !trigger.choices.is_empty() => Some(trigger),
+                        _ => None,
+                    }
+                }).next().unwrap();
+                assert_eq!(trigger.choices.len(), 1, "random selection must not add an ordinary target");
+                assert!(trigger.choices[0].count().random);
+            }
         }
     }
 }

@@ -316,7 +316,19 @@ pub(super) fn parse_triggered_line_impl(
                 effects,
             })
         }
-        DelayedScheduleStep::MainPhase => {
+        DelayedScheduleStep::MainPhaseThisTurn => {
+                EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
+                    trigger: crate::cards::builders::TriggerSpec::BeginningOfMainPhase {
+                        player: PlayerFilter::Any,
+                        surface: ironsmith_core::trigger_model::MainPhaseSurface::MainPhase,
+                    },
+                    effects,
+                    one_shot: true,
+                    until_end_of_combat: false,
+                    attach_to_previous_ability: false,
+                })
+            }
+            DelayedScheduleStep::MainPhase => {
             EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextMainPhase {
                 player: match schedule.player {
                     PlayerAst::You | PlayerAst::Implicit => PlayerFilter::You,

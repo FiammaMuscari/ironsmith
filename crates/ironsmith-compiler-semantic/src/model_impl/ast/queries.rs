@@ -243,6 +243,7 @@ pub fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantAbilitiesToTarget {
                 target, ..
             })
+            | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantToTarget { target, .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantAbilitiesChoiceToTarget {
                 target,
@@ -374,7 +375,14 @@ pub fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
             } else if *filter == PlayerFilter::IteratedPlayer {
                 ChooseSpec::Player(filter.clone())
             } else if explicit_target_span.is_some() {
-                ChooseSpec::target(ChooseSpec::Player(filter.clone()))
+                // The filter can already carry the discourse target marker.
+                // The ChooseSpec owns announcement; retaining both markers
+                // would declare the same player again through a follow-up.
+                let mut constraint = filter;
+                while let PlayerFilter::Target(inner) = constraint {
+                    constraint = inner;
+                }
+                ChooseSpec::target(ChooseSpec::Player(constraint.clone()))
             } else {
                 ChooseSpec::Player(filter.clone())
             }
@@ -433,5 +441,19 @@ pub fn source_reference_hinted_spec(
     match surface {
         Some(surface) => spec.with_surface_hint(ChooseSpecSurfaceHint::SourceReference(surface)),
         None => spec,
+    }
+}
+
+#[cfg(test)]
+mod target_player_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_player_target_has_one_announcement_marker() {
+        let expected = ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Opponent));
+        for filter in [PlayerFilter::Opponent, PlayerFilter::target_opponent()] {
+            let target = TargetAst::Player(filter, Some(crate::diagnostics::TextSpan::synthetic()));
+            assert_eq!(choose_spec_for_target(&target), expected);
+        }
     }
 }

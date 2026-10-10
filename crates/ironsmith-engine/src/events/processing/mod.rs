@@ -3223,6 +3223,16 @@ pub(crate) struct DestroyExecutionReceipt {
 }
 
 impl DestroyExecutionReceipt {
+    pub(crate) fn result_objects(&self) -> Vec<ObjectId> {
+        self.zone_receipts
+            .iter()
+            .flat_map(|(_, receipt)| match &receipt.original {
+                EventOutcome::Proceed(applied) => applied.new_object_ids.clone(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
     pub(crate) fn has_deferred_programs(&self) -> bool {
         !self.programs.is_empty()
             || self
@@ -10858,10 +10868,13 @@ fn prepare_etb_replacements_inner(
                                 } => Some(*life_cost),
                                 _ => None,
                             };
-                            let controller = game
-                                .object(object_id)
-                                .map(|o| game.controller_of(o))
-                                .unwrap_or(PlayerId::from_index(0));
+                            let controller = if life_cost.is_some() {
+                                decision_ctx.player()
+                            } else {
+                                game.object(object_id)
+                                    .map(|o| game.controller_of(o))
+                                    .unwrap_or(PlayerId::from_index(0))
+                            };
                             let response = match decision_ctx {
                                 crate::decisions::context::DecisionContext::Boolean(ctx) => {
                                     if dm.decide_boolean(game, &ctx) {
@@ -11034,10 +11047,13 @@ fn prepare_etb_replacements_inner(
                     destinations,
                     ..
                 } => {
-                    let controller = game
-                        .object(object_id)
-                        .map(|o| game.controller_of(o))
-                        .unwrap_or(PlayerId::from_index(0));
+                    let controller = if life_cost.is_some() {
+                        decision_ctx.player()
+                    } else {
+                        game.object(object_id)
+                            .map(|o| game.controller_of(o))
+                            .unwrap_or(PlayerId::from_index(0))
+                    };
                     let response = match decision_ctx {
                         crate::decisions::context::DecisionContext::Boolean(ctx) => {
                             if dm.decide_boolean(game, &ctx) {

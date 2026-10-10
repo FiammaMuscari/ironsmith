@@ -34,7 +34,9 @@ fn lifeblood_hydra_gains_life_and_draws_by_its_power() {
         assert_eq!(gains.len(), 1);
         assert_eq!(draws.len(), 1);
         assert!(matches!(gains[0].amount.unhinted(), Value::PowerOf(_)), "{:?}", gains[0].amount);
-        assert_eq!(gains[0].amount.unhinted(), draws[0].count.unhinted());
+        let Value::PowerOf(gain_source) = gains[0].amount.unhinted() else { unreachable!() };
+        let Value::PowerOf(draw_source) = draws[0].count.unhinted() else { panic!("draw amount must use power") };
+        assert_eq!(gain_source.base(), draw_source.base());
     }
 }
 

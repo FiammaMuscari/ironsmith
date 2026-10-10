@@ -39,8 +39,8 @@ impl PermanentTappedEvent {
     pub fn capture(game: &GameState, permanent: ObjectId, actor: Option<PlayerId>) -> Self {
         Self {
             permanent,
-            snapshot: game.object(permanent).map(|object| {
-                ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
+            snapshot: game.object(permanent).and_then(|object| {
+                ObjectSnapshot::capture_for_execution(object, game)
             }),
             actor,
             before_snapshot: None,
@@ -111,11 +111,9 @@ pub(crate) fn before_tap_state_snapshots(
     game.battlefield
         .iter()
         .filter_map(|id| game.object(*id))
-        .map(|object| {
-            (
-                object.id,
-                ObjectSnapshot::from_object_with_calculated_characteristics(object, game),
-            )
+        .filter_map(|object| {
+            ObjectSnapshot::capture_for_execution(object, game)
+                .map(|snapshot| (object.id, snapshot))
         })
         .collect()
 }

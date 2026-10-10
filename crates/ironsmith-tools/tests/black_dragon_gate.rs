@@ -94,10 +94,10 @@ fn black_dragon_gate_waits_for_the_color_choice_before_entering() {
         suspend: true,
         ..Default::default()
     };
-    assert!(
-        game.move_object_with_etb_processing_with_dm(hand, Zone::Battlefield, &mut dm).map(require_plain_entry_for_test).expect("entry execution must succeed in this scenario")
-            .is_none()
-    );
+    let pending = game.move_object_with_etb_processing_with_dm(hand, Zone::Battlefield, &mut dm)
+        .expect("entry should suspend for its color choice");
+    assert!(pending.pending);
+    assert!(pending.original.into_result().is_none());
     assert_eq!(dm.prompts, 1);
     assert_eq!(game.object(hand).unwrap().zone, Zone::Hand);
     assert!(game.battlefield.is_empty());

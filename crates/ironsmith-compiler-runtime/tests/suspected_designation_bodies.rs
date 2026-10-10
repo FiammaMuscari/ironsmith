@@ -82,7 +82,7 @@ impl DecisionMaker for Choices {
         } else { SelectFirstDecisionMaker.decide_targets(game, context) }
     }
     fn decide_options(&mut self, game: &GameState, context: &SelectOptionsContext) -> Vec<usize> {
-        if context.description.starts_with("Choose mode") && let Some(modes) = &self.modes { return modes.clone(); }
+        if (context.description.starts_with("Choose ") && context.description.contains("mode")) && let Some(modes) = &self.modes { return modes.clone(); }
         SelectFirstDecisionMaker.decide_options(game, context)
     }
 }

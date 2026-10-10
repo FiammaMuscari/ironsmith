@@ -228,7 +228,7 @@ pub fn parse_draw(
                     EffectAst::subject_verb(SubjectVerbRoleAst::Chooser, player.clone(),
                         SubjectVerbActionAst::Choices(crate::cards::builders::ChoiceActionAst::ChooseNumber { min: 0, max: Some(max), source_owned: false })),
                     subject_verb_player_resource_effect(SubjectVerbRoleAst::AffectedPlayer, player,
-                        SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count: Value::PendingEffectMetric { source: ironsmith_core::EffectMetricSource::Outcome, metric: ironsmith_core::EffectMetric::Count } })),
+                        SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count: Value::PendingPriorEffectMetric(ironsmith_core::PriorEffectMetricQuery::new(ironsmith_core::EffectMetricSource::Outcome, ironsmith_core::EffectMetric::Count).with_action(ironsmith_core::PriorEffectAction::ChosenNumber)) })),
                 ] });
             }
         }
@@ -1293,7 +1293,7 @@ mod counter_payment_actor_tests {
             "target spell unless a creature pays {1}",
             "target spell unless its controller discards their library",
             "target spell unless you sacrifice a creature nonsense"] {
-            assert!(parse(text).is_err(), "{text}");
+            assert!(parse(text).is_err(), "{text}: {:?}", parse(text));
         }
     }
 }

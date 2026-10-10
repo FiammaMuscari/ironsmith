@@ -1432,13 +1432,14 @@ impl RuntimeCacheState {
     }
 }
 
-/// LKI snapshot memo scoped to the current (mutation, effect) revision pair.
+/// LKI snapshot memo scoped to mutation, continuous-context and effect revisions.
 /// Lookups only ever use the current revisions, so entries from older
 /// revisions are unreachable; scoping keeps the map bounded by object count
 /// instead of growing for the whole session.
 #[derive(Debug, Default, Clone)]
 struct ObjectSnapshotCache {
     mutation_revision: u64,
+    context_revision: u64,
     effect_revision: u64,
     entries: PersistentMap<ObjectId, Arc<ObjectSnapshot>>,
 }
@@ -5984,13 +5985,16 @@ impl GameState {
 
     /// History is staged after an instruction's physical mutations. A query
     /// made during those mutations may already have warmed characteristics, so
-    /// invalidate history-reading numeric modifiers at publication as well.
+    /// invalidate history-reading conditions, selectors, and numeric modifiers
+    /// at publication as well. Fixed bonuses can still depend on turn history.
     fn invalidate_continuous_history_modifiers(&self) {
         if !self.runtime_cache.continuous_state_dirty.get()
             && self
                 .cached_continuous_effects_snapshot_arc()
                 .iter()
-                .any(|effect| Self::modification_is_turn_context_sensitive(&effect.modification))
+                .any(|effect| effect.condition.is_some()
+                    || Self::effect_target_is_turn_context_sensitive(&effect.applies_to)
+                    || Self::modification_is_turn_context_sensitive(&effect.modification))
         {
             self.mark_continuous_state_dirty();
         }
@@ -7399,11 +7403,17 @@ impl GameState {
         spell: &crate::object::Object,
         ctx: &crate::filter::FilterContext,
     ) -> bool {
-        filter.matches(spell, ctx, self)
+        // Grants apply during proposal, before a StackEntry is published.
+        // Its retained origin is already authoritative at that point.
+        let mut ctx = ctx.clone();
+        if spell.zone == Zone::Stack && self.cast_origin_snapshot(spell_id).is_some() {
+            ctx.prospective_cast = Some(spell_id);
+        }
+        filter.matches(spell, &ctx, self)
             || (spell.zone == Zone::Stack
                 && self
                     .cast_origin_snapshot(spell_id)
-                    .is_some_and(|snapshot| filter.matches_snapshot(snapshot, ctx, self)))
+                    .is_some_and(|snapshot| filter.matches_snapshot(snapshot, &ctx, self)))
     }
 
     /// Whether any object could currently have a "goads matching" static
@@ -7561,12 +7571,16 @@ impl GameState {
     }
 
     pub fn cleanup_restrictions_end_of_turn(&mut self) {
+        let before = self.effect_store.restriction_effects.len();
         let current_turn = self.turn.turn_number;
         self.effect_store.restriction_effects.retain(|effect| {
             effect.starts_in_added_combat.is_none()
                 && (!matches!(effect.duration, crate::effect::Until::EndOfTurn)
                     || effect.expires_end_of_turn > current_turn)
         });
+        if self.effect_store.restriction_effects.len() != before {
+            self.update_cant_effects();
+        }
     }
 
     pub fn cleanup_restrictions_end_of_combat(&mut self) {

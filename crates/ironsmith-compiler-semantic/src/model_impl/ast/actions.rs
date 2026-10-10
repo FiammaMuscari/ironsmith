@@ -1857,6 +1857,9 @@ impl std::fmt::Debug for SubjectVerbActionAst {
                 .field("abilities", abilities)
                 .field("duration", duration)
                 .finish(),
+            Self::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, source, duration }) => f
+                .debug_struct("GrantActivatedAbilitiesFrom")
+                .field("target", target).field("source", source).field("duration", duration).finish(),
             Self::Grants(GrantActionAst::GrantAbilitiesToTarget {
                 target,
                 abilities,

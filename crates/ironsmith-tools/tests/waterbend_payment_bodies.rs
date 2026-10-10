@@ -232,6 +232,9 @@ impl Board {
     }
     fn finish(&mut self) {
         for _ in 0..48 {
+            ironsmith::game_loop::check_and_apply_sbas_with(
+                &mut self.game, &mut self.queue, &mut self.choices,
+            ).unwrap();
             drain_pending_trigger_events(&mut self.game, &mut self.queue);
             put_triggers_on_stack_with_dm(&mut self.game, &mut self.queue, &mut self.choices).unwrap();
             if self.game.stack.is_empty() { return; }
@@ -351,8 +354,8 @@ fn spirit_pays_one_combined_price_and_keeps_flying_ward_and_enters_scry() {
 fn mandatory_waterbend_never_replaces_colored_pips_or_ordinary_cost_increases() {
     for route in ROUTES {
         let mut board = Board::new(route);
-        board.permanent("Thalia, Guardian of Thraben", BOB);
         board.resources(6);
+        board.permanent("Thalia, Guardian of Thraben", BOB);
         board.main(ALICE);
         let definition = definition("Water Whip", route);
         let card = board.hand(&definition, ALICE);
@@ -598,7 +601,7 @@ fn katara_migration_keeps_nonzero_own_turn_activation_and_entire_temporary_body(
         let stable = board.game.object(spell).unwrap().stable_id;
         board.finish();
         let katara = board.game.find_object_by_stable_id(stable).unwrap();
-        let ally = *board.game.battlefield.iter().find(|id| board.game.object(**id).is_some_and(|object| object.name == "Ally")).unwrap();
+        let ally = *board.game.battlefield.iter().find(|id| board.game.object(**id).is_some_and(|object| object.has_subtype(ironsmith::Subtype::Ally))).unwrap();
         assert_eq!((board.game.calculated_power(ally), board.game.calculated_toughness(ally)), (Some(1), Some(1)));
         assert!(board.game.object_has_static_ability_id(katara, ironsmith::static_abilities::StaticAbilityId::Vigilance));
         board.pool(ALICE, &[]);

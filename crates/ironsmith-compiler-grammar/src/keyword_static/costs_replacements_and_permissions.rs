@@ -1940,12 +1940,13 @@ pub fn parse_dynamic_cost_modifier_value(
         | DynamicCostValueShape::UnsupportedCardTypesAmong => {
             unreachable!("card-types-among values are handled before history fallbacks")
         }
-        DynamicCostValueShape::CountersRemovedThisWay => Value::PendingPriorEffectMetric(
+        DynamicCostValueShape::CountersRemovedThisWay(counter_type) => Value::PendingPriorEffectMetric(
             ironsmith_core::PriorEffectMetricQuery::new(
                 EffectMetricSource::Outcome,
                 EffectMetric::Count,
             )
-            .with_action(ironsmith_core::PriorEffectAction::Removed),
+            .with_action(ironsmith_core::PriorEffectAction::Removed)
+            .with_counter_type(counter_type),
         )
         .with_surface_hint(ironsmith_core::ValueSurfaceHint::CountersRemovedThisWay),
         DynamicCostValueShape::PlayerCounters(counter_type) => {
@@ -2600,6 +2601,11 @@ pub fn parse_all_are_pt_color_type_addition_line(
     else {
         return Ok(None);
     };
+    // Both grammars recognize a sized creature addition. Use the same
+    // ordering and recipient filter so the registry sees one interpretation.
+    if let Some(abilities) = parse_lands_are_pt_creatures_still_lands_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     let mut colors = ColorSet::new();
     let mut card_types = Vec::new();
     let mut subtypes = Vec::new();
@@ -4380,7 +4386,7 @@ pub fn parse_doesnt_untap_during_untap_step_line(
     match parse_doesnt_untap_during_untap_step_spec_lexed(tokens) {
         Some(DoesntUntapDuringUntapStepSpec::Source { tail_tokens }) => {
             let clause_display = render_token_slice(tokens);
-            let tail_tokens = trim_commas(tail_tokens);
+            let tail_tokens = trim_edge_punctuation(&trim_commas(tail_tokens));
             if tail_tokens.is_empty() {
                 return Ok(Some(
                     StaticAbilityAst::Static(StaticAbility::doesnt_untap()),
@@ -4916,7 +4922,9 @@ pub fn parse_you_may_static_grant_line(
             crate::model::CompilerGrantableCore::play_from(), filter, Zone::Exile,
         ).with_source_exiled_surface(crate::grant::SourceExiledGrantSurface {
             mana_rider: (!mode.is_normal()).then_some(rider_surface),
-            source: reference.surface, plural_spell_subject: true,
+            source: reference.surface,
+            plural_spell_subject: parser_token_word_refs(tokens).windows(3)
+                .any(|words| words == ["and", "cast", "spells"]),
             generic_card_pool: true, generic_cast_this_way_subject: true,
         });
         spec.requires_linked_exile_pair = true;
@@ -5472,19 +5480,24 @@ pub fn parse_you_have_protection_from_opponents_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let tokens = trim_edge_punctuation_tokens(tokens);
-    if parser_token_word_refs(tokens).as_slice()
-        != [
-            "you",
-            "have",
-            "protection",
-            "from",
-            "each",
-            "of",
-            "your",
-            "opponents",
-        ]
-    {
-        return Ok(None);
+    let words = parser_token_word_refs(tokens);
+    if words.as_slice() != ["you", "have", "protection", "from", "each", "of", "your", "opponents"] {
+        if !words.starts_with(&["you", "have", "protection", "from"]) {
+            return Ok(None);
+        }
+        let Some(actions) = crate::clause_support::parse_protection_chain(&tokens[2..]) else {
+            return Ok(None);
+        };
+        let mut abilities = Vec::new();
+        for action in actions {
+            let Some(filter) = super::granted_protection_source_filter(
+                &StaticAbilityAst::KeywordAction(action),
+            ) else { return Ok(None); };
+            abilities.push(StaticAbility::player_protection_from(
+                PlayerFilter::You, filter, render_token_slice(tokens),
+            ));
+        }
+        return Ok(Some(abilities));
     }
     Ok(Some(vec![StaticAbility::player_protection_from(
         PlayerFilter::You,
@@ -6928,26 +6941,9 @@ pub fn parse_copy_activated_abilities_line(
 
     let filter_tokens =
         trim_edge_punctuation(&tokens[fact.filter_start_token..fact.filter_end_token]);
-    let mut filter_tokens =
+    let filter_tokens =
         strip_leading_token_words_any(&filter_tokens, &["all", "each"]).to_vec();
-    // "lands your opponents control except mana abilities" (Sharkey).
-    let exclude_mana_end = {
-        let words = parser_token_word_refs(&filter_tokens);
-        if words.ends_with(&["except", "mana", "abilities"]) {
-            match crate::lexer::TokenWordView::new(&filter_tokens)
-                .token_span_for_words(0, words.len() - 3)
-            {
-                Some(span) => Some(span.end),
-                None => return Ok(None),
-            }
-        } else {
-            None
-        }
-    };
-    let exclude_mana_abilities = exclude_mana_end.is_some();
-    if let Some(end) = exclude_mana_end {
-        filter_tokens.truncate(end);
-    }
+    let exclude_mana_abilities = fact.exclude_mana_abilities;
     let force_once_each_turn = fact.once_each_turn_word_start.is_some();
     if filter_tokens.is_empty() {
         return Ok(None);
@@ -7176,6 +7172,17 @@ pub fn parse_spend_mana_as_any_color_line(
                 clause_words.join(" "),
             )
         }
+        keyword_static_lines::ManaSpendPermissionShape::AnyTypeForSourceActivation { subject_tokens } => {
+            let subject = parser_token_word_refs(subject_tokens);
+            if crate::util::source_reference_surface_for_possessive_words(&subject).is_none() {
+                return Ok(None);
+            }
+            let mut permission = crate::effect::ManaSpendPermission::any_color_for_activation(
+                PlayerFilter::Any, ObjectFilter::source(),
+            );
+            permission.mode = ironsmith_core::value_model::ManaSpendMode::AnyType;
+            (permission, clause_words.join(" "))
+        }
         keyword_static_lines::ManaSpendPermissionShape::AnyColorToCast {
             player,
             filter_tokens,
@@ -7224,6 +7231,28 @@ mod tests {
     use super::*;
     use crate::lexer::lex_line;
     use crate::static_abilities::StaticAbilityId;
+
+    #[test]
+    fn passive_any_type_permission_is_limited_to_source_activations() {
+        let tokens = lex_line("Mana of any type can be spent to activate this creature's abilities.", 0)
+            .expect("permission should lex");
+        let ability = parse_spend_mana_as_any_color_line(&tokens)
+            .expect("permission should not hard-error")
+            .expect("permission should parse");
+        let StaticAbilityAst::Static(ability) = ability else {
+            panic!("expected a static permission");
+        };
+        let ironsmith_core::StaticAbilityPayload::ManaSpendPermission { permission, .. } = ability.payload else {
+            panic!("expected typed mana spending permission");
+        };
+        assert_eq!(permission.mode, ironsmith_core::value_model::ManaSpendMode::AnyType);
+        assert_eq!(permission.player, PlayerFilter::Any);
+        assert_eq!(permission.scope, ironsmith_core::value_model::ManaSpendScope::ActivationCostsOf(ObjectFilter::source()));
+
+        let unrelated = lex_line("Mana of any type can be spent to activate other creatures' abilities.", 0)
+            .expect("unrelated permission should lex");
+        assert!(parse_spend_mana_as_any_color_line(&unrelated).unwrap().is_none());
+    }
 
     #[test]
     fn spell_reduction_and_cant_be_countered_keeps_both_typed_clauses() {

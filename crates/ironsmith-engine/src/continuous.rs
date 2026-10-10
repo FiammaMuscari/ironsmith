@@ -5146,12 +5146,27 @@ pub(crate) fn continuous_duration_predicate_matches(
             continuous_duration_object_id(lesser)
                 .zip(continuous_duration_object_id(greater))
                 .is_some_and(|(lesser, greater)| {
-                    continuous_duration_object_is_visible(game, lesser)
-                        && continuous_duration_object_is_visible(game, greater)
-                        && game
-                            .calculated_power(lesser)
-                            .zip(game.calculated_power(greater))
-                            .is_some_and(|(lesser, greater)| lesser <= greater)
+                    if !continuous_duration_object_is_visible(game, lesser)
+                        || !continuous_duration_object_is_visible(game, greater)
+                    {
+                        return false;
+                    }
+                    // A duration may be tested in the control layer, before
+                    // power modifications have been applied. Evaluate a full
+                    // independent view rather than consuming that partial
+                    // layer frame. The duration guard above bounds re-entry.
+                    let independent;
+                    let view = if characteristics_calculation_in_progress(game, lesser)
+                        || characteristics_calculation_in_progress(game, greater)
+                    {
+                        independent = game.clone();
+                        &independent
+                    } else {
+                        game
+                    };
+                    view.calculated_power(lesser)
+                        .zip(view.calculated_power(greater))
+                        .is_some_and(|(lesser, greater)| lesser <= greater)
                 })
         }
     }

@@ -5,7 +5,7 @@
 #[path = "cf8_p10_support/mod.rs"]
 mod support;
 
-use ironsmith::effects::{MoveToZoneAttackTargetMode, MoveToZoneEffect};
+use ironsmith::effects::{MoveToZoneAttackTargetMode, MoveToZoneEffect, ReturnToHandEffect};
 use ironsmith::target::PlayerFilter;
 use ironsmith::Zone;
 
@@ -28,9 +28,17 @@ fn zara_puts_a_creature_from_the_defending_hand_attacking_that_player() {
                 PlayerFilter::Defending
             ))
         );
-        assert!(debug.contains("Hand"), "{debug}");
+        let ironsmith::target::ChooseSpec::Tagged(tag) = entry.target.base() else {
+            panic!("the entry must use the selection from the looked-at hand: {entry:?}");
+        };
+        let choices = support::find_all::<ironsmith::effects::ChooseObjectsEffect>(&definition);
+        let choice = choices.iter().find(|choice| &choice.tag == tag)
+            .expect("the moved card must come from the preceding hand selection");
+        assert_eq!(choice.filter.zone, Some(Zone::Hand));
+        assert_eq!(choice.filter.owner, Some(PlayerFilter::Defending));
+        assert!(choice.filter.card_types.contains(&ironsmith::types::CardType::Creature));
         assert!(
-            moves.iter().any(|effect| effect.zone == Zone::Hand),
+            !support::find_all::<ReturnToHandEffect>(&definition).is_empty(),
             "the delayed return to its owner's hand: {moves:#?}"
         );
     }

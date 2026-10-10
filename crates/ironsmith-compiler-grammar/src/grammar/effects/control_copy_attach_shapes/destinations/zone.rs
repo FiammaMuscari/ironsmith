@@ -29,8 +29,8 @@ pub fn parse_onto_battlefield_destination_shape(
     // "attacking that opponent" / "attacking that player or a planeswalker
     // they control": the attack target of the entering attacker.
     const ATTACK_TARGETS: [(&[&str], bool); 4] = [
-        (&["that", "player", "or", "a", "planeswalker", "they", "control"], false),
-        (&["that", "opponent", "or", "a", "planeswalker", "they", "control"], false),
+        (&["that", "player", "or", "planeswalker", "they", "control"], false),
+        (&["that", "opponent", "or", "planeswalker", "they", "control"], false),
         (&["that", "opponent"], true),
         (&["that", "player"], true),
     ];

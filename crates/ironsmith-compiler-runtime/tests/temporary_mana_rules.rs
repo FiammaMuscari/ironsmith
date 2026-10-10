@@ -48,7 +48,7 @@ fn chaos_moon_compiles_both_parity_branches() {
         let debug = format!("{definition:?}");
         assert!(debug.contains("CountParity"), "{debug}");
         // Odd: a temporary tap-for-mana trigger adding {R}.
-        assert!(debug.contains("PlayerTapsForMana"), "{debug}");
+        assert!(debug.contains("TapForManaTrigger"), "{debug}");
         // Even: a registered rewrite to colorless for Mountains.
         assert!(debug.contains("RegisterManaRewrite"), "{debug}");
         assert!(debug.contains("Mountain"), "{debug}");

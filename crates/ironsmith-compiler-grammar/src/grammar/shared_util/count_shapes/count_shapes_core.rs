@@ -1,6 +1,14 @@
 use super::*;
 
 pub fn parse_for_each_count_value_words(words: &[&str]) -> Option<(Value, usize)> {
+    if matches!(words,
+        ["for", "each", "opponent" | "player", "you", "attacked"]
+        | ["for", "each", "opponent" | "player", "you", "attacked", "this", "combat"])
+    {
+        return Some((Value::TurnHistoryCount(
+            ironsmith_core::TurnHistoryCount::PlayersAttackedThisCombat(PlayerFilter::You),
+        ).with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach), words.len()));
+    }
     // "for each of the chosen colors it is" (Tablet of the Guilds): the
     // referenced object's colors among the source's chosen colors.
     if let ["for", "each", "of", "the", "chosen", "colors", "it", "is", ..] = words {

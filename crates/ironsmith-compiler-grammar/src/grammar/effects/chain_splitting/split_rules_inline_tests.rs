@@ -351,3 +351,12 @@ fn enumerated_reanimation_target_count_is_not_an_action_boundary() {
         assert!(segments[1].iter().any(|token| token.is_word("draw")));
     }
 }
+
+#[test]
+fn removing_types_and_abilities_keeps_the_noun_pair_before_a_following_grant() {
+    let tokens = lex_line("It loses all land types and abilities and has flying.", 0).unwrap();
+    let segments = split_effect_chain_on_and_tokens(&tokens, true);
+    let words: Vec<_> = segments.iter().map(|segment|
+        crate::lexer::parser_token_word_refs(segment).join(" ")).collect();
+    assert_eq!(words, ["it loses all land types and abilities", "has flying"]);
+}

@@ -44,7 +44,13 @@ fn action(spell: ObjectId, from_zone: Zone) -> LegalAction {
 }
 fn can_cast(game: &mut GameState, spell: ObjectId, player: PlayerId) -> bool {
     game.turn.phase = ironsmith::Phase::FirstMain; game.turn.step = None; game.turn.active_player = player; game.turn.priority_player = Some(player);
-    compute_legal_actions(game, player).unwrap().contains(&action(spell, game.object(spell).unwrap().zone))
+    let zone = game.object(spell).unwrap().zone;
+    let actions = if zone == Zone::Command {
+        ironsmith::decision::compute_commander_actions(game, player)
+    } else {
+        compute_legal_actions(game, player)
+    }.unwrap();
+    actions.contains(&action(spell, zone))
 }
 struct Choices { accept: bool, permanent: Option<ObjectId> }
 impl Default for Choices { fn default() -> Self { Self { accept: true, permanent: None } } }

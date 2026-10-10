@@ -255,6 +255,8 @@ fn pending_selection_and_failed_added_effect_restore_entitlements_and_native_ret
     use ironsmith::replacement::{ReplacementAction, ReplacementEffect};
     for definition in definitions() { for pending_choice in [false, true] {
         let mut game = game(); let (source, victim, mut dm) = pending(&mut game, &definition, false);
+        // Two eligible cards force a real selection; one card is auto-selected.
+        let unchosen = hand(&mut game, B, false);
         let owner = game.stack[0].linked_exile_owner.clone().unwrap(); let stable = game.object(victim).unwrap().stable_id;
         let replacement = if !pending_choice { Some(game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(source, A,
             ironsmith::events::zones::matchers::WouldChangeZoneMatcher::new(ObjectFilter::specific(victim), Some(Zone::Hand), Some(Zone::Exile)),
@@ -270,6 +272,7 @@ fn pending_selection_and_failed_added_effect_restore_entitlements_and_native_ret
         let mut retry = Choices { pick: Some(victim), chooser: Some(B), ..Default::default() }; resolve(&mut game, &mut retry);
         let member = game.find_object_by_stable_id(stable).unwrap(); assert_eq!(game.linked_exile_pair_members(&owner).unwrap(), &[member]);
         assert!(look(&game, member, A)); assert!(!look(&game, member, B)); assert_eq!(retry.questions, 1);
+        assert_eq!(game.object(unchosen).unwrap().zone, Zone::Hand);
     }}
 }
 

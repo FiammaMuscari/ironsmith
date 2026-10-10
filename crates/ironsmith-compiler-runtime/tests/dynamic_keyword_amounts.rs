@@ -122,7 +122,7 @@ struct Choices {
 }
 impl DecisionMaker for Choices {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
-        if ctx.description.starts_with("Choose mode") && !self.modes.is_empty() {
+        if (ctx.description.starts_with("Choose ") && ctx.description.contains("mode")) && !self.modes.is_empty() {
             return self.modes.clone();
         }
         if ctx.description == "Choose a basic land type" {

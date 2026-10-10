@@ -61,7 +61,8 @@ pub fn parse_filtered_object_animation_tokens(
         } else {
             copula_word + 1
         };
-        let full_body_words = &words[body_start..];
+        let (full_body_words, trailing_addition) =
+            strip_become_addition_tail_words(&words[body_start..]);
         let Some((body_words, tail)) = split_animation_tail_words(full_body_words) else {
             continue;
         };
@@ -111,7 +112,7 @@ pub fn parse_filtered_object_animation_tokens(
             power,
             toughness,
             descriptor,
-            preserve_other_types || tail.still_other_card_type,
+            preserve_other_types || trailing_addition || tail.still_other_card_type,
             tail,
         ));
         break;

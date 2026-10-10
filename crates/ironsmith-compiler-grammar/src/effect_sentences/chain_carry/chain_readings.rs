@@ -1203,6 +1203,11 @@ fn read_explicit_comma_then_boundary(
     input: &Chain<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
+    if let Some(effects) = super::super::subject_verb_primitives::parse_sentence_random_hand_reveal_then_loses_mana_value_life(
+        super::super::SubjectVerbPrimitiveClause::new(tokens),
+    )? {
+        return Ok(Some(effects));
+    }
     // Some specialized subject/verb parsers accept a valid leading clause
     // without requiring end-of-input. Split a genuine top-level conjunction
     // before entering that registry, otherwise a first arm such as `copy that
@@ -1217,6 +1222,17 @@ fn read_coordinated_and_segments(
     input: &Chain<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
+    // The first conjunction in "exile this source and each ..." joins
+    // recipients. Let the exile reader retain the set's own conjunctions.
+    if tokens.first().is_some_and(|token| token.is_word("exile"))
+        && let Some(and_index) = tokens.windows(2)
+            .position(|pair| pair[0].is_word("and") && pair[1].is_word("each"))
+        && and_index > 1
+        && crate::util::is_source_reference_words(&crate::lexer::token_word_refs(&tokens[1..and_index]))
+    {
+        return crate::effect_sentences::zone_handlers::parse_exile(&tokens[1..], None)
+            .map(|effect| Some(vec![effect]));
+    }
     // A non-actor participant prefix scopes the whole coordinated body.
     // Keep its per-player object reference inside that one iteration.
     if for_each_shapes::parse_participant_clause_shape(tokens)

@@ -215,6 +215,10 @@ fn frozen_bioshift_empty_donor_and_zero_choice_leave_replacement_unused() {
 fn frozen_bioshift_failed_placement_restores_removal_stack_and_replacement() {
     for definition in definitions() {
         let (mut game, from, to, spell) = setup(&definition, A);
+        // Keep the initial effective characteristics representable so the
+        // failure belongs to counter placement, after casting and removal.
+        game.object_mut(to).unwrap().base_power = Some(ironsmith::card::PtValue::Fixed(i32::MIN));
+        game.object_mut(to).unwrap().base_toughness = Some(ironsmith::card::PtValue::Fixed(i32::MIN));
         game.object_mut(to).unwrap().counters.insert(KIND, u32::MAX);
         announce(&mut game, spell, from, to, false);
         let shield = game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(to, A,

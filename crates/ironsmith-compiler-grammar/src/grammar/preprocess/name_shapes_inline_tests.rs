@@ -36,6 +36,9 @@ fn parses_keyword_and_short_name_surfaces() {
         parse_short_self_reference_name("Turn Static Boundary Variant"),
         "Turn Static Boundary Variant"
     );
+    for name in ["And They Shall Know No Fear", "Then Draw Probe", "Or Choose Probe"] {
+        assert_eq!(parse_short_self_reference_name(name), name);
+    }
     assert_eq!(parse_short_self_reference_name("Ajani Vengeant"), "Ajani");
     assert_eq!(
         parse_short_self_reference_name("Enchanted River's Grasp"),
@@ -56,6 +59,10 @@ fn parses_keyword_and_short_name_surfaces() {
         "Sunburst Parse Test",
         "Removed Counter Mana Variant",
         "Destroyed Draw Variant",
+        "Cast intervening-if probe",
+        "Play with Fire",
+        "Protection context grant",
+        "Roll and mana",
         "Tapped Damage Variant",
         "Bottom Library Exile",
         "Target Opponent Put",

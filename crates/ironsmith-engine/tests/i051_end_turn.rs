@@ -85,6 +85,7 @@ fn delayed_upkeep_trigger(source: ObjectId, controller: PlayerId) -> DelayedTrig
         not_before_turn: None,
         expires_at_turn: None,
         expires_before_controller_turn_after: None,
+        expires_after_controller_turn_after: None,
         expires_at_end_of_combat: false,
         bound_extra_turn_index: None,
         while_any_tagged_object_in_zone: None,
@@ -260,7 +261,7 @@ fn end_turn_uses_no_priority_sbas_then_cleanup_triggers_priority_and_repeats_cle
         Trigger::exiled(ObjectFilter::default()),
         vec![Effect::gain_life(1)],
     ));
-    game.create_object_from_definition(&watcher, alice, Zone::Battlefield);
+    let exile_watcher = game.create_object_from_definition(&watcher, alice, Zone::Battlefield);
 
     let mut end_step_watcher =
         definition("End Step Watcher", vec![CardType::Enchantment], Vec::new());
@@ -300,8 +301,8 @@ fn end_turn_uses_no_priority_sbas_then_cleanup_triggers_priority_and_repeats_cle
         TurnAction::Continue
     ));
     assert!(
-        trigger_queue.entries.is_empty(),
-        "old queued trigger ceased to exist"
+        trigger_queue.entries.iter().all(|entry| entry.source == exile_watcher),
+        "old queued trigger ceases to exist; stack-exile triggers wait for cleanup"
     );
     assert!(
         game.stack_is_empty(),
@@ -330,6 +331,9 @@ fn end_turn_uses_no_priority_sbas_then_cleanup_triggers_priority_and_repeats_cle
         runner.advance(&mut game, &mut trigger_queue).unwrap(),
         TurnAction::RunPriority
     ));
+    // RunPriority delegates trigger stacking to the priority loop.
+    ironsmith::put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("stack the waiting cleanup trigger");
     assert_eq!(
         game.stack.len(),
         1,

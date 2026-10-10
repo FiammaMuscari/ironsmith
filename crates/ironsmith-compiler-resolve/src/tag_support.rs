@@ -662,7 +662,7 @@ fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetA
                 target,
                 source,
                 ..
-            }) => {
+            }) | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, source, .. }) => {
                 visit(target);
                 visit(source);
             }
@@ -683,6 +683,9 @@ fn direct_effect_targets_reference_tag(effect: &EffectAst, tag: &str) -> bool {
 
 fn effect_references_tag_in_object_position(effect: &EffectAst, tag: &str) -> bool {
     assert_effect_ast_variant_coverage(effect);
+    if damage_multiplier_references_tag(effect, tag) {
+        return true;
+    }
     if direct_effect_targets_reference_tag(effect, tag) {
         return true;
     }
@@ -847,6 +850,23 @@ pub fn filter_references_tag(filter: &ObjectFilter, tag: &str) -> bool {
             .any(|branch| filter_references_tag(branch, tag))
 }
 
+// Replacement filters consume references just like direct action targets.
+// Keep all three scopes visible so reference annotation retains the selected
+// object and trigger lowering emits any required event-object tag prelude.
+fn damage_multiplier_references_tag(effect: &EffectAst, tag: &str) -> bool {
+    let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::Replacements(
+            ReplacementActionAst::RegisterDamageMultiplier { spec },
+        ),
+        ..
+    }) = effect else {
+        return false;
+    };
+    filter_references_tag(&spec.source_filter, tag)
+        || spec.target_object_filter.as_ref().is_some_and(|filter| filter_references_tag(filter, tag))
+        || spec.target_player_filter.as_ref().is_some_and(|filter| player_filter_references_tag(filter, tag))
+}
+
 fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
     match effect {
         EffectAst::SubjectVerb(subject_verb) => match &subject_verb.action {
@@ -950,6 +970,9 @@ fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
 
 pub fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
     assert_effect_ast_variant_coverage(effect);
+    if damage_multiplier_references_tag(effect, tag) {
+        return true;
+    }
     if delayed_trigger_references_tag(effect, tag) {
         return true;
     }
@@ -1439,6 +1462,7 @@ fn target_references_event_derived_amount(target: &TargetAst) -> bool {
 
 fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
     match action {
+        SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. }) => None,
         SubjectVerbActionAst::Random(RandomActionAst::FlipCoins { count_value, .. }) => count_value.as_ref(),
         SubjectVerbActionAst::Random(RandomActionAst::RollDie { result_modifier, .. }) => result_modifier.as_ref().map(|modifier| modifier.value()),
         SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterDamageAddition {
@@ -1961,6 +1985,21 @@ pub fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
     {
         return true;
     }
+    if let EffectAst::ControlFlow(control) = effect {
+        let condition = match &control.node {
+            crate::model::ControlFlowNodeAst::Condition { condition, .. } => Some(condition),
+            crate::model::ControlFlowNodeAst::Replacement(replacement) => replacement.condition.as_ref(),
+            crate::model::ControlFlowNodeAst::Prevention(prevention) => prevention.condition.as_ref(),
+            _ => None,
+        };
+        if condition.is_some_and(|condition| matches!(
+            &condition.predicate,
+            crate::model::ControlPredicateAst::State(predicate)
+                if predicate_references_event_derived_amount(predicate)
+        )) {
+            return true;
+        }
+    }
     let mut target_references = false;
     with_direct_effect_targets(effect, |target| {
         target_references |= target_references_event_derived_amount(target);
@@ -2228,6 +2267,9 @@ pub fn effect_references_its_controller(effect: &EffectAst) -> bool {
 
 pub fn effect_references_it_tag(effect: &EffectAst) -> bool {
     assert_effect_ast_variant_coverage(effect);
+    if damage_multiplier_references_tag(effect, crate::tag::CompilerReferenceTag::It.as_str()) {
+        return true;
+    }
     if matches!(effect, EffectAst::SnapshotLastObjectTag { .. }) {
         return true;
     }

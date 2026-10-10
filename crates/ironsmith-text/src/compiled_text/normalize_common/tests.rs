@@ -4882,3 +4882,25 @@ fn team_other_subtype_condition_renders_only_the_exact_scoped_existential() {
     assert_ne!(describe_condition(&condition(filter, source)), "your team controls another Warrior");
 }
 
+
+#[test]
+fn subtype_family_removal_renders_every_family() {
+    for family in [
+        crate::types::SubtypeFamily::Land,
+        crate::types::SubtypeFamily::Creature,
+        crate::types::SubtypeFamily::Artifact,
+        crate::types::SubtypeFamily::Enchantment,
+        crate::types::SubtypeFamily::Spell,
+        crate::types::SubtypeFamily::Planeswalker,
+        crate::types::SubtypeFamily::Battle,
+    ] {
+        let effect = crate::effects::ApplyContinuousEffect::with_spec(
+            ChooseSpec::Source,
+            crate::continuous::Modification::RemoveAllSubtypesOfFamily(family),
+            Until::EndOfTurn,
+        );
+        let text = describe_apply_continuous_effect(&effect).expect("subtype removal text");
+        assert!(text.contains(&format!("loses all {}s", family.type_phrase())), "{text}");
+        assert!(text.contains("until end of turn"), "{text}");
+    }
+}

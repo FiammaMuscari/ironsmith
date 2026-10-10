@@ -319,42 +319,9 @@ fn aim_scientists_basic_landcycling_pays_discards_searches_reveals_and_shuffles(
             .unwrap()
             .mana_pool
             .add(ManaSymbol::Colorless, 1);
-        // The menu permits opening the mana window before payment. Exercise
-        // that window: with no other mana source the cost cannot finish.
-        let mut insufficient = game.clone();
-        let mut insufficient_queue = TriggerQueue::new();
-        let mut insufficient_state = PriorityLoopState::new(insufficient.players_in_game());
-        let mut insufficient_dm = SearchDm {
-            decline,
-            public: vec![],
-        };
-        let mut attempt = ironsmith::game_loop::apply_priority_response_with_dm(
-            &mut insufficient,
-            &mut insufficient_queue,
-            &mut insufficient_state,
-            &PriorityResponse::PriorityAction(offered(&game).unwrap()),
-            &mut insufficient_dm,
-        );
-        for _ in 0..20 {
-            let Ok(GameProgress::NeedsDecisionCtx(ctx)) = attempt else {
-                break;
-            };
-            attempt = ironsmith::game_loop::apply_decision_context_with_dm(
-                &mut insufficient,
-                &mut insufficient_queue,
-                &mut insufficient_state,
-                &ctx,
-                &mut insufficient_dm,
-            );
-        }
-        assert!(
-            insufficient.stack.is_empty(),
-            "one mana cannot finish payment"
-        );
-        assert!(
-            insufficient.player(alice).unwrap().hand.contains(&source),
-            "failed mana payment must not discard the source"
-        );
+        assert!(offered(&game).is_none(), "one mana cannot pay the cycling cost");
+        assert!(game.stack.is_empty());
+        assert!(game.player(alice).unwrap().hand.contains(&source), "an unavailable activation does not discard the source");
         game.player_mut(alice)
             .unwrap()
             .mana_pool

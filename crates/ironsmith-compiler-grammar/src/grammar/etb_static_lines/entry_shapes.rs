@@ -92,6 +92,13 @@ pub fn parse_as_enters_tokens(tokens: &[OwnedLexToken]) -> Option<AsEntersSpec<'
 
 fn parse_entry_filter_lexed<'a>(input: &mut LexStream<'a>) -> WResult<EtbEntryFilterSpec<'a>> {
     let filter_tokens = take_until_entry_verb(input)?;
+    // The subject must belong to this sentence. A later dice-table branch
+    // or resolving instruction cannot turn the preceding procedure into
+    // the subject of a standing entry replacement.
+    if filter_tokens.iter().any(|token| matches!(token.kind,
+        crate::lexer::TokenKind::Period | crate::lexer::TokenKind::Pipe)) {
+        return Err(primitives::backtrack_err("ETB entry filter", "one subject sentence"));
+    }
     parse_entry_verb(input)?;
     let tail_tokens = take_nonempty_sentence_body(input)?;
     Ok(EtbEntryFilterSpec {
@@ -266,6 +273,18 @@ fn contains_with_additional_counter(tokens: &[OwnedLexToken]) -> bool {
 mod tests {
     use super::super::super::super::lexer::{lex_line, render_token_slice};
     use super::*;
+
+    #[test]
+    fn entry_subject_does_not_consume_preceding_instructions_or_dice_branches() {
+        for text in [
+            "Roll a d20. 20 | Creatures your opponents control enter tapped.",
+            "Tap all creatures. Creatures your opponents control enter tapped.",
+            "20 | Creatures your opponents control enter tapped.",
+        ] {
+            let tokens = lex_line(text, 0).unwrap();
+            assert!(parse_entry_filter_tokens(&tokens).is_none(), "{text}");
+        }
+    }
 
     #[test]
     fn parses_entry_and_as_enters_shapes() {

@@ -166,6 +166,13 @@ impl ScheduleDelayedTriggerEffect {
         self
     }
 
+    pub fn until_controller_next_turn_end(mut self) -> Self {
+        self.duration = ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd;
+        self.until_end_of_turn = false;
+        self.until_end_of_combat = false;
+        self
+    }
+
     pub fn with_leading_duration_surface(mut self) -> Self {
         self.leading_duration_surface = true;
         self
@@ -357,7 +364,11 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                         == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurn)
                         .then_some(game.turn.turn_number),
                 )
-                .with_expires_at_end_of_combat(self.until_end_of_combat)
+                .with_expires_after_controller_turn_after(
+            (self.duration == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd)
+                .then_some(game.turn.turn_number),
+        )
+        .with_expires_at_end_of_combat(self.until_end_of_combat)
                 .with_bound_extra_turn_index(
                     self.start_next_turn
                         .then_some(ctx.created_extra_turn_index)
@@ -407,6 +418,10 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
         })
         .with_expires_before_controller_turn_after(
             (self.duration == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurn)
+                .then_some(game.turn.turn_number),
+        )
+        .with_expires_after_controller_turn_after(
+            (self.duration == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd)
                 .then_some(game.turn.turn_number),
         )
         .with_expires_at_end_of_combat(self.until_end_of_combat)
@@ -817,7 +832,7 @@ mod tests {
             .expect("schedule should resolve");
 
         let event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::LandPlayedEvent::new(land_id, alice, Zone::Hand),
+            crate::events::LandPlayedEvent::with_current_snapshot(land_id, alice, Zone::Hand, Zone::Battlefield, &game).unwrap(),
             crate::provenance::ProvNodeId::default(),
         );
         assert_eq!(

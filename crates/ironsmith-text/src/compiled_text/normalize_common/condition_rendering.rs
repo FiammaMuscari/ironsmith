@@ -1486,6 +1486,23 @@ pub(crate) fn describe_coin_result_comparison_for(
 }
 
 pub(crate) fn describe_condition(condition: &Condition) -> String {
+    let (result_condition, negated) = match condition {
+        Condition::Not(inner) => (inner.as_ref(), true),
+        condition => (condition, false),
+    };
+    if let Condition::ValueComparison { left, operator, right } = result_condition
+        && *operator == crate::effect::ValueComparisonOperator::GreaterThanOrEqual
+        && right.unhinted() == &Value::Fixed(1)
+        && let Value::PriorEffectMetric { query, .. } = left.unhinted()
+        && query.action == Some(crate::effect::PriorEffectAction::Drawn)
+        && query.source == crate::effect::EffectMetricSource::AffectedObjects
+        && query.metric == crate::effect::EffectMetric::Count
+        && query.player == Some(PlayerFilter::You)
+        && query.filter.as_ref().is_none_or(|filter| *filter == ObjectFilter::default())
+        && query.counter_type.is_none()
+    {
+        return if negated { "you don't draw a card this way" } else { "you draw a card this way" }.into();
+    }
     if let Some(text) = describe_each_quality_control_condition(condition) {
         return text;
     }

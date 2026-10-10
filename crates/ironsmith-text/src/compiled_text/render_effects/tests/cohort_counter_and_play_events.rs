@@ -196,7 +196,7 @@ fn cohort_combined_entry_and_multitype_card_play_triggers_resolve_for_all_player
         );
         let event = if land {
             crate::triggers::TriggerEvent::new_with_provenance(
-                crate::events::LandPlayedEvent::new(played, player, Zone::Hand),
+                crate::events::LandPlayedEvent::with_current_snapshot(played, player, Zone::Hand, Zone::Battlefield, &game).unwrap(),
                 crate::provenance::ProvNodeId::default(),
             )
         } else {
@@ -229,7 +229,7 @@ fn cohort_combined_entry_and_multitype_card_play_triggers_resolve_for_all_player
                 .battlefield
                 .iter()
                 .copied()
-                .filter(|id| game.object(*id).unwrap().name == "Bird")
+                .filter(|id| game.object(*id).unwrap().subtypes.contains(&Subtype::Bird))
                 .collect::<Vec<_>>();
             assert_eq!(birds.len(), 3);
             for player in &game.players {

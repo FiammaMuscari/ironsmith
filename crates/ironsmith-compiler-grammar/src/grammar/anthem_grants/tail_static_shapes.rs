@@ -235,6 +235,20 @@ pub fn parse_isnt_creature_shape(
         clause_tokens = trim_lexed_commas(remaining);
     }
 
+    if let Some((head, condition_tokens)) = primitives::split_lexed_once_on_separator(
+        clause_tokens, || primitives::phrase(&["as", "long", "as"]),
+    ) {
+        if leading_condition_tokens.is_some() {
+            return Ok(None);
+        }
+        let condition_tokens = trim_lexed_commas(condition_tokens);
+        if condition_tokens.is_empty() {
+            return Err(IsntCreatureShapeError::MissingLeadingCondition);
+        }
+        leading_condition_tokens = Some(condition_tokens);
+        clause_tokens = trim_lexed_commas(head);
+    }
+
     let mut unless_condition_tokens = None;
     if let Some((head, condition_tokens)) =
         primitives::split_lexed_once_on_separator(clause_tokens, || primitives::kw("unless").void())

@@ -149,7 +149,7 @@ fn complete_frozen_metadata_and_executable_bodies_survive_all_three_routes() {
         let expected = if simulacrum {
             "{T}: Target opponent loses 1 life. If you control a Tezzeret planeswalker, that player loses 3 life instead."
         } else {
-            "At the beginning of your upkeep, if you control a green or white permanent, target player loses 1 life. If you control a green permanent and a white permanent, that player loses 3 life instead."
+            "At the beginning of your upkeep, if you control a green or white permanent, target player loses 1 life. If you control a green permanent and you control a white permanent, that player loses 3 life instead."
         };
         assert_eq!(ironsmith_text::canonical_compiled_lines(&definition).join("\n").trim_end_matches('.'), expected.trim_end_matches('.'), "independently authored complete executable body");
         assert_eq!(definition.abilities.len(), 1);

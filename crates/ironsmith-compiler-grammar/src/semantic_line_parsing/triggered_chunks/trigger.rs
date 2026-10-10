@@ -203,7 +203,8 @@ pub fn apply_explicit_intervening_if_to_triggered_chunk(
             }
             if matches!(
                 effects.as_slice(),
-                [EffectAst::Conditionals(ConditionalEffectAst::Conditional { if_false, .. })] if if_false.is_empty()
+                [EffectAst::Conditionals(ConditionalEffectAst::Conditional { predicate: existing, if_false, .. })]
+                    if if_false.is_empty() && existing == &predicate
             ) {
                 Ok(LineAst::Triggered {
                     trigger,
@@ -307,12 +308,12 @@ pub fn apply_explicit_intervening_if_to_triggered_chunk(
                 if let Some(effects_ast) = parsed.effects_ast.take() {
                     if let [
                         EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                            predicate: existing,
                             if_true,
                             if_false,
-                            ..
                         }),
                     ] = effects_ast.as_slice()
-                        && if_false.is_empty()
+                        && if_false.is_empty() && existing == &predicate
                     {
                         parsed.effects_ast = Some(if_true.clone());
                     } else {

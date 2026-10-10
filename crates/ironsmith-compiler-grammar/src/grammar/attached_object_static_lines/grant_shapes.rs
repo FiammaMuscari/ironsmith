@@ -233,6 +233,8 @@ pub fn parse_attached_gets_and_has_tokens(
         || winnow::combinator::alt((
             primitives::phrase(&["and", "has"]).value(false),
             primitives::phrase(&["and", "have"]).value(false),
+            (primitives::comma(), primitives::kw("has")).value(false),
+            (primitives::comma(), primitives::kw("have")).value(false),
             primitives::phrase(&["and", "can"]).value(true),
         )),
     )?;

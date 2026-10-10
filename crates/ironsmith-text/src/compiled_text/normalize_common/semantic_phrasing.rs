@@ -6293,7 +6293,6 @@ pub(crate) fn normalize_common_semantic_phrasing(line: &str) -> String {
         .replace("Counter target instant spell spell", "Counter target instant spell")
         .replace("Counter target sorcery spell spell", "Counter target sorcery spell")
         .replace(" spell spell", " spell")
-        .replace("the defending player", "defending player")
         .replace("Non-Human attacking creatures", "Attacking non-Human creatures")
         .replace("non-Human attacking creatures", "attacking non-Human creatures")
         .replace("Non-Human attacking creature", "Attacking non-Human creature")

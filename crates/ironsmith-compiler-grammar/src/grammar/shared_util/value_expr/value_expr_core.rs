@@ -367,7 +367,11 @@ pub(super) fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usiz
             || permission_shapes::prefix_words(words, &["number", "of"]))
         && permission_shapes::suffix_words(words, &["removed", "this", "way"])
     {
-        return Some((Value::EventValue(EventValueSpec::Amount), words.len()));
+        let start = if words.first() == Some(&"the") { 3 } else { 2 };
+        let mut counted = vec!["for", "each"];
+        counted.extend_from_slice(&words[start..]);
+        let (value, consumed) = crate::util::parse_for_each_count_value_words(&counted)?;
+        return (consumed == counted.len()).then_some((value, words.len()));
     }
     if permission_shapes::prefix_words(words, &["twice", "x"]) {
         return Some((Value::XTimes(2), 2));

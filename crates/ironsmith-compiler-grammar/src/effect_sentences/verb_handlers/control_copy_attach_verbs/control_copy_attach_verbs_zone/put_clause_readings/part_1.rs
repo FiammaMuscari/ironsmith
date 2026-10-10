@@ -117,6 +117,18 @@ pub(super) fn read_tagged_battlefield_partition(
                 ReturnControllerAst::Owner
             }
         };
+        if shape.remainder_in_hand {
+            let remainder_tag = crate::util::helper_tag_for_tokens(tokens, "partition_remainder");
+            let capture_remainder = EffectAst::subject_verb_tag_matching_objects(
+                remainder_filter, vec![Zone::Library], crate::tag::TagRef::of(remainder_tag.clone()));
+            let move_remainder = EffectAst::subject_verb_move_to_zone(
+                TargetAst::Tagged(crate::tag::TagRef::of(remainder_tag), None), Zone::Hand,
+                false, ReturnControllerAst::Preserve, false, None)
+                .with_destination_player_surface(Some(player));
+            return Ok(Some(EffectAst::Sequence { effects: vec![
+                capture_collection, choose, capture_remainder, move_chosen, move_remainder,
+            ] }));
+        }
         let move_remainder = EffectAst::subject_verb_put_all_onto_battlefield(
             remainder_filter,
             shape.remainder_tapped,

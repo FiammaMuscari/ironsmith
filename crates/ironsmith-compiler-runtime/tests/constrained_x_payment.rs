@@ -685,7 +685,12 @@ mod exact_cards {
                     ..Default::default()
                 };
                 let activation = action(&game, source, true); // X=0 still permits announcement.
-                assert!(announce(&mut game, activation, &mut choices).is_err());
+                let result = announce(&mut game, activation, &mut choices);
+                // Returning normally after cancellation is also valid. The
+                // contract is an unpaid, rolled-back activation, not an error
+                // return from the decision loop.
+                assert!(game.stack.is_empty(), "{name}: {result:?}");
+                assert_eq!(game.object(source).unwrap().x_value, None);
                 assert!(!game.is_tapped(source));
                 assert_eq!(game.player(A).unwrap().mana_pool.amount(wrong), 3);
                 assert_eq!(game.player(A).unwrap().life, 20);

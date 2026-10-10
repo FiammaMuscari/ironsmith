@@ -203,6 +203,16 @@ pub(super) fn predicate_matches_with_context(
         return *required_count >= 2 && objects.len() >= *required_count as usize
             && result_memories_share_characteristic(&objects, *required_count as usize, *characteristic);
     }
+    if let EffectPredicate::PlayerActionObjectHasGreatestManaValue { player, action } = predicate {
+        let objects = outcome.action_objects(*action, None);
+        let Some(greatest) = objects.iter().map(|object| object.mana_value()).max() else { return false; };
+        let filter_ctx = ctx.filter_context(game);
+        return game.players.iter().any(|candidate| {
+            player_filter_matches_game(player, candidate.id, game, &filter_ctx)
+                && outcome.action_objects(*action, Some(candidate.id)).iter()
+                    .any(|object| object.mana_value() == greatest)
+        });
+    }
     if let EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player } = predicate {
         let Some(all_memory) = outcome.affected_object_memory() else {
             return false;
@@ -275,6 +285,11 @@ pub(super) fn predicate_matches_with_context(
             crate::effect::PriorEffectResultActor::It => return false,
         };
         let filter_ctx = ctx.filter_context(game);
+        let instruction = outcome.instruction_result();
+        let original_arrivals = instruction.execution_facts.iter().filter_map(|fact| {
+            if let ExecutionFact::OriginalZoneMoveCards(cards) = fact { Some(cards) } else { None }
+        }).collect::<Vec<_>>();
+        let mut seen = std::collections::HashSet::new();
         let cards = outcome
             .instruction_result()
             .execution_facts
@@ -292,6 +307,13 @@ pub(super) fn predicate_matches_with_context(
                     .then_some(cards)
             })
             .flatten()
+            // Replacement programs may put an unrelated card into hand.
+            // The movement owner's exact arrival receipt distinguishes that
+            // action from the original instruction, even after a later move.
+            .filter(|card| original_arrivals.is_empty() || original_arrivals.iter().any(|cards| {
+                cards.iter().any(|original| original.object_id == card.object_id)
+            }))
+            .filter(|card| seen.insert(card.object_id))
             .filter(|card| surface.filter.matches_snapshot(card, &filter_ctx, game))
             .collect::<Vec<_>>();
         if cards.len() < surface.required_count.unwrap_or(1) as usize {
@@ -629,8 +651,9 @@ impl EffectExecutor for IfEffect {
             return super::ForPlayersEffect::new(filter, effects).prepare_draw_continuation(game, ctx)
                 .map(super::for_players::ForPlayersDrawProgress::into_commit);
         }
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
     fn supports_prepared_action_program(&self) -> bool {
@@ -1077,6 +1100,35 @@ mod tests {
             &game,
             &ctx
         ));
+    }
+
+    #[test]
+    fn action_extremum_excludes_draws_and_compares_all_participants_discards() {
+        let game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = crate::ids::ObjectId::from_raw(100);
+        let ctx = ExecutionContext::new_default(source, alice);
+        let memory = |id, player, mana_value| {
+            let id = crate::ids::ObjectId::from_raw(id);
+            let mut object = crate::snapshot::ObjectSnapshot::public_placeholder(
+                id, crate::ids::StableId::from(id), player, player, crate::zone::Zone::Hand);
+            object.linked_face_mana_value = Some(mana_value);
+            object
+        };
+        let predicate = EffectPredicate::PlayerActionObjectHasGreatestManaValue {
+            player: crate::target::PlayerFilter::You,
+            action: crate::effect::PriorEffectAction::Discarded,
+        };
+        for (yours, theirs, expected) in [(3, 5, false), (5, 5, true), (5, 3, true)] {
+            let outcome = EffectOutcome::count(4)
+                .with_action_objects(crate::effect::PriorEffectAction::Drawn, Some(alice), vec![memory(1, alice, 9)])
+                .with_action_objects(crate::effect::PriorEffectAction::Drawn, Some(bob), vec![memory(2, bob, 9)])
+                .with_action_objects(crate::effect::PriorEffectAction::Discarded, Some(alice), vec![memory(3, alice, yours)])
+                .with_action_objects(crate::effect::PriorEffectAction::Discarded, Some(bob), vec![memory(4, bob, theirs)]);
+            assert_eq!(predicate_matches_with_context(&predicate, &outcome, &game, &ctx), expected);
+        }
+        assert!(!predicate_matches_with_context(&predicate, &EffectOutcome::count(0), &game, &ctx));
     }
 
     #[test]

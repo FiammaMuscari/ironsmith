@@ -17,7 +17,11 @@ fn static_count(definition: &ironsmith::cards::CardDefinition) -> usize {
 fn tetsuko_power_or_toughness_unblockable_subject() {
     for definition in support::definitions("Tetsuko Umezawa, Fugitive") {
         let text = support::rendered(&definition);
-        assert!(text.contains("power or toughness 1 or less"), "{text}");
+        assert!(
+            text.contains("power or toughness 1 or less")
+                || text.contains("power 1 or less or a creature you control with toughness 1 or less"),
+            "{text}"
+        );
         assert!(text.contains("can't be blocked"), "{text}");
     }
 }

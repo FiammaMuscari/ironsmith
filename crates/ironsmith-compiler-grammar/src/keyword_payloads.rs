@@ -224,6 +224,15 @@ pub(super) fn parse_additional_cost(
         optional.reference = "Evidence".into();
         return Ok(ast(LineAst::OptionalCost(optional)));
     }
+    // Optional additional costs are announced and recorded as optional costs.
+    // A MayEffect in the mandatory cost program cannot publish the paid label
+    // queried by a later "if this spell's additional cost was paid" clause.
+    if effect_tokens.get(0).is_some_and(|token| token.is_word("you"))
+        && effect_tokens.get(1).is_some_and(|token| token.is_word("may"))
+    {
+        let cost = crate::activation_and_restrictions::activated_line_core::parse_compiler_activation_cost(&effect_tokens[2..])?;
+        return Ok(ast(LineAst::OptionalCost(crate::model::CompilerOptionalCost::custom("Additional", cost))));
+    }
     let evidence_minimum = match words.as_slice() {
         [
             "collect",
@@ -389,6 +398,13 @@ pub(super) fn parse_flashback(
     } else {
         selected_sentences
     };
+    let complete_tokens = if token_slice_first_is(full_tokens, "flashback") {
+        full_tokens
+    } else { tokens };
+    if crate::util::split_flashback_x_cant_be_zero(complete_tokens).1 > 0 {
+        return Ok(parse_flashback_line_lexed(complete_tokens)?
+            .map(|method| KeywordLinePayload::ast(LineAst::AlternativeCastingMethod(method))));
+    }
     let Some(flashback_tokens) = sentences.first().copied() else {
         return Ok(None);
     };

@@ -175,11 +175,20 @@ fn parse_optional_companion_fanout_body(
         let second =
             parse_rewritten_effects(leading_action_clause(shape.verb, shape.companion_tokens))?;
         first.extend(second);
-        return Ok(Some(vec![EffectAst::Coordinated {
+        let coordinated = EffectAst::Coordinated {
             effects: first,
             leading_duration: false,
             result_conjunction: false,
-        }]));
+        };
+        let coordinated = if matches!(shape.verb, LeadingOptionalCompanionVerb::Tap) {
+            // A later plural reference names both selections, including the
+            // optional companion, rather than the first child's tap tag.
+            EffectAst::TagReferenced {
+                effect: Box::new(coordinated),
+                tag: crate::tag::TagRef::of(crate::util::helper_tag_for_tokens(tokens, "tapped_group")),
+            }
+        } else { coordinated };
+        return Ok(Some(vec![coordinated]));
     }
 
     Ok(None)
@@ -317,9 +326,10 @@ mod tests {
         let parsed = parse_optional_companion_fanout_sentence(&tokens)
             .unwrap()
             .unwrap();
-        let [EffectAst::Coordinated { effects, .. }] = parsed.as_slice() else {
+        let [EffectAst::TagReferenced { effect, .. }] = parsed.as_slice() else {
             panic!("expected coordinated taps: {parsed:#?}");
         };
+        let EffectAst::Coordinated { effects, .. } = effect.as_ref() else { panic!("tap group"); };
         assert_eq!(effects.len(), 2);
         let EffectAst::SubjectVerb(SubjectVerbEffectAst {
             action:
@@ -330,6 +340,26 @@ mod tests {
             panic!("expected optional tap target: {effects:#?}");
         };
         let (_, count) = optional_target(target).expect("optional tap target");
+        assert_eq!((count.min, count.max), (0, Some(1)));
+    }
+
+    #[test]
+    fn optional_tap_companion_survives_a_following_freeze_sentence() {
+        let tokens = lex_line(
+            "Tap it and up to one target creature an opponent controls. They don't untap during their controllers' next untap steps.",
+            0,
+        ).unwrap();
+        let parsed = super::super::parse_effect_sentences_lexed(&tokens).unwrap();
+        let EffectAst::TagReferenced { effect, .. } = &parsed[0] else {
+            panic!("expected both tap subjects: {parsed:#?}");
+        };
+        let EffectAst::Coordinated { effects, .. } = effect.as_ref() else { panic!("tap group"); };
+        assert_eq!(effects.len(), 2);
+        let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action: SubjectVerbActionAst::PermanentState(PermanentStateActionAst::Tap { target }),
+            ..
+        }) = &effects[1] else { panic!("expected companion tap"); };
+        let (_, count) = optional_target(target).unwrap();
         assert_eq!((count.min, count.max), (0, Some(1)));
     }
 

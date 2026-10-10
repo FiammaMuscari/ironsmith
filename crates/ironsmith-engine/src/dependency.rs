@@ -94,12 +94,12 @@ fn effect_depends_on_with_baseline_and_started_groups(
         return true;
     }
 
-    // Static ability effects depend on any effect that would remove the
-    // originating static ability from their source, unless this effect already
+    // Static ability effects depend on effects that add or remove their
+    // originating ability from the source, unless this effect already
     // began applying in an earlier layer (CR 613.6).
     if !effect_group_has_started(a, started_groups)
         && a.originating_static_ability.is_some()
-        && modification_can_remove_static_ability_presence(&b.modification)
+        && modification_can_change_static_ability_presence(&b.modification)
         && {
             game.note_dependency_pair_probed();
             source_ability_presence_changed(a, b, baseline, objects, game)
@@ -1991,7 +1991,7 @@ fn non_pt_group_has_no_dynamic_dependencies(effects: &[&ContinuousEffect], game:
                 return false;
             }
             if a.originating_static_ability.is_some()
-                && modification_can_remove_static_ability_presence(&b.modification)
+                && modification_can_change_static_ability_presence(&b.modification)
             {
                 return false;
             }
@@ -2495,13 +2495,15 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
     }
 }
 
-fn modification_can_remove_static_ability_presence(modification: &Modification) -> bool {
+fn modification_can_change_static_ability_presence(modification: &Modification) -> bool {
     matches!(
         modification,
         Modification::CopyOf { .. }
             | Modification::SetTextBox(_)
             | Modification::SetSubtypes(_)
             | Modification::SetAbilities(_)
+            | Modification::AddAbility(_)
+            | Modification::AddAbilityGeneric(_)
             | Modification::RemoveAbility(_)
             | Modification::RemoveStaticAbilityFamily(_)
             | Modification::RemoveAbilityGeneric { .. }
@@ -4085,6 +4087,9 @@ mod tests {
         let grant = must_attack.with_originating_static_ability(StaticAbility::flying());
         let removal = create_test_effect(5, 50, Modification::RemoveAllAbilities);
         assert!(needs_baseline_dependency_sort(&[&grant, &removal], &game));
+        // A granted static ability must exist before its own effect runs.
+        let addition = create_test_effect(6, 60, Modification::AddAbility(StaticAbility::flying()));
+        assert!(needs_baseline_dependency_sort(&[&grant, &addition], &game));
     }
 
     fn chars_for(object: &crate::object::Object) -> CalculatedCharacteristics {

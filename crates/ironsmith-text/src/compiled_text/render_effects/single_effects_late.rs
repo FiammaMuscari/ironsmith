@@ -3336,13 +3336,19 @@ pub(super) fn describe_structural_transfigure_keyword(
             return None;
         };
         let choose = choose_effect.downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
-        let consume = consume_effect.downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
         let shuffle = shuffle_effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
-        let [move_effect] = consume.effects.as_slice() else {
-            return None;
+        let (move_to_battlefield, matches_selection) = if let Some(consume) =
+            consume_effect.downcast_ref::<crate::effects::ForEachTaggedEffect>()
+        {
+            let [move_effect] = consume.effects.as_slice() else { return None; };
+            let put = move_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
+            (put, choose.tag == consume.tag
+                && consume.controller_at_last_blocked_by.is_none()
+                && matches!(put.target.base(), ChooseSpec::Iterated))
+        } else {
+            let put = consume_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
+            (put, matches!(put.target.base(), ChooseSpec::Tagged(tag) if tag == &choose.tag))
         };
-        let move_to_battlefield =
-            move_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
         if !choose.is_search
             || choose.reveal
             || choose.chooser != PlayerFilter::You
@@ -3351,9 +3357,7 @@ pub(super) fn describe_structural_transfigure_keyword(
             || !choose.count.is_single()
             || choose.count_value.is_some()
             || choose.aggregate_constraint.is_some()
-            || choose.tag != consume.tag
-            || consume.controller_at_last_blocked_by.is_some()
-            || !matches!(move_to_battlefield.target.base(), ChooseSpec::Iterated)
+            || !matches_selection
             || move_to_battlefield.tapped
             || move_to_battlefield.controller != PlayerFilter::You
             || !move_to_battlefield.enters_with_counters.is_empty()

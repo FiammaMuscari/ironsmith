@@ -554,7 +554,7 @@ fn read_simple_gain_ability(
         && shape.complete
         && !shape.subject_tokens.first().is_some_and(|token| {
             token.is_any_word(&[
-                "if", "unless", "when", "whenever", "at", "as", "then", "instead",
+                "if", "unless", "when", "whenever", "at", "as", "then", "instead", "for",
             ])
         })
         && !shape
@@ -785,6 +785,11 @@ fn read_complete_simple_subject_verb(
     Ok(None)
 }
 fn read_for_each_player(input: &Statement<'_>) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    // The vote reader owns both the collective vote and its received-vote
+    // follow-ups, including their per-player tally bindings.
+    if super::dispatch_inner::parse_vote_subject_verb(input.sentence)?.is_some() {
+        return Ok(None);
+    }
     if let Some(effects) = super::subject_verb_primitives::parse_sentence_each_player_may_reveal_selected_cards_in_their_hand(
         super::SubjectVerbPrimitiveClause::new(input.sentence),
     )? {
@@ -1029,6 +1034,11 @@ fn read_tap(input: &Statement<'_>) -> Result<Option<Vec<EffectAst>>, CardTextErr
     }
     let sentence = input.sentence;
     if sentence.first().is_some_and(|token| token.is_word("tap")) {
+        if let Some(effects) =
+            super::optional_companion_fanout::parse_optional_companion_fanout_sentence(sentence)?
+        {
+            return Ok(Some(effects));
+        }
         return super::zone_handlers::parse_tap(&sentence[1..]).map(|effect| Some(vec![effect]));
     }
     Ok(None)
@@ -1351,48 +1361,7 @@ fn read_other_chosen_player(
 fn read_counted_next_untap_steps(
     input: &Statement<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let tokens = crate::util::trim_edge_punctuation_tokens(input.sentence);
-    let words = crate::lexer::token_word_refs(tokens);
-    let Some(next) = words.iter().position(|word| *word == "next") else {
-        return Ok(None);
-    };
-    let (Some(count_word), Some(untap), Some(steps)) =
-        (words.get(next + 1), words.get(next + 2), words.get(next + 3))
-    else {
-        return Ok(None);
-    };
-    if *untap != "untap" || *steps != "steps" || next + 4 != words.len() {
-        return Ok(None);
-    }
-    let Some(count) = crate::util::parse_number_word_u32(count_word).filter(|count| *count >= 2)
-    else {
-        return Ok(None);
-    };
-    let Some(count_token) = crate::lexer::TokenWordView::new(tokens)
-        .map_word_or_end_to_token_boundary(next + 1)
-    else {
-        return Ok(None);
-    };
-    // Read the single-step sentence, then widen its duration.
-    let mut single = tokens[..count_token].to_vec();
-    single.push(OwnedLexToken::word("untap", crate::cards::builders::TextSpan::synthetic()));
-    single.push(OwnedLexToken::word("step", crate::cards::builders::TextSpan::synthetic()));
-    let mut effects = super::parse_effect_sentence_lexed(&single)?;
-    let mut widened = 0;
-    for effect in &mut effects {
-        if let EffectAst::SubjectVerb(subject_verb) = effect
-            && let crate::cards::builders::SubjectVerbActionAst::Cant {
-                restriction: crate::effect::Restriction::Untap(_),
-                duration: crate::effect::Until::ControllersNextUntapStep,
-                duration_surface,
-                ..
-            } = &mut subject_verb.action
-        {
-            *duration_surface = crate::effect::RestrictionDurationSurface::NextUntapSteps(count);
-            widened += 1;
-        }
-    }
-    Ok((widened == 1).then_some(effects))
+    crate::grammar::effects::parse_counted_next_untap_steps(input.sentence)
 }
 
 /// "Then transform any number of Human Werewolves you control." (Tovolar,

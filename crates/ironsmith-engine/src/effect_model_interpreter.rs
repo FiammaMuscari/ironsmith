@@ -514,6 +514,9 @@ where
             ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurn => {
                 converted.until_controller_next_turn()
             }
+            ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd => {
+                converted.until_controller_next_turn_end()
+            }
         };
         // Backward compatibility for compiler effects authored before the
         // typed duration field was introduced.
@@ -530,8 +533,7 @@ where
     if let Some(payload) =
         M::downcast_ref::<ironsmith_core::GrantAbilitiesTargetEffect<M::StaticAbility>>(&effect)
     {
-        return Ok(Effect::new(
-            crate::effects::GrantAbilitiesTargetEffect::new(
+        let mut converted = crate::effects::GrantAbilitiesTargetEffect::new(
                 payload.target.clone(),
                 payload
                     .abilities
@@ -540,8 +542,9 @@ where
                     .map(|ability| hooks.runtime_static_ability_hook(ability))
                     .collect::<Result<Vec<_>, _>>()?,
                 payload.duration.clone(),
-            ),
-        ));
+            );
+        converted.activated_from = payload.activated_from.clone();
+        return Ok(Effect::new(converted));
     }
     if let Some(payload) =
         M::downcast_ref::<ironsmith_core::CreateTokenCopyEffect<M::StaticAbility>>(&effect)
@@ -1636,24 +1639,14 @@ where
     if let Some(payload) =
         M::downcast_ref::<ironsmith_core::ForEachCounterKindPutOrRemoveEffect>(&effect)
     {
-        let effect = if payload.put_only
-            && payload.choose_target_per_kind
-            && let Some(counter_source) = &payload.counter_source
-        {
-            crate::effects::ForEachCounterKindPutOrRemoveEffect::put_each_kind_from(
-                counter_source.clone(),
-                payload.target.clone(),
-            )
-        } else if let Some(counter_type) = payload.fixed_counter_type {
-            crate::effects::ForEachCounterKindPutOrRemoveEffect::fixed_counter_type(
-                payload.target.clone(),
-                counter_type,
-                payload.optional_action,
-            )
-        } else if payload.all_kinds {
-            crate::effects::ForEachCounterKindPutOrRemoveEffect::new(payload.target.clone())
-        } else {
-            crate::effects::ForEachCounterKindPutOrRemoveEffect::one_kind(payload.target.clone())
+        let effect = crate::effects::ForEachCounterKindPutOrRemoveEffect {
+            target: payload.target.clone(),
+            counter_source: payload.counter_source.clone(),
+            all_kinds: payload.all_kinds,
+            fixed_counter_type: payload.fixed_counter_type,
+            optional_action: payload.optional_action,
+            put_only: payload.put_only,
+            choose_target_per_kind: payload.choose_target_per_kind,
         };
         return Ok(Effect::new(effect));
     }

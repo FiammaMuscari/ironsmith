@@ -673,7 +673,7 @@ fn sync_card_status_db_configures_worker_stack_for_deep_compile_paths() {
     );
     let stdout = String::from_utf8(output.stdout).expect("sync stdout utf8");
     assert!(
-        stdout.contains("Rayon worker stack: 16777216 bytes"),
+        stdout.contains("Rayon worker stack: 67108864 bytes"),
         "expected sync output to report configured worker stack, got {stdout}"
     );
 }

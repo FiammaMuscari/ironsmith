@@ -106,10 +106,9 @@ fn u045_paid_reroll_replaces_the_natural_result_without_completing_the_discarded
         .expect("roll resolves");
 
     assert_eq!(outcome.as_count(), Some(5));
-    assert_eq!(outcome.events.len(), 1);
-    let event = outcome.events[0]
-        .downcast::<DieRolledEvent>()
-        .expect("one completed die roll");
+    let rolls: Vec<_> = outcome.events.iter().filter_map(|event| event.downcast::<DieRolledEvent>()).collect();
+    assert_eq!(rolls.len(), 1, "only the final roll completes; payment events are separate");
+    let event = rolls[0];
     assert_eq!((event.natural_result, event.result), (5, 5));
     assert!(
         !game
@@ -155,9 +154,9 @@ fn u045_rerolls_apply_before_numerical_modifiers() {
 
     let outcome = execute_effect(&mut game, &Effect::roll_die(6, PlayerFilter::You), &mut ctx)
         .expect("roll resolves");
-    let event = outcome.events[0]
-        .downcast::<DieRolledEvent>()
-        .expect("completed roll");
+    let rolls: Vec<_> = outcome.events.iter().filter_map(|event| event.downcast::<DieRolledEvent>()).collect();
+    assert_eq!(rolls.len(), 1);
+    let event = rolls[0];
 
     assert_eq!((event.natural_result, event.result), (4, 5));
     assert_eq!(game.player(alice).expect("Alice").life, 19);
@@ -261,7 +260,7 @@ fn u045_multiple_optional_rerolls_are_ordered_and_applied_independently() {
         .expect("roll resolves");
 
     assert_eq!(outcome.as_count(), Some(5));
-    assert_eq!(outcome.events.len(), 1);
+    assert_eq!(outcome.events.iter().filter(|event| event.downcast::<DieRolledEvent>().is_some()).count(), 1, "discarded rerolls do not emit completed-roll events");
     assert_eq!(
         game.turn_store
             .turn_history

@@ -261,6 +261,7 @@ fn aettir_setting_obeys_later_layer_seven_b_overrides_and_ability_removal() {
         assert_eq!(pt(&game, host), (6, 8));
         set_life(&mut game, source, A, 13);
         assert_eq!(base_pt(&game, host), (4, 6), "a live earlier setting cannot outrank a later setting");
+        game.effect_store.continuous_effects.cleanup_end_of_turn();
         game.next_turn();
         assert_eq!(pt(&game, host), (15, 15));
         game.effect_store.continuous_effects.add_effect(ironsmith::continuous::ContinuousEffect::new(
@@ -291,6 +292,7 @@ fn angry_mob_keeps_both_turn_conditions_opponent_scope_and_battlefield_only_sett
         apply(&mut game, source, A, Effect::pump(2, 3, ChooseSpec::SpecificObject(source), Until::EndOfTurn));
         assert_eq!(pt(&game, source), (7, 8));
         assert_eq!(base_pt(&game, source), (4, 4));
+        game.effect_store.continuous_effects.cleanup_end_of_turn();
         game.next_turn();
         assert_eq!(game.turn.active_player, B);
         assert_eq!(pt(&game, source), (3, 3));

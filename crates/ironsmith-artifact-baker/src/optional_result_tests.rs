@@ -74,6 +74,9 @@ impl DecisionMaker for Choices {
 }
 fn resolve(game: &mut GameState, choices: &mut Choices) {
     engine::game_loop::resolve_stack_entry_with(game, choices).unwrap();
+    engine::game_loop::put_triggers_on_stack_with_dm(
+        game, &mut engine::triggers::TriggerQueue::new(), choices,
+    ).unwrap();
 }
 
 const CAMPSITE: &str = r#"Mana cost: {1}{G}
@@ -259,7 +262,7 @@ fn rose_treasure_branches_and_optional_payment_use_distinct_results() {
         assert_eq!(
             game.battlefield
                 .iter()
-                .filter(|id| game.object(**id).unwrap().name == "Treasure")
+                .filter(|id| game.object(**id).unwrap().has_subtype(engine::types::Subtype::Treasure))
                 .count(),
             usize::from(previous < 2)
         );

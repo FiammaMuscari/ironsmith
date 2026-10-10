@@ -2260,6 +2260,11 @@ impl ForPlayersActionState {
                                 continue;
                             }
                             let effect = &simultaneous_effects[effect_index];
+                            if matches!(purpose, crate::effects::EffectExecutionPurpose::Action)
+                                && !crate::effects::runtime::prepare_reached_effect_inputs(game, effect, ctx)?
+                            {
+                                return Ok(());
+                            }
                             if effect.0.is_read_only_simultaneous_player_action() {
                                 let outcome = in_optional_action(
                                     ctx,
@@ -4857,10 +4862,9 @@ mod tests {
         assert_eq!(ctx.source, source);
         assert!(ctx.source_snapshot.is_none());
         assert!(ctx.additional_replacement_effects().is_empty());
-        let events = game
-            .take_pending_trigger_events()
-            .into_iter()
-            .filter_map(|event| event.downcast::<crate::events::ZoneChangeEvent>().cloned())
+        let events = game.turn_store.turn_history.projected_records()
+            .filter_map(|record| record.event.downcast::<crate::events::ZoneChangeEvent>().cloned())
+            .filter(|event| event.from == crate::zone::Zone::Battlefield && event.to == crate::zone::Zone::Exile)
             .collect::<Vec<_>>();
         assert_eq!(events.len(), 2);
         assert!(

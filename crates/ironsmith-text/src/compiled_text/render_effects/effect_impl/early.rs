@@ -3002,6 +3002,21 @@
         if let Some(deal_damage) = unwrap_basic_tag_wrappers(&with_source.effect)
             .downcast_ref::<crate::effects::DealDamageEffect>()
         {
+            // The spell can deal damage measured by another object's power
+            // to that object's controller. Dropping the explicit source is
+            // safe only for Source; calling the measured creature "it"
+            // here would change the damage source when the text is reparsed.
+            if matches!(with_source.source.base(), ChooseSpec::Source)
+                && let Value::PowerOf(measured) | Value::ToughnessOf(measured) =
+                    deal_damage.amount.unhinted()
+                && let ChooseSpec::Tagged(measured_tag) = measured.base()
+                && matches!(deal_damage.target.base(), ChooseSpec::Player(
+                    PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(target_tag))
+                    | PlayerFilter::OwnerOf(crate::target::ObjectRef::Tagged(target_tag))
+                ) if target_tag == measured_tag)
+            {
+                return describe_effect(&with_source.effect);
+            }
             let has_explicit_source_surface =
                 with_source.source.source_reference_surface().is_some();
             let mut subject = describe_choose_spec(&with_source.source);
@@ -5753,6 +5768,15 @@
             .destination_player_surface
             .as_ref()
             .map(|player| format!("{} hand", describe_possessive_player_filter(player)));
+        if let ChooseSpec::All(filter) = return_to_hand.spec.base()
+            && has_vote_winners_tag(filter)
+        {
+            let destination = contextual_hand.as_deref()
+                .unwrap_or_else(|| owner_hand_phrase_for_spec(&return_to_hand.spec));
+            return format!(
+                "Return each card with the most votes or tied for most votes to {destination}"
+            );
+        }
         if let ChooseSpec::Target(inner) = &return_to_hand.spec
             && let ChooseSpec::Object(filter) = inner.as_ref()
             && filter.zone == Some(Zone::Exile)
@@ -6530,6 +6554,11 @@
     }
     if let Some(grant_target) = effect.downcast_ref::<crate::effects::GrantAbilitiesTargetEffect>()
     {
+        if let Some(source) = &grant_target.activated_from {
+            return format!("{} gains all activated abilities of {} {}",
+                capitalize_first(&describe_choose_spec(&grant_target.target)),
+                describe_choose_spec(source), describe_until(&grant_target.duration));
+        }
         if grant_target.abilities.len() == 1
             && matches!(grant_target.abilities[0].id(), crate::static_abilities::StaticAbilityId::CanBlockAnyNumber | crate::static_abilities::StaticAbilityId::CanBlockAdditionalCreatureEachCombat)
             && matches!(grant_target.duration, Until::EndOfTurn)

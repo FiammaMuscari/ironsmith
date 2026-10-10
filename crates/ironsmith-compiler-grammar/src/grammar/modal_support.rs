@@ -1106,6 +1106,7 @@ fn replace_modal_header_x_in_effect_ast(
             })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantAbilitiesChoiceAll { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantAbilitiesToTarget { .. })
+            | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantToTarget { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantBySpec { .. })
             | SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesFromTarget {

@@ -48,7 +48,11 @@ fn gameplay_keyword_grants_compile_to_executable_typed_abilities() {
                 && (printed_debug.contains("Triggered(")
                     || printed_debug.contains("Activated(")
                     || printed_debug.contains("EntersWithCounters")
-                    || printed_debug.contains("GrantObjectAbilityForFilter")),
+                    || printed_debug.contains("GrantObjectAbilityForFilter")
+                    || printed.abilities.iter().any(|ability| matches!(
+                        &ability.kind,
+                        ironsmith_compiler::ability::AbilityKind::Static(ability) if ability.id.is_some()
+                    ))),
             "printed {keyword} must include executable semantics: {printed_debug}"
         );
 

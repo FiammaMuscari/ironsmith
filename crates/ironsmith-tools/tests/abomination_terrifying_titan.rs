@@ -242,7 +242,10 @@ fn abomination_power_up_cannot_be_reactivated_on_the_same_object() {
     );
     copied.effect_store.continuous_effects.cleanup_end_of_turn();
     copied.next_turn();
+    copied.turn.active_player = alice;
     copied.turn.priority_player = Some(alice);
+    copied.turn.phase = ironsmith::game_state::Phase::FirstMain;
+    copied.player_mut(alice).unwrap().mana_pool.add(ManaSymbol::Red, 7);
     assert!(
         matches!(
             copied
@@ -1005,13 +1008,16 @@ fn abomination_activation_records_announced_ability_when_mana_changes_its_text()
         ),
         "mana ability changed the source during payment"
     );
+    // Finish the announced activation before querying the separately
+    // acquired ability, with enough mana available for another payment.
+    ironsmith::game_loop::resolve_stack_entry_with(&mut game, &mut dm).unwrap();
+    game.player_mut(alice).unwrap().mana_pool.add(ManaSymbol::Red, 7);
     assert!(
         compute_legal_actions(&game, alice).expect("fixture has complete replacement state").iter().any(
             |action| matches!(action,LegalAction::ActivateAbility{source:id,..} if *id==source)
         ),
         "the acquired ability was not the one activated"
     );
-    ironsmith::game_loop::resolve_stack_entry_with(&mut game, &mut dm).unwrap();
     game.effect_store.continuous_effects.cleanup_end_of_turn();
     assert!(
         !compute_legal_actions(&game, alice).expect("fixture has complete replacement state").iter().any(

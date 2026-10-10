@@ -1735,7 +1735,7 @@ mod tests {
                 .expect("search should resolve");
             assert_eq!(outcome.chosen_objects().unwrap_or_default().len(), 2);
             assert!(
-                ctx.get_tagged_all("searched").is_none(),
+                ctx.get_tagged_all("searched").is_none_or(|objects| objects.is_empty()),
                 "Opposition Agent should consume found cards at search resolution"
             );
         }

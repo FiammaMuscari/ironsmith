@@ -34,7 +34,7 @@ fn definitions(index: usize, oracle_id: &str) -> [CardDefinition; 2] {
 fn assert_counter_linked(debug: &str, counter: &str) {
     assert!(debug.contains("ForAsLongAs"), "{debug}");
     assert!(debug.contains("AffectedObject"), "{debug}");
-    assert!(debug.contains(counter), "{debug}");
+    assert!(debug.to_ascii_lowercase().contains(&counter.to_ascii_lowercase()), "{debug}");
     assert!(!debug.contains("Until::Forever") || debug.contains("ForAsLongAs"), "{debug}");
 }
 

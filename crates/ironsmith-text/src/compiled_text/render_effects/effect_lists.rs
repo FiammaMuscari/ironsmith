@@ -14126,7 +14126,7 @@ mod leading_duration_wrapped_modifications_tests {
         let rendered = crate::compiled_text::compiled_text_lines(&definition);
         assert_eq!(rendered.len(), 1, "{rendered:#?}");
         assert!(
-            rendered[0].starts_with("Until end of turn, each creature you control becomes black"),
+            rendered[0].starts_with("Until end of turn, each creature you control becomes a black Shade"),
             "{rendered:#?}"
         );
         assert!(
@@ -21114,7 +21114,7 @@ mod attached_untap_counter_tests {
         game.object_mut(aura).unwrap().attached_to =
             Some(crate::object::AttachmentTarget::Object(host));
         game.object_mut(host).unwrap().attachments.push(aura);
-        let counter = CounterType::Named("sleep".into());
+        let counter = CounterType::Sleep;
         game.object_mut(host).unwrap().add_counters(counter, 1);
         game.turn.active_player = bob;
         game.tap(host);

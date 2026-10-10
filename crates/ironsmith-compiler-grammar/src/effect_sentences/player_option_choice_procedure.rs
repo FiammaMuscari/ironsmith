@@ -56,6 +56,15 @@ fn named_options(tokens: &[OwnedLexToken]) -> Option<Vec<String>> {
     let mut saw_or = false;
     for token in tokens {
         if expect_option {
+            // The final conjunction may follow the serial comma. It is a
+            // separator, not a named option in "money, friends, or secrets".
+            if token.is_word("or") {
+                if options.is_empty() || saw_or {
+                    return None;
+                }
+                saw_or = true;
+                continue;
+            }
             let word = token.as_word()?;
             if NON_OPTION_WORDS.contains(&word)
                 || !word.chars().all(|ch| ch.is_ascii_alphabetic())
@@ -64,6 +73,8 @@ fn named_options(tokens: &[OwnedLexToken]) -> Option<Vec<String>> {
             }
             options.push(word.to_string());
             expect_option = false;
+        } else if saw_or {
+            return None;
         } else if token.is_comma() {
             expect_option = true;
         } else if token.is_word("or") {
@@ -76,8 +87,7 @@ fn named_options(tokens: &[OwnedLexToken]) -> Option<Vec<String>> {
             return None;
         }
     }
-    // A trailing ", or" is absorbed by the comma/or alternation above; the
-    // list must end on an option and contain the final "or".
+    // The list must end on an option and contain the final "or".
     (!expect_option && saw_or && options.len() >= 2).then_some(options)
 }
 

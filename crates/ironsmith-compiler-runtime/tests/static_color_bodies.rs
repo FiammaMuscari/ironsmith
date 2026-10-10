@@ -466,7 +466,7 @@ fn live_color_grants_use_acquisition_time_then_preserve_native_clone_identity() 
     static_effect(&mut cloned, source, EffectTarget::Specific(host), Modification::SetColors(ColorSet::GREEN));
     assert_eq!(color(&cloned, host), ColorSet::GREEN, "an ordinary effect acquired after the grant wins");
     assert_eq!(color(&game, host), ColorSet::BLUE, "a clone does not mutate authoritative chronology");
-    game.turn.turn_number += 1;
+    game.next_turn();
     refresh(&mut game);
     assert_eq!(color(&game, host), ColorSet::RED, "expiry removes the blue grant, not the older red effect");
     assert_eq!(game.object(host).unwrap().temporary_static_ability_grants.origin(0), Some(&original_origin));

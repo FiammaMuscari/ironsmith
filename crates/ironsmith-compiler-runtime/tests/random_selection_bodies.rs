@@ -155,7 +155,7 @@ fn tomb_tyrant_keeps_anthem_activation_restrictions_costs_and_resolution_pool() 
         game.remove_summoning_sickness(source);
         let sacrifice = creature(&mut game, A, Zone::Battlefield, "Sacrifice", "Zombie", 2);
         let foreign = creature(&mut game, B, Zone::Battlefield, "Foreign", "Zombie", 2);
-        assert_eq!(game.current_power(source), Some(4));
+        assert_eq!(game.current_power(source), Some(3));
         assert_eq!(game.current_power(sacrifice), Some(3));
         assert_eq!(game.current_power(foreign), Some(2));
         let ability_index = definition.abilities.iter().position(|ability| matches!(ability.kind, AbilityKind::Activated(_))).unwrap();

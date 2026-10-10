@@ -54,6 +54,23 @@ fn if_it_doesnt_is_the_preceding_conditionals_false_arm() {
         ("Weatherlight Compleated", "DrawCards", "Scry"),
     ] {
         for definition in definitions(name) {
+            let trigger = definition.abilities.iter().find_map(|ability| match &ability.kind {
+                ironsmith::ability::AbilityKind::Triggered(trigger) => Some(trigger),
+                _ => None,
+            }).expect("triggered ability");
+            assert!(trigger.intervening_if.is_none(), "{name}: the condition is checked during resolution");
+            fn has_both_branches(effect: &ironsmith::effect::Effect) -> bool {
+                if let Some(condition) = effect.downcast_ref::<ironsmith::effects::ConditionalEffect>() {
+                    if !condition.if_true.is_empty() && !condition.if_false.is_empty() {
+                        return true;
+                    }
+                }
+                let mut found = false;
+                effect.visit_child_effects(&mut |child| found |= has_both_branches(child));
+                found
+            }
+            assert!(trigger.effects.all_effects().into_iter().any(has_both_branches),
+                "{name}: the fallback must be the same condition's false branch");
             let debug = format!("{definition:?}");
             assert!(debug.contains("Conditional"), "{name}: {debug}");
             let draw = debug.find(true_arm).unwrap_or_else(|| panic!("{name}: {debug}"));

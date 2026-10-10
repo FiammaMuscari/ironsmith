@@ -1076,6 +1076,10 @@ fn default_trigger_last_object_prelude(
     }
     match trigger {
         TriggerSpec::WithIntro { trigger, .. } => default_trigger_last_object_prelude(trigger, tag),
+        TriggerSpec::ThisDealsCombatDamageToPlayer { .. }
+        | TriggerSpec::DealsCombatDamageToPlayer { .. }
+        | TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. } =>
+            Some(EffectPreludeTag::TriggeringSource(tag.clone())),
         TriggerSpec::BlocksOrBecomesBlockedByObject { subject, other } => {
             Some(EffectPreludeTag::OtherBlockParticipantMatchingSubject {
                 tag: tag.clone(),
@@ -2671,6 +2675,13 @@ fn stage_effects_from_normalized(
         if let Some(default_prelude) = default_last_object_prelude
             && !prelude.contains(&default_prelude)
         {
+            if let EffectPreludeTag::TriggeringSource(tag) = &default_prelude {
+                // Reference inference knows the antecedent tag but not which
+                // participant of a damage event supplies it. The trigger's
+                // typed source binding replaces that generic object binding.
+                prelude.retain(|binding| !matches!(binding,
+                    EffectPreludeTag::TriggeringObject(existing) if existing == tag));
+            }
             prelude.insert(0, default_prelude);
         }
         if references_triggering_source {
@@ -2955,6 +2966,16 @@ fn flatten_top_level_source_sentences(
                 starting_with_controller,
                 ..
             }) => *starting_with_controller = true,
+            EffectAst::ForEach(ForEachEffectAst::ForEachPlayer { .. }
+                | ForEachEffectAst::ForEachOpponent { .. }) => {
+                // A shared producer/consumer pipeline can discard source
+                // segments. Keep ordering on this iteration when it does.
+                *first = EffectAst::SourceSentence {
+                    effects: vec![first.clone()],
+                    leading_then: false,
+                    starting_with_controller: true,
+                };
+            }
             EffectAst::Sequence { effects }
             | EffectAst::CommaThen { effects }
             | EffectAst::Coordinated { effects, .. }
@@ -5264,9 +5285,39 @@ pub fn lower_static_ability_ast(ability: StaticAbilityAst) -> Result<StaticAbili
             display,
         } => {
             let (templates, choices) = compile_trigger_effects(None, &templates)?;
+            // Templates describe replacement token groups rather than an
+            // executing instruction sequence. Automatic result tags are not
+            // observable here, and attachment references are read from the
+            // replacement source when its copy template is applied.
+            let templates = templates.into_iter().filter_map(|mut effect| {
+                while let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+                    effect = (*tagged.effect).clone();
+                }
+                if let Some(attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>()
+                    && matches!(attached.tag.as_str(), "enchanted" | "equipped" | "fortified")
+                { return None; }
+                Some(effect)
+            }).collect::<Vec<_>>();
             if !choices.is_empty()
                 || templates.is_empty()
                 || templates.iter().any(|effect| {
+                    if let Some(copy) = effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>() {
+                        // Replacement execution supports a plain copy template;
+                        // copy exceptions and entry riders need their own owner.
+                        let mut plain = crate::effects::CreateTokenCopyEffect::one(copy.target.clone());
+                        // A next-step participant is inert without a cleanup
+                        // rider, and numeric surface hints do not change one.
+                        plain.next_end_step_player = copy.next_end_step_player.clone();
+                        plain.count = copy.count.clone();
+                        return !matches!(copy.count.unhinted(), crate::effect::Value::Fixed(1))
+                            || copy != &plain
+                            || !match copy.target.base() {
+                                crate::target::ChooseSpec::Object(_) => !copy.target.is_target(),
+                                crate::target::ChooseSpec::Tagged(tag) =>
+                                    matches!(tag.as_str(), "enchanted" | "equipped" | "fortified"),
+                                _ => false,
+                            };
+                    }
                     effect
                         .downcast_ref::<crate::effects::CreateTokenEffect>()
                         .is_none_or(|create| {

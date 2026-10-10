@@ -150,7 +150,9 @@ pub trait DecisionMaker {
             Some(ctx.source),
             format!("Confirm mana payment for {}", ctx.subject),
             vec![
-                crate::decisions::context::SelectableOption::new(1, "Confirm payment"),
+                crate::decisions::context::SelectableOption::with_legality(
+                    1, "Confirm payment", ctx.plan.payable,
+                ),
                 crate::decisions::context::SelectableOption::new(0, "Cancel"),
             ],
             1,
@@ -1043,6 +1045,31 @@ impl DecisionMaker for AutoPassDecisionMaker {
 /// Useful for testing effects where you want to verify behavior when a choice is made.
 #[derive(Debug, Default)]
 pub struct SelectFirstDecisionMaker;
+
+#[cfg(test)]
+mod default_mana_payment_tests {
+    use super::*;
+
+    #[test]
+    fn automatic_confirmation_requires_a_payable_plan() {
+        let mut game = GameState::new(vec!["Alice".into()], 20);
+        let player = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let request = crate::mana_payment::ManaPaymentRequest::new(
+            player, source, crate::costs::PaymentReason::Effect, crate::mana::ManaCost::new(),
+        );
+        let plan = crate::mana_payment::ManaPaymentPlanner::default()
+            .first_plan(&game, &request).unwrap();
+        let mut context = crate::decisions::context::ManaPaymentContext::new(
+            player, source, "test payment", request, plan,
+        );
+        assert!(matches!(SelectFirstDecisionMaker.decide_mana_payment(&game, &context),
+            crate::mana_payment::ManaPaymentResponse::Confirm { .. }));
+        context.plan.payable = false;
+        assert!(matches!(SelectFirstDecisionMaker.decide_mana_payment(&game, &context),
+            crate::mana_payment::ManaPaymentResponse::Cancel));
+    }
+}
 
 impl DecisionMaker for SelectFirstDecisionMaker {
     fn answers_player_choices(&self) -> bool {

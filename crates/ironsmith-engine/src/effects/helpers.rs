@@ -357,7 +357,8 @@ pub(crate) fn pin_tagged_objects_to_current(
     tagged_objects: &mut HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
 ) {
     for (tag, snapshots) in tagged_objects.iter_mut() {
-        if tag.as_str().starts_with("__paid_departure__")
+        if tag.as_str() == crate::tag::SOURCE_EMERGE_SACRIFICE_TAG
+            || tag.as_str().starts_with("__paid_departure__")
             || matches!(
                 ironsmith_core::tag::SacrificeCostTag::parse(tag),
                 Some(ironsmith_core::tag::SacrificeCostTag::OriginalResult(_))
@@ -4210,6 +4211,15 @@ pub fn resolve_objects_from_spec(
 
         // Tagged objects
         ChooseSpec::Tagged(tag) => {
+            if tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+                && let Some(owner) = &ctx.linked_exile_owner
+            {
+                // A definition-local pair is authoritative even when the
+                // caller retained an unrelated source-wide collection.
+                return Ok(game.linked_exile_pair_members(owner)?.iter().copied()
+                    .filter(|id| game.object(*id).is_some_and(|object| object.zone == Zone::Exile))
+                    .collect());
+            }
             let Some(tagged) = ctx.get_tagged_all(tag) else {
                 return Ok(Vec::new());
             };

@@ -35,11 +35,11 @@ pub fn split_effect_chain_on_and_tokens(
         }
         let current = trim_lexed_commas(tokens.get(start..idx).unwrap_or_default());
         let remaining = trim_lexed_commas(tokens.get(idx + 1..).unwrap_or_default());
+        let current_words = crate::lexer::parser_token_word_refs(current);
+        let remaining_words = crate::lexer::parser_token_word_refs(remaining);
         if preserve_and_reason(current, remaining, extended).is_some() {
             continue;
         }
-        let current_words = crate::lexer::parser_token_word_refs(current);
-        let remaining_words = crate::lexer::parser_token_word_refs(remaining);
         // "create a tapped and attacking token" (CR 508.4): the conjunction
         // joins two entry states of one token, never two actions.
         if current_words.last() == Some(&"tapped")
@@ -66,6 +66,8 @@ pub fn split_effect_chain_on_and_tokens(
             .any(|word| matches!(*word, "fights" | "fight"))
             && !current_words.iter().any(|word| matches!(*word, "fights" | "fight"));
         let remaining_starts_action = remaining_is_fight
+            || (current_words.ends_with(&["types", "and", "abilities"])
+                && remaining_words.first().is_some_and(|word| matches!(*word, "has" | "have")))
             || find_chain_verb_tokens(remaining).is_some()
             || has_extended_effect_head_tokens(remaining)
             || starts_with_player_may_tokens(remaining)

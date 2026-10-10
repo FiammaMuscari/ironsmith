@@ -24,7 +24,9 @@ fn the_instead_line_is_one_conditional_amount_for_the_same_target() {
             assert_eq!(damage.len(), 2, "{name}: exactly the default and the replacement arm");
             assert!(amounts.contains(&Value::Fixed(*base)) && amounts.contains(&Value::Fixed(*boosted)), "{name}: {amounts:?}");
             assert_eq!(damage[0].target, damage[1].target, "{name}: both arms hit the one declared target");
-            assert_eq!(definition.spell_effect.as_ref().unwrap().all_effects().len(), 1, "{name}: one top-level instruction");
+            let program = definition.spell_effect.as_ref().unwrap();
+            assert_eq!(program.segments.len(), 1, "{name}: one authored instruction");
+            assert_eq!(program.segments[0].self_replacements.len(), 1, "{name}: one replacement arm");
             let text = support::rendered(&definition);
             assert!(text.contains("instead"), "{name}: {text}");
         }

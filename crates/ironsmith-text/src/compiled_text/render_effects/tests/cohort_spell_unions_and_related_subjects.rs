@@ -349,7 +349,7 @@ fn cohort_chosen_hand_card_mana_value_controls_token_creation_including_no_choic
             .battlefield
             .iter()
             .filter_map(|id| game.object(*id))
-            .filter(|o| o.name == "Spirit")
+            .filter(|o| o.subtypes.contains(&Subtype::Spirit))
             .collect::<Vec<_>>();
         assert_eq!(
             tokens.len(),

@@ -508,6 +508,9 @@ fn short_name_is_distinct_name(short_name: &str) -> bool {
     let lower = short_name.to_ascii_lowercase();
     !is_name_article(&lower)
         && !is_rules_function_word(&lower)
+        // These are ordinary instructions/ability text even when a card's
+        // full name starts with them (for example, "Cast Down").
+        && !matches!(lower.as_str(), "cast" | "casts" | "play" | "plays" | "protection" | "roll" | "rolls")
         && parse_leaf_color_complete(&lower).is_err()
         && parse_leaf_card_type_complete(&lower).is_err()
         && match parse_leaf_subtype_flexible_complete(&lower) {
@@ -611,3 +614,19 @@ fn parse_roman_numeral(input: &mut &str) -> WResult<LeafRomanNumeral> {
 #[cfg(test)]
 #[path = "source_references_inline_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod ambiguous_short_names {
+    use super::*;
+
+    #[test]
+    fn rules_words_do_not_become_inferred_short_names() {
+        for name in ["Cast Down", "Play with Fire", "Protection context grant"] {
+            let aliases = parse_leaf_source_reference_aliases_for_name(name);
+            assert!(aliases.iter().any(|alias| matches!(alias.surface, SourceReferenceSurface::FullName(_))));
+            assert!(!aliases.iter().any(|alias| alias.words.len() == 1));
+        }
+        assert!(parse_leaf_source_reference_aliases_for_name("Jaya Ballard").iter()
+            .any(|alias| alias.words == ["jaya"]));
+    }
+}

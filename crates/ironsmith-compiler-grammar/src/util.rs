@@ -842,6 +842,16 @@ pub fn compiler_activation_cost_reference_imports(
                         .expect("typed sacrifice-cost tag")
                         .original_result_key(),
                 ));
+            } else if crate::tag::CompilerCostObjectTag::Exile.matches(&tag)
+                || tag.as_str() == crate::tag::CompilerReferenceTag::CostExiledFromHand.as_str()
+                || tag.as_str() == crate::tag::CompilerReferenceTag::CostExiledTop.as_str()
+            {
+                // Keep the paid exile antecedent even if choosing a target
+                // subsequently replaces the latest-object reference.
+                imports.snapshot_tag_aliases.push((
+                    crate::tag::CompilerReferenceTag::SourceExiled.bind().into(),
+                    tag,
+                ));
             } else if crate::tag::CompilerCostObjectTag::Discard.matches(&tag) {
                 // A filtered or random discard payment tags its card under
                 // its own `discard_cost_N` key; "the discarded card" names
@@ -2913,7 +2923,7 @@ pub fn parse_flashback_line(
     }))
 }
 
-fn split_flashback_x_cant_be_zero(tokens: &[OwnedLexToken]) -> (&[OwnedLexToken], u32) {
+pub(crate) fn split_flashback_x_cant_be_zero(tokens: &[OwnedLexToken]) -> (&[OwnedLexToken], u32) {
     const TAIL: &[&str] = &[
         "if", "you", "cast", "this", "spell", "this", "way", "x", "cant", "be", "0",
     ];

@@ -372,7 +372,7 @@ fn run(def: &CardDefinition, mode: usize) -> Result<Value, String> {
     let counter = if def.name() == "Myojin of Blooming Dawn" {
         ironsmith::CounterType::Indestructible
     } else {
-        ironsmith::CounterType::Named("divinity".into())
+        ironsmith::CounterType::Divinity
     };
     let before_counter = g.counter_count(source, counter.clone());
     let before_indestructible = g.object_has_static_ability_id(source, K::Indestructible);

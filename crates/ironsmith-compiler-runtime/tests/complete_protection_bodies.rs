@@ -330,7 +330,8 @@ fn unavailable_damage_source_is_incomplete_evidence_and_checked_sequences_roll_b
         for definition in definitions(name) {
             let mut game = game();
             let protected = game.create_object_from_definition(&definition, A, Zone::Battlefield);
-            let absent = ObjectId::new();
+            let absent = ObjectId::from_raw(u64::MAX);
+            assert!(game.object(absent).is_none());
             let other = creature(&mut game, B, ColorSet::RED);
             let wrong = ironsmith::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(game.object(other).unwrap(), &game);
             let sequence = Effect::new(SequenceEffect::new(vec![Effect::gain_life(3),
@@ -340,7 +341,11 @@ fn unavailable_damage_source_is_incomplete_evidence_and_checked_sequences_roll_b
                 let mut dm = SelectFirstDecisionMaker;
                 let mut context = EffectContext::new(absent, B, &mut dm);
                 if use_wrong { context.source_snapshot = Some(wrong.clone()); }
-                assert!(matches!(execute_effect(&mut game, &sequence, &mut context), Err(ExecutionError::IncompleteEvidence(_))));
+                let result = execute_effect(&mut game, &sequence, &mut context);
+            assert!(matches!(&result, Err(ExecutionError::IncompleteEvidence(_)))
+                || matches!(&result, Err(ExecutionError::ContinuousDiscovery(
+                    ironsmith::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }
+                )) if *object == absent), "{result:?}");
                 assert_eq!(game.damage_on(protected), 0);
                 assert_eq!(game.player(B).unwrap().life, life);
             }

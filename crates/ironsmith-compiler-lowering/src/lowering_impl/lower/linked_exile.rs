@@ -102,14 +102,53 @@ pub(super) fn bind_scalar_linked_exile(definition: &mut CardDefinition) {
     }
 }
 
+/// Sentence boundaries and sequential composition do not create another
+/// producer. Conditional/replacement bodies must still fail the exact shape
+/// checks below, rather than being flattened into an unconditional program.
+fn linear_effects(program: &ResolutionProgram) -> Option<Vec<&Effect>> {
+    if program.segments.iter().any(|segment| !segment.self_replacements.is_empty()) {
+        return None;
+    }
+    fn append<'a>(effect: &'a Effect, effects: &mut Vec<&'a Effect>) {
+        if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+            for child in &sequence.effects { append(child, effects); }
+        } else {
+            effects.push(effect);
+        }
+    }
+    let mut effects = Vec::new();
+    for segment in &program.segments {
+        for effect in &segment.default_effects { append(effect, &mut effects); }
+    }
+    Some(effects)
+}
+
+fn exclude_prior_exile_viewers(program: &mut ResolutionProgram) {
+    fn rewrite(effect: &mut Effect) {
+        if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+            let mut sequence = sequence.clone();
+            for child in &mut sequence.effects { rewrite(child); }
+            *effect = Effect::new(sequence);
+        } else if let Some(exile) = effect.downcast_ref::<crate::effects::ExileEffect>() {
+            let mut exile = exile.clone();
+            exile.exclude_prior_zone_viewers = true;
+            *effect = Effect::new(exile);
+        }
+    }
+    let mut segments = program.segments.clone();
+    for segment in &mut segments {
+        for effect in &mut segment.default_effects { rewrite(effect); }
+    }
+    program.replace_segments(segments);
+}
+
 #[derive(Clone, Copy)]
 enum StaticExileProducer { FaceUpLibrary, FaceDownLibrary, FaceDownHandChoice, FaceUpHandUntilSourceLeaves }
 
 /// Inventory one complete typed producer, including the private selection's
 /// exact dataflow. No wrapper, extra action, label or tag spelling proves a pair.
 fn static_exile_producer(program: &ResolutionProgram) -> Option<StaticExileProducer> {
-    if program.segments.len() != 1 || !program.segments[0].self_replacements.is_empty() { return None; }
-    let effects = program.all_effects();
+    let effects = linear_effects(program)?;
     if effects.len() == 1
         && let Some(exile) = effects[0].downcast_ref::<crate::effects::ExileTopOfLibraryEffect>()
     {
@@ -150,6 +189,7 @@ fn static_exile_producer(program: &ResolutionProgram) -> Option<StaticExileProdu
     let mut filter = choice.filter.clone();
     if filter.owner.as_ref() != Some(&choice.chooser) { return None; }
     filter.owner = None;
+    if filter.zone == Some(crate::zone::Zone::Hand) { filter.zone = None; }
     if filter != crate::target::ObjectFilter::default() { return None; }
     Some(StaticExileProducer::FaceDownHandChoice)
 }
@@ -219,14 +259,8 @@ pub(super) fn bind_static_linked_exile(definition: &mut CardDefinition) {
     if matches!(producer_kind, StaticExileProducer::FaceDownHandChoice)
         && let AbilityKind::Triggered(ability) = &mut definition.abilities[producer].kind
     {
-        let mut segments = ability.effects.segments.clone();
-        let Some(exile) = segments[0].default_effects[1].downcast_ref::<crate::effects::ExileEffect>() else { return; };
-        let mut exile = exile.clone();
-        // Choosing one's hand card is not permission to inspect the new
-        // face-down exile. The separate active static reader owns entitlement.
-        exile.exclude_prior_zone_viewers = true;
-        segments[0].default_effects[1] = Effect::new(exile);
-        ability.effects.replace_segments(segments);
+        // The active static reader owns inspection of the new exile incarnation.
+        exclude_prior_exile_viewers(&mut ability.effects);
     }
     let Ok(bytes) = serde_json::to_vec(&definition.abilities) else { return; };
     let pair = ironsmith_core::LinkedExilePair {
@@ -253,7 +287,7 @@ fn simple_linked_activation(ability: &crate::ability::ActivatedAbility) -> bool 
 }
 
 fn draw_then_private_hand_exile(program: &ResolutionProgram) -> bool {
-    let effects = program.all_effects();
+    let Some(effects) = linear_effects(program) else { return false; };
     if effects.len() != 3 { return false; }
     let Some(draw) = crate::compile_support::effect_without_result_tags(effects[0])
         .downcast_ref::<crate::effects::DrawCardsEffect>() else { return false; };
@@ -271,6 +305,9 @@ fn single_paired_return(program: &ResolutionProgram) -> bool {
         .downcast_ref::<crate::effects::ReturnToHandEffect>() else { return false; };
     if returned.spec.is_target() || !returned.spec.count().is_single()
         || !matches!(returned.spec.unhinted(), ChooseSpec::WithCount(_, _)) { return false; }
+    if let ChooseSpec::Tagged(tag) = returned.spec.base() {
+        return tag.as_str() == ironsmith_core::SOURCE_EXILED_TAG;
+    }
     let ChooseSpec::Object(filter) = returned.spec.base() else { return false; };
     if filter.zone != Some(crate::zone::Zone::Exile) || filter.tagged_constraints.len() != 1
         || filter.tagged_constraints[0].tag.as_str() != ironsmith_core::SOURCE_EXILED_TAG
@@ -307,10 +344,7 @@ pub(super) fn bind_private_return_linked_exile(definition: &mut CardDefinition) 
     }
     let (Some(producer), Some(consumer), Some(inspector)) = (producer, consumer, inspector) else { return; };
     if let AbilityKind::Activated(ability) = &mut definition.abilities[producer].kind {
-        let mut segments = ability.effects.segments.clone();
-        let Some(exile) = segments[0].default_effects[2].downcast_ref::<crate::effects::ExileEffect>() else { return; };
-        let mut exile = exile.clone(); exile.exclude_prior_zone_viewers = true;
-        segments[0].default_effects[2] = Effect::new(exile); ability.effects.replace_segments(segments);
+        exclude_prior_exile_viewers(&mut ability.effects);
     }
     let Ok(bytes) = serde_json::to_vec(&definition.abilities) else { return; };
     let pair = ironsmith_core::LinkedExilePair {
@@ -344,8 +378,7 @@ fn class_level_activation(ability: &crate::ability::Ability, level: u32) -> bool
 }
 
 fn class_private_library_producer(program: &ResolutionProgram) -> bool {
-    if program.segments.len() != 1 || !program.segments[0].self_replacements.is_empty() { return false; }
-    let effects = program.all_effects();
+    let Some(effects) = linear_effects(program) else { return false; };
     if effects.len() != 2 { return false; }
     let Some(exile) = crate::compile_support::effect_without_result_tags(effects[0])
         .downcast_ref::<crate::effects::ExileTopOfLibraryEffect>() else { return false; };

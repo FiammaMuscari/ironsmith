@@ -13,13 +13,14 @@ pub(super) fn read(tokens: &[OwnedLexToken]) -> Result<Option<Vec<EffectAst>>, C
     let Some(index) = tokens.iter().position(|token| token.is_word("instead")) else { return Ok(None); };
     let action = &tokens[..index];
     let words = crate::lexer::parser_token_word_refs(action);
-    let counter = words.as_slice() == ["counter", "that", "spell"];
+    let counter = words.starts_with(&["counter", "that", "spell"]);
     let sacrifice = words.starts_with(&["each", "player", "sacrifices", "all"])
         && words.ends_with(&["they", "control"]);
     if !counter && !sacrifice { return Ok(None); }
     // Both adopted action heads have word/number predicates. An embedded
     // symbol or a second replacement marker must not disappear in a fallback.
-    if tokens.iter().any(|token| !matches!(token.kind, TokenKind::Word | TokenKind::Number))
+    if (counter && words.as_slice() != ["counter", "that", "spell"])
+        || tokens.iter().any(|token| !matches!(token.kind, TokenKind::Word | TokenKind::Number))
         || tokens.iter().filter(|token| token.is_word("instead")).count() != 1
         || !tokens.get(index + 1).is_some_and(|token| token.is_word("if"))
     {
@@ -61,7 +62,7 @@ pub(super) fn read(tokens: &[OwnedLexToken]) -> Result<Option<Vec<EffectAst>>, C
     Ok(Some(vec![EffectAst::Conditionals(ConditionalEffectAst::TrailingIf { predicate, effects })]))
 }
 
-pub(super) fn validate(tokens: &[OwnedLexToken]) -> Result<(), CardTextError> {
+pub(crate) fn validate(tokens: &[OwnedLexToken]) -> Result<(), CardTextError> {
     for sentence in crate::lexer::split_lexed_sentences(tokens) { read(sentence)?; }
     Ok(())
 }

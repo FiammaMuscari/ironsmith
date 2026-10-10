@@ -28,7 +28,7 @@ fn counter_threshold_transform_untaps_only_after_threshold() {
         game.tap(source);
         game.add_counters(
             source,
-            crate::object::CounterType::Named("soul".into()),
+            crate::object::CounterType::Soul,
             initial,
         );
         game.add_counters(source, crate::object::CounterType::Charge, 2);
@@ -47,7 +47,7 @@ fn counter_threshold_transform_untaps_only_after_threshold() {
         );
         assert_eq!(game.is_tapped(source), initial < 2);
         assert_eq!(
-            game.counter_count(source, crate::object::CounterType::Named("soul".into())),
+            game.counter_count(source, crate::object::CounterType::Soul),
             if initial >= 2 { 0 } else { initial + 1 }
         );
         assert_eq!(

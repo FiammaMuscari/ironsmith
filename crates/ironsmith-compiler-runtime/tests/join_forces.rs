@@ -52,9 +52,9 @@ fn native(name: &str) -> Effect {
                     .owned_by(player.clone()),
                 ChoiceCount::up_to_dynamic_x(), player.clone(), tag,
             ).in_zone(Zone::Library).with_count_value(Value::X).as_optional_search();
-            vec![Effect::new(choose), Effect::for_each_tagged(tag, vec![Effect::new(
-                PutOntoBattlefieldEffect::new(ChooseSpec::Iterated, true, player.clone()),
-            )]), Effect::shuffle_library_player(player)]
+            vec![Effect::new(choose), Effect::new(
+                PutOntoBattlefieldEffect::new(ChooseSpec::Tagged(tag.into()), true, player.clone()),
+            ), Effect::shuffle_library_player(player)]
         }
         _ => unreachable!(),
     };
@@ -310,7 +310,11 @@ fn unrepresentable_contribution_bound_is_a_typed_error_and_restores_earlier_paym
         player.mana_pool.blue = u32::MAX;
         let mut choices = Choices { amounts: [1, 0, 0], ..Default::default() };
         let error = execute(&program, &mut game, source, &mut choices).unwrap_err();
-        assert!(matches!(error, ExecutionError::UnresolvableValue(_)));
+        assert!(matches!(error, ExecutionError::ContinuousDiscovery(
+            ironsmith::static_ability_processor::StaticEffectDiscoveryError::ScalarRange {
+                resource: "unspent mana", ..
+            }
+        )), "{error:?}");
         assert_eq!(game.player(A).unwrap().mana_pool.total(), 5);
         assert_eq!(game.player(B).unwrap().mana_pool.total_wide(), 2 * u64::from(u32::MAX) + 5);
         assert_body("Shared Trauma", &game, 0);

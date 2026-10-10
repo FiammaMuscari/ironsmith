@@ -175,6 +175,8 @@ mod tests {
             vec!["Alice".to_string(), "Bob".to_string(), "Carol".to_string()],
             20,
         );
+        game.turn.phase = crate::game_state::Phase::Combat;
+        game.turn.step = Some(crate::game_state::Step::DeclareAttackers);
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
         let carol = PlayerId::from_index(2);

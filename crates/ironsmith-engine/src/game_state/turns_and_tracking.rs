@@ -1668,6 +1668,16 @@ impl GameState {
             &completed_turn_players_for_durations,
             &active_players,
         );
+        // Bind a delayed ability's end-of-next-turn duration to the actual
+        // next turn of its controller, including inserted or skipped turns.
+        for delayed in self.effect_store.delayed_triggers.iter_mut() {
+            if delayed.expires_after_controller_turn_after.is_some_and(|anchor|
+                self.turn.turn_number > anchor && active_players.contains(&delayed.controller))
+            {
+                delayed.expires_at_turn = Some(self.turn.turn_number);
+                delayed.expires_after_controller_turn_after = None;
+            }
+        }
         self.correct_next_turn_end_predictions(&active_players);
 
         // Begin the shared turn independently for each active player.
@@ -3174,6 +3184,7 @@ impl GameState {
         if entry.triggering_event.is_none() {
             for (tag, snapshots) in entry.tagged_objects.iter_mut() {
                 if tag.as_str() == crate::tag::SOURCE_COST_PUBLIC_ARRIVAL_TAG
+                    || tag.as_str() == crate::tag::SOURCE_EMERGE_SACRIFICE_TAG
                     || matches!(ironsmith_core::tag::SacrificeCostTag::parse(tag), Some(ironsmith_core::tag::SacrificeCostTag::OriginalResult(_)))
                     || tag.as_str().starts_with("__paid_departure__")
                     || tag.as_str().starts_with("__pre_move_history__")

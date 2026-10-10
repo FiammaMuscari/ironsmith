@@ -2,7 +2,7 @@
 //! life auction for control (Illicit Auction) are one procedure, so the later
 //! sentences no longer reach the verb parser on their own.
 use ironsmith::cards::CardDefinition;
-use ironsmith::decision::{DecisionMaker, SelectFirstDecisionMaker};
+use ironsmith::decision::{DecisionMaker};
 use ironsmith::decisions::context::{BooleanContext, NumberContext};
 use ironsmith::game_loop::{
     extract_target_requirements_from_program_with_modes, resolve_stack_entry_with,
@@ -44,9 +44,14 @@ fn definitions() -> [CardDefinition; 2] {
         let debug = format!("{:?}", definition.spell_effect);
         assert_eq!(debug.matches("BidLifeEffect").count(), 1, "{debug}");
         assert!(debug.contains("Fixed(0)"), "{debug}");
-        assert!(debug.contains("GainControlEffect"), "{debug}");
+        assert!(debug.contains("ChangeControllerToEffectController"), "{debug}");
     }
     [direct, decoded]
+}
+
+struct EveryonePasses;
+impl DecisionMaker for EveryonePasses {
+    fn decide_boolean(&mut self, _: &GameState, _: &BooleanContext) -> bool { false }
 }
 
 /// Bob tops the opening bid once with 3 life; Alice then passes.
@@ -99,7 +104,7 @@ fn auction(definition: &CardDefinition, dm: &mut impl DecisionMaker) -> (GameSta
 #[test]
 fn unopposed_opening_bid_of_zero_wins_control_for_free() {
     for definition in definitions() {
-        let (game, creature) = auction(&definition, &mut SelectFirstDecisionMaker);
+        let (game, creature) = auction(&definition, &mut EveryonePasses);
         let object = game.object(creature).unwrap();
         assert_eq!(game.controller_of(object), A);
         assert_eq!(game.player(A).unwrap().life, 20);

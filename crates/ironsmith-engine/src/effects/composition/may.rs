@@ -74,6 +74,7 @@ fn optional_branch_cursor(
 fn execute_optional_effects_with_outputs(
     effects: &[Effect],
     pay_as_cost: bool,
+    payer: PlayerId,
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     purpose: crate::effects::EffectExecutionPurpose,
@@ -81,7 +82,6 @@ fn execute_optional_effects_with_outputs(
     if pay_as_cost {
         let cost = crate::costs::Cost::try_effects(effects.iter().cloned())
             .map_err(ExecutionError::InternalError)?;
-        let payer = ctx.iteration.iterated_player.unwrap_or(ctx.controller);
         if let ironsmith_core::TotalCostKind::All(components) = cost.kind()
             && components.iter().all(|component| component.0.supports_prepared_payment()) {
             let prepared = crate::costs::prepare_total_cost(&cost, game, ctx, payer, crate::costs::PaymentReason::Effect)?;
@@ -164,10 +164,13 @@ pub struct MayEffect {
 
 pub(crate) struct PreparedOptionalExecution {
     pub(crate) previous_iterated_player: Option<PlayerId>,
+    // The offer's decider pays; an inherited "that player" can be someone else.
+    pub(crate) payment_player: PlayerId,
 }
 
 #[derive(Debug, Clone)]
 struct AcceptedOptionalAction {
+    payment_player: PlayerId,
     identity_guard: Option<crate::effects::context::OptionalIdentityGuard>,
     limit: Option<crate::effects::DoThisLimit>,
     player: Option<PlayerId>,
@@ -324,6 +327,7 @@ impl MayEffect {
             ctx.iteration.iterated_player
         };
         Ok(Some(AcceptedOptionalAction {
+            payment_player: deciding_player,
             identity_guard,
             limit: do_this_limit,
             player,
@@ -344,6 +348,7 @@ impl MayEffect {
         ctx.iteration.iterated_player = accepted.player;
         Ok(Some(PreparedOptionalExecution {
             previous_iterated_player,
+            payment_player: accepted.payment_player,
         }))
     }
 
@@ -399,8 +404,9 @@ impl EffectExecutor for MayEffect {
     fn prepare_replacement_draw_continuation_with_outputs(
         &self, game: &mut GameState, ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>, ExecutionError> {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
     fn supports_prepared_action_program(&self) -> bool {
@@ -506,7 +512,7 @@ impl EffectExecutor for MayEffect {
             .unwrap_or(ctx.iteration.iterated_player);
         let prepared = if self.pay_as_cost && acceptance.is_some() {
             let cost = crate::costs::Cost::try_effects(self.effects.iter().cloned()).map_err(ExecutionError::InternalError)?;
-            crate::costs::prepare_total_cost(&cost, game, ctx, iterated_player.unwrap_or(ctx.controller), crate::costs::PaymentReason::Effect)?
+            crate::costs::prepare_total_cost(&cost, game, ctx, acceptance.as_ref().expect("accepted payment").payment_player, crate::costs::PaymentReason::Effect)?
         } else if self.pay_as_cost { None } else { super::prepared_branch::prepare_action_branch(
             &effects,
             game,
@@ -735,6 +741,7 @@ impl crate::effects::SimultaneousEffectProposal for MayProposal {
                 execute_optional_effects_with_outputs(
                     &self.effects,
                     self.pay_as_cost,
+                    ctx.iteration.iterated_player.unwrap_or(ctx.controller),
                     game,
                     ctx,
                     crate::effects::EffectExecutionPurpose::Action,
@@ -773,7 +780,7 @@ fn execute_may_with_outputs(
                     EffectOutcome::declined(),
                 ));
             };
-            let result = execute_optional_effects_with_outputs(&effect.effects, effect.pay_as_cost, game, ctx, purpose);
+            let result = execute_optional_effects_with_outputs(&effect.effects, effect.pay_as_cost, prepared.payment_player, game, ctx, purpose);
             ctx.iteration.iterated_player = prepared.previous_iterated_player;
             result
         },
@@ -842,6 +849,26 @@ impl MayEffect {
             && super::choose_objects_runtime::fixed_choice_requirement_is_unmet(choose, game, ctx)?
         {
             return Ok(true);
+        }
+
+        // A fixed optional discard must be possible in full before accepting
+        // the offer. Accepting with an empty hand must not suppress an
+        // attached "if they don't" consequence via the Accepted receipt.
+        if let Some(discard) = self.effects.first().and_then(|effect| {
+            let mut effect = effect;
+            while let Some(child) = effect.transparent_child_effect() {
+                effect = child;
+            }
+            effect.downcast_ref::<crate::effects::DiscardEffect>()
+        }) && !discard.any_number {
+            let player = crate::effects::helpers::resolve_player_filter(game, &discard.player, ctx)?;
+            let mut payment = discard.clone();
+            payment.player = PlayerFilter::Specific(player);
+            if matches!(payment.check_cost_with_context(game, ctx,
+                crate::costs::PaymentReason::Effect, false),
+                Err(CostValidationError::NotEnoughCards)) {
+                return Ok(true);
+            }
         }
 
         if let Some(put) = self.effects.first().and_then(|effect| {
@@ -920,6 +947,30 @@ mod tests {
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn explicit_optional_payer_does_not_charge_the_trigger_context_player() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = game.create_object_from_definition(
+            &source_creature_definition(), alice, Zone::Battlefield,
+        );
+        game.player_mut(alice).unwrap().mana_pool.colorless = 3;
+        let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(source, alice, &mut decision_maker);
+        ctx.iteration.iterated_player = Some(bob);
+        let mut optional = MayEffect::new_for_player(vec![Effect::new(crate::effects::PayManaEffect::new(
+            crate::mana::ManaCost::from_pips(vec![vec![crate::mana::ManaSymbol::Generic(3)]]),
+            ChooseSpec::Player(PlayerFilter::You),
+        ))], PlayerFilter::You);
+        optional.pay_as_cost = true;
+        let outcome = execute_effect(&mut game, &Effect::new(optional), &mut ctx).unwrap();
+        assert!(outcome.status.is_success());
+        assert_eq!(game.player(alice).unwrap().mana_pool.total(), 0);
+        assert_eq!(game.player(bob).unwrap().mana_pool.total(), 0);
+        assert_eq!(ctx.iteration.iterated_player, Some(bob));
     }
 
     fn source_creature_definition() -> crate::cards::CardDefinition {

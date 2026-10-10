@@ -77,3 +77,52 @@ fn impulsive_maneuvers_doubles_the_next_combat_damage_or_prevents_it() {
         assert!(debug.contains("Coin") || debug.contains("coin"), "{debug}");
     }
 }
+
+#[test]
+fn jeska_registration_remembers_only_the_selected_creature_after_resolution() {
+    use ironsmith::effects::{EffectContext, ResolvedTarget, execute_effect};
+    use ironsmith::events::{DamageTarget, cause::EventCause};
+    use ironsmith::events::processing::{
+        SimultaneousDamageEvent, process_simultaneous_damage_assignments_with_event,
+    };
+    use ironsmith::{CardId, CardType, GameState, PlayerId, Zone};
+
+    let rows = support::rows(FIXTURE);
+    for definition in support::definitions(support::row(&rows, "Jeska, Thrice Reborn")) {
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
+        let creature = ironsmith::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Creature")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(ironsmith::card::PowerToughness::fixed(2, 2)).build();
+        let selected = game.create_object_from_definition(&creature, alice, Zone::Battlefield);
+        let other = game.create_object_from_definition(&creature, alice, Zone::Battlefield);
+        let ability = support::activated(&definition).into_iter().find(|ability|
+            !support::find::<RegisterDamageMultiplierEffect>(&support::activated_effects(ability)).is_empty()
+        ).unwrap();
+        {
+            let mut context = EffectContext::new_default(source, alice)
+                .with_targets(vec![ResolvedTarget::Object(selected)]);
+            for effect in ability.effects.all_effects() {
+                execute_effect(&mut game, effect, &mut context).unwrap();
+            }
+        }
+        for (attacker, recipient, combat, expected) in [
+            (selected, bob, true, 6),
+            (other, bob, true, 2),
+            (selected, alice, true, 2),
+            (selected, bob, false, 2),
+        ] {
+            let result = process_simultaneous_damage_assignments_with_event(&mut game, &[
+                SimultaneousDamageEvent {
+                    source: attacker, target: DamageTarget::Player(recipient), amount: 2,
+                    is_combat: combat, unpreventable: false,
+                    cause: if combat { EventCause::combat_damage(attacker) } else { EventCause::effect() },
+                    source_snapshot: None,
+                },
+            ]).unwrap();
+            assert_eq!(result[0].assignments.iter().map(|a| a.amount).sum::<u32>(), expected);
+        }
+    }
+}

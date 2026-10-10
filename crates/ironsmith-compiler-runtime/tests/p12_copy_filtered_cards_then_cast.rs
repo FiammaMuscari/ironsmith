@@ -30,7 +30,12 @@ fn definitions(name: &str, text: &str) -> [CardDefinition; 2] {
 fn assert_each_copy_cast(name: &str, text: &str) {
     for definition in definitions(name, text) {
         let debug = format!("{definition:?}");
-        assert!(debug.contains("ForEachTagged"), "{name}: {debug}");
+        if name == "Arcane Bombardment" {
+            assert!(debug.contains("ForEachObject") && debug.contains("__source_exiled__"),
+                "iterate the complete source-linked exile set: {debug}");
+        } else {
+            assert!(debug.contains("ForEachTagged"), "{name}: {debug}");
+        }
         assert!(debug.contains("as_copy: true"), "{name}: {debug}");
         assert!(!debug.contains("CopySpellEffect"), "{name}: {debug}");
     }

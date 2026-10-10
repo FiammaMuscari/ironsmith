@@ -206,12 +206,21 @@ pub fn parse_tagged_mana_value_reference_tokens(
     )
 }
 
+fn read_your_hand_count_prefix<'a>(input: &mut LexStream<'a>) -> WResult<()> {
+    primitives::phrase(&["where", "x", "is"]).parse_next(input)?;
+    opt(primitives::kw("the")).parse_next(input)?;
+    primitives::phrase(&["number", "of", "cards", "in", "your"]).parse_next(input)?;
+    alt((primitives::kw("hand"), primitives::kw("hands"))).parse_next(input)?;
+    Ok(())
+}
+
+pub fn etb_your_hand_count_remainder(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
+    primitives::parse_prefix(tokens, read_your_hand_count_prefix).map(|(_, rest)| rest)
+}
+
 pub fn etb_tokens_have_your_hand_count_value(tokens: &[OwnedLexToken]) -> bool {
     fn read<'a>(input: &mut LexStream<'a>) -> WResult<()> {
-        primitives::phrase(&["where", "x", "is"]).parse_next(input)?;
-        opt(primitives::kw("the")).parse_next(input)?;
-        primitives::phrase(&["number", "of", "cards", "in", "your"]).parse_next(input)?;
-        alt((primitives::kw("hand"), primitives::kw("hands"))).parse_next(input)?;
+        read_your_hand_count_prefix(input)?;
         primitives::sentence_end().parse_next(input)
     }
     primitives::probe_all(tokens, read, "complete where-X hand count").is_some()

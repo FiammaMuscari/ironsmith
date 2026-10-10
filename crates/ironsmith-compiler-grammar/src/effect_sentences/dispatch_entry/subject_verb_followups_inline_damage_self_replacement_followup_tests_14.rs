@@ -103,7 +103,6 @@ fn amount_replacement_does_not_claim_a_destination_rider_or_unbound_event_amount
         "If this spell was kicked, it deals 4 damage to target player instead.",
         "If this spell was kicked, it deals 4 damage instead and you draw a card.",
         "If this spell was kicked, that creature deals 4 damage instead.",
-        "If this spell was kicked, it deals twice that much damage instead.",
         "If this spell was kicked, it deals 4 damage instead instead.",
     ] {
         let base = crate::lexer::lex_line("This deals 2 damage to any target.", 0).unwrap();
@@ -127,4 +126,16 @@ fn cast_time_control_cannot_be_substituted_with_current_control() {
     ).unwrap();
     let error = parse_effect_sentences_lexed(&tokens).unwrap_err();
     assert!(error.to_string().contains("retained cast-time control evidence"), "{error}");
+}
+
+#[test]
+fn doubled_damage_replacement_binds_the_original_amount() {
+    let tokens = crate::lexer::lex_line("This deals 2 damage to any target. If this spell was kicked, it deals twice that much damage instead.", 0).unwrap();
+    let parsed = parse_effect_sentences_lexed(&tokens).unwrap();
+    let [EffectAst::SelfReplacement { if_true, if_false, .. }] = parsed.as_slice() else {
+        panic!("expected bound amount replacement: {parsed:#?}");
+    };
+    assert_eq!(sole_damage_payload(if_true), Some((Value::Scaled(Box::new(Value::Fixed(2)), 2), false)));
+    assert_eq!(sole_damage_payload(if_false), Some((Value::Fixed(2), false)));
+    assert_eq!(primary_damage_target_from_effect(&if_true[0]), primary_damage_target_from_effect(&if_false[0]));
 }

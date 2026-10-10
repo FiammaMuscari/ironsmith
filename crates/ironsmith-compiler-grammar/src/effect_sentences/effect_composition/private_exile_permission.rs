@@ -1,5 +1,25 @@
 use super::*;
 
+/// An immediate private-view permission names this exile's arrivals, not all
+/// cards linked to the source or all cards owned by the choosing player.
+pub(super) fn parse_private_exile_inspection_bundle(
+    sentences: &[&[OwnedLexToken]],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let [exile, inspection] = sentences else { return Ok(None); };
+    let Some(mut inspection) = crate::permission_helpers::parse_look_tagged_exile_permission(inspection)? else { return Ok(None); };
+    let mut effects = effect_sentences::parse_effect_sentence_lexed(exile)?;
+    if !matches!(effects.as_slice(), [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Exile { face_down: true, .. }), ..
+    })]) { return Ok(None); }
+    let tag = helper_tag_for_tokens(exile, "exiled");
+    let EffectAst::SubjectVerb(SubjectVerbEffectAst { action: SubjectVerbActionAst::RevealLook(
+        RevealLookActionAst::LookAtObjects { filter, .. }), .. }) = &mut inspection else { return Ok(None); };
+    filter.tagged_constraints[0].tag = tag.clone().into();
+    Ok(Some(vec![EffectAst::TagAffected {
+        effect: Box::new(effects.remove(0)), tag: crate::tag::TagRef::of(tag),
+    }, inspection]))
+}
+
 /// Keep exact-card readers inside the optional producer's result branch.
 /// Declining the payment never executes readers with a missing antecedent.
 pub(super) fn parse_optional_private_exile_play_bundle(

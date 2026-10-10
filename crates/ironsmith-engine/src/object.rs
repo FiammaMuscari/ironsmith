@@ -3420,7 +3420,7 @@ mod tests {
         obj.abilities_mut()
             .push(Ability::static_ability(StaticAbility::make_colorless(
                 ObjectFilter::source(),
-            )));
+            )).in_zones(vec![Zone::Battlefield]));
 
         assert!(
             obj.colors().contains(Color::Blue),

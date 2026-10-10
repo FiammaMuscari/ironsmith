@@ -3326,29 +3326,23 @@ pub(super) fn rewrite_lexed_parse_cast_target_graveyard_without_paying_mana_cost
     let effects =
         parse_effect_sentence_lexed(&tokens).expect("targeted graveyard free-cast should parse");
 
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [crate::cards::builders::EffectAst::SubjectVerb(
-                crate::cards::builders::SubjectVerbEffectAst {
-                    subject: crate::cards::builders::SubjectVerbSubjectAst {
-                        role: crate::cards::builders::SubjectVerbRoleAst::Actor,
-                        player: crate::cards::builders::PlayerAst::Implicit,
-                    },
-                    action: crate::cards::builders::SubjectVerbActionAst::Stack(
-                        StackActionAst::CastTagged {
-                            player: crate::cards::builders::PlayerAst::Implicit,
-                            allow_land: false,
-                            as_copy: false,
-                            without_paying_mana_cost: true,
-                            ..
-                        }
-                    ),
-                },
-            )]
-        ),
-        "expected targeted graveyard free-cast CastTagged effect, got {effects:#?}"
-    );
+    let [EffectAst::Sequence { effects }] = effects.as_slice() else {
+        panic!("expected target selection followed by free casting: {effects:#?}");
+    };
+    let [EffectAst::TagAffected { effect, tag: selected }, EffectAst::SubjectVerb(cast)] = effects.as_slice() else {
+        panic!("expected one selected object and its cast: {effects:#?}");
+    };
+    let EffectAst::SubjectVerb(selection) = effect.as_ref() else { panic!("target selection"); };
+    let SubjectVerbActionAst::TargetOnly { target: crate::cards::builders::TargetAst::Object(filter, Some(_), _), .. } = &selection.action else {
+        panic!("expected an announced object target: {selection:#?}");
+    };
+    assert_eq!(filter.zone, Some(crate::Zone::Graveyard));
+    assert_eq!(filter.owner, Some(crate::target::PlayerFilter::You));
+    assert_eq!(filter.card_types, [CardType::Instant, CardType::Sorcery, CardType::Artifact]);
+    assert!(matches!(&cast.action, SubjectVerbActionAst::Stack(StackActionAst::CastTagged {
+        tag, player: crate::cards::builders::PlayerAst::Implicit,
+        allow_land: false, as_copy: false, without_paying_mana_cost: true, ..
+    }) if tag == selected), "{cast:#?}");
 }
 
 #[test]

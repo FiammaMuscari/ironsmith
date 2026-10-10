@@ -311,7 +311,9 @@ pub(super) fn parse_activated_line_impl(
         });
     }
 
-    if let Some(spec) = parse_fixed_mana_output_clause_spec_lexed(&effect_parse_tokens) {
+    if !line.is_loyalty_ability
+        && let Some(spec) = parse_fixed_mana_output_clause_spec_lexed(&effect_parse_tokens)
+    {
         let functional_zones = infer_rewrite_activated_functional_zones(line)?;
         let mut parsed = ParsedAbility {
             ability: Ability {
@@ -347,7 +349,9 @@ pub(super) fn parse_activated_line_impl(
         });
     }
 
-    if activated_effect_may_be_mana_ability_lexed(&effect_parse_tokens) {
+    if !line.is_loyalty_ability
+        && activated_effect_may_be_mana_ability_lexed(&effect_parse_tokens)
+    {
         let effects_ast = normalize_mana_replacement_effects(parse_activated_effects_lexed(
             effect_text.as_str(),
             &effect_parse_tokens,

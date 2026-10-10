@@ -136,7 +136,8 @@ Notes:
   - Cargo builds WASM with the fast-to-compile wasm-release profile; --release uses the
     size-optimized wasm-dist profile (opt-level "z", fat LTO, one codegen unit) instead.
   - Native corpus tools use the optimized release profile.
-  - wasm-opt is skipped by default for faster iteration; pass --release to enable it.
+  - Development builds run wasm-opt -O1 on the engine so source compilation fits browser worker stacks.
+  - --release optimizes all three modules at IRONSMITH_WASM_OPT_LEVEL.
   - Scryfall Default Cards are downloaded to $DEFAULT_CARDS_FILE when Scryfall publishes a newer bulk-data updated_at.
   - Registry DB rows are inserted only for cards not already present; existing registry cards are not updated or pruned during this rebuild preflight.
   - Cards without compilation status rows are compiled before frontend assets are generated.
@@ -148,7 +149,7 @@ Notes:
   - The package contains separate engine, compiler, and verifier modules behind one JavaScript facade.
   - Custom-card compilation is always enabled in the engine, including lean builds with default features disabled.
   - IRONSMITH_WASM_OPT_LEVEL selects the shipped optimizer level (-O1, -O2, -Os, or -Oz; default -Oz).
-  - --release uses a pinned, checksum-verified native Binaryen wasm-opt (see scripts/lib/wasm-opt.sh), downloaded once into the tools cache; IRONSMITH_WASM_OPT overrides the binary.
+  - Packaging uses a pinned, checksum-verified native Binaryen wasm-opt (see scripts/lib/wasm-opt.sh), downloaded once into the tools cache; IRONSMITH_WASM_OPT overrides the binary.
 USAGE
 }
 
@@ -665,7 +666,7 @@ fi
 if [[ "$OPTIMIZE_WASM" -eq 1 ]]; then
   echo "[INFO] wasm-opt: enabled"
 else
-  echo "[INFO] wasm-opt: disabled (--no-opt)"
+  echo "[INFO] wasm-opt: engine-only -O1 (browser worker stack safety)"
 fi
 
 load_wasm_opt_library() {
@@ -739,15 +740,15 @@ build_split_wasm_package() {
     generated_wasm+=("$PKG_DIR/${artifact_name}_bg.wasm")
   done
 
+  load_wasm_opt_library || return 1
+  wasm_opt="$(resolve_wasm_opt)" || {
+    echo "[ERROR] browser packaging requires the pinned Binaryen $IRONSMITH_BINARYEN_VERSION wasm-opt (or IRONSMITH_WASM_OPT)" >&2
+    return 1
+  }
+  if ! wasm_opt_matches_pin "$wasm_opt"; then
+    echo "[WARN] wasm-opt override reports '$("$wasm_opt" --version 2>/dev/null)'; the pinned optimizer is Binaryen $IRONSMITH_BINARYEN_VERSION" >&2
+  fi
   if [[ "$OPTIMIZE_WASM" -eq 1 ]]; then
-    load_wasm_opt_library || return 1
-    wasm_opt="$(resolve_wasm_opt)" || {
-      echo "[ERROR] release packaging requires the pinned Binaryen $IRONSMITH_BINARYEN_VERSION wasm-opt (or IRONSMITH_WASM_OPT)" >&2
-      return 1
-    }
-    if ! wasm_opt_matches_pin "$wasm_opt"; then
-      echo "[WARN] wasm-opt override reports '$("$wasm_opt" --version 2>/dev/null)'; the pinned optimizer is Binaryen $IRONSMITH_BINARYEN_VERSION" >&2
-    fi
     echo "[INFO] optimizing split artifacts with $("$wasm_opt" --version) at $WASM_OPT_LEVEL and at most two wasm-opt processes"
     "$wasm_opt" "$WASM_OPT_LEVEL" "${generated_wasm[0]}" -o "${generated_wasm[0]}.optimized" &
     engine_opt_pid="$!"
@@ -761,10 +762,19 @@ build_split_wasm_package() {
     for artifact in "${generated_wasm[@]}"; do
       mv -f "$artifact.optimized" "$artifact"
     done
+  else
+    # LLVM opt-level 0 leaves the recursive source parser too deep for browser
+    # worker stacks (e.g. Endurance after rejecting a stale baked artifact).
+    # A trap strands the wasm-bindgen mutable borrow and poisons every later
+    # engine call. Keep fast Cargo builds, but never ship that raw engine.
+    echo "[INFO] optimizing development engine at -O1 for browser worker stack safety"
+    "$wasm_opt" -O1 "${generated_wasm[0]}" -o "${generated_wasm[0]}.optimized"
+    mv -f "${generated_wasm[0]}.optimized" "${generated_wasm[0]}"
   fi
 
   cp -f "$ROOT_DIR/npm/ironsmith-wasm/split-facade.js" "$PKG_DIR/ironsmith.js"
   cp -f "$ROOT_DIR/npm/ironsmith-wasm/split-facade.d.ts" "$PKG_DIR/ironsmith.d.ts"
+  node "$ROOT_DIR/scripts/prepare-exact-build-snapshots.mjs" "$PKG_DIR"
   cp -f "$ROOT_DIR/npm/ironsmith-wasm/package.template.json" "$PKG_DIR/package.json"
   if [[ -f "$ROOT_DIR/npm/ironsmith-wasm/README.md" ]]; then
     cp -f "$ROOT_DIR/npm/ironsmith-wasm/README.md" "$PKG_DIR/README.md"

@@ -58,6 +58,12 @@ fn connive_snapshot_for_object(
             object, game,
         ));
     }
+    // A trigger can be queued before control changes and the permanent
+    // departs. The departure receipt is newer than the entry/stack snapshot.
+    // Match the exact incarnation; a later return must not replace its LKI.
+    if let Some(snapshot) = game.source_last_known_snapshot(object_id) {
+        return Some(snapshot.clone());
+    }
     if let Some(snapshot) = ctx.target_snapshots.get(&object_id) {
         return Some(snapshot.clone());
     }

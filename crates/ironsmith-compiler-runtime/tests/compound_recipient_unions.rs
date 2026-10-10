@@ -99,12 +99,12 @@ fn faiths_shield_fateful_hour_protects_you_and_each_permanent_with_one_choice() 
         };
         play::cast(&mut game, play::A, &definition, &mut dm);
         play::resolve_all(&mut game, &mut dm);
-        let mode_prompts = dm
+        let color_prompts = dm
             .option_prompts
             .iter()
-            .filter(|(_, description)| description.starts_with("Choose mode"))
+            .filter(|(_, description)| description == "Choose a mode")
             .count();
-        assert_eq!(mode_prompts, 1, "one color choice for every recipient");
+        assert_eq!(color_prompts, 1, "one color choice for every recipient: {:?}", dm.option_prompts);
 
         // The first offered color is white; white damage to the player and to
         // both permanents is prevented.

@@ -426,7 +426,8 @@ pub(super) fn runtime_public_surface_does_not_export_legacy_executor_or_game_eve
         "effects/mod.rs should keep EffectContext as the public execution-context name"
     );
     assert!(
-        effects_mod.contains("pub(crate) use context::ExecutionContext;"),
+        effects_mod.lines().any(|line| line.starts_with("pub(crate) use context::")
+            && line.contains("ExecutionContext")),
         "effects/mod.rs should keep ExecutionContext crate-private for runtime internals"
     );
 }
@@ -1008,20 +1009,26 @@ pub(super) fn function_source<'a>(
     start_marker: &str,
     end_marker: &str,
 ) -> &'a str {
+    let exact_marker = |source: &str, marker: &str| {
+        source.match_indices(marker).find_map(|(index, _)| {
+            let next = source[index + marker.len()..].chars().next();
+            (!next.is_some_and(|ch| ch.is_alphanumeric() || ch == '_')).then_some(index)
+        })
+    };
     let find_function_marker = |marker: &str| {
-        content.find(marker).or_else(|| {
+        exact_marker(content, marker).or_else(|| {
             marker
                 .split_once("fn ")
-                .and_then(|(_, signature)| content.find(&format!("fn {signature}")))
+                .and_then(|(_, signature)| exact_marker(content, &format!("fn {signature}")))
         })
     };
     let start = find_function_marker(start_marker);
     let start = start.unwrap_or_else(|| panic!("missing function start marker: {start_marker}"));
     let tail = &content[start..];
-    let end = tail.find(end_marker).or_else(|| {
+    let end = exact_marker(tail, end_marker).or_else(|| {
         end_marker
             .split_once("fn ")
-            .and_then(|(_, signature)| tail.find(&format!("fn {signature}")))
+            .and_then(|(_, signature)| exact_marker(tail, &format!("fn {signature}")))
     });
     let end = end.unwrap_or_else(|| {
         panic!("missing function end marker after {start_marker}: {end_marker}")
@@ -1419,7 +1426,7 @@ pub(super) fn shared_util_level_header_parser_uses_tokens_not_raw_prefixes() {
     let content = read_repo_file(&root, relative);
     let parser = function_source(
         &content,
-        "pub(crate) fn parse_level_header",
+        "pub(crate) fn parse_level_header_tokens",
         "pub(crate) fn parse_power_toughness",
     );
     let actual = non_test_raw_text_check_literals(parser)
@@ -1889,7 +1896,7 @@ pub(super) fn keyword_static_source_damage_prevention_uses_token_slices() {
     let consumer = function_source(
         &family,
         "pub(crate) fn parse_prevent_damage_to_you_from_source_filter_line",
-        "pub(crate) fn parse_replace_damage_with_counters_instead_line",
+        "pub(crate) fn parse_damage_prevention_with_owner_shuffle_line",
     );
     for required in [
         "keyword_static_lines::parse_prevent_damage_to_you_tokens(tokens)",
@@ -2315,12 +2322,12 @@ pub(super) fn keyword_static_land_animation_uses_token_word_ranges() {
     let parser = function_source(
         &content,
         "pub(crate) fn parse_lands_are_pt_creatures_still_lands_line",
-        "pub(crate) fn parse_filter_is_pt_creature_in_addition_and_has_line",
+        "pub(crate) fn parse_static_base_power_toughness_value_tail",
     );
 
     for required in [
         "type_and_color_facts::parse_land_animation_tokens(tokens)",
-        "parse_object_filter_lexed(fact.subject_tokens, false)",
+        "complete_characteristic_subject(fact.subject_tokens)?",
         "StaticAbility::set_base_power_toughness(filter, fact.power, fact.toughness)",
     ] {
         assert!(
@@ -2464,6 +2471,8 @@ pub(super) fn keyword_static_copy_activated_abilities_gates_use_clause_shapes() 
         "tokens[fact.filter_start_token..fact.filter_end_token]",
         "fact.once_each_turn_word_start.is_some()",
         "fact.exclude_source_name",
+        "fact.exclude_mana_abilities",
+        "source_reference_surface_for_words",
     ] {
         assert!(
             parser.contains(required),
@@ -2474,7 +2483,6 @@ pub(super) fn keyword_static_copy_activated_abilities_gates_use_clause_shapes() 
         "HAS_ALL_ACTIVATED_ABILITIES_OF_PATTERN.matches_words(&clause_words[idx..])",
         "ACTIVATE_EACH_OF_THOSE_ONCE_TAIL_PATTERN.matches_words(window)",
         "SAME_NAME_AS_SOURCE_CREATURE_PATTERN.matches_words(window)",
-        "parser_token_word_refs(&filter_tokens)",
     ] {
         assert!(
             !parser.contains(forbidden),

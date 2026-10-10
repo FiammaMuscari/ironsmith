@@ -71,7 +71,9 @@ fn announce(game: &mut GameState, action: LegalAction) {
     )
     .unwrap();
     for _ in 0..40 {
-        if state.pending_cast.is_none() && state.pending_activation.is_none() {
+        if state.pending_cast.is_none() && state.pending_activation.is_none()
+            && state.pending_method_selection.is_none()
+        {
             return;
         }
         let GameProgress::NeedsDecisionCtx(context) = progress else {

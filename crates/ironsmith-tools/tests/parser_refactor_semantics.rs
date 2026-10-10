@@ -710,22 +710,27 @@ fn bare_attached_subtype_setting_is_continuous_and_token_entry_sentence_is_retai
 #[test]
 fn linked_exiled_card_supplies_token_owner_and_size_in_a_later_ability() {
     let definition = compile(
-        "When this creature leaves the battlefield, the exiled card's owner creates an X/X white Spirit creature token, where X is the mana value of the exiled card.",
+        "When this creature enters, exile target creature until this creature leaves the battlefield.\nWhen this creature leaves the battlefield, the exiled card's owner creates an X/X white Spirit creature token, where X is the mana value of the exiled card.",
         CardType::Creature,
     );
-    let AbilityKind::Triggered(ability) = &definition.abilities[0].kind else {
+    let AbilityKind::Triggered(ability) = &definition.abilities[1].kind else {
         panic!("trigger");
     };
     let mut game = game();
     let alice = PlayerId::from_index(0);
     let bob = PlayerId::from_index(1);
     let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
-    let mut exiled_definition = permanent("Linked", vec![CardType::Sorcery]);
+    let mut exiled_definition = permanent("Linked", vec![CardType::Creature]);
     exiled_definition.card.mana_cost = Some(ironsmith::mana::ManaCost::from_pips(vec![vec![
         ironsmith::mana::ManaSymbol::Generic(5),
     ]]));
     let exiled = game.create_object_from_definition(&exiled_definition, bob, Zone::Exile);
-    game.add_exiled_with_source_link(source, exiled);
+    let owner = ironsmith::linked_exile::LinkedExileOwner {
+        host: source,
+        pair: ability.effects.linked_exile_pair.expect("complete body should link both abilities"),
+        acquisition: ironsmith::linked_exile::LinkedExileAcquisition::Printed,
+    };
+    game.add_linked_exile_pair_member(owner.clone(), exiled);
     let snapshot =
         ironsmith::snapshot::ObjectSnapshot::from_object(game.object(source).unwrap(), &game);
     game.move_object_by_effect(source, Zone::Graveyard).unwrap();
@@ -745,10 +750,10 @@ fn linked_exiled_card_supplies_token_owner_and_size_in_a_later_ability() {
     let mut ctx = ExecutionContext::new_default(source, alice)
         .with_source_snapshot(snapshot)
         .with_triggering_event(event);
-    // Stack resolution seeds persistent linked-exile snapshots before executing
-    // an ability; reproduce that setup when exercising the effects directly.
+    // Direct effect execution retains the same proven pair and acquisition
+    // that normal stack admission captures for this printed ability.
     let linked = game
-        .get_exiled_with_source_links(source)
+        .linked_exile_pair_members(&owner).unwrap()
         .iter()
         .map(|id| {
             ironsmith::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(
@@ -763,6 +768,7 @@ fn linked_exiled_card_supplies_token_owner_and_size_in_a_later_ability() {
         "the source's old identity retains the linked card after leaving"
     );
     ctx.set_tagged_objects(ironsmith::tag::SOURCE_EXILED_TAG, linked);
+    ctx.linked_exile_owner = Some(owner);
     for effect in &ability.effects {
         execute_effect(&mut game, effect, &mut ctx).unwrap();
     }

@@ -67,9 +67,9 @@ fn parses_dynamic_pt_and_lifecycle_reminders() {
         matches!(
             facts.dynamic_power_toughness,
             Some((
-                Value::CountersOn(_, Some(crate::CounterType::Named(power_counter))),
-                Value::CountersOn(_, Some(crate::CounterType::Named(toughness_counter))),
-            )) if power_counter.as_str() == "slime" && toughness_counter.as_str() == "slime"
+                Value::CountersOn(_, Some(crate::CounterType::Slime)),
+                Value::CountersOn(_, Some(crate::CounterType::Slime)),
+            ))
         ),
         "{facts:#?}"
     );
@@ -236,7 +236,7 @@ fn named_source_counter_pt_keeps_the_creating_permanent() {
         (
             "this token's power and toughness are each equal to the number of slime counters on gutter grime",
             "Gutter Grime",
-            crate::object::CounterType::Named("slime".into()),
+            crate::object::CounterType::Slime,
         ),
         (
             "this token's power and toughness are each equal to the number of fade counters on saproling burst",

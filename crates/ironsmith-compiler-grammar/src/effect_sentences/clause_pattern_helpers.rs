@@ -50,6 +50,22 @@ pub fn parse_prevent_next_damage_clause(
     let Some(shape) = clause_shapes::parse_prevent_next_damage_tokens(tokens) else {
         return Ok(None);
     };
+    if let Some(binding) = crate::grammar::effects::sentence_predicate_shapes::parse_where_x_sentence_tokens(tokens) {
+        // Preserve the divided target list while binding the amount. General
+        // sentence composition would split its comma into a separate clause.
+        let value = super::dispatch_entry::parse_exact_where_x_value_expression(binding.where_tokens)
+            .or_else(|| crate::keyword_static::parse_where_x_is_number_of_filter_value(binding.where_tokens))
+            .or_else(|| crate::keyword_static::parse_value_binding_clause_lexed(binding.where_tokens));
+        if let Some(value) = value {
+            if let Some(mut effect) = parse_prevent_next_damage_clause(binding.stripped_tokens)? {
+                let value = super::dispatch_entry::with_where_x_surface_hints(value, binding.where_tokens);
+                super::dispatch_entry::replace_unbound_x_in_effect_anywhere(
+                    &mut effect, &value, &LexedClause::new(tokens).text(),
+                )?;
+                return Ok(Some(effect));
+            }
+        }
+    }
     let clause_text = LexedClause::new(tokens).text();
     let Some((amount, amount_used)) = parse_value(shape.amount_tokens) else {
         return Err(CardTextError::ParseError(format!(
@@ -1604,8 +1620,8 @@ pub fn parse_prevent_all_damage_clause(
                 .first()
                 .is_some_and(|token| token.is_word("that"))
                 && (source_tokens
-                    .last()
-                    .is_some_and(|token| token.is_word("sources"))
+                    .iter()
+                    .any(|token| token.is_word("sources"))
                     || source_tokens.get(1).is_some_and(|token| {
                         token.is_any_word(&[
                             "sources",

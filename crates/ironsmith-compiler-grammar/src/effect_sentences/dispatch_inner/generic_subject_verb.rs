@@ -1563,7 +1563,7 @@ fn parse_generic_mana_any_type_cast_tagged_this_way(tokens: &[OwnedLexToken]) ->
             PlayerAst::You,
             false,
             false,
-            true,
+            ironsmith_core::value_model::ManaSpendMode::AnyType,
             None,
         )
     })

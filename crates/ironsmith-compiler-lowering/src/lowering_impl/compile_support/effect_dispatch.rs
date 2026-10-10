@@ -167,6 +167,15 @@ pub(crate) fn visit_direct_nested_effect_values(effect: &Effect, visit: &mut imp
     value_field!(crate::effects::SetBasePowerToughnessEffect, power);
     value_field!(crate::effects::SetBasePowerToughnessEffect, toughness);
 
+    if let Some(continuous) = effect.downcast_ref::<crate::effects::ApplyContinuousEffect>() {
+        for modification in &continuous.runtime_modifications {
+            if let crate::effects::continuous::RuntimeModification::ModifyPowerToughness { power, toughness } = modification {
+                visit(power);
+                visit(toughness);
+            }
+        }
+    }
+
     if let Some(incubate) = effect.downcast_ref::<crate::effects::IncubateEffect>() {
         visit(&incubate.amount);
         visit(&incubate.count);
@@ -1507,7 +1516,7 @@ fn compile_effect_inner(
     if let EffectAst::SourceSentence {
         effects,
         leading_then,
-        ..
+        starting_with_controller,
     } = effect
     {
         // SourceSentence is compiler-only provenance used to keep one Oracle
@@ -1515,6 +1524,9 @@ fn compile_effect_inner(
         // separate runtime effect; lower its typed children in order.
         let (mut effects, choices) = compile_effects(effects, ctx)?;
         preserve_nested_result_value_links(&mut effects);
+        if *starting_with_controller {
+            super::prepared_effects::preserve_starting_player_order(&mut effects);
+        }
         if *leading_then {
             return Ok((
                 vec![Effect::new(
@@ -1752,6 +1764,9 @@ fn compile_effect_inner(
                 || effect
                     .downcast_ref::<crate::effects::TagMatchingObjectsEffect>()
                     .is_some()
+                // A nontargeted/random exile first selects its source card.
+                // Only the following move contributes to the affected set.
+                || effect.downcast_ref::<crate::effects::ChooseObjectsEffect>().is_some()
         }
         if !lowered.iter().all(is_target_or_capture_prelude) {
             return Err(CardTextError::ParseError(

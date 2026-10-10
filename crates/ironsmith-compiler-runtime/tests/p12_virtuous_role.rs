@@ -17,7 +17,7 @@ fn ellivere_creates_an_attached_virtuous_role() {
             .iter()
             .find_map(|effect| effect.downcast_ref::<ironsmith::effects::CreateTokenEffect>())
             .expect("typed Role creation");
-        assert_eq!(create.token.card.name, "Virtuous Role");
+        assert_eq!(create.token.card.name, "Virtuous"); // CR 111.10p
         assert!(create.token.card.subtypes.contains(&Subtype::Aura));
         assert!(create.token.card.subtypes.contains(&Subtype::Role));
     }

@@ -319,7 +319,7 @@ fn end_combat_symmetric_counter_and_destroy_bodies_restrict_the_source_partner()
                         Some(&1)
                     ),
                     _ => {
-                        let paralysis = CounterType::Named("paralyzation".into());
+                        let paralysis = CounterType::Paralyzation;
                         assert_eq!(
                             board.game.object(current).unwrap().counters.get(&paralysis),
                             Some(&1)
@@ -441,7 +441,7 @@ fn end_combat_dread_wight_recipient_keeps_and_can_pay_its_counter_removal_abilit
                 .object(board.partner)
                 .unwrap()
                 .counters
-                .get(&CounterType::Named("paralyzation".into()))
+                .get(&CounterType::Paralyzation)
                 .copied()
                 .unwrap_or(0),
             0

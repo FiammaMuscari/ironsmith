@@ -76,6 +76,6 @@ fn conditional_attacker_untap_text() {
         .unwrap();
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&definition).join("\n"),
-        TEXT.replace("Fateful hour — ", "")
+        TEXT
     );
 }

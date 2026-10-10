@@ -1131,6 +1131,9 @@ fn parse_bounded_x_mana_payment_sentence(tokens: &[OwnedLexToken]) -> Option<Vec
 fn parse_complete_become_before_effect_chain(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    if let Some(effects) = crate::effect_sentences::fanout_family::parse_compound_damage_fanout_sentence(tokens)? {
+        return Ok(effects);
+    }
     // Copy exceptions belong to one action even when separated by a comma.
     // Keep that action intact inside a conditional body before chain splitting.
     if let Some(effect) =

@@ -339,6 +339,7 @@ fn each_player_choose_bounce_then_draw(words: &[&str]) -> bool {
 fn leading_effect_verb(words: &[&str]) -> bool {
     [
         "add",
+        "change",
         "choose",
         "counter",
         "create",

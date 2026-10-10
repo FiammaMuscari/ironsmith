@@ -43,7 +43,10 @@ fn game() -> GameState {
     game.turn.phase = ironsmith::Phase::FirstMain; game.turn.step = None;
     game.turn.active_player = A; game.turn.priority_player = Some(A);
     for player in [A, B, C] {
-        game.player_mut(player).unwrap().land_plays_per_turn = 8;
+        let source = game.new_object_id();
+        ironsmith::effects::AdditionalLandPlaysEffect::new(
+            7, ironsmith::target::PlayerFilter::You, Until::EndOfTurn,
+        ).execute(&mut game, &mut EffectContext::new_default(source, player)).unwrap();
         for color in [ManaSymbol::White, ManaSymbol::Blue, ManaSymbol::Black, ManaSymbol::Red, ManaSymbol::Green, ManaSymbol::Colorless] {
             game.player_mut(player).unwrap().mana_pool.add(color, 10);
         }
@@ -98,8 +101,15 @@ fn settle(game: &mut GameState, dm: &mut Choices) {
 }
 fn named(game: &GameState, name: &str) -> ObjectId { *game.battlefield.iter().find(|id| game.object(**id).unwrap().name == name).unwrap() }
 fn set_types(game: &mut GameState, object: ObjectId, types: Vec<CardType>) {
-    ApplyContinuousEffect::with_spec(ChooseSpec::SpecificObject(object), Modification::SetCardTypes(types), Until::EndOfTurn)
+    let zone = game.object(object).unwrap().zone;
+    ApplyContinuousEffect::new(
+        ironsmith::continuous::EffectTarget::Filter(
+            ironsmith::ObjectFilter::specific(object).in_zone(zone)),
+        Modification::SetCardTypes(types.clone()), Until::EndOfTurn,
+    ).lock_filter_at_resolution()
         .execute(game, &mut EffectContext::new_default(object, A)).unwrap();
+    game.refresh_continuous_state().unwrap();
+    assert_eq!(game.current_card_types(object), Some(types));
 }
 fn prepare(definition: &CardDefinition, types: Vec<CardType>) -> (GameState, ObjectId, ObjectId) {
     let mut game = game();
@@ -221,7 +231,9 @@ fn gatekeeper_keeps_cast_actor_after_spell_control_changes() {
         let (mut game, source, _) = prepare(&def, vec![CardType::Artifact]);
         let spell = cast_artifact(&mut game, B); assert_eq!(game.stack.len(), 2);
         let stable = game.object(spell).unwrap().stable_id;
-        game.set_current_controller(spell, C).unwrap();
+        ApplyContinuousEffect::with_spec(
+            ChooseSpec::SpecificObject(spell), Modification::ChangeController(C), Until::EndOfTurn,
+        ).execute(&mut game, &mut EffectContext::new_default(source, C)).unwrap();
         assert_eq!(game.current_controller(spell), Some(C));
         // The native stack-resolution owner refreshes the spell entry's
         // controller from current control; the cast notice retains caster B.

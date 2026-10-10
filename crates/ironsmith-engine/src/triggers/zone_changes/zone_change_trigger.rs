@@ -1436,6 +1436,13 @@ fn matching_snapshots<'a>(
     filter: &ObjectFilter,
     ctx: &TriggerContext,
 ) -> Vec<&'a crate::snapshot::ObjectSnapshot> {
+    if zc.to == Zone::Battlefield {
+        return zc.destination_snapshots.iter()
+            .filter(|snapshot| zc.destination_objects().contains(&snapshot.object_id)
+                && snapshot.zone == Zone::Battlefield
+                && snapshot_matches_filter(snapshot, filter, ctx))
+            .collect();
+    }
     // A leaves-the-battlefield trigger looks back in time (CR 603.10a): a
     // characteristic comparison against the battlefield ("with the greatest
     // power among creatures that player controls") still sees the permanents
@@ -1551,14 +1558,18 @@ impl TriggerMatcher for ZoneChangeTrigger {
             return false;
         }
 
-        let use_snapshot = self.uses_snapshot() && !zc.snapshots().is_empty();
+        // Entry characteristics are fixed when the entry completes. A later
+        // grant in the same resolving program cannot retroactively make the
+        // entrant satisfy a trigger (for example, entering with haste).
+        let use_snapshot = (zc.to == Zone::Battlefield && !zc.destination_snapshots.is_empty())
+            || (self.uses_snapshot() && !zc.snapshots().is_empty());
         let matching_snapshots = if use_snapshot {
             matching_snapshots(&zc, &self.object_filter, ctx)
         } else {
             Vec::new()
         };
 
-        // Check player relation using LKI snapshots only for leave/die-style triggers.
+        // Use the same completed entry or departure frame for controller checks.
         if self.player != PlayerRelation::Any {
             let player_matches = if use_snapshot {
                 matching_snapshots
@@ -1595,8 +1606,8 @@ impl TriggerMatcher for ZoneChangeTrigger {
             }
         }
 
-        // Check object filter using snapshot only when the trigger cares about the
-        // pre-change object state. ETB-style triggers need the live object.
+        // Completed entries and departures retain the characteristics at the
+        // event boundary; other destination events use the current object.
         if use_snapshot {
             if matching_snapshots.is_empty() {
                 return false;
@@ -1624,10 +1635,7 @@ impl TriggerMatcher for ZoneChangeTrigger {
 
         // Check cause filter if specified
         if let Some(ref cause_filter) = self.cause_filter {
-            let affected = zc
-                .snapshot
-                .as_ref()
-                .filter(|_| use_snapshot)
+            let affected = matching_snapshots.first().copied()
                 .map(|snapshot| snapshot.controller)
                 .or_else(|| {
                     zc.objects

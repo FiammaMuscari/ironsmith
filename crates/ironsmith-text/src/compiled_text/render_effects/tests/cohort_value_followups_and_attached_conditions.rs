@@ -227,7 +227,7 @@ fn cohort_second_spell_copies_only_player_or_permanent_targets_otherwise_draws()
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&card),
         vec![
-            "Whenever you cast your second spell each turn, copy that spell if it targets a permanent or player, and you may choose new targets for the copy. If you don't copy a spell this way, draw a card."
+            "Whenever you cast your second spell each turn, copy that spell if it targets a player or a permanent and you may choose new targets for the copy. If you don't copy a spell this way, you draw a card."
         ]
     );
     let candidate = crate::CardDefinitionBuilder::new(CardId::new(), "Candidate")

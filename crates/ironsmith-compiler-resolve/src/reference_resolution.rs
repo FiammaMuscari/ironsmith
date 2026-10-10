@@ -42,7 +42,7 @@ use crate::filter::Comparison;
 use super::compile_support::{
     effect_references_event_derived_amount, effects_reference_it_tag,
     effects_reference_its_controller, effects_reference_tag,
-    effects_reference_tag_in_object_position, is_sentence_helper_consult_match_tag,
+    effects_reference_tag_in_object_position,
     is_sentence_helper_exiled_collection_tag, predicate_references_tag,
     value_references_event_derived_amount,
 };
@@ -522,7 +522,11 @@ fn track_target_player(target: &TargetAst, frame: &mut ReferenceFrame) {
                     .clone()
                     .unwrap_or(PlayerFilter::IteratedPlayer)
             } else if explicit_target_span.is_some() {
-                PlayerFilter::Target(Box::new(filter.clone()))
+                if matches!(filter, PlayerFilter::Target(_)) {
+                    filter.clone()
+                } else {
+                    PlayerFilter::Target(Box::new(filter.clone()))
+                }
             } else {
                 as_followup_player_alias(filter.clone())
             });
@@ -2180,14 +2184,11 @@ fn advance_reference_frame_for_effect(
                     }
                     if frame.auto_tag_object_targets
                         && choose_spec_targets_object(&spec) {
-                            if let ChooseSpec::Tagged(tag) = spec.base()
-                                && (is_sentence_helper_consult_match_tag(tag)
-                                    || is_sentence_helper_exiled_collection_tag(tag))
-                            {
-                                // Consult matches and typed exiled collections keep
-                                // their identity across this move. Other tagged
-                                // selections use the canonical source-linked exile
-                                // bucket expected by search-and-play permissions.
+                            if let ChooseSpec::Tagged(tag) = spec.base() {
+                                // A selected card retains its resolution-local
+                                // snapshot across exile. Source-linked exile is
+                                // a separate ability relationship and requires
+                                // explicit pair/acquisition metadata.
                                 frame.last_object_tag = Some(tag.clone());
                             } else if spec.is_target() {
                                 if let Some(tag) =
@@ -2951,6 +2952,9 @@ fn advance_reference_frame_for_effect(
                 SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeColorChoice { target, .. }) => {
                     maybe_tag_target(target, frame, id_gen, "become_color_choice")?;
                 }
+                SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ChangeText { target, .. }) => {
+                    maybe_tag_target(target, frame, id_gen, "text_changed")?;
+                }
                 SubjectVerbActionAst::Characteristics(CharacteristicActionAst::BecomeCopy { target, source, .. }) => {
                     let source_is_explicit_target = {
                         let refs = lowering_reference_frame(frame);
@@ -3633,6 +3637,11 @@ fn advance_reference_frame_for_effect(
                 remember_chosen_object_alias(frame, &tag.key);
             }
             remember_exiled_library_card_kind(effect, &tag.key, frame);
+            if is_object_memory_producer_for_action(effect, PriorEffectAction::Milled) {
+                let alias = crate::tag::CompilerReferenceTag::MilledThisWay.key();
+                frame.snapshot_tag_aliases.retain(|(existing, _)| existing != &alias);
+                frame.snapshot_tag_aliases.push((alias, tag.key.clone()));
+            }
             if is_object_memory_producer_for_action(effect, PriorEffectAction::Exiled) {
                 let alias = crate::tag::CompilerReferenceTag::ExiledThisWay.key();
                 frame
@@ -3689,6 +3698,14 @@ fn advance_reference_frame_for_effect(
         | EffectAst::Votes(VoteEffectAst::VoteStartObjects { .. })
         | EffectAst::Votes(VoteEffectAst::VoteStartPlayers { .. })
         | EffectAst::Votes(VoteEffectAst::VoteExtra { .. }) => {}
+    }
+
+    if is_object_memory_producer_for_action(effect, PriorEffectAction::Milled)
+        && let Some(tag) = frame.last_object_tag.clone()
+    {
+        let alias = crate::tag::CompilerReferenceTag::MilledThisWay.key();
+        frame.snapshot_tag_aliases.retain(|(existing, _)| existing != &alias);
+        frame.snapshot_tag_aliases.push((alias, tag));
     }
 
     if is_object_memory_producer_for_action(effect, PriorEffectAction::Exiled)
@@ -4888,6 +4905,20 @@ fn effect_is_library_search(effect: &EffectAst) -> bool {
         EffectAst::Permissions(
             PermissionEffectAst::May { effects } | PermissionEffectAst::MayByPlayer { effects, .. },
         ) => effects.first().is_some_and(effect_is_library_search),
+        EffectAst::Sequence { effects } | EffectAst::CommaThen { effects }
+        | EffectAst::SourceSentence { effects, .. } | EffectAst::Coordinated { effects, .. }
+        | EffectAst::ForEach(ForEachEffectAst::RepeatProcess { effects, .. }
+            | ForEachEffectAst::RepeatEffects { effects, .. }) =>
+            effects.iter().any(effect_is_library_search),
+        EffectAst::Conditionals(ConditionalEffectAst::Conditional { if_true, if_false, .. }) =>
+            if_true.iter().chain(if_false).any(effect_is_library_search),
+        EffectAst::ControlFlow(_) => {
+            let mut searches = false;
+            for_each_nested_effects(effect, true, |nested| {
+                searches |= nested.iter().any(effect_is_library_search);
+            });
+            searches
+        }
         _ => false,
     }
 }
@@ -5080,6 +5111,7 @@ fn effect_can_supply_event_derived_amount_for(effect: &EffectAst, consumer: &Eff
         PriorEffectAction::Destroyed,
         PriorEffectAction::Discarded,
         PriorEffectAction::Drawn,
+        PriorEffectAction::Copied,
         PriorEffectAction::Exiled,
         PriorEffectAction::Goaded,
         PriorEffectAction::Milled,
@@ -5356,6 +5388,8 @@ fn is_object_memory_producer_for_action(effect: &EffectAst, action: PriorEffectA
             SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Discard { .. })
                 | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::DiscardHand)
         ),
+        PriorEffectAction::Copied => matches!(producer_action,
+            SubjectVerbActionAst::Stack(crate::model::StackActionAst::CopySpell { .. })),
         PriorEffectAction::Drawn => {
             matches!(
                 producer_action,
@@ -7484,6 +7518,7 @@ fn resolve_effect_result_values_in_fields(
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantAbilitiesChoiceAll { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantToTarget { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantBySpec { .. })
+            | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. })
             | SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesFromTarget {
                 ..
             })
@@ -9375,7 +9410,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
                 target,
                 source,
                 ..
-            }) => {
+            }) | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, source, .. }) => {
                 bind_unresolved_it_in_target(target, seed_tag)
                     + bind_unresolved_it_in_target(source, seed_tag)
             }
@@ -12552,7 +12587,10 @@ fn comparison_antecedent_binds_operands_and_difference_across_clauses() {
     assert_eq!(
         count,
         &Value::absolute_difference(Value::Fixed(7), Value::Fixed(4))
-            .with_surface_hint(ValueSurfaceHint::Difference)
+            .with_surface_hints([
+                ValueSurfaceHint::Difference,
+                ValueSurfaceHint::ComparisonDifferenceReference,
+            ])
     );
 }
 

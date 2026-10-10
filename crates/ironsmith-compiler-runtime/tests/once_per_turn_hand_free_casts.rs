@@ -34,7 +34,9 @@ fn free_casts(game: &GameState, id: ObjectId) -> usize {
     compute_legal_actions(game, A)
         .unwrap()
         .into_iter()
-        .filter(|action| matches!(action, LegalAction::CastSpell { spell_id, casting_method: CastingMethod::Alternative(_), .. } if *spell_id == id))
+        .filter(|action| matches!(action, LegalAction::CastSpell { spell_id, casting_method, .. }
+            if *spell_id == id && (casting_method.is_alternative()
+                || matches!(casting_method, CastingMethod::PlayFrom { use_alternative: Some(_), .. }))))
         .count()
 }
 
@@ -67,5 +69,7 @@ fn zaffai_offers_free_casts_only_for_instants_and_sorceries_on_your_turn() {
         let creature = card(&mut game, "Creature", "Mana cost: {5}{G}\nType: Creature — Bear\nPower/Toughness: 2/2");
         assert!(free_casts(&game, sorcery) > 0, "free instant/sorcery cast");
         assert_eq!(free_casts(&game, creature), 0, "creature spells are outside the filter");
+        game.turn.active_player = PlayerId(1);
+        assert_eq!(free_casts(&game, sorcery), 0, "permission is limited to your turn");
     }
 }

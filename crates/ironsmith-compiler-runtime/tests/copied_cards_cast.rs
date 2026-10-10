@@ -35,9 +35,22 @@ fn copy_casts(debug: &str) -> usize {
 fn mnemonic_deluge_casts_three_free_copies_of_the_exiled_card() {
     for definition in definitions(0) {
         assert!(!ironsmith::cards::generated_definition_has_unimplemented_content(&definition));
-        let debug = format!("{definition:?}");
-        assert!(copy_casts(&debug) >= 3, "{debug}");
-        assert!(debug.contains("without_paying_mana_cost: true"), "{debug}");
+        let effects = definition.spell_effect.as_ref().unwrap().flattened_default_effects();
+        let repeat = effects.iter().find_map(|effect|
+            effect.downcast_ref::<ironsmith::effects::RepeatEffectsEffect>()).unwrap();
+        assert_eq!(repeat.count, ironsmith::effect::Value::Fixed(3));
+        let mut casts = Vec::new();
+        for effect in &repeat.effects {
+            effect.visit_child_effects(&mut |child| {
+                if let Some(cast) = child.downcast_ref::<ironsmith::effects::CastTaggedEffect>() {
+                    casts.push(cast.clone());
+                }
+            });
+        }
+        assert_eq!(casts.len(), 1);
+        assert!(casts[0].as_copy);
+        assert!(casts[0].without_paying_mana_cost);
+        assert!(!casts[0].allow_land);
     }
 }
 

@@ -126,6 +126,8 @@ pub enum PriorEffectAction {
     Flipped,
     /// The original removals belonging to a move of this counter kind.
     CountersMoved(crate::counter::CounterType),
+    /// Stack objects actually created by a copy instruction.
+    Copied,
 }
 
 /// A metric over the last-known-information memory emitted by one exact

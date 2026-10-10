@@ -269,9 +269,9 @@ fn swapped_sacrifice_ability_pays_its_cost_and_draws_for_each_other_player() {
         .mana_pool
         .add(ironsmith::mana::ManaSymbol::Colorless, 2);
     let is_activation = |action: &LegalAction| matches!(action, LegalAction::ActivateAbility { source, .. } if *source == partner);
-    // Actions open a mana-ability window before checking exact payment.
+    // The legal menu excludes an activation whose full cost is unaffordable.
     assert!(
-        ironsmith::decision::compute_legal_actions(&game, bob).expect("fixture has complete replacement state")
+        !ironsmith::decision::compute_legal_actions(&game, bob).expect("fixture has complete replacement state")
             .iter()
             .any(is_activation)
     );

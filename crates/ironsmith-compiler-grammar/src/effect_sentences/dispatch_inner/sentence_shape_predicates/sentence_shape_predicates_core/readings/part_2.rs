@@ -186,6 +186,10 @@ pub(super) fn read_leading_result_prefix(
         };
         let mut trailing_effects = if let Some(effects) = get_then_gain {
             effects
+        } else if let Some(permission) = crate::permission_helpers::parse_cast_or_play_tagged_clause(prefix.trailing_tokens)? {
+            // A result row owns the complete casting permission, including
+            // its mana-spending rider, before effect-chain splitting.
+            vec![permission]
         } else if sentence_shapes::parse_where_x_sentence_tokens(
             prefix.trailing_tokens,
         )
@@ -198,6 +202,7 @@ pub(super) fn read_leading_result_prefix(
         if matches!(
             &prefix.predicate,
             crate::cards::builders::IfResultPredicate::DieValue(_)
+                | crate::cards::builders::IfResultPredicate::Value(_)
         ) {
             bind_numeric_result_counter_amounts(&mut trailing_effects);
         }
@@ -308,6 +313,9 @@ pub(super) fn read_future_zone_replacement(
     input: &Sentence<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
+    if let Some(effect) = crate::effect_sentences::dispatch_entry::parse_turn_scoped_enter_tapped_replacement(tokens)? {
+        return Ok(Some(vec![effect]));
+    }
     if let Some(effect) =
         super::super::super::super::dispatch_entry::future_zone_replacement_from_sentence_tokens(
             tokens,
@@ -348,6 +356,18 @@ pub(super) fn read_delayed_schedule_sentence(
                 EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextDrawStep {
                     player: schedule.player,
                     effects,
+                })
+            }
+            effect_grammar::delayed_sentence_shapes::DelayedScheduleStep::MainPhaseThisTurn => {
+                EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
+                    trigger: crate::cards::builders::TriggerSpec::BeginningOfMainPhase {
+                        player: PlayerFilter::Any,
+                        surface: ironsmith_core::trigger_model::MainPhaseSurface::MainPhase,
+                    },
+                    effects,
+                    one_shot: true,
+                    until_end_of_combat: false,
+                    attach_to_previous_ability: false,
                 })
             }
             effect_grammar::delayed_sentence_shapes::DelayedScheduleStep::MainPhase => {

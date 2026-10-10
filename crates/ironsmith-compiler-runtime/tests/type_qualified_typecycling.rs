@@ -22,8 +22,28 @@ fn artifact_landcycling_searches_for_artifact_lands_from_hand() {
             .expect("landcycling is an activated ability from hand");
         let debug = format!("{cycling:?}");
         assert!(debug.contains("Discard"), "{debug}");
-        let all_types = format!("all_card_types: {:?}", vec![CardType::Artifact, CardType::Land]);
-        assert!(debug.contains(&all_types), "artifact AND land: {debug}");
-        assert!(debug.contains("ShuffleLibraryEffect"), "{debug}");
+        let AbilityKind::Activated(ability) = &cycling.kind else { unreachable!() };
+        let search = ability.effects.all_effects().into_iter()
+            .find_map(|effect| effect.downcast_ref::<ironsmith::effects::SearchLibraryEffect>())
+            .expect("typecycling searches the library");
+        assert_eq!(search.filter.all_card_types, vec![CardType::Artifact, CardType::Land]);
+        assert_eq!(search.destination, Zone::Hand);
+        assert!(search.reveal);
+
+        // Searching owns its shuffle; it need not be a separate program node.
+        let mut game = ironsmith::GameState::new(vec!["Alice".into()], 20);
+        let alice = ironsmith::PlayerId::from_index(0);
+        let source = game.create_object_from_definition(&definition, alice, Zone::Hand);
+        for types in [vec![CardType::Artifact, CardType::Land], vec![CardType::Land]] {
+            let card = ironsmith::card::CardBuilder::new(ironsmith::CardId::new(), "Search candidate")
+                .card_types(types).build();
+            game.create_object_from_card(&card, alice, Zone::Library);
+        }
+        let before = game.irreversible_random_count();
+        let mut context = ironsmith::effects::EffectContext::new_default(source, alice);
+        ironsmith::effects::EffectExecutor::execute(search, &mut game, &mut context).unwrap();
+        assert_eq!(game.irreversible_random_count(), before + 1);
+        assert_eq!(game.player(alice).unwrap().hand.len(), 2);
+        assert_eq!(game.player(alice).unwrap().library.len(), 1);
     }
 }

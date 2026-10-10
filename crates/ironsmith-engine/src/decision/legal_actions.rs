@@ -583,17 +583,13 @@ pub(crate) fn filtered_alternative_cast_zone_permission(
     })
 }
 
-fn append_native_alternative_cast_actions_for_card_from_zone(
-    game: &GameState,
-    actions: &mut Vec<LegalAction>,
-    player: PlayerId,
-    card_id: ObjectId,
-    card: &crate::object::Object,
-    from_zone: Zone,
+pub(crate) fn native_alternative_cast_zone_permission(
+    game: &GameState, player: PlayerId, card: &crate::object::Object,
+    from_zone: Zone, alt_cast: &crate::alternative_cast::AlternativeCastingMethod,
     view: &DerivedGameView<'_>,
-) {
-    for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
-        let additional_zone_allowed = card.abilities.iter().any(|ability| {
+) -> bool {
+    if card.zone != from_zone || card.owner != player { return false; }
+    card.abilities.iter().any(|ability| {
             let crate::ability::AbilityKind::Static(ability) = &ability.kind else { return false; };
             matches!(ability.compiled_model().map(|model| &model.payload),
                 Some(ironsmith_core::StaticAbilityPayload::NativeAlternativeCastFromZone { zone, method })
@@ -606,7 +602,22 @@ fn append_native_alternative_cast_actions_for_card_from_zone(
                 from_zone,
                 alt_cast.keyword(),
                 view,
-            ));
+            ))
+}
+
+fn append_native_alternative_cast_actions_for_card_from_zone(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+    from_zone: Zone,
+    view: &DerivedGameView<'_>,
+) {
+    for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
+        let additional_zone_allowed = native_alternative_cast_zone_permission(
+            game, player, card, from_zone, alt_cast, view,
+        );
         if (alt_cast.cast_from_zone() == from_zone || additional_zone_allowed)
             && can_cast_with_alternative_with_view(game, player, card, alt_cast, view)
         {
@@ -2500,6 +2511,9 @@ fn activation_precheck_with_view(
     source_facts: Option<&ActivationSourceFacts>,
 ) -> Option<PlayerId> {
     let started_at = PerfTimer::start();
+    if game.is_phased_out(source) {
+        return None;
+    }
     let owned_facts;
     let source_facts = if let Some(source_facts) = source_facts {
         source_facts
@@ -2923,49 +2937,47 @@ pub(crate) fn can_activate_ability_with_restrictions_with_view(
         return true;
     }
 
-    let total_cost = {
-        calculate_effective_activation_total_cost_with_view(
-            game,
-            controller,
-            source,
-            &activated.mana_cost,
-            &[],
-            Some(ActivationCostAbility::of(
-                game, controller, source, activated,
-            )),
-            view,
-        )
+    let ability = Some(ActivationCostAbility::of(game, controller, source, activated));
+    let payable = |targets: &[Target]| {
+        let total_cost = calculate_effective_activation_total_cost_with_view(
+            game, controller, source, &activated.mana_cost, targets, ability, view,
+        );
+        let loyalty_costs_payable = match total_cost.kind() {
+            ironsmith_core::TotalCostKind::All(costs) => loyalty_negative_costs_payable(game, source, costs),
+            ironsmith_core::TotalCostKind::OneOf(branches) => branches.iter().any(|branch| {
+                branch.as_all().is_some_and(|costs| loyalty_negative_costs_payable(game, source, costs))
+            }),
+        };
+        (!activated.is_loyalty_ability() || loyalty_costs_payable)
+            && activation_total_cost_is_payable_with_view(
+                game, controller, source, &total_cost, view,
+                activated.payment_reason(game, source, controller),
+            )
+    };
+    // Price a one-target activation against each legal announcement. Equip
+    // reductions based on the chosen creature's power/color cannot be priced
+    // with an empty target list before that creature has been chosen.
+    let requirements = crate::game_loop::extract_target_requirements_from_program_with_modes(
+        game, &activated.effects, controller, Some(source), None,
+    );
+    let can_pay = if let [requirement] = requirements.as_slice()
+        && requirement.max_targets == Some(1)
+        && requirement.aggregate_constraint.is_none()
+    {
+        (requirement.min_targets == 0 && payable(&[]))
+            || requirement.legal_targets.iter().any(|target| {
+                (requirement.legal_target_sets.is_empty()
+                    || requirement.legal_target_sets.iter().any(|set| set.as_slice() == [*target]))
+                    && payable(&[*target])
+            })
+    } else {
+        payable(&[])
     };
     if let Some(perf_ctx) = perf_ctx {
         perf_ctx.add_cost_build_ms(cost_started_at.elapsed_ms());
-    }
-    let loyalty_costs_payable = match total_cost.kind() {
-        ironsmith_core::TotalCostKind::All(costs) => {
-            loyalty_negative_costs_payable(game, source, costs)
-        }
-        ironsmith_core::TotalCostKind::OneOf(branches) => branches.iter().any(|branch| {
-            branch
-                .as_all()
-                .is_some_and(|costs| loyalty_negative_costs_payable(game, source, costs))
-        }),
-    };
-    if activated.is_loyalty_ability() && !loyalty_costs_payable {
-        if let Some(perf_ctx) = perf_ctx {
-            perf_ctx.add_total_ms(total_started_at.elapsed_ms());
-        }
-        return false;
-    }
-    if !activation_total_cost_is_payable_with_view(game, controller, source, &total_cost, view, activated.payment_reason(game, source, controller)) {
-        if let Some(perf_ctx) = perf_ctx {
-            perf_ctx.add_total_ms(total_started_at.elapsed_ms());
-        }
-        return false;
-    }
-
-    if let Some(perf_ctx) = perf_ctx {
         perf_ctx.add_total_ms(total_started_at.elapsed_ms());
     }
-    true
+    can_pay
 }
 
 /// Compute legal commander actions for a player (casting from command zone).

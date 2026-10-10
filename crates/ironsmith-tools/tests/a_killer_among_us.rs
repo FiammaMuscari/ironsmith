@@ -242,9 +242,9 @@ fn a_killer_among_us_pays_before_resolving_and_checks_the_targets_current_type()
             "source must already be sacrificed"
         );
         assert_eq!(
-            game.chosen_subtype(source),
+            game.stack.last().and_then(|entry| entry.source_snapshot.as_ref()).and_then(|snapshot| snapshot.chosen_subtype),
             Some(Subtype::Human),
-            "choice must be revealed during payment"
+            "choice revealed during payment is retained by the ability after sacrifice"
         );
         assert_eq!(
             game.object(target)

@@ -288,6 +288,13 @@ pub fn recognize_activation_cost_head(
     }
 }
 
+/// Whether one complete token is an imperative effect verb.
+pub fn is_imperative_effect_verb_token(token: &OwnedLexToken) -> bool {
+    let mut input = LexStream::new(std::slice::from_ref(token));
+    crate::grammar::primitives::take_leaf(&mut input, source_alias_effect_verb).is_some()
+        && crate::grammar::primitives::take_leaf(&mut input, eof.void()).is_some()
+}
+
 /// The same shape over tokens the caller already holds.
 pub fn source_alias_effect_verb_surface_tokens(
     alias_tokens: &[OwnedLexToken],

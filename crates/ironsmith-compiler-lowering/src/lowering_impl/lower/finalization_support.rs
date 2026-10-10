@@ -757,12 +757,16 @@ fn bind_graveyard_cast_trigger_to_triggering_permanent_entry(ability: &mut Abili
     let exiles_source = move_effect
         .downcast_ref::<crate::effects::ExileEffect>()
         .is_some_and(|effect| {
-            effect.spec == ChooseSpec::Source && !effect.face_down && !effect.turn_face_up
+            (effect.spec.base() == &ChooseSpec::Source
+                || matches!(effect.spec.base(), ChooseSpec::Object(filter) if filter.source))
+                && !effect.face_down && !effect.turn_face_up
         })
         || move_effect
             .downcast_ref::<crate::effects::MoveToZoneEffect>()
             .is_some_and(|effect| {
-                effect.target == ChooseSpec::Source && effect.zone == Zone::Exile
+                (effect.target.base() == &ChooseSpec::Source
+                    || matches!(effect.target.base(), ChooseSpec::Object(filter) if filter.source))
+                    && effect.zone == Zone::Exile
             });
     let Some(counter) = counter_effect.downcast_ref::<crate::effects::PutCountersEffect>() else {
         return;
@@ -896,6 +900,16 @@ fn rest_complement_producer(earlier: &[crate::effect::Effect]) -> Option<crate::
             crate::effects::TagMatchingObjectsEffect::new(filter, REST_TAG).in_zone(zone),
         )
     };
+    fn contains_exile(effect: &crate::effect::Effect) -> bool {
+        if effect.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>().is_some()
+            || effect.downcast_ref::<crate::effects::ExileEffect>().is_some()
+        {
+            return true;
+        }
+        let mut found = false;
+        effect.visit_child_effects(&mut |child| found |= contains_exile(child));
+        found
+    }
     let zone_of_collection = |tag: &TagKey| -> Option<Zone> {
         earlier.iter().rev().find_map(|effect| {
             let text = format!("{effect:?}");
@@ -927,7 +941,7 @@ fn rest_complement_producer(earlier: &[crate::effect::Effect]) -> Option<crate::
             {
                 return Some(Zone::Library);
             }
-            if text.contains("ExileTopOfLibraryEffect") || text.contains("ExileEffect") {
+            if contains_exile(unwrapped) {
                 return Some(Zone::Exile);
             }
             None

@@ -16,6 +16,7 @@ pub(super) fn is_reserved_short_alias(alias: &str, alias_tokens: &[OwnedLexToken
     if matches!(
         lower.as_str(),
         "prototype" | "dredge" | "enchanted" | "equipped" | "command" | "flashback"
+            | "cast" | "casts" | "play" | "plays" | "protection" | "roll" | "rolls"
             // "Venture into the dungeon" (Dungeon Map, Dungeon Descent): the
             // dungeon is a game object (CR 309), never the source's alias.
             | "dungeon"
@@ -40,6 +41,7 @@ pub(super) fn is_reserved_short_alias(alias: &str, alias_tokens: &[OwnedLexToken
     matches!(
         lower.as_str(),
         "a" | "an"
+            | "and" | "or" | "but" | "then" | "else"
             | "the"
             | "one"
             | "two"

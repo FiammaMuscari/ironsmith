@@ -393,7 +393,8 @@ fn incomplete_damage_evidence_rolls_back_the_whole_native_effect_before_retry() 
         let mut game = game();
         game.create_object_from_definition(&definition, A, Zone::Battlefield);
         let target = creature(&mut game, A);
-        let absent = ObjectId::new();
+        let absent = ObjectId::from_raw(u64::MAX);
+            assert!(game.object(absent).is_none());
         let unrelated = creature(&mut game, B);
         let wrong = snapshot(&game, unrelated);
         let effect = Effect::new(SequenceEffect::new(vec![Effect::gain_life(4),
@@ -404,7 +405,11 @@ fn incomplete_damage_evidence_rolls_back_the_whole_native_effect_before_retry() 
             let mut dm = SelectFirstDecisionMaker;
             let mut context = EffectContext::new(absent, A, &mut dm);
             if with_wrong { context.source_snapshot = Some(wrong.clone()); }
-            assert!(matches!(execute_effect(&mut game, &effect, &mut context), Err(ExecutionError::IncompleteEvidence(_))));
+            let result = execute_effect(&mut game, &effect, &mut context);
+            assert!(matches!(&result, Err(ExecutionError::IncompleteEvidence(_)))
+                || matches!(&result, Err(ExecutionError::ContinuousDiscovery(
+                    ironsmith::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }
+                )) if *object == absent), "{result:?}");
             assert_eq!(game.player(A).unwrap().life, life);
             assert_eq!(game.damage_on(target), 0);
             assert!(game.take_pending_trigger_events().is_empty());

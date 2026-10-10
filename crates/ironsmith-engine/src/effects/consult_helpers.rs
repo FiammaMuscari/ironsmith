@@ -62,14 +62,14 @@ impl<Output> Default for LibraryConsultResult<Output> {
 impl LibraryConsultResult {
     pub fn attach_to_outcome(self, outcome: EffectOutcome) -> EffectOutcome {
         let (original, operations) = self.bind_observations(outcome);
-        EffectOutcome::aggregate_with_primary_result(original, operations)
+        EffectOutcome::aggregate_replacement_outcomes(original, operations)
     }
 }
 
 impl LibraryConsultResult<CompletedEffectOutputs> {
     pub fn attach_to_outputs(self, outcome: EffectOutcome) -> CompletedEffectOutputs {
         let (original, operations) = self.bind_observations(outcome);
-        let aggregate = EffectOutcome::aggregate_with_primary_result(
+        let aggregate = EffectOutcome::aggregate_replacement_outcomes(
             original,
             operations.iter().map(|outputs| outputs.outcome.clone()),
         );
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(result.exposed_object_ids, vec![first, second]);
         assert!(result.matched_snapshots.is_empty());
         assert_eq!(snapshot_ids(&ctx, "all"), vec![first, second]);
-        assert!(ctx.get_tagged_all("match").is_none());
+        assert!(ctx.get_tagged_all("match").is_some_and(|objects| objects.is_empty()));
     }
 
     #[test]

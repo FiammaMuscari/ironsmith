@@ -155,13 +155,14 @@ fn cast_creature_from_hand(game: &mut GameState, hand: ObjectId) -> ObjectId {
     resolve_stack_entry_with(game, &mut dm).unwrap();
     game.find_object_by_stable_id(stable).unwrap()
 }
-fn tokens_named(game: &GameState, name: &str) -> Vec<ObjectId> {
+fn zombie_tokens(game: &GameState) -> Vec<ObjectId> {
     game.battlefield
         .iter()
         .copied()
         .filter(|id| {
             game.object(*id).is_some_and(|object| {
-                object.name == name && object.kind == ironsmith::object::ObjectKind::Token
+                game.current_has_subtype(*id, ironsmith::Subtype::Zombie)
+                    && object.kind == ironsmith::object::ObjectKind::Token
             })
         })
         .collect()
@@ -287,7 +288,7 @@ fn wilhelt_rejects_decayed_death_snapshot_and_keeps_end_step_sacrifice_draw() {
         let mut dm = Decisions { chosen: None };
         kill(&mut game, source, A, zombie, &mut dm);
         settle(&mut game, &mut dm);
-        let token = tokens_named(&game, "Zombie")[0];
+        let token = zombie_tokens(&game)[0];
         kill(&mut game, source, A, token, &mut dm);
         assert_eq!(
             pending(&mut game, &mut dm),
@@ -312,7 +313,7 @@ fn wilhelt_rejects_decayed_death_snapshot_and_keeps_end_step_sacrifice_draw() {
         settle(&mut game, &mut dm);
         assert!(game.object(zombie).is_none());
         assert_eq!(game.player(A).unwrap().hand.len(), 1);
-        assert_eq!(tokens_named(&game, "Zombie").len(), 1);
+        assert_eq!(zombie_tokens(&game).len(), 1);
     }
 }
 #[test]

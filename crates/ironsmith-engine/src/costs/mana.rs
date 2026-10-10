@@ -484,6 +484,22 @@ mod tests {
         prompts: usize,
     }
     impl DecisionMaker for ChooseLife {
+        fn decide_mana_payment(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::ManaPaymentContext,
+        ) -> crate::mana_payment::ManaPaymentResponse {
+            if !ctx.request.preferences.prefer_life {
+                self.prompts += 1;
+                let mut preferences = ctx.request.preferences.clone();
+                preferences.prefer_life = true;
+                return crate::mana_payment::ManaPaymentResponse::Replan { preferences };
+            }
+            crate::mana_payment::ManaPaymentResponse::Confirm {
+                plan_id: ctx.plan.id,
+                request_hash: ctx.plan.request_hash,
+            }
+        }
         fn decide_options(
             &mut self,
             _game: &GameState,
@@ -500,6 +516,23 @@ mod tests {
         invalid: bool,
     }
     impl DecisionMaker for StopAtChoice {
+        fn decide_mana_payment(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::ManaPaymentContext,
+        ) -> crate::mana_payment::ManaPaymentResponse {
+            self.calls += 1;
+            if self.calls == 1 {
+                let mut preferences = ctx.request.preferences.clone();
+                preferences.prefer_life = true;
+                return crate::mana_payment::ManaPaymentResponse::Replan { preferences };
+            }
+            self.waiting = !self.invalid;
+            crate::mana_payment::ManaPaymentResponse::Confirm {
+                plan_id: ctx.plan.id.wrapping_add(1),
+                request_hash: ctx.plan.request_hash,
+            }
+        }
         fn decide_options(
             &mut self,
             _game: &GameState,

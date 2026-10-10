@@ -3474,6 +3474,11 @@ fn parse_predicate_counted_source_exiled_objects_uses_capture_parser() -> Result
 {
     for (text, expected_count, expected_card_type) in [
         (
+            "If there are four or more creature cards exiled with this artifact",
+            4,
+            Some(CardType::Creature),
+        ),
+        (
             "If three or more cards have been exiled with this artifact",
             3,
             None,
@@ -3669,9 +3674,7 @@ fn parse_predicate_source_counters_use_shared_capture_parser() -> Result<(), Car
         ),
         (
             "If there are no more scream counters on it",
-            PredicateAst::Source(SourcePredicateAst::SourceHasNoCounter(CounterType::Named(
-                "scream".into(),
-            ))),
+            PredicateAst::Source(SourcePredicateAst::SourceHasNoCounter(CounterType::Scream)),
         ),
         (
             "If there are two counters on this creature",

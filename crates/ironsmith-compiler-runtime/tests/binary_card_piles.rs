@@ -197,10 +197,16 @@ fn seven_full_bodies_partition_every_legal_size_and_preserve_untouched_cards() {
                         assert_eq!(game.stack[0].targets.len(), usize::from(name == "Fortune's Favor"));
                         resolve(&mut game, &mut choices);
                         assert_eq!(choices.targets, usize::from(targeted(name)));
+                        // A singleton chosen pile is a forced selection; the
+                        // engine need not ask the decision maker to select it.
+                        let chosen_pile: Vec<_> = pool.iter().copied()
+                            .filter(|id| choices.selected.contains(id) == (mode == 0)).collect();
+                        let single = choices.single.or_else(||
+                            (chosen_pile.len() == 1).then(|| chosen_pile[0]));
                         for &(old, identity) in &stable {
                             let current = game.find_object_by_stable_id(identity).unwrap();
                             let expected = if name == "Truth or Tale" {
-                                if choices.single == Some(old) { Zone::Hand } else { Zone::Library }
+                                if single == Some(old) { Zone::Hand } else { Zone::Library }
                             } else if choices.selected.contains(&old) == (mode == 0) { Zone::Hand } else { Zone::Graveyard };
                             assert_eq!(game.object(current).unwrap().zone, expected, "{name}, take {take}, mode {mode}");
                         }

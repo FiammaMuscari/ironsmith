@@ -472,6 +472,9 @@ fn parse_payment_clause_as_effects(
         trimmed
     };
 
+    if let Some(effect) = parse_payer_gets_player_counters(&trimmed) {
+        return Ok(Some(vec![effect]));
+    }
     let ast = match parse_effect_sentences_lexed(&trimmed) {
         Ok(ast) => ast,
         // "Ward—Get five poison counters" (The Serpent Society): a cost is
@@ -1275,6 +1278,15 @@ const COST_KEYWORDS: &[(&str, KeywordCostFallback, fn(ManaCost) -> KeywordAction
 pub fn parse_dynamic_keyword_amount(tokens: &[OwnedLexToken]) -> Option<KeywordAction> {
     use crate::grammar::keyword_action_costs::DynamicAmountKeyword;
     let shape = crate::grammar::keyword_action_costs::parse_dynamic_keyword_amount_tokens(tokens)?;
+    if let Some(definition) = shape.definition
+        && let Some(rest) = crate::grammar::etb_static_lines::etb_your_hand_count_remainder(definition)
+        && !crate::util::trim_edge_punctuation_tokens(rest).is_empty()
+        // Arithmetic has its own complete expression reader. A bare hand
+        // count cannot swallow an unrelated instruction or unknown words.
+        && !rest.first().is_some_and(|token| token.is_word("plus") || token.is_word("minus"))
+    {
+        return None;
+    }
     let amount = match shape.definition {
         // In a granted keyword, "its power" names the recipient creature.
         Some(definition) if shape.kind == DynamicAmountKeyword::Mobilize

@@ -1391,6 +1391,13 @@ pub(super) fn for_each_filter_candidate(
     filter: &ObjectFilter,
     mut visitor: impl FnMut(&Object),
 ) {
+    // Phased-out permanents are absent for continuous-value queries, just as
+    // they are for ordinary object filters (CR 702.26b).
+    let mut visitor = |object: &Object| {
+        if object.zone != Zone::Battlefield || !ctx.game.is_phased_out(object.id) {
+            visitor(object);
+        }
+    };
     // Fast path: explicit zone filters and default-battlefield filters can be
     // scanned directly without allocating a candidate ID vector.
     if let Some(zone) = filter.zone {

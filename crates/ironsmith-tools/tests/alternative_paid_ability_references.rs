@@ -221,7 +221,7 @@ fn combat_qualification_has_complete_negatives_and_explicit_missing_lki() {
                     let mut state = game.combat.take().unwrap(); declare_blockers(&game, &mut state, vec![(blocker, source)]).unwrap(); game.combat = Some(state);
                     damage(&mut game); main(&mut game, A);
                 }
-                if case == "old" { qualify(&mut game, subtype, false); game.next_turn(); main(&mut game, A); }
+                if case == "old" { qualify(&mut game, subtype, false); ironsmith::execute_cleanup_step(&mut game); game.next_turn(); main(&mut game, A); }
                 if case == "unknown" {
                     qualify(&mut game, subtype, false);
                     let records: Vec<_> = game.turn_store.turn_history.event_records.iter().cloned().collect();
@@ -304,7 +304,7 @@ fn leonardo_paid_entry_and_independent_first_strike_activation_expire() {
             let mana = game.player(A).unwrap().mana_pool.total(); announce(&mut game, activate, &mut dm);
             assert_eq!(mana - game.player(A).unwrap().mana_pool.total(), 2); finish(&mut game, &mut dm);
             assert!(game.current_has_static_ability_id(source, ironsmith::static_abilities::StaticAbilityId::FirstStrike));
-            game.next_turn();
+            ironsmith::execute_cleanup_step(&mut game); game.next_turn();
             assert_eq!(game.calculated_power(source), Some(2)); assert_eq!(game.calculated_power(friend), Some(4));
             assert!(!game.current_has_static_ability_id(source, ironsmith::static_abilities::StaticAbilityId::FirstStrike));
         }
@@ -353,7 +353,7 @@ fn karai_damage_trigger_distinguishes_paid_this_turn_from_a_prior_cast_and_survi
                     let mut dm = Choices { target: Some(Target::Object(target)), ..Default::default() };
                     cast(&mut game, card, paid, if paid { 4 } else { 3 }, &mut dm); finish(&mut game, &mut dm);
                     let source = game.find_object_by_stable_id(stable).unwrap();
-                    if later { game.next_turn(); main(&mut game, A); }
+                    if later { ironsmith::execute_cleanup_step(&mut game); game.next_turn(); main(&mut game, A); }
                     if later || !paid { combat(&mut game, source, AttackTarget::Player(B)); }
                     damage(&mut game); if depart { game.move_object_by_effect(source, Zone::Hand).unwrap(); }
                     finish(&mut game, &mut dm);
@@ -380,11 +380,11 @@ fn monastery_replaces_two_with_paid_x_and_retains_exact_exiled_collection_permis
                     assert_eq!(game.exile.len(), count); assert_eq!(game.player(A).unwrap().library.len(), 8 - count);
                     let cards = game.exile.clone();
                     for id in &cards { assert!(action(&game, *id, false).is_some()); }
-                    game.next_turn(); main(&mut game, B);
+                    ironsmith::execute_cleanup_step(&mut game); game.next_turn(); main(&mut game, B);
                     for id in &cards { assert!(action(&game, *id, false).is_none(), "no flash"); }
-                    game.next_turn(); main(&mut game, A);
+                    ironsmith::execute_cleanup_step(&mut game); game.next_turn(); main(&mut game, A);
                     for id in &cards { assert!(action(&game, *id, false).is_some(), "permission lasts through own next turn"); }
-                    game.next_turn(); main(&mut game, A);
+                    ironsmith::execute_cleanup_step(&mut game); game.next_turn(); main(&mut game, A);
                     for id in &cards { assert!(action(&game, *id, false).is_none(), "permission expired"); }
                 }
             }
@@ -428,7 +428,7 @@ fn mayhem_requires_exact_discard_origin_time_and_real_cost_and_changes_the_affec
             assert_eq!(game.calculated_power(friend), Some(if paid { 4 } else { 2 }));
             assert_eq!(game.calculated_toughness(friend), Some(if paid { 4 } else { 2 }));
             assert_eq!(game.calculated_power(opponent), Some(2)); assert_eq!(game.calculated_toughness(opponent), Some(2));
-            game.next_turn(); assert_eq!(game.calculated_power(friend), Some(4)); assert_eq!(game.calculated_toughness(opponent), Some(4));
+            ironsmith::execute_cleanup_step(&mut game); game.next_turn(); assert_eq!(game.calculated_power(friend), Some(4)); assert_eq!(game.calculated_toughness(opponent), Some(4));
         }
     }
 }
@@ -447,7 +447,9 @@ fn copied_spells_retain_alternative_payment_and_x_without_another_cast() {
                 let card = if name == "Sandman's Quicksand" && paid { discard(&mut game, card, &mut dm) } else { card };
                 if name == "Monastery Raid" { qualify(&mut game, ironsmith::Subtype::Assassin, false); }
                 let spell = cast(&mut game, card, paid, if paid { 4 } else { 3 }, &mut dm);
-                let receipt = game.stack.last().unwrap().optional_costs_paid.clone();
+                let mut receipt = game.stack.last().unwrap().optional_costs_paid.clone();
+                // A copy retains payment choices, but was not itself cast.
+                receipt.clear_uncopied_cast_facts();
                 let casts = game.turn_store.turn_history.spells_cast_by_player(A);
                 let mut ctx = ExecutionContext::new(spell, A, &mut dm); ctx.targets = vec![ResolvedTarget::Object(spell)];
                 ironsmith::effects::CopySpellEffect::new(ironsmith::target::ChooseSpec::spell(), 1).execute(&mut game, &mut ctx).unwrap();
@@ -472,7 +474,9 @@ fn receipt_transport_survives_lki_but_permanent_copy_and_new_incarnation_start_u
         combat(&mut game, attacker, AttackTarget::Player(B));
         let card = game.create_object_from_definition(&definition, A, Zone::Hand); let stable = game.object(card).unwrap().stable_id;
         let mut dm = Choices::default(); cast(&mut game, card, true, 4, &mut dm);
-        let receipt = game.stack.last().unwrap().optional_costs_paid.clone();
+        let mut receipt = game.stack.last().unwrap().optional_costs_paid.clone();
+                // A copy retains payment choices, but was not itself cast.
+                receipt.clear_uncopied_cast_facts();
         let restored: ironsmith_core::OptionalCostsPaid = serde_json::from_slice(&serde_json::to_vec(&receipt).unwrap()).unwrap();
         assert_eq!(receipt, restored); finish(&mut game, &mut dm);
         let source = game.find_object_by_stable_id(stable).unwrap();
@@ -512,7 +516,7 @@ fn undated_legacy_paid_receipts_error_under_positive_and_negated_resolution_gate
     assert!(matches!(ironsmith::effects::helpers::resolve_value(&game, &Value::WasPaidLabel(query.clone()), &ctx), Err(ExecutionError::IncompleteEvidence(_))));
     ctx.optional_costs_paid.record_completed_cast_payment(game.turn.turn_number);
     assert!(ironsmith::condition_eval::evaluate_condition_resolution(&game, &Condition::ThisSpellPaidLabel(query.clone()), &ctx).unwrap());
-    game.next_turn(); assert!(!ironsmith::condition_eval::evaluate_condition_resolution(&game, &Condition::ThisSpellPaidLabel(query), &ctx).unwrap());
+    ironsmith::execute_cleanup_step(&mut game); game.next_turn(); assert!(!ironsmith::condition_eval::evaluate_condition_resolution(&game, &Condition::ThisSpellPaidLabel(query), &ctx).unwrap());
 }
 
 fn temporal_header(negated: bool) -> CardDefinition {

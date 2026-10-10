@@ -45,7 +45,8 @@ fn ninja_teen_level_three_lets_graveyard_creatures_be_cast_with_granted_sneak() 
         for level in [1, 3] {
             let mut game = declare_blockers_game();
             let class = game.create_object_from_definition(&teen, A, Zone::Battlefield);
-            assert!(game.set_class_level(class, level));
+            assert_eq!(game.set_class_level(class, level), level != 1);
+            assert_eq!(game.class_level(class), level);
             let attacker_def = compile_to_runtime_definition(
                 "Unblocked attacker",
                 "Mana cost: {1}\nType: Creature — Human\nPower/Toughness: 1/1",
@@ -58,6 +59,7 @@ fn ninja_teen_level_three_lets_graveyard_creatures_be_cast_with_granted_sneak() 
                 creature: attacker,
                 target: AttackTarget::Player(B),
             });
+            ironsmith::combat_state::declare_blockers(&game, &mut combat, vec![]).unwrap();
             game.combat = Some(combat);
             let card_def = compile_to_runtime_definition(
                 "Graveyard ninja",

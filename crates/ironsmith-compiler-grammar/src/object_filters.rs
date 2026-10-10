@@ -837,6 +837,14 @@ fn preserve_public_spell_filter_facts(filter: &mut ObjectFilter, tokens: &[Owned
     }
 
     let words = parser_token_word_refs(tokens);
+    // Retain all three characteristic alternatives and their source-owned
+    // numeric reference before the generic adjective union can narrow them.
+    if let Some(axes) = crate::grammar::filters::parse_source_number_spell_axes(&words) {
+        filter.any_of = axes.any_of;
+        filter.mana_value = None;
+        filter.power = None;
+        filter.toughness = None;
+    }
     if filter.zone == Some(Zone::Stack)
         && filter.stack_kind == Some(crate::filter::StackObjectKind::Spell)
         && crate::word_primitives::parse_sequence_suffix(&words, &["with", "a", "single", "target"])
@@ -1019,6 +1027,15 @@ fn finalize_public_object_filter(
         &parser_token_word_refs(tokens),
     );
     preserve_public_spell_filter_facts(&mut filter, tokens);
+    // A quantified stack-object selector still includes the ability arm.
+    // The noun pass's spell defaults must not require that arm to have a
+    // mana cost or turn "spell or ability" into "spell".
+    let head = words.strip_prefix(&["a"]).unwrap_or(&words);
+    if matches!(head, ["spell" | "spells", "or", "ability" | "abilities", ..]) {
+        filter.zone = Some(Zone::Stack);
+        filter.stack_kind = Some(crate::filter::StackObjectKind::SpellOrAbility);
+        filter.has_mana_cost = false;
+    }
     preserve_terminal_characteristic_union_domain(&mut filter, tokens);
     share_terminal_card_type_union_zone(&mut filter, tokens);
     preserve_chosen_object_reference_noun(&mut filter, tokens);
@@ -1086,7 +1103,7 @@ fn preserve_combat_role_disjunction(filter: &mut ObjectFilter, tokens: &[OwnedLe
 
 /// The noun after `same name as` describes the comparison object, not
 /// the selected objects. Parse the two operands independently.
-fn parse_terminal_same_name_filter(
+pub(crate) fn parse_terminal_same_name_filter(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<Option<ObjectFilter>, CardTextError> {
@@ -1450,6 +1467,9 @@ pub fn parse_object_filter(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    if let Some(result) = crate::grammar::filters::parse_live_name_relation(tokens, other) {
+        return result;
+    }
     // Commit this complete cross-zone noun phrase before the branch-shape
     // registry can mistake an unknown suspended-card qualifier for a zone arm.
     if let Some(result) = super::grammar::filters::reference_tag_stage::parse_complete_permanent_or_suspended_card_filter(tokens, other) {

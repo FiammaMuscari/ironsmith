@@ -184,6 +184,7 @@ fn u037_scheduler_skips_end_combat_triggers_and_defers_procedure_triggers() {
         not_before_turn: None,
         expires_at_turn: None,
         expires_before_controller_turn_after: None,
+        expires_after_controller_turn_after: None,
         expires_at_end_of_combat: true,
         bound_extra_turn_index: None,
         while_any_tagged_object_in_zone: None,

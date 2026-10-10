@@ -335,7 +335,7 @@ pub(super) fn arcee_sharpshooter_counter_removal_cost_binds_that_much_damage() {
         .parse_text(
             "{1}, Remove one or more +1/+1 counters from Arcee: It deals that much damage to target creature. Convert Arcee.",
         )
-        .expect("Arcee's counter-removal amount should lower as activation X");
+        .expect("Arcee's counter-removal amount should lower as a counter-cost receipt");
     let debug = format!("{:#?}", definition.abilities);
     assert!(
         debug.contains("RemoveAnyCountersAmongEffect")
@@ -343,10 +343,13 @@ pub(super) fn arcee_sharpshooter_counter_removal_cost_binds_that_much_damage() {
             && debug.contains("dynamic_count: true"),
         "{debug}"
     );
-    assert!(
-        debug.contains("DealDamageEffect") && debug.contains("amount: X"),
-        "{debug}"
-    );
+    let damage = definition.abilities.iter().find_map(|ability| {
+        let AbilityKind::Activated(activated) = &ability.kind else { return None; };
+        activated.effects.all_effects().into_iter().find_map(find_nested_effect::<crate::effects::DealDamageEffect>)
+    }).expect("damage must use the counter-payment receipt");
+    assert_eq!(damage.amount.unhinted(), &crate::effect::Value::EffectValue(
+        crate::effect::EffectId::ACTIVATION_COUNTER_COST,
+    ));
 }
 
 #[test]
@@ -395,13 +398,16 @@ pub(super) fn geistflame_reservoir_counter_removal_cost_binds_that_much_damage()
         .parse_text(
             "{1}{R}, {T}, Remove any number of charge counters from this artifact: It deals that much damage to any target.",
         )
-        .expect("Geistflame Reservoir's counter-removal amount should lower as activation X");
+        .expect("Geistflame Reservoir's counter-removal amount should lower as a counter-cost receipt");
     let debug = format!("{:#?}", definition.abilities);
     assert!(debug.contains("RemoveAnyCountersFromSource"), "{debug}");
-    assert!(
-        debug.contains("DealDamageEffect") && debug.contains("amount: X"),
-        "{debug}"
-    );
+    let damage = definition.abilities.iter().find_map(|ability| {
+        let AbilityKind::Activated(activated) = &ability.kind else { return None; };
+        activated.effects.all_effects().into_iter().find_map(find_nested_effect::<crate::effects::DealDamageEffect>)
+    }).expect("damage must use the counter-payment receipt");
+    assert_eq!(damage.amount.unhinted(), &crate::effect::Value::EffectValue(
+        crate::effect::EffectId::ACTIVATION_COUNTER_COST,
+    ));
 }
 
 #[test]

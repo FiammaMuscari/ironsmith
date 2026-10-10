@@ -275,9 +275,10 @@ fn describe_participant_loot_greatest_mana_value_followup(effects: &[Effect]) ->
         || participants.starting_with_controller
         || participants.stop_after_first_happened
         || conditional.condition != producer.id
-        || conditional.predicate
-            != (EffectPredicate::PlayerAffectedObjectHasGreatestManaValue {
-                player: PlayerFilter::You,
+        || !matches!(conditional.predicate,
+            EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player: PlayerFilter::You }
+            | EffectPredicate::PlayerActionObjectHasGreatestManaValue {
+                player: PlayerFilter::You, action: crate::effect::PriorEffectAction::Discarded,
             })
         || !conditional.else_.is_empty()
     {
@@ -9306,8 +9307,43 @@ pub(super) fn describe_quantified_player_effect(
         .or_else(|| describe_quantified_player_conditional(for_players))
         .or_else(|| describe_quantified_player_life_total(for_players))
         .or_else(|| describe_quantified_player_optional_hand_reveal(for_players))
+        .or_else(|| describe_quantified_player_temporary_hand_exile(for_players))
         .or_else(|| describe_for_players_simple_iterated_action(for_players))
         .or_else(|| describe_for_players_iterated_action_sequence(for_players))
+}
+
+fn describe_quantified_player_temporary_hand_exile(
+    for_players: &crate::effects::ForPlayersEffect,
+) -> Option<String> {
+    if for_players.sequential
+        || for_players.starting_with_controller
+        || for_players.stop_after_first_happened
+    {
+        return None;
+    }
+    let [effect] = for_players.effects.as_slice() else {
+        return None;
+    };
+    let exile = structural_unwrap_render_wrappers(effect)
+        .downcast_ref::<crate::effects::ExileUntilEffect>()?;
+    let ChooseSpec::Object(filter) = exile.spec.base() else {
+        return None;
+    };
+    if filter.zone != Some(Zone::Hand)
+        || filter.owner != Some(PlayerFilter::IteratedPlayer)
+    {
+        return None;
+    }
+    // Keep the quantified actor: "for each opponent" reparses as a
+    // sequential loop and loses simultaneous linked-exile choices.
+    let rendered = describe_effect(effect);
+    let action = rendered.strip_prefix("Exile ")?;
+    let subject = quantified_player_subject(&for_players.filter);
+    let verb = if subject == "You" { "exile" } else { "exiles" };
+    Some(format!(
+        "{subject} {verb} {}",
+        action.replace("in that player's hand", "from their hand")
+    ))
 }
 
 fn describe_parley_reveal_repeat_draw(effects: &[Effect]) -> Option<String> {

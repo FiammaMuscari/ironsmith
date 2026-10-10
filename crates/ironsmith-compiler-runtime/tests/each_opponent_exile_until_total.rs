@@ -8,11 +8,25 @@ mod support;
 const TASHAS_HIDEOUS_LAUGHTER: &str = "Mana cost: {1}{U}{B}\nType: Sorcery\nEach opponent exiles cards from the top of their library until that player has exiled cards with total mana value 20 or greater.";
 const DREAM_HARVEST: &str = "Mana cost: {5}{U}{B}\nType: Sorcery\nEach opponent exiles cards from the top of their library until they have exiled cards with total mana value 5 or greater this way. Until end of turn, you may cast cards exiled this way without paying their mana costs.";
 
+fn assert_opponent_consult(definition: &ironsmith::cards::CardDefinition, total: i32) -> ironsmith::tag::TagKey {
+    use ironsmith::effects::{ForPlayersEffect, ConsultTopOfLibraryEffect, ConsultTopOfLibraryStopRule};
+    use ironsmith::target::PlayerFilter;
+    let effects = definition.spell_effect.as_ref().unwrap().flattened_default_effects();
+    let players = effects.iter().find_map(|effect| effect.downcast_ref::<ForPlayersEffect>()).unwrap();
+    assert_eq!(players.filter, PlayerFilter::Opponent);
+    let consult = players.effects.iter().find_map(|effect|
+        effect.downcast_ref::<ConsultTopOfLibraryEffect>()).unwrap();
+    assert_eq!(consult.player, PlayerFilter::IteratedPlayer);
+    assert_eq!(consult.mode, ironsmith_core::LibraryConsultMode::Exile);
+    assert_eq!(consult.stop_rule, ConsultTopOfLibraryStopRule::TotalManaValue(ironsmith::effect::Value::Fixed(total)));
+    consult.all_tag.clone()
+}
+
 #[test]
 fn tashas_hideous_laughter_runs_one_total_mana_value_consult_per_opponent() {
     for definition in support::definitions("Tasha's Hideous Laughter", TASHAS_HIDEOUS_LAUGHTER) {
         let debug = format!("{:?}", definition.spell_effect);
-        assert!(debug.contains("TotalManaValue(20)"), "{debug}");
+        assert_opponent_consult(&definition, 20);
         assert!(debug.contains("Exile"), "{debug}");
         assert!(
             debug.contains("ForPlayers") || debug.contains("ForEachOpponent") || debug.contains("Opponent"),
@@ -24,9 +38,14 @@ fn tashas_hideous_laughter_runs_one_total_mana_value_consult_per_opponent() {
 #[test]
 fn dream_harvest_consults_each_opponent_then_grants_free_casts_of_the_exiled_cards() {
     for definition in support::definitions("Dream Harvest", DREAM_HARVEST) {
-        let debug = format!("{:?}", definition.spell_effect);
-        assert!(debug.contains("TotalManaValue(5)"), "{debug}");
-        assert!(debug.contains("without_paying_mana_cost: true") || debug.contains("WithoutPaying"), "{debug}");
+        let tag = assert_opponent_consult(&definition, 5);
+        let effects = definition.spell_effect.as_ref().unwrap().flattened_default_effects();
+        let free = effects.iter().find_map(|effect|
+            effect.downcast_ref::<ironsmith::effects::GrantTaggedSpellFreeCastUntilEndOfTurnEffect>()).unwrap();
+        assert_eq!(free.tag, tag);
+        assert_eq!(free.player, ironsmith::target::PlayerFilter::You);
+        assert_eq!(free.zone, Some(ironsmith::Zone::Exile));
+        assert_eq!(free.duration, ironsmith_core::GrantPlayTaggedDuration::UntilEndOfTurn);
     }
 }
 

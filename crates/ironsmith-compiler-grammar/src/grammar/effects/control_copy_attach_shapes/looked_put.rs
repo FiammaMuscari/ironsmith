@@ -65,6 +65,7 @@ pub struct TaggedBattlefieldPartitionShape {
     pub chosen_controller: PartitionBattlefieldControllerShape,
     pub remainder_tapped: bool,
     pub remainder_controller: PartitionBattlefieldControllerShape,
+    pub remainder_in_hand: bool,
 }
 
 fn rest_head(tokens: &[OwnedLexToken]) -> Option<&[OwnedLexToken]> {
@@ -137,6 +138,9 @@ fn parse_partition_battlefield_destination(
     } else {
         (false, tokens)
     };
+    if tokens.is_empty() {
+        return Some((tapped, PartitionBattlefieldControllerShape::You));
+    }
     let (_, tokens) = primitives::parse_prefix(tokens, primitives::kw("under").void())?;
     let (controller, tokens) = if let Some((_, rest)) =
         primitives::parse_prefix(tokens, primitives::phrase(&["your", "control"]).void())
@@ -162,13 +166,24 @@ pub fn parse_tagged_battlefield_partition_shape(
 ) -> Option<TaggedBattlefieldPartitionShape> {
     let body = strip_optional_put(tokens);
     let (rest_index, _, remainder_destination) =
-        primitives::find_prefix(body, || primitives::phrase(&["and", "the", "rest"]).void())?;
+        primitives::find_prefix(body, || alt((
+            primitives::phrase(&["and", "the", "rest"]),
+            primitives::phrase(&["and", "the", "other"]),
+        )).void())?;
     let chosen_clause = trim_lexed_commas(body.get(..rest_index)?);
     let (onto_index, _, chosen_destination) =
         primitives::find_prefix(chosen_clause, || primitives::kw("onto"))?;
     let count = parse_count_and_reference(trim_lexed_commas(chosen_clause.get(..onto_index)?))?;
     let (chosen_tapped, chosen_controller) =
         parse_partition_battlefield_destination(chosen_destination)?;
+    if primitives::parse_all(trim_lexed_commas(remainder_destination),
+        primitives::phrase(&["into", "your", "hand"]).void(), "partition hand").is_ok() {
+        return Some(TaggedBattlefieldPartitionShape {
+            count, chosen_tapped, chosen_controller, remainder_tapped: false,
+            remainder_controller: PartitionBattlefieldControllerShape::You,
+            remainder_in_hand: true,
+        });
+    }
     let (_, remainder_destination) = primitives::parse_prefix(
         trim_lexed_commas(remainder_destination),
         primitives::kw("onto").void(),
@@ -182,6 +197,7 @@ pub fn parse_tagged_battlefield_partition_shape(
         chosen_controller,
         remainder_tapped,
         remainder_controller,
+        remainder_in_hand: false,
     })
 }
 

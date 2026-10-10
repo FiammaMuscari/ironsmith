@@ -62,9 +62,13 @@ fn permanent_card(
 /// Puts a card from `owner`'s hand onto the battlefield through the full ETB
 /// replacement pipeline and returns the new permanent.
 fn enter(game: &mut GameState, owner: PlayerId, definition: &CardDefinition) -> ObjectId {
+    enter_with(game, owner, definition, &mut SelectFirstDecisionMaker)
+}
+
+fn enter_with(game: &mut GameState, owner: PlayerId, definition: &CardDefinition, dm: &mut impl ironsmith::decision::DecisionMaker) -> ObjectId {
     let hand = game.create_object_from_definition(definition, owner, Zone::Hand);
     let receipt = game
-        .move_object_with_etb_processing_with_dm(hand, Zone::Battlefield, &mut SelectFirstDecisionMaker)
+        .move_object_with_etb_processing_with_dm(hand, Zone::Battlefield, dm)
         .unwrap();
     assert!(!receipt.pending);
     receipt.original.into_result().unwrap().new_id
@@ -97,13 +101,23 @@ fn open_subject_entry_replacements_compile_on_both_routes() {
 
 #[test]
 fn gond_gate_untaps_only_gates_its_controller_controls() {
+    struct ApplyOwnTappedFirst;
+    impl ironsmith::decision::DecisionMaker for ApplyOwnTappedFirst {
+        fn decide_options(&mut self, game: &GameState, ctx: &ironsmith::decisions::context::SelectOptionsContext) -> Vec<usize> {
+            ctx.options.iter().find(|option| option.legal && option.description == "Tapped gate")
+                .map(|option| vec![option.index])
+                .unwrap_or_else(|| ironsmith::decision::DecisionMaker::decide_options(&mut SelectFirstDecisionMaker, game, ctx))
+        }
+    }
     for definition in routes("Gond Gate", GOND_GATE) {
         let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
         enter(&mut game, A, &definition);
         // A Gate that would enter tapped by its own replacement.
         let tapped_gate_text = "Type: Land — Gate\nThis land enters tapped.\n{T}: Add {C}.";
         let tapped_gate = routes("Tapped gate", tapped_gate_text)[0].clone();
-        let mine = enter(&mut game, A, &tapped_gate);
+        // Both replacements apply. Choose the tapped replacement first so
+        // Gond Gate's untapped replacement determines the final entry state.
+        let mine = enter_with(&mut game, A, &tapped_gate, &mut ApplyOwnTappedFirst);
         assert!(!game.is_tapped(mine), "CR 614.12: Gond Gate's replacement applies to Gates you control");
         let theirs = enter(&mut game, B, &tapped_gate);
         assert!(game.is_tapped(theirs), "an opponent's Gate is outside the filter");

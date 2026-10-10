@@ -1075,11 +1075,13 @@ fn you_acted_this_way(words: &[&str]) -> Option<PredicateAst> {
         ["you", "didnt" | "dont", rest @ ..] => (true, rest),
         ["you", "did", "not", rest @ ..] => (true, rest),
         ["you", rest @ ..] => (false, rest),
+        ["that" | "the", "player", rest @ ..] | ["player", rest @ ..] => (false, rest),
         _ => return None,
     };
     let (participle, rest): (&[&str], &[&str]) = match rest {
         ["return" | "returned", rest @ ..] => (&["returned"], rest),
         ["draw" | "drew", rest @ ..] => (&["drawn"], rest),
+        ["mill" | "mills" | "milled", rest @ ..] => (&["milled"], rest),
         _ => return None,
     };
     let [object @ .., "this", "way"] = rest else {
@@ -1087,6 +1089,7 @@ fn you_acted_this_way(words: &[&str]) -> Option<PredicateAst> {
     };
     let (minimum, object) = match object {
         [count, "or", "more", object @ ..] => (number(count)?, object),
+        ["at", "least", count, object @ ..] => (number(count)?, object),
         ["a" | "an", object @ ..] => (1, object),
         object => (1, object),
     };
@@ -1105,12 +1108,31 @@ fn you_acted_this_way(words: &[&str]) -> Option<PredicateAst> {
         .chain(destination.iter().copied())
         .chain(["this", "way"])
         .collect();
-    let predicate = at_least(this_way_count(&object_words)?, minimum);
+    let mut count = this_way_count(&object_words)?;
+    if words.first() == Some(&"you")
+        && let Value::PendingPriorEffectMetric(query) = &mut count {
+        query.player = Some(PlayerFilter::You);
+    }
+    let predicate = at_least(count, minimum);
     Some(if negated {
         PredicateAst::Not(Box::new(predicate))
     } else {
         predicate
     })
+}
+
+#[cfg(test)]
+#[test]
+fn mill_threshold_counts_remembered_creature_cards_outside_the_battlefield() {
+    let predicate = you_acted_this_way(&[
+        "the", "player", "mills", "at", "least", "one", "creature", "card", "this", "way",
+    ]).expect("definite player subject should retain the mill-result predicate");
+    let PredicateAst::ValueComparison { left: Value::PendingPriorEffectMetric(query), right, .. } = predicate else {
+        panic!("expected a prior-effect count comparison");
+    };
+    assert_eq!(query.action, Some(ironsmith_core::PriorEffectAction::Milled));
+    assert_eq!(query.filter.unwrap().zone, None);
+    assert_eq!(right, Value::Fixed(1));
 }
 
 /// "If no life is lost this way" (Blitzwing, Cruel Tormentor): the prior

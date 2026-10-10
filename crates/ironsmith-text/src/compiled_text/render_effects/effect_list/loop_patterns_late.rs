@@ -1521,6 +1521,13 @@
             let shuffle = filtered
                 .get(idx + 2)
                 .and_then(|effect| effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>());
+            if let Some(put) = next_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
+                && let Some(compact) = describe_search_choose_then_put(choose, put, shuffle)
+            {
+                parts.push(compact);
+                idx += if shuffle.is_some() { 3 } else { 2 };
+                continue;
+            }
             if let Some(move_to_zone) =
                 next_effect.downcast_ref::<crate::effects::MoveToZoneEffect>()
                 && let Some(compact) =

@@ -18,6 +18,13 @@ pub(super) fn narrow_trailing_condition_to_consequence_object(
     let Some(spec) = consequence.target_spec() else {
         return Condition::TaggedObjectMatches(tag, filter);
     };
+    if tag.as_str() == crate::tag::CompilerReferenceTag::ChosenObjects.as_str()
+        && let ChooseSpec::Tagged(consequence_tag) = spec.base()
+    {
+        // A definite description can already have resolved to one announced
+        // target. Test that member instead of the complete chosen pair.
+        return Condition::TaggedObjectMatches(consequence_tag.clone(), filter);
+    }
     let (ChooseSpec::Object(object) | ChooseSpec::All(object)) = spec.base() else {
         return Condition::TaggedObjectMatches(tag, filter);
     };

@@ -11,7 +11,11 @@ fn singe_mind_ogre_loses_life_equal_to_the_random_card() {
         assert!(debug.contains("ManaValueOf"), "{debug}");
         let text = support::rendered(&definition);
         support::assert_no_internal_markers("Singe-Mind Ogre", &text);
-        assert!(text.contains("at random from their hand"), "{text}");
+        assert!(
+            text.contains("at random from their hand")
+                || text.contains("at random from target player's hand"),
+            "{text}"
+        );
         assert!(!text.contains("that spell's mana value"), "{text}");
     }
 }

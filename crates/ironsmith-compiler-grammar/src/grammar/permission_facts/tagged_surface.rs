@@ -484,6 +484,9 @@ fn parse_tagged_permission_target_lexed<'a>(
     Option<u32>,
 )> {
     alt((
+        primitives::phrase(&["the", "card", "exiled", "this", "way"])
+            .value((TaggedPermissionReference::LastTagged, false,
+                TaggedPermissionTargetSurface::ThatCard, None)),
         // "You may play lands and cast spells from among cards exiled this
         // way without paying their mana costs." (Gix, Magus of the Mind):
         // to play a card is to play a land or cast a spell (CR 305.1, 601.1), so

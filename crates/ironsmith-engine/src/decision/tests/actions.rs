@@ -1341,14 +1341,14 @@ fn test_activated_ability_cost_reduction_respects_minimum_one_mana() {
     let actions_without_mana =
         compute_legal_actions(&game, alice).expect("fixture has complete replacement state");
     assert!(
-        actions_without_mana.iter().any(|action| matches!(
+        !actions_without_mana.iter().any(|action| matches!(
             action,
             LegalAction::ActivateAbility {
                 source,
                 ability_index: 0
             } if *source == creature_id
         )),
-        "reduced activated abilities should still surface before mana is floated"
+        "the minimum-one-mana floor requires an available payment source"
     );
 
     game.player_mut(alice)

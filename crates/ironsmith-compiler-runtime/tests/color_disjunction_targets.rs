@@ -29,7 +29,15 @@ fn tidebinder_mage_taps_one_red_or_green_target_and_locks_its_untap() {
         assert!(!ironsmith::cards::generated_definition_has_unimplemented_content(&definition));
         let debug = format!("{definition:?}");
         assert_eq!(debug.matches("TapEffect").count(), 1, "{debug}");
-        assert!(debug.contains("Red") && debug.contains("Green"), "{debug}");
+        let trigger = definition.abilities.iter().find_map(|ability| match &ability.kind {
+            ironsmith::ability::AbilityKind::Triggered(trigger) => Some(trigger),
+            _ => None,
+        }).expect("entry trigger");
+        assert_eq!(trigger.choices.len(), 1);
+        let ironsmith::target::ChooseSpec::Object(filter) = trigger.choices[0].base() else {
+            panic!("expected one creature target: {:?}", trigger.choices);
+        };
+        assert_eq!(filter.colors, Some(ironsmith::color::ColorSet::RED.union(ironsmith::color::ColorSet::GREEN)));
         assert!(debug.contains("Opponent"), "{debug}");
         assert!(debug.contains("Untap") || debug.contains("DoesntUntap"), "{debug}");
     }

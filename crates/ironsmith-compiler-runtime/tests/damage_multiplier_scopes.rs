@@ -357,7 +357,9 @@ fn enter(game: &mut GameState, definition: &CardDefinition, dm: &mut Choices) ->
         .copied()
         .find(|id| game.object(*id).unwrap().stable_id == stable)
         .unwrap();
-    put_triggers_on_stack_with_dm(game, &mut TriggerQueue::new(), dm).unwrap();
+    let mut queue = TriggerQueue::new();
+    ironsmith::game_loop::drain_pending_trigger_events_with_dm(game, &mut queue, dm).unwrap();
+    put_triggers_on_stack_with_dm(game, &mut queue, dm).unwrap();
     id
 }
 #[test]
@@ -656,7 +658,10 @@ fn goblin_goliath_captures_ability_controller_but_queries_each_damage_source_liv
         assert_eq!(
             game.battlefield
                 .iter()
-                .filter(|id| game.object(**id).unwrap().name == "Goblin")
+                .filter(|id| {
+                    let object = game.object(**id).unwrap();
+                    object.kind == ironsmith::object::ObjectKind::Token && object.subtypes.contains(&ironsmith::Subtype::Goblin)
+                })
                 .count(),
             2
         );

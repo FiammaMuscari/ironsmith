@@ -19,6 +19,7 @@ pub(crate) struct TaggedRuntimeState {
     retain_selected_destroy_target: bool,
     stable_id_fallback: Option<StableIdFallback>,
     pub(crate) outcome_only: bool,
+    result_object_reference: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -135,9 +136,13 @@ pub(crate) fn capture_tagged_runtime_state(
                 .is_some(),
         retain_selected_destroy_target: effect
             .downcast_ref::<crate::effects::DestroyEffect>()
-            .is_some(),
+            .is_some_and(|destroy| destroy.spec.is_target()),
         stable_id_fallback: capture_stable_id_fallback(game, effect, ctx),
         outcome_only: false,
+        // Milling exposes the exact public successors (CR 701.17c), while
+        // its affected-object memories retain the original library objects.
+        result_object_reference: effect.downcast_ref::<crate::effects::MillEffect>().is_some()
+            || effect.downcast_ref::<crate::effects::ReturnFromGraveyardToBattlefieldEffect>().is_some(),
     }
 }
 
@@ -157,7 +162,12 @@ pub(crate) fn apply_tagged_runtime_state(
         .pre_snapshots
         .iter()
         .filter(|snapshot| {
-            game.object(snapshot.object_id).is_none()
+            // Decision hints contain every candidate. Only a selected card's
+            // departure belongs to this instruction; a replacement may move
+            // some other candidate as part of its own program.
+            (!state.pre_snapshots_from_decision_hints
+                || outcome.chosen_objects().is_some_and(|chosen| chosen.contains(&snapshot.object_id)))
+                && game.object(snapshot.object_id).is_none()
                 && game
                     .find_object_by_stable_id(snapshot.stable_id)
                     .and_then(|id| game.object(id))
@@ -178,10 +188,9 @@ pub(crate) fn apply_tagged_runtime_state(
     // A prevented destruction still leaves the selected object's identity
     // available to a following reference such as "that land's controller".
     // Outcome-only tags continue to describe successfully affected objects.
-    if state.retain_selected_destroy_target
-        && !state.outcome_only
-        && !state.pre_snapshots.is_empty()
-    {
+    if state.retain_selected_destroy_target && !state.outcome_only {
+        // An optional destruction with no chosen target still supplies a
+        // known empty antecedent, rather than missing execution evidence.
         ctx.set_tagged_objects(tag, state.pre_snapshots);
         return;
     }
@@ -196,7 +205,7 @@ pub(crate) fn apply_tagged_runtime_state(
     // action happened (including its origin zone and derived types). Ordinary
     // result references may instead follow the new zone-change incarnation.
     if !state.preserve_departure_lki
-        && !state.outcome_only
+        && (!state.outcome_only || state.result_object_reference)
         && let Some(result_ids) = outcome
             .explicit_objects()
             .or_else(|| outcome.result_objects())
@@ -352,7 +361,9 @@ pub(crate) fn apply_tagged_runtime_state(
     // memories before looking up the old IDs in current state; a replacement
     // can leave an object with that ID present but with a different controller
     // or characteristics.
-    if state.pre_snapshots.is_empty() {
+    if state.pre_snapshots.is_empty() || state.outcome_only {
+        // Outcome-only tags use the successful affected set, even when target
+        // snapshots were captured. Departed target IDs have no live object.
         // A coordinated group appends one fact per child. The singular
         // accessor returns only the first fact, so collect all successful
         // affected-object memories before exposing the group's result set.
@@ -424,6 +435,10 @@ pub(crate) fn apply_tagged_runtime_state(
         ctx.set_tagged_objects(tag, Vec::new());
     } else if !state.pre_snapshots.is_empty() {
         ctx.tag_objects(tag, state.pre_snapshots);
+    } else {
+        // A completed instruction with no selected or produced objects is
+        // known empty, so a following reference is not missing evidence.
+        ctx.set_tagged_objects(tag, Vec::new());
     }
 }
 
@@ -518,6 +533,16 @@ fn snapshot_for_object_reference(
         return Some(ObjectSnapshot::from_object_with_calculated_characteristics(
             obj, game,
         ));
+    }
+    if let Some(entry) = game.stack_ability_entry(object_id)
+        && let Some(mut snapshot) = entry.source_snapshot.clone()
+    {
+        // A stack ability has its own identity even after its source leaves.
+        // References to the chosen ability must keep that stack-entry id.
+        snapshot.object_id = object_id;
+        snapshot.zone = Zone::Stack;
+        snapshot.controller = entry.controller;
+        return Some(snapshot);
     }
     if let Some(snapshot) = ctx.target_snapshots.get(&object_id) {
         return Some(snapshot.clone());

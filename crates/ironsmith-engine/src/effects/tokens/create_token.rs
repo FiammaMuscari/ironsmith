@@ -16,7 +16,7 @@ use super::create_token_copy::{
 };
 use super::lifecycle::{
     TokenCleanupOptions, TokenEntryOptions, apply_token_battlefield_entry_with_outputs,
-    create_replacement_additional_tokens, schedule_token_cleanup_with_outputs,
+    create_replacement_additional_tokens, schedule_token_batch_cleanup_with_outputs,
 };
 
 /// Effect that creates token creatures or other token permanents.
@@ -691,14 +691,7 @@ fn commit_token_original(
                 crate::effects::combat::put_onto_battlefield_blocking(game, entered_id, attacker);
             }
 
-            let cleanup = schedule_token_cleanup_with_outputs(
-                game,
-                ctx,
-                entered_id,
-                controller_id,
-                cleanup_options.clone(),
-            )?;
-            super::lifecycle::retain_token_child(&mut events, &mut lifecycle_children, cleanup);
+
         }
     }
 
@@ -718,7 +711,7 @@ fn commit_token_original(
             attack_player: configured_attack_player,
             attack_player_only,
             blocking_attacker,
-            cleanup: Some(cleanup_options.clone()),
+            cleanup: None,
             linked_exiles: linked_exiles.clone(),
             initial_counters: initial_counters.to_vec(),
             ..Default::default()
@@ -736,6 +729,10 @@ fn commit_token_original(
         ));
     }
     created_ids.extend(additional_ids);
+    let cleanup = schedule_token_batch_cleanup_with_outputs(
+        game, ctx, &created_ids, controller_id, cleanup_options,
+    )?;
+    super::lifecycle::retain_token_child(&mut events, &mut lifecycle_children, cleanup);
     super::lifecycle::publish_created_token_groups(game, ctx, actual_creation, &mut events);
 
     if created_ids.len() > 1 {

@@ -661,7 +661,9 @@ fn unknown_saddle_snapshot_round_trip_remains_unknown_and_cannot_serve_as_false_
     legacy.as_object_mut().unwrap().remove("saddled");
     let snapshot: ironsmith::snapshot::ObjectSnapshot = serde_json::from_value(legacy).unwrap();
     assert_eq!(snapshot.saddled, None);
-    game.move_object_by_effect(source, Zone::Graveyard).unwrap();
+    // Install a legacy departure receipt without also staging a modern move
+    // whose known saddle state would correctly take precedence over it.
+    game.remove_object(source);
     let event = ironsmith::events::RawEvent::new(ironsmith::events::ZoneChangeEvent::with_cause(
         source, Zone::Battlefield, Zone::Graveyard,
         ironsmith::events::cause::EventCause::effect(), Some(snapshot.clone()),

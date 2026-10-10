@@ -33,8 +33,11 @@ fn wanderwine_counts_permanents_returned_this_way() {
             .into_iter()
             .find_map(|effect| effect.downcast_ref::<ironsmith::effects::CreateTokenEffect>().cloned())
             .expect("merfolk creation");
-        let count = format!("{:?}", create.count);
-        assert!(count.contains("PendingPriorEffectMetric") && count.contains("Returned"), "{count}");
+        let Value::PriorEffectMetric { query, .. } = create.count.unhinted() else {
+            panic!("resolved prior-action count: {:?}", create.count);
+        };
+        assert_eq!(query.action, Some(ironsmith::effect::PriorEffectAction::Returned));
+        assert_eq!(query.metric, ironsmith::effect::EffectMetric::Count);
     }
 }
 

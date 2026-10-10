@@ -59,3 +59,13 @@ fn manifest_or_wrong_complement_tag_does_not_claim_the_cloak_partition() {
         expected
     );
 }
+
+#[test]
+fn manifest_selected_objects_has_a_complete_fallback_surface() {
+    for cloak in [false, true] {
+        let effects = looked_cloak_program(cloak, TagKey::from("different_selection"));
+        let text = describe_effect_list(&effects);
+        assert!(!text.contains("Unsupported"), "{text}");
+        assert!(text.to_lowercase().contains(if cloak { "cloak" } else { "manifest" }), "{text}");
+    }
+}

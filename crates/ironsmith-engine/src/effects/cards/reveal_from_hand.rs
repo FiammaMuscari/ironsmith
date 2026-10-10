@@ -546,6 +546,11 @@ mod tests {
             .with_x(2)
             .with_pre_chosen_cards(vec![green_one, blue_card, green_two]);
 
+        assert!(cost.pay(&mut game, &mut ctx).is_err(), "an invalid submitted payment must be rejected in full");
+        assert!(!ctx.tagged_objects.contains_key(&TagKey::from(crate::effects::PUBLIC_REVEALED_TAG)));
+        let mut ctx = CostContext::new(source, alice, &mut dm)
+            .with_x(2)
+            .with_pre_chosen_cards(vec![green_one, green_two]);
         assert_eq!(cost.pay(&mut game, &mut ctx), Ok(CostPaymentResult::Paid));
         let revealed = ctx
             .tagged_objects

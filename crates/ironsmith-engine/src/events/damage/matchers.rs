@@ -367,15 +367,30 @@ impl ReplacementMatcher for NoncombatDamageMatcher {
 /// CR 608.2h/609.7b: current source properties are authoritative while the
 /// source is present. A failed current match cannot fall back to older LKI.
 /// Phased-out sources are absent for this query (CR 702.26b).
-fn damage_source_matches_filter(source: ObjectId, filter: &ObjectFilter, ctx: &EventContext) -> bool {
+fn damage_source_matches_filter(source: ObjectId, filter: &ObjectFilter, ctx: &crate::events::context::PreparedEventContext) -> bool {
+    if filter.specific.is_some_and(|id| id != source) || (filter.source && ctx.source != Some(source)) {
+        return false;
+    }
     if !ctx.game.is_phased_out(source) {
         if let Some(object) = ctx.game.object(source) {
             return filter.matches(object, &ctx.filter_ctx, ctx.game);
         }
     }
-    ctx.event_source_snapshot
+    if let Some(snapshot) = ctx.event_source_snapshot
         .filter(|snapshot| snapshot.object_id == source)
-        .is_some_and(|snapshot| filter.matches_snapshot(snapshot, &ctx.filter_ctx, ctx.game))
+    {
+        return filter.matches_snapshot(snapshot, &ctx.filter_ctx, ctx.game);
+    }
+    // Identity-only predicates need no characteristics. Every other filter
+    // must distinguish missing evidence from a complete negative result.
+    let mut qualities = filter.clone();
+    qualities.specific = None;
+    qualities.source = false;
+    if qualities == ObjectFilter::default() {
+        return true;
+    }
+    ctx.record_match_failure(crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object: source });
+    false
 }
 
 /// Matches damage events from a source matching the filter.
@@ -508,7 +523,7 @@ impl DamageFromSourceToObjectMatcher {
         self
     }
 
-    fn source_matches(&self, damage: &DamageEvent, ctx: &EventContext) -> bool {
+    fn source_matches(&self, damage: &DamageEvent, ctx: &crate::events::context::PreparedEventContext) -> bool {
         damage_source_matches_filter(damage.source, &self.source_filter, ctx)
     }
 
@@ -747,7 +762,7 @@ impl DamageSourceConstraint {
     pub(crate) fn matches_damage_source(
         &self,
         source: ObjectId,
-        ctx: &crate::events::EventContext,
+        ctx: &crate::events::context::PreparedEventContext,
     ) -> bool {
         let filter_matches = |filter: &ObjectFilter| damage_source_matches_filter(source, filter, ctx);
         match self {
@@ -1602,9 +1617,20 @@ mod authoritative_damage_source_filter_tests {
                 (Box::new(DamageToSelfFromSourceFilterMatcher::new(filter.clone())), &object_event),
             ];
             for (index, (owner, event)) in owners.iter().enumerate() {
-                assert_eq!(owner.matches_event(*event, &ctx).unwrap(), expected, "source owner {index}, state {state}");
+                let result = owner.matches_event(*event, &ctx);
+                if state == 4 {
+                    assert!(matches!(result, Err(crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }) if object == source));
+                } else {
+                    assert_eq!(result.unwrap(), expected, "source owner {index}, state {state}");
+                }
             }
-            assert_eq!(DamageSourceConstraint::SpecificMatching { source, filter }.matches_damage_source(source, &ctx), expected);
+            let result = ctx.with_complete_query(&object_event, |prepared|
+                DamageSourceConstraint::SpecificMatching { source, filter }.matches_damage_source(source, prepared));
+            if state == 4 {
+                assert!(matches!(result, Err(crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }) if object == source));
+            } else {
+                assert_eq!(result.unwrap(), expected);
+            }
         }
     }
 }

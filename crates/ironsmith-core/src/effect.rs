@@ -342,6 +342,12 @@ pub enum EffectPredicate {
         required_count: u32,
         characteristic: crate::ObjectCharacteristic,
     },
+    /// Compare only the objects of the named action, excluding other actions
+    /// in the same compound producer (such as draws preceding discards).
+    PlayerActionObjectHasGreatestManaValue {
+        player: PlayerFilter,
+        action: PriorEffectAction,
+    },
 }
 
 /// Authored grammatical subject for a prior-result predicate.
@@ -777,6 +783,7 @@ pub enum DelayedTriggerDuration {
     EndOfTurn,
     EndOfCombat,
     UntilControllerNextTurn,
+    UntilControllerNextTurnEnd,
 }
 
 /// A cost that may be paid while a delayed trigger is pending to cancel that
@@ -924,6 +931,13 @@ impl<E> ScheduleDelayedTriggerEffect<E> {
 
     pub fn until_controller_next_turn(mut self) -> Self {
         self.duration = DelayedTriggerDuration::UntilControllerNextTurn;
+        self.until_end_of_turn = false;
+        self.until_end_of_combat = false;
+        self
+    }
+
+    pub fn until_controller_next_turn_end(mut self) -> Self {
+        self.duration = DelayedTriggerDuration::UntilControllerNextTurnEnd;
         self.until_end_of_turn = false;
         self.until_end_of_combat = false;
         self
@@ -4251,6 +4265,9 @@ pub struct GrantAbilitiesTargetEffect<A> {
     pub target: ChooseSpec,
     pub abilities: Vec<A>,
     pub duration: Until,
+    /// Snapshot this object's activated abilities when the grant resolves.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub activated_from: Option<ChooseSpec>,
 }
 
 impl<A> GrantAbilitiesTargetEffect<A> {
@@ -4263,6 +4280,7 @@ impl<A> GrantAbilitiesTargetEffect<A> {
             target,
             abilities: abilities.into_iter().collect(),
             duration,
+            activated_from: None,
         }
     }
 }

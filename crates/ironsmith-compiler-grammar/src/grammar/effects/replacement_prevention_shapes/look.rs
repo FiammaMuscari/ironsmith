@@ -10,6 +10,7 @@ pub enum LookHandPlayerShape {
     TargetOpponent,
     Opponent,
     IteratedPlayer,
+    DefendingPlayer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +28,9 @@ pub struct LookTopExileOneShape {
 
 fn look_hand_player<'a>(input: &mut LexStream<'a>) -> WResult<LookHandPlayerShape> {
     alt((
+        (opt(primitives::kw("the")), primitives::any_phrase(&[
+            &["defending", "player's"], &["defending", "players'"], &["defending", "players"],
+        ])).value(LookHandPlayerShape::DefendingPlayer),
         primitives::any_phrase(&[
             &["target", "player's"],
             &["target", "players'"],

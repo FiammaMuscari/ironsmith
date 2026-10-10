@@ -226,7 +226,7 @@ fn appositive_creature_token_name_can_start_with_the_and_contain_subtypes() {
         panic!("expected creature token shape");
     };
     assert_eq!(creature.name, "The Tiger God");
-    assert_eq!(creature.subtypes, vec![Subtype::God, Subtype::Cat]);
+    assert_eq!(creature.subtypes, vec![Subtype::Cat, Subtype::God]);
     assert_eq!(creature.power_toughness, (4, 4));
     assert_eq!(creature.colors, ColorSet::GREEN);
     assert!(creature.legendary);

@@ -1384,11 +1384,14 @@ mod tests {
                             .get_effect(one_shot)
                             .is_none()
                     );
+                    let mut observed = std::collections::HashSet::new();
                     let queued = game
                         .turn_store
                         .turn_history
                         .projected_records()
                         .map(|record| record.event.clone())
+                        .chain(replay.events.iter().cloned())
+                        .filter(|event| observed.insert(event.occurrence_key()))
                         .collect::<Vec<_>>();
                     if operation == 9 {
                         let mut observed = std::collections::HashSet::new();

@@ -354,7 +354,8 @@ fn targeted_repeated_investigate_pending_and_resource_error_restore_whole_instru
             let source = object(&mut game, A, Zone::Battlefield, "Investigation source", "Artifact");
             game.take_pending_trigger_events();
             game.effect_store.replacement_effects.add_resolution_effect(ReplacementEffect::with_matcher(
-                source, A, ironsmith::events::zones::matchers::WouldEnterBattlefieldMatcher::any(),
+                // "You" in this replacement is its controller, the investigating player.
+                source, B, ironsmith::events::zones::matchers::WouldEnterBattlefieldMatcher::any(),
                 ReplacementAction::InteractivePayLifeOrEnterTapped { life_cost: 2 },
             ));
             if !pending { game.set_token_creation_limits(ironsmith::effects::tokens::TokenCreationLimits { max_created_tokens: 1, ..Default::default() }); }

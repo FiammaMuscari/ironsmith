@@ -16,6 +16,9 @@ fn land_descriptor_keeps_size_color_subtype_and_live_recipient() {
     assert!(matches!(&abilities[1].payload, P::AddSubtypes { subtypes, .. } if subtypes == &[Subtype::Elf]));
     assert!(matches!(&abilities[2].payload, P::SetColors { colors, .. } if *colors == ColorSet::GREEN));
     assert!(matches!(&abilities[3].payload, P::SetBasePowerToughness { power: 1, toughness: 1, .. }));
+    let canonical = parse_lands_are_pt_creatures_still_lands_line(&lex(
+        "Forests you control are 1/1 green Elf creatures in addition to their other types.")).unwrap().unwrap();
+    assert_eq!(canonical, abilities);
 }
 
 #[test]

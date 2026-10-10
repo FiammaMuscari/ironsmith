@@ -3868,7 +3868,7 @@ pub(super) fn rewrite_removed_counter_mana_scalars_keep_this_way_surface_hint() 
 
         assert!(debug.contains("AddScaledManaEffect"), "{debug}");
         assert!(debug.contains("CountersRemovedThisWay"), "{debug}");
-        assert!(debug.contains("X"), "{debug}");
+        assert!(debug.contains("PriorEffectMetric") && debug.contains("Removed"), "{debug}");
     }
 }
 

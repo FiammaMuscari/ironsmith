@@ -38,10 +38,11 @@ fn each_color_gets_its_own_up_to_one_graveyard_target() {
                 .filter(|text| text.contains("Hand") && text.contains("Graveyard"))
                 .collect();
             assert_eq!(returns.len(), 5, "{name}: one return per color: {returns:#?}");
-            for color in ["WHITE", "BLUE", "BLACK", "RED", "GREEN"] {
+            for color in [ironsmith::ColorSet::WHITE, ironsmith::ColorSet::BLUE,
+                ironsmith::ColorSet::BLACK, ironsmith::ColorSet::RED, ironsmith::ColorSet::GREEN] {
                 assert!(
-                    returns.iter().any(|text| text.to_ascii_uppercase().contains(color)),
-                    "{name}: {color}"
+                    returns.iter().any(|text| text.contains(&format!("colors: Some({color:?})"))),
+                    "{name}: {color:?}"
                 );
             }
             if name == "Rogues' Gallery" {

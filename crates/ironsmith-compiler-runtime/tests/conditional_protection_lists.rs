@@ -34,7 +34,7 @@ fn dominarias_judgment_grants_each_color_only_with_its_basic_land_type() {
     for definition in definitions() {
         assert!(!ironsmith::cards::generated_definition_has_unimplemented_content(&definition));
         let debug = format!("{definition:?}");
-        assert_eq!(debug.matches("ProtectionFrom").count() >= 5, true, "{debug}");
+        assert_eq!(debug.matches("Protection(Color(").count(), 5, "{debug}");
         for land in ["Plains", "Island", "Swamp", "Mountain", "Forest"] {
             assert!(debug.contains(land), "{land}: {debug}");
         }

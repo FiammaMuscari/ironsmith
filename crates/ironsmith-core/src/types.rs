@@ -663,6 +663,8 @@ pub enum Subtype {
     Heartwood,
     // Appended creature type (CR 205.3m), ordinal-compatible.
     Llama,
+    // CR 205.3m; append to preserve serialized variant ordinals.
+    Orb,
 }
 
 impl Subtype {
@@ -825,6 +827,7 @@ impl Subtype {
             Subtype::Octopus,
             Subtype::Ogre,
             Subtype::Ooze,
+            Subtype::Orb,
             Subtype::Orc,
             Subtype::Otter,
             Subtype::Ouphe,
@@ -1252,26 +1255,7 @@ impl Subtype {
     }
 
     pub fn is_planeswalker_subtype(&self) -> bool {
-        matches!(
-            self,
-            Subtype::Ajani
-                | Subtype::Ashiok
-                | Subtype::Bolas
-                | Subtype::Chandra
-                | Subtype::Elspeth
-                | Subtype::Garruk
-                | Subtype::Gideon
-                | Subtype::Jace
-                | Subtype::Karn
-                | Subtype::Kaya
-                | Subtype::Liliana
-                | Subtype::Nissa
-                | Subtype::Sorin
-                | Subtype::Teferi
-                | Subtype::Tyvar
-                | Subtype::Ugin
-                | Subtype::Vraska
-        )
+        Self::all_planeswalker_types().contains(self)
     }
 
     pub fn belongs_to_family(&self, family: SubtypeFamily) -> bool {
@@ -1341,7 +1325,10 @@ mod tests {
         assert!(Subtype::Equipment.belongs_to_family(SubtypeFamily::Artifact));
         assert!(Subtype::Aura.belongs_to_family(SubtypeFamily::Enchantment));
         assert!(Subtype::Arcane.belongs_to_family(SubtypeFamily::Spell));
-        assert!(Subtype::Jace.belongs_to_family(SubtypeFamily::Planeswalker));
+        for subtype in Subtype::all_planeswalker_types() {
+            assert!(subtype.belongs_to_family(SubtypeFamily::Planeswalker), "{subtype}");
+            assert!(!subtype.is_creature_type(), "{subtype} is a planeswalker subtype");
+        }
         assert!(!Subtype::Elf.belongs_to_family(SubtypeFamily::Artifact));
     }
 }

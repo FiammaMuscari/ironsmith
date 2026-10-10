@@ -417,70 +417,48 @@ fn supplemental_card_name(card: &Value) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Visit one card at a time, retaining neither the input string nor the
+/// complete deserialized corpus. Validate the tail even after finding a match.
+fn visit_card_records(path: &str, mut visit: impl FnMut(&Value)) -> Result<(), Box<dyn Error>> {
+    struct CardsVisitor<'a, F>(&'a mut F);
+    impl<'de, F: FnMut(&Value)> serde::de::Visitor<'de> for CardsVisitor<'_, F> {
+        type Value = ();
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("an array of card records")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut records: A) -> Result<(), A::Error> {
+            while let Some(card) = records.next_element::<Value>()? {
+                (self.0)(&card);
+            }
+            Ok(())
+        }
+    }
+    let reader = std::io::BufReader::new(fs::File::open(path)?);
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    serde::Deserializer::deserialize_seq(&mut deserializer, CardsVisitor(&mut visit))?;
+    deserializer.end()?;
+    Ok(())
+}
+
 pub fn load_card_by_name(path: &str, name: &str) -> Result<Option<CardPayload>, Box<dyn Error>> {
-    let cards = load_canonical_cards(path)?;
     let normalized = normalize_lookup_name(name);
-    Ok(cards.get(&normalized).cloned())
+    let mut found = None;
+    visit_card_records(path, |card| {
+        if found.is_some() || supplemental_card_name(card).as_deref() != Some(normalized.as_str()) {
+            return;
+        }
+        found = build_registry_card_record_with_explicit_includes(card, &BTreeSet::new())
+            .map(|record| record.payload);
+    })?;
+    Ok(found)
 }
 
 pub fn load_card_payloads_by_name(
     path: &str,
     name: &str,
 ) -> Result<Vec<CardPayload>, Box<dyn Error>> {
-    let raw = fs::read_to_string(path)?;
-    let cards: Vec<Value> = serde_json::from_str(&raw)?;
-    let normalized = normalize_lookup_name(name);
-
-    for card in &cards {
-        if card
-            .get("digital")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        let card_name = card
-            .get("name")
-            .and_then(Value::as_str)
-            .map(normalize_lookup_name);
-        let card_name_matches = card_name.as_deref() == Some(normalized.as_str());
-        let supported = card_is_legal_in_supported_paper_format(card);
-        let face_match_indexes = matching_face_indexes(card, &normalized);
-        if !supported && !card_name_matches && face_match_indexes.is_empty() {
-            continue;
-        }
-
-        if card_name_matches {
-            if linked_face_layout_from_card(card).is_some()
-                && let Some(faces) = card.get("card_faces").and_then(Value::as_array)
-            {
-                let payloads = (0..faces.len())
-                    .filter_map(|idx| build_card_payload_for_face(card, idx))
-                    .collect::<Vec<_>>();
-                if !payloads.is_empty() {
-                    return Ok(payloads);
-                }
-            }
-            if let Some(record) =
-                build_registry_card_record_with_explicit_includes(card, &BTreeSet::new())
-            {
-                return Ok(vec![record.payload]);
-            }
-        }
-
-        if !face_match_indexes.is_empty() {
-            let payloads = face_match_indexes
-                .into_iter()
-                .filter_map(|idx| build_card_payload_for_face(card, idx))
-                .collect::<Vec<_>>();
-            if !payloads.is_empty() {
-                return Ok(payloads);
-            }
-        }
-    }
-
-    Ok(Vec::new())
+    Ok(load_card_payloads_by_names(path, &[name.to_owned()])?
+        .remove(&normalize_lookup_name(name)).unwrap_or_default())
 }
 
 /// Load many named card payloads with a single `cards.json` parse.
@@ -496,17 +474,15 @@ pub fn load_card_payloads_by_names(
         .iter()
         .map(|name| normalize_lookup_name(name))
         .collect::<BTreeSet<_>>();
-    let raw = fs::read_to_string(path)?;
-    let cards: Vec<Value> = serde_json::from_str(&raw)?;
     let mut out = BTreeMap::new();
 
-    for card in &cards {
+    visit_card_records(path, |card| {
         if card
             .get("digital")
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            continue;
+            return;
         }
 
         let card_name = card
@@ -534,7 +510,7 @@ pub fn load_card_payloads_by_names(
         }
 
         let Some(faces) = card.get("card_faces").and_then(Value::as_array) else {
-            continue;
+            return;
         };
         for (idx, face) in faces.iter().enumerate() {
             let Some(face_name) = face
@@ -551,7 +527,7 @@ pub fn load_card_payloads_by_names(
                 out.insert(face_name, vec![payload]);
             }
         }
-    }
+    })?;
 
     Ok(out)
 }
@@ -2887,22 +2863,6 @@ fn get_second_face(card: &Value) -> Option<&Value> {
         .and_then(|faces| faces.get(1))
 }
 
-fn matching_face_indexes(card: &Value, normalized_name: &str) -> Vec<usize> {
-    card.get("card_faces")
-        .and_then(Value::as_array)
-        .map(|faces| {
-            faces
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, face)| {
-                    let face_name = face.get("name").and_then(Value::as_str)?.trim();
-                    (normalize_lookup_name(face_name) == normalized_name).then_some(idx)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn build_card_payload_for_face(card: &Value, face_index: usize) -> Option<CardPayload> {
     let faces = card.get("card_faces")?.as_array()?;
     let face = faces.get(face_index)?;
@@ -3208,7 +3168,14 @@ fn parse_with_fallback(mut parse: impl FnMut(bool) -> ParseAttempt) -> ParseAtte
 pub fn compile_definition_from_payload(payload: &CardPayload) -> Result<CardDefinition, String> {
     // Dungeon cards (CR 309) begin outside the game; make their compiled
     // rooms available to any game built from compiled cards.
-    if let Err(error) = ironsmith_registry::register_builtin_dungeons() {
+    // Builtin initialization is not part of the requested card's parse trace.
+    // A nested capture preserves the outer trace while isolating dungeon lines.
+    let dungeons = if parse_trace::is_enabled() {
+        parse_trace::capture(ironsmith_registry::register_builtin_dungeons).0
+    } else {
+        ironsmith_registry::register_builtin_dungeons()
+    };
+    if let Err(error) = dungeons {
         parse_trace::event(format!("dungeon cards failed to compile: {error}"));
     }
     definition_from_payload(payload, CardId::new(), false)
@@ -3858,15 +3825,17 @@ CardDefinition {
     }
 
     #[test]
-    fn authoritative_snapshot_rejects_dropped_shared_card_type_marker() {
-        let snapshot = compile_authoritative_snapshot_from_payload(&holistic_wisdom_payload());
+    fn authoritative_snapshot_preserves_and_guards_shared_card_type_marker() {
+        let mut snapshot = compile_authoritative_snapshot_from_payload(&holistic_wisdom_payload());
+        assert_eq!(snapshot.parse_status, ParseStatus::StrictCompiled);
+        assert_eq!(snapshot.parse_error, None);
+        assert!(snapshot.compiled_text.as_deref().unwrap().contains("shares a card type"));
 
-        assert_eq!(snapshot.parse_status, ParseStatus::ParseFailed);
+        snapshot.compiled_text = Some("Return target card from your graveyard to your hand".into());
         assert_eq!(
-            snapshot.parse_error.as_deref(),
+            authoritative_semantic_marker_parse_error(&snapshot).as_deref(),
             Some("compiled text dropped required semantic marker: shares-a-card-type")
         );
-        assert!(snapshot.compiled_text.is_none());
     }
 
     #[test]
@@ -4252,6 +4221,30 @@ CardDefinition {
             rendered,
             "Search your library for three cards and reveal them. Target opponent chooses one. Put that card into your hand and the rest into your graveyard. Then shuffle."
         );
+    }
+
+    #[test]
+    fn named_loaders_preserve_first_eligible_record_and_validate_the_tail() {
+        let path = unique_temp_path("named-card-stream");
+        let cards = serde_json::json!([
+            {"name":"Stream Probe","digital":true,"type_line":"Instant","oracle_text":"Wrong digital card."},
+            {"name":"Unrelated","type_line":"Land","oracle_text":""},
+            {"name":"Stream Probe","type_line":"Instant","oracle_text":"Draw a card."},
+            {"name":"Stream Probe","type_line":"Instant","oracle_text":"Wrong duplicate."}
+        ]);
+        fs::write(&path, cards.to_string()).unwrap();
+        let file = path.to_str().unwrap();
+        let single = load_card_by_name(file, "Stream Probe").unwrap().unwrap();
+        assert_eq!(single.oracle_text, "Draw a card.");
+        let faces = load_card_payloads_by_name(file, "Stream Probe").unwrap();
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].oracle_text, single.oracle_text);
+        assert!(load_card_by_name(file, "Missing").unwrap().is_none());
+        assert!(load_card_payloads_by_name(file, "Missing").unwrap().is_empty());
+        fs::write(&path, format!("{cards} trailing garbage")).unwrap();
+        assert!(load_card_by_name(file, "Stream Probe").is_err());
+        assert!(load_card_payloads_by_name(file, "Stream Probe").is_err());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

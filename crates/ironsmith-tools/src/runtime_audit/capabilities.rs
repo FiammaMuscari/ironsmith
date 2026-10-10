@@ -8,7 +8,7 @@ use super::contracts::ContractFinding;
 use ironsmith::Effect;
 use ironsmith::ability::AbilityKind;
 use ironsmith::cards::CardDefinition;
-use ironsmith::effects::{ChooseObjectsEffect, ForPlayersEffect, SequenceEffect};
+use ironsmith::effects::ChooseObjectsEffect;
 
 fn failure(path: &str, code: &str, message: String) -> ContractFinding {
     ContractFinding {
@@ -19,34 +19,10 @@ fn failure(path: &str, code: &str, message: String) -> ContractFinding {
     }
 }
 
-fn simultaneous_supported(effect: &Effect) -> bool {
-    effect.0.supports_simultaneous_player_action()
-        || effect.0.is_read_only_simultaneous_player_action()
-}
-
 fn visit(effect: &Effect, path: &str, findings: &mut Vec<ContractFinding>) {
-    if let Some(players) = effect.downcast_ref::<ForPlayersEffect>() {
-        if !players.sequential
-            && !players.starting_with_controller
-            && !players.stop_after_first_happened
-        {
-            for (index, child) in players.effects.iter().enumerate() {
-                // Matches the runtime's explicit sequence-unwrapping gate.
-                let accepted_sequence =
-                    child
-                        .downcast_ref::<SequenceEffect>()
-                        .is_some_and(|sequence| {
-                            !sequence.effects.is_empty()
-                                && sequence.effects.iter().all(simultaneous_supported)
-                        });
-                if !simultaneous_supported(child) && !accepted_sequence {
-                    let description: String = format!("{child:?}").chars().take(160).collect();
-                    findings.push(failure(&format!("{path}/players.effects[{index}]"), "unsupported_simultaneous_action",
-                        format!("Non-sequential player loop rejects this body before executing any player when its filter matches: {description}")));
-                }
-            }
-        }
-    }
+    // ForPlayers now executes actions without immutable proposals through
+    // its ordered per-player fallback. The proposal capability traits alone
+    // no longer establish that a body is unsupported.
     if let Some(choice) = effect.downcast_ref::<ChooseObjectsEffect>() {
         if choice.filter.zone.is_none() && choice.zone.is_none() {
             findings.push(failure(path, "missing_choice_zone",
@@ -112,12 +88,12 @@ mod tests {
     use super::*;
     use ironsmith::cards::builders::CardDefinitionBuilder;
     use ironsmith::effect::{EffectId, EffectPredicate};
-    use ironsmith::effects::IfEffect;
+    use ironsmith::effects::{IfEffect, ForPlayersEffect};
     use ironsmith::target::PlayerFilter;
     use ironsmith::{CardId, CardType};
 
     #[test]
-    fn valid_simultaneous_draw_is_distinct_from_unsupported_conditional() {
+    fn simultaneous_draw_and_ordered_conditional_fallback_are_supported() {
         let mut definition = CardDefinitionBuilder::new(CardId::new(), "Capability fixture")
             .card_types(vec![CardType::Sorcery])
             .build();
@@ -140,11 +116,7 @@ mod tests {
             ))]
             .into(),
         );
-        assert!(
-            audit(&definition)
-                .iter()
-                .any(|finding| finding.code == "unsupported_simultaneous_action")
-        );
+        assert!(audit(&definition).is_empty());
     }
 }
 
@@ -160,7 +132,7 @@ mod collective_payment_contract_tests {
             let findings = super::audit(&definition);
             assert!(findings.is_empty(), "{name}: {findings:?}");
         }
-        // The existing unsupported conditional-child scenario above remains
-        // unchanged: payment ownership is not a blanket capability exemption.
+        // Actual execution is covered by the join-forces gameplay suite;
+        // this audit only reports capabilities the runtime cannot provide.
     }
 }

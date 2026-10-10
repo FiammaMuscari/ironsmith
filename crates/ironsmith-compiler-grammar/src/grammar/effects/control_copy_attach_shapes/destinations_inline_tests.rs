@@ -27,6 +27,17 @@ fn parses_library_and_battlefield_destinations() {
 }
 
 #[test]
+fn entering_attacker_keeps_player_or_planeswalker_choice() {
+    let destination = lex_line(
+        "the battlefield under your control tapped and attacking that player or a planeswalker they control", 0,
+    ).unwrap();
+    let parsed = parse_onto_battlefield_destination_shape(&destination).unwrap();
+    assert!(parsed.supported_tail && parsed.tapped && parsed.attacking);
+    assert_eq!(parsed.controller, Some(BattlefieldControllerShape::You));
+    assert_eq!(parsed.attack_target, Some((crate::cards::builders::PlayerAst::Defending, false)));
+}
+
+#[test]
 fn onto_destination_excludes_a_trailing_where_x_binding() {
     let tokens = lex_line(
             "an artifact card with mana value X or less from your hand onto the battlefield, where X is the number of ingenuity counters on this creature",

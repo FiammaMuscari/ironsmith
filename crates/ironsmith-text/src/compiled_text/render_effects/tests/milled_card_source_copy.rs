@@ -17,20 +17,17 @@ fn milled_card_copy_changes_only_source_and_keeps_the_upkeep_ability() {
         .power_toughness(crate::card::PowerToughness::fixed(2, 2))
         .parse_text(TEXT)
         .unwrap();
-    let trigger = definition
-        .abilities
-        .iter()
-        .find_map(|a| match &a.kind {
-            AbilityKind::Triggered(t) => Some(t),
-            _ => None,
-        })
-        .unwrap();
     for creature_owner in [None, Some(0), Some(1), Some(2)] {
         for accept in [false, true] {
             let mut game =
                 crate::game_state::GameState::new(vec!["Alice".into(), "Bob".into()], 20);
             let alice = game.players[0].id;
             let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
+            let source_abilities = game.current_abilities(source).unwrap();
+            let trigger = source_abilities.iter().find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(trigger) => Some(trigger),
+                _ => None,
+            }).unwrap();
             let other_card =
                 crate::card::CardBuilder::new(crate::ids::CardId::new(), "Other creature")
                     .card_types(vec![CardType::Creature])
@@ -114,7 +111,7 @@ fn milled_card_copy_preserves_conditional_source_text() {
         .unwrap();
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&definition).join("\n"),
-        TEXT
+        TEXT.replace("from among the cards milled this way", "milled this way")
     );
 }
 

@@ -136,6 +136,7 @@ fn instigator_forces_only_the_target_players_creatures_this_turn() {
         resolve_ability(&mut game, source, program, vec![Target::Player(B)]);
         assert!(must_attack_with_game(game.object(theirs).unwrap(), &game));
         assert!(!must_attack_with_game(game.object(mine).unwrap(), &game));
+        ironsmith::turn::execute_cleanup_step(&mut game);
         game.next_turn();
         assert!(
             !must_attack_with_game(game.object(theirs).unwrap(), &game),

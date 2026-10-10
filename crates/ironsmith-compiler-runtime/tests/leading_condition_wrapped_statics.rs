@@ -17,7 +17,9 @@ fn static_debug(definition: &CardDefinition) -> Vec<String> {
         .abilities
         .iter()
         .filter_map(|ability| match &ability.kind {
-            AbilityKind::Static(ability) => Some(format!("{ability:?}")),
+            // The source-line marker preserves grouping; it is not a grant
+            // whose application needs the line's condition.
+            AbilityKind::Static(ability) if ability.id() != ironsmith::static_abilities::StaticAbilityId::SourceLineStaticGroup => Some(format!("{ability:?}")),
             _ => None,
         })
         .collect()

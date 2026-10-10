@@ -548,7 +548,20 @@ pub(super) fn creature_rules(
     CreatureTokenRulesShape {
         token_rules,
         authored_inline_rules: authored_inline_rule_presentations(source_tokens, named_card),
-        cumulative_upkeep_mana_symbols: rules::cumulative_upkeep_mana_symbols(intrinsic_words),
+        cumulative_upkeep_mana_symbols: rules::cumulative_upkeep_mana_symbols(intrinsic_words)
+            .or_else(|| {
+                double_quoted_rule_bodies(source_tokens).into_iter().find_map(|body| {
+                    let words = parser_token_word_refs(body);
+                    if !words.starts_with(&["cumulative", "upkeep"]) {
+                        return None;
+                    }
+                    let symbols = rules::cumulative_upkeep_mana_symbols(&words)?;
+                    // Only a complete keyword owns an intrinsic upkeep cost.
+                    // Mentions inside a grant or trigger belong to that rule.
+                    (!symbols.is_empty() && words.len() == symbols.len() + 2)
+                        .then_some(symbols)
+                })
+            }),
         tap_mana_ability: rules::parse_token_tap_mana_ability_tokens(source_tokens),
         saddle_crew_power_bonus: power_bonus,
         banding: common::word_present(intrinsic_words, "banding"),

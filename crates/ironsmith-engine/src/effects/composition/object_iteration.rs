@@ -35,6 +35,7 @@ pub(super) fn prepare_iteration_continuation(
     cursor: Option<Box<dyn ActionProgramCursor>>,
     game: &mut GameState,
     ctx: &mut ExecutionContext,
+    parent: ExecutionContextCheckpoint,
 ) -> Result<SimultaneousEffectCommit<CompletedEffectOutputs>, ExecutionError> {
     let Some(cursor) = cursor else {
         if ctx.decision_maker.awaiting_choice() {
@@ -46,14 +47,20 @@ pub(super) fn prepare_iteration_continuation(
             "selected iterator lost its cursor".into(),
         ));
     };
-    IterationContinuation {
+    let result = IterationContinuation {
         cursor,
         history: Vec::new(),
         retained_outputs: Vec::new(),
         pending: None,
         context: ExecutionContextCheckpoint::capture(ctx),
     }
-    .run(game, ctx, true)
+    .run(game, ctx, true);
+    if result.as_ref().is_ok_and(|prepared| prepared.completion.is_some()) {
+        // The continuation captured its active child frame. Until it resumes,
+        // sibling originals must see their parent's bindings, not this iteration.
+        parent.restore_preserving_resolution_control(ctx);
+    }
+    result
 }
 
 struct IterationContinuation {

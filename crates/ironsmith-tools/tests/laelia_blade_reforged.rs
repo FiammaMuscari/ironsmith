@@ -118,17 +118,9 @@ fn attack_exiles_top_card_and_grants_normal_play_only_this_turn() {
                 vec![(source, ironsmith::combat_state::AttackTarget::Player(bob))],
             )
             .unwrap();
-            let event = ironsmith::triggers::TriggerEvent::new_with_provenance(
-                ironsmith::events::CreatureAttackedEvent::new(
-                    source,
-                    ironsmith::triggers::event::AttackEventTarget::Player(bob),
-                ),
-                ironsmith::provenance::ProvNodeId::default(),
-            );
+            // Declaring attackers already published the attack event.
             let mut queue = ironsmith::triggers::TriggerQueue::new();
-            for entry in ironsmith::triggers::check_triggers(&game, &event) {
-                queue.add(entry);
-            }
+            ironsmith::game_loop::drain_pending_trigger_events(&mut game, &mut queue);
             ironsmith::game_loop::put_triggers_on_stack(&mut game, &mut queue).unwrap();
             assert_eq!(game.stack.len(), 1);
             if source_leaves {

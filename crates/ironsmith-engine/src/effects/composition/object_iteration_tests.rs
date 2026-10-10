@@ -78,8 +78,8 @@ fn raw_object_and_tagged_replacement_loops_keep_scope_and_draw_after_original_sh
             object: replaced, player: alice, tagged });
         let middle = if depth > 0 { Effect::move_to_zone(ChooseSpec::Iterated, Zone::Exile, false) }
             else { Effect::draw(1) };
-        let payload = iterator(tagged, "it", vec![binding.clone(), Effect::may(vec![Effect::gain_life(2)]),
-            middle, binding, Effect::may(vec![Effect::gain_life(3)])]);
+        let payload = iterator(tagged, "it", vec![binding.clone(), Effect::new(crate::effects::MayEffect::new_for_player(vec![Effect::gain_life(2)], PlayerFilter::You)),
+            middle, binding, Effect::new(crate::effects::MayEffect::new_for_player(vec![Effect::gain_life(3)], PlayerFilter::You))]);
         let outer = game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(
             replacement_source, bob, crate::events::zones::matchers::WouldChangeZoneMatcher::new(
                 ObjectFilter::specific(replaced), Some(Zone::Graveyard), Some(Zone::Library)),
@@ -467,11 +467,13 @@ impl EffectExecutor for AssertRetainedWrapperResult {
         assert_eq!(game.player(player).unwrap().hand.len(), 2);
         assert_eq!(game.irreversible_random_count(), self.random + 2);
         assert!(game.object(self.other_original).is_none(), "the outer original precedes the wrapped draw tail");
-        assert_eq!(ctx.effect_outcomes[&self.id].count_or_zero(), 1,
-            "WithId retains the movement quantity, not its appended draw count");
+        assert_eq!(ctx.effect_outcomes[&self.id].instruction_result().objects().unwrap().len(), 1,
+            "WithId retains the movement arrival, not its appended draw");
         let tagged = ctx.get_tagged_all(&self.tag).unwrap();
         assert_eq!(tagged.len(), 1);
-        assert_eq!(tagged[0].zone, Zone::Hand);
+        assert_eq!(tagged[0].zone, Zone::Exile, "outcome-only tags retain departure characteristics");
+        let arrival = game.find_object_by_stable_id(tagged[0].stable_id).unwrap();
+        assert_eq!(game.object(arrival).unwrap().zone, Zone::Hand);
         Ok(EffectOutcome::count(0))
     }
 }

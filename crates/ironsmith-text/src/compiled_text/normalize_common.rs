@@ -1283,7 +1283,10 @@ fn describe_token_blueprint_with_name_role(
                 Some(ironsmith_core::TokenNameTextRole::Explicit) => true,
                 Some(ironsmith_core::TokenNameTextRole::SubtypeDerived) => false,
                 None => !card.name.trim().is_empty() && name_lower != "token"
-                    && name_lower != subtype_text.to_ascii_lowercase() && !name_matches_any_subtype,
+                    && name_lower != subtype_text.to_ascii_lowercase()
+                    && !ironsmith_core::token_text::subtype_derived_token_name(&card.subtypes)
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&card.name))
+                    && !name_matches_any_subtype,
             };
             let use_name_as_prefix = name_is_distinct
                 && card

@@ -202,6 +202,14 @@ pub fn compile_annotated_effects_with_context(
     annotated: &AnnotatedEffectSequence,
     ctx: &mut EffectLoweringContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    // Annotation reserves result IDs before lowering allocates IDs for nested
+    // instructions (for example, a copy inside a die-result row). Keep those
+    // allocators disjoint so a branch cannot overwrite its table's die result.
+    let mut id_gen = ctx.id_gen_context();
+    for id in annotated.effects.iter().filter_map(|effect| effect.assigned_effect_id) {
+        id_gen.next_effect_id = id_gen.next_effect_id.max(id.0 + 1);
+    }
+    ctx.apply_id_gen_context(id_gen);
     let mut compiled = Vec::new();
     let mut choices = Vec::new();
     let mut idx = 0;

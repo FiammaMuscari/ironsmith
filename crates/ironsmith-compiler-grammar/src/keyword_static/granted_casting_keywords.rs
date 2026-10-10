@@ -185,7 +185,28 @@ pub fn parse_granted_casting_keyword_line(
     if subject.first().is_some_and(|token| token.is_word("each")) {
         subject = &subject[1..];
     }
-    let filter = parse_object_filter_lexed(subject, false)?;
+    let mut filter = parse_object_filter_lexed(subject, false)?;
+    // A single terminal zone phrase scopes the complete card list, including
+    // repeated nouns: "Artifact cards and red creature cards in your hand".
+    // Do not merge lists whose arms explicitly name different zones.
+    let words = parser_token_word_refs(subject);
+    let zone_words = words.iter().filter(|word| matches!(**word,
+        "hand" | "graveyard" | "library" | "exile" | "battlefield" | "command")).count();
+    if filter.zone.is_none() && filter.any_of.len() >= 2 && zone_words == 1
+        && let Some(last) = filter.any_of.last()
+        && let Some(zone) = last.zone.filter(|zone| *zone != Zone::Battlefield)
+        && filter.any_of[..filter.any_of.len() - 1].iter().all(|arm| {
+            matches!(arm.zone, None | Some(Zone::Battlefield))
+                && arm.owner.is_none() && arm.controller.is_none()
+        })
+    {
+        filter.zone = Some(zone);
+        filter.owner = last.owner.clone();
+        for arm in &mut filter.any_of {
+            arm.zone = None;
+            arm.owner = None;
+        }
+    }
     let Some((filter, zone)) = granted_subject_card_filter(filter) else {
         return Ok(None);
     };
@@ -258,6 +279,7 @@ const MADNESS_MANA_COST_TAIL: &[&str] = &[
 const NOT_ON_BATTLEFIELD_TAILS: &[&[&str]] = &[
     &["that", "isn't", "on", "the", "battlefield"],
     &["that", "isnt", "on", "the", "battlefield"],
+    &["that", "is", "not", "on", "the", "battlefield"],
 ];
 
 /// "Each Vampire creature card you own that isn't on the battlefield has
@@ -295,24 +317,18 @@ pub fn parse_granted_madness_line(
     }
     // "... that isn't on the battlefield" scopes the grant to the zones
     // listed above; the remaining words name the cards.
-    let subject_words = parser_token_word_refs(subject);
-    let Some(scope_start) = subject_words.len().checked_sub(5) else {
-        return Ok(None);
-    };
-    let scope_words = &subject_words[scope_start..];
-    if !NOT_ON_BATTLEFIELD_TAILS
-        .iter()
-        .any(|tail| crate::word_primitives::parse_sequence_complete(scope_words, tail))
-    {
-        return Ok(None);
-    }
     let Some(that_idx) = subject.iter().rposition(|token| token.is_word("that")) else {
         return Ok(None);
     };
-    let mut filter = parse_object_filter_lexed(&subject[..that_idx], false)?;
-    if filter.zone == Some(Zone::Battlefield) {
+    let scope_words = parser_token_word_refs(&subject[that_idx..]);
+    if !NOT_ON_BATTLEFIELD_TAILS.iter()
+        .any(|tail| crate::word_primitives::parse_sequence_complete(&scope_words, tail))
+    {
         return Ok(None);
     }
+    let mut filter = parse_object_filter_lexed(&subject[..that_idx], false)?;
+    // Creature filters default to battlefield. This complete explicit scope
+    // replaces that default with the nonbattlefield grant zones below.
     filter.zone = None;
     let mut spec = crate::model::CompilerGrantSpecCore::new(
         crate::model::CompilerGrantableCore::DerivedAlternativeCast(

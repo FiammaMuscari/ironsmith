@@ -646,6 +646,15 @@ mod chain_entry_readings;
 fn parse_effect_chain_lexed_inner(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // A casting permission's mana-spending rider belongs to that permission,
+    // including inside a die-result row. Splitting its coordinating "and"
+    // would leave a standalone spend-mana instruction with no permission.
+    if crate::lexer::parser_token_word_refs(tokens).starts_with(&["you", "may"])
+        && tokens.iter().any(|token| token.is_word("spend"))
+        && let Some(effect) = parse_cast_or_play_tagged_clause(tokens)?
+    {
+        return Ok(vec![effect]);
+    }
     if let Some(effect) = super::duration_source_prevention::parse(tokens)? {
         return Ok(vec![effect]);
     }
@@ -1441,7 +1450,7 @@ mod inner_chain_readings;
 /// life gain/loss coordinated with a later instruction shares that
 /// instruction's terminal "equal to" amount. Restate the amount on the life
 /// clause so each coordinated action reads its own complete quantity.
-fn expand_shared_life_equal_to_amount(tokens: &[OwnedLexToken]) -> Option<Vec<OwnedLexToken>> {
+pub(super) fn expand_shared_life_equal_to_amount(tokens: &[OwnedLexToken]) -> Option<Vec<OwnedLexToken>> {
     let and_idx = tokens.iter().position(|token| token.is_word("and"))?;
     let head = &tokens[..and_idx];
     let (life, before_life) = head.split_last()?;
@@ -1476,6 +1485,23 @@ fn parse_effect_chain_inner_lexed_unstacked(
     tokens: &[OwnedLexToken],
     recognize_control_flow: bool,
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // Copy exceptions may contain quoted triggers with their own verbs.
+    // Keep the complete outer action ahead of damage and chain readers.
+    if let Some(effect) = super::dispatch_entry::parse_complete_become_statement(tokens)? {
+        return Ok(vec![effect]);
+    }
+    // Conditional consequences enter this inner boundary directly. Keep
+    // repeated damage amounts with their shared verb before splitting "and".
+    if let Some(effects) = super::fanout_family::parse_compound_damage_fanout_sentence(tokens)? {
+        return Ok(effects);
+    }
+    if let Some(split) = tokens.windows(2).position(|pair| pair[0].is_comma() && pair[1].is_word("then"))
+        && crate::grammar::effects::control_copy_attach_shapes::parse_tagged_battlefield_partition_shape(&tokens[..split]).is_some()
+    {
+        let mut effects = vec![super::verb_handlers::parse_put_into_hand(&tokens[..split], None)?];
+        effects.extend(parse_effect_chain_inner_lexed(&tokens[split + 2..])?);
+        return Ok(effects);
+    }
     // A complete anchored turn instruction owns its internal comma before
     // generic coordination constructs sibling clauses.
     if let Some(effect) = super::dispatch_inner::parse_take_extra_turn_sentence(tokens)? {
@@ -2243,11 +2269,14 @@ fn parse_effect_chain_inner_lexed_unstacked(
                         )
                     })
                 {
-                    previous_segment = Some(segment);
+                    previous_segment = Some(modifier_tokens);
                     continue;
                 }
                 effects.push(bind_source_exiled_effect(effect, bind_source_exiled));
-                previous_segment = Some(segment);
+                // Keep the carried verb for a third or later list member.
+                // Otherwise "lose A, B, and ward" flips back to "gains"
+                // after B and attempts to parse ward as a grant with a cost.
+                previous_segment = Some(modifier_tokens);
                 continue;
             }
         }

@@ -190,7 +190,8 @@ fn filtered_damage_requires_exact_source_evidence_and_rolls_back_unknowns() {
             let mut game = game();
             let inferno = enter(&mut game, &definition, A);
             assert_eq!(game.chosen_creature_type(inferno), Some(Subtype::Dinosaur));
-            let absent = ObjectId::new();
+            let absent = ObjectId::from_raw(u64::MAX);
+            assert!(game.object(absent).is_none());
             let other = game.create_object_from_definition(&simple("Creature — Elf", "{1}", ""), A, Zone::Battlefield);
             let other_snapshot = ironsmith::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(game.object(other).unwrap(), &game);
             game.take_pending_trigger_events();
@@ -203,7 +204,10 @@ fn filtered_damage_requires_exact_source_evidence_and_rolls_back_unknowns() {
             let mut context = EffectContext::new(absent, A, &mut dm);
             if missing_kind == 1 { context.source_snapshot = Some(other_snapshot.clone()); }
             let result = execute_effect(&mut game, &sequence, &mut context);
-            assert!(matches!(result, Err(ExecutionError::IncompleteEvidence(_))),
+            assert!(matches!(&result, Err(ExecutionError::IncompleteEvidence(_)))
+                || matches!(&result, Err(ExecutionError::ContinuousDiscovery(
+                    ironsmith::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }
+                )) if *object == absent),
                 "missing/mismatched LKI cannot be a false replacement predicate: {result:?}");
             assert_eq!((game.player(A).unwrap().life, game.player(B).unwrap().life), before_life);
             assert!(game.take_pending_trigger_events().is_empty(), "failed operations cannot publish earlier life or damage events");

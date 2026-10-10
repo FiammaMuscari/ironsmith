@@ -534,15 +534,18 @@ impl EffectExecutor for ExploreEffect {
                                         target_id,
                                         1,
                                     )
-                                    .with_snapshot(action_snapshot)
+                                    .with_snapshot(action_snapshot.clone())
                                     .with_object_tags(object_tags);
                                     explored_objects.push(target_id);
                                     let original =
                                         crate::effects::CompletedEffectOutputs::from_children(
                                             children,
                                             |children| {
-                                                EffectOutcome::aggregate_with_primary_result(
-                                                    EffectOutcome::with_objects(explored_objects),
+                                                EffectOutcome::aggregate_replacement_outcomes(
+                                                    EffectOutcome::with_objects(explored_objects)
+                                                        .with_execution_fact(crate::effect::ExecutionFact::ResultObjectMemory(
+                                                            action_snapshot.into_iter().collect(),
+                                                        )),
                                                     children,
                                                 )
                                             },
@@ -4318,10 +4321,9 @@ mod tests {
             2,
             "expected one sacrifice event per sacrificed creature"
         );
-        let zone_changes = game
-            .effect_store
-            .pending_trigger_events
-            .iter()
+        let events = game.turn_store.turn_history.event_records.iter()
+            .map(|record| &record.event).collect::<Vec<_>>();
+        let zone_changes = events.iter()
             .filter_map(|event| event.downcast::<ZoneChangeEvent>())
             .collect::<Vec<_>>();
         assert_eq!(zone_changes.len(), 1, "expected one batched death event");
@@ -4329,8 +4331,8 @@ mod tests {
         assert_eq!(zone_changes[0].result_objects.len(), 2);
         assert_eq!(zone_changes[0].snapshots().len(), 2);
 
-        let triggered =
-            crate::triggers::check_triggers(&game, &game.effect_store.pending_trigger_events[0]);
+        // Death observers were captured in the simultaneous departure frame.
+        let triggered = game.take_pending_trigger_entries();
         assert_eq!(
             triggered.len(),
             2,
@@ -4480,7 +4482,9 @@ mod replacement_manifest_owner_contract_tests {
             self.calls += 1;
             assert!(game.object(self.first).is_none());
             let arrival = game.objects_in_deterministic_order().into_iter().find(|object| object.stable_id == self.stable).unwrap();
-            assert_eq!(arrival.zone, Zone::Battlefield); assert!(game.is_manifested(arrival.id)); assert!(game.is_face_down(arrival.id));
+            assert_eq!(arrival.zone, Zone::Battlefield);
+            assert!(if self.sequential { game.is_cloaked(arrival.id) } else { game.is_manifested(arrival.id) });
+            assert!(game.is_face_down(arrival.id));
             if self.sequential { assert_eq!(game.object(self.second).unwrap().zone, Zone::Library); assert!(!game.is_face_down(self.second)); }
             else { assert!(game.object(self.second).is_none(), "simultaneous entries precede additions"); }
             if self.binding { assert_eq!(game.counter_count(arrival.id, CounterType::PlusOnePlusOne), 1); }
@@ -4514,7 +4518,7 @@ mod replacement_manifest_owner_contract_tests {
         else if mode == 2 { assert!(ctx.decision_maker.awaiting_choice()); assert!(result.unwrap().events.is_empty()); }
         else {
             let outcome = result.unwrap(); assert_eq!(outcome.value.objects().unwrap().len(), 2);
-            for id in outcome.value.objects().unwrap() { assert_eq!(game.object(*id).unwrap().zone, Zone::Battlefield); assert!(game.is_manifested(*id)); assert!(game.is_face_down(*id)); }
+            for id in outcome.value.objects().unwrap() { assert_eq!(game.object(*id).unwrap().zone, Zone::Battlefield); assert!(if sequential { game.is_cloaked(*id) } else { game.is_manifested(*id) }); assert!(game.is_face_down(*id)); }
             assert_eq!(outcome.events.iter().filter_map(|event| event.downcast::<KeywordActionEvent>()).map(|event| event.amount).sum::<u32>(), 2);
             assert_eq!(game.player(alice).unwrap().life, 20); assert_eq!(game.player(bob).unwrap().life, if mode == 3 { 20 } else { 27 });
             if mode == 3 { let arrival = game.objects_in_deterministic_order().into_iter().find(|object| object.stable_id == stable).unwrap(); assert_eq!(game.counter_count(arrival.id, CounterType::PlusOnePlusOne), 1); }

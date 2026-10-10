@@ -99,7 +99,7 @@ struct Choices {
 }
 impl DecisionMaker for Choices {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
-        if ctx.description.starts_with("Choose mode") && !self.modes.is_empty() {
+        if (ctx.description.starts_with("Choose ") && ctx.description.contains("mode")) && !self.modes.is_empty() {
             return self.modes.clone();
         }
         if ctx.description == "Choose a basic land type" {
@@ -578,9 +578,11 @@ fn rankle_all_modes_retain_treasures_sacrifice_and_player_battle_only_bonus() {
                     .filter(|id| game
                         .object(**id)
                         .is_some_and(|o| game.current_controller(o.id) == Some(player)
-                            && o.name.as_str() == "Treasure"))
+                            && o.kind == ironsmith::object::ObjectKind::Token && o.subtypes.contains(&ironsmith::types::Subtype::Treasure)))
                     .count(),
-                1
+                1,
+                "Treasure for {player:?}; battlefield: {:?}",
+                game.battlefield.iter().filter_map(|id| game.object(*id)).map(|o| (o.name.to_string(), game.current_controller(o.id))).collect::<Vec<_>>()
             );
         }
         assert!(

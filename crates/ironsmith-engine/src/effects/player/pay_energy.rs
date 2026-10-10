@@ -174,7 +174,7 @@ impl CostExecutableEffect for PayEnergyEffect {
             .map_err(CostValidationError::ExecutionFailed)?;
         let player = game
             .player(payer)
-            .ok_or_else(|| CostValidationError::Other("unable to resolve payer".into()))?;
+            .ok_or(CostValidationError::ExecutionFailed(ExecutionError::PlayerNotFound(payer)))?;
         (player.energy_counters >= needed)
             .then_some(())
             .ok_or(CostValidationError::NotEnoughEnergy)

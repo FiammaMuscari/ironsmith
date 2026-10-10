@@ -105,10 +105,22 @@ fn free_exile_price_keeps_mandatory_mana_and_life_costs_through_actual_payment()
     assert!(cast_actions(&game, player, card).is_empty(), "mandatory red mana is still required");
     let method = CastingMethod::PlayFrom { source, zone: Zone::Exile, use_alternative: Some(1) };
     let mut rejected = game.clone();
-    assert!(apply_priority_response_with_dm(&mut rejected, &mut TriggerQueue::new(),
-        &mut PriorityLoopState::new(2), &PriorityResponse::PriorityAction(LegalAction::CastSpell {
+    let mut state = PriorityLoopState::new(2);
+    let mut queue = TriggerQueue::new();
+    let mut progress = apply_priority_response_with_dm(&mut rejected, &mut queue,
+        &mut state, &PriorityResponse::PriorityAction(LegalAction::CastSpell {
             spell_id: card, from_zone: Zone::Exile, casting_method: method.clone(),
-        }), &mut SelectFirstDecisionMaker).is_err(), "unpayable cast cannot bypass its absent menu action");
+        }), &mut SelectFirstDecisionMaker);
+    // Presentation permits proposing a spell before producing its mana.
+    // The payment owner must cancel this proposal when no payment exists.
+    for _ in 0..10 {
+        if !state.has_pending_action() { break; }
+        let Ok(GameProgress::NeedsDecisionCtx(context)) = progress else { break; };
+        progress = crate::game_loop::apply_decision_context_with_dm(&mut rejected, &mut queue,
+            &mut state, &context, &mut SelectFirstDecisionMaker);
+    }
+    assert!(!state.has_pending_action(), "unpayable proposal must be cancelled: {progress:?}");
+    assert!(rejected.stack.is_empty());
     assert_eq!(rejected.object(card).unwrap().zone, Zone::Exile);
     game.player_mut(player).unwrap().mana_pool.red = 1;
     let actions = cast_actions(&game, player, card);
@@ -320,7 +332,12 @@ fn free_exile_printed_x_positive_minimum_rejects_menu_and_forgery_with_full_roll
                     spell_id: card, from_zone: Zone::Exile, casting_method: method.clone(),
                 }), &mut SelectFirstDecisionMaker)
         };
-        assert!(matches!(result, Err(GameLoopError::ActionCancelled(_))), "{result:?}");
+        if direct_proposal {
+            assert!(matches!(result, Err(GameLoopError::ActionCancelled(_))), "{result:?}");
+        } else {
+            assert!(matches!(result, Err(GameLoopError::InvalidState(ref message))
+                if message == "selected action is not legal for any member of the priority team"), "{result:?}");
+        }
         assert_eq!(format!("{:?}", game.object(card).unwrap()), original);
         assert_eq!(game.exile, exile);
         assert_eq!(game.next_object_id_counter(), next_id);
@@ -415,7 +432,8 @@ fn free_exile_printed_x_stale_action_rechecks_the_current_minimum() {
     let mut state = PriorityLoopState::new(2);
     assert!(matches!(apply_priority_response_with_dm(&mut game, &mut TriggerQueue::new(),
         &mut state, &PriorityResponse::PriorityAction(action), &mut SelectFirstDecisionMaker),
-        Err(GameLoopError::ActionCancelled(_))));
+        Err(GameLoopError::InvalidState(ref message))
+            if message == "selected action is not legal for any member of the priority team"));
     assert_eq!(format!("{:?}", game.object(card).unwrap()), original);
     assert_eq!(game.next_object_id_counter(), next_id);
     assert!(game.stack.is_empty());

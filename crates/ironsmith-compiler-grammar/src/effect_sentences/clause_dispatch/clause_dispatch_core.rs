@@ -342,9 +342,12 @@ pub(super) fn parse_effect_clause_unstacked(
     }
     let subject_word_view = ClauseDispatchCompatWords::new(subject_tokens);
     let subject_words = subject_word_view.to_word_refs();
-    if is_target_player_dealt_damage_by_this_turn_subject(&subject_words) {
+    // An indicative control clause is not a player subject for a later verb.
+    // Do not discard an unsupported static clause while keeping its "and draw"
+    // tail as an unrelated spell instruction.
+    if subject_words.starts_with(&["you", "control"]) {
         return Err(CardTextError::ParseError(format!(
-            "unsupported combat-history player subject (clause: '{}') [rule=combat-history-player-subject]",
+            "unsupported complete control clause (clause: '{}')",
             render_lower_words(tokens)
         )));
     }
@@ -420,6 +423,11 @@ pub(super) fn parse_effect_clause_unstacked(
                 tail.duration,
             ));
         }
+    }
+    if matches!(verb, Verb::Lose)
+        && let Some(effect) = super::super::gain_ability::parse_lose_family_types_and_abilities(tokens)?
+    {
+        return Ok(effect);
     }
     if matches!(verb, Verb::Lose) && clause_grammar::parse_shared_ability_gain_shape(rest).is_some()
     {

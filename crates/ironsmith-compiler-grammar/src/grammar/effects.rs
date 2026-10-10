@@ -1732,9 +1732,65 @@ fn dont_lose_mana_subject_player(words: &[&str]) -> PlayerAst {
     }
 }
 
+pub(crate) fn parse_counted_next_untap_steps(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let tokens = crate::util::trim_edge_punctuation_tokens(tokens);
+    let words = crate::lexer::token_word_refs(tokens);
+    let Some(next) = words.iter().position(|word| *word == "next") else {
+        return Ok(None);
+    };
+    let (Some(count_word), Some(untap), Some(steps)) =
+        (words.get(next + 1), words.get(next + 2), words.get(next + 3))
+    else {
+        return Ok(None);
+    };
+    if *untap != "untap" || *steps != "steps" || next + 4 != words.len() {
+        return Ok(None);
+    }
+    let Some(count) = crate::util::parse_number_word_u32(count_word).filter(|count| *count >= 2)
+    else {
+        return Ok(None);
+    };
+    let Some(count_token) = crate::lexer::TokenWordView::new(tokens)
+        .map_word_or_end_to_token_boundary(next + 1)
+    else {
+        return Ok(None);
+    };
+    // Read the single-step sentence, then widen its duration.
+    let mut single = tokens[..count_token].to_vec();
+    single.push(OwnedLexToken::word("untap", crate::cards::builders::TextSpan::synthetic()));
+    // Multiple controllers each have one next step; retain that plural
+    // agreement while removing only the count from the duration.
+    let step = if next >= 2 && words[next - 2] == "their" { "steps" } else { "step" };
+    single.push(OwnedLexToken::word(step, crate::cards::builders::TextSpan::synthetic()));
+    let mut effects = match parse_cant_effect_sentence_with_grammar_entrypoint_lexed(&single)? {
+        Some(effects) => effects,
+        None => return Ok(None),
+    };
+    let mut widened = 0;
+    for effect in &mut effects {
+        if let EffectAst::SubjectVerb(subject_verb) = effect
+            && let crate::cards::builders::SubjectVerbActionAst::Cant {
+                restriction: crate::effect::Restriction::Untap(_),
+                duration: crate::effect::Until::ControllersNextUntapStep,
+                duration_surface,
+                ..
+            } = &mut subject_verb.action
+        {
+            *duration_surface = crate::effect::RestrictionDurationSurface::NextUntapSteps(count);
+            widened += 1;
+        }
+    }
+    Ok((widened == 1).then_some(effects))
+}
+
 pub fn parse_cant_effect_sentence_with_grammar_entrypoint_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if let Some(effects) = parse_counted_next_untap_steps(tokens)? {
+        return Ok(Some(effects));
+    }
     let words = token_word_refs(tokens);
     let parser_words = parser_token_word_refs(tokens);
     if crate::word_primitives::parse_choice_sequence_complete(

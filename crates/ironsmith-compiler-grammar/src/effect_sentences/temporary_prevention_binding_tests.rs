@@ -16,7 +16,7 @@ fn chosen_color_keeps_the_declared_recipient_and_fixed_source_qualities() {
             DamagePreventionActionAst::PreventAllDamageToTargetFromSourceFilter {
                 target, duration, of_chosen_color, ..
             },
-        ) = subject.action else { panic!("filtered target shield") };
+        ) = subject.action else { panic!("filtered target shield: {:?}", subject.action) };
         assert!(of_chosen_color);
         assert_eq!(duration, Until::EndOfTurn);
         assert!(!matches!(target, TargetAst::Source(_)));

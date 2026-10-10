@@ -274,7 +274,14 @@ pub fn parse_discard(
             );
             filter.set_additional_cost_object_surface(Some(surface));
             Some(filter)
-        } else if let Ok(filter) = parse_object_filter(trailing_tokens, false) {
+        } else if let Ok(filter) = parse_object_filter(trailing_tokens, false).or_else(|error| {
+            // A relation such as "with mana value equal to the number"
+            // requires its card noun to select the object-filter grammar.
+            let Some(start) = tokens.len().checked_sub(
+                cards_shape.qualifier_tokens.len() + 1 + cards_shape.trailing_tokens.len(),
+            ) else { return Err(error); };
+            parse_object_filter(&tokens[start..], false)
+        }) {
             // "discards all nonland cards with mana value equal to the
             // number" (Void): the trailing relation qualifies the card
             // phrase. Read the complete phrase so the leading qualifier

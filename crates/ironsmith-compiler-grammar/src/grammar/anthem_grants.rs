@@ -1824,7 +1824,9 @@ fn parse_cant_be_blocked_by_more_than_clause_lexed<'a>(
 fn parse_can_block_additional_creature_clause_lexed<'a>(
     input: &mut LexStream<'a>,
 ) -> WResult<CanBlockAdditionalCreatureClause<'a>> {
-    let subject_tokens = take_until_phrase(input, &[&["can", "block"]])?;
+    // A granted tail inherits its subject from the enclosing anthem.
+    let subject_tokens = repeat_till(0.., any.void(), peek(primitives::phrase(&["can", "block"])))
+        .map(|((), _)| ()).take().parse_next(input)?;
     primitives::phrase(&["can", "block"]).parse_next(input)?;
     let additional_count_tokens = take_until_phrase(
         input,

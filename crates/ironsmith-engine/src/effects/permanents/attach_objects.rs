@@ -937,8 +937,12 @@ mod authored_attachment_in_tagged_loop_contract_tests {
         let current=game.find_object_by_stable_id(stable).unwrap();
         assert_ne!(current,original);assert_eq!(game.object(current).unwrap().zone,Zone::Battlefield);
         assert_eq!(game.object(current).unwrap().attached_to,Some(AttachmentTarget::Player(bob)));
-        let events=game.take_pending_trigger_events();
-        assert_eq!(events.iter().filter(|event|event.kind()==crate::events::EventKind::EnterBattlefield).count(),1);
+        let events=&game.turn_store.turn_history.event_records;
+        assert_eq!(events.iter().filter(|record| {
+            crate::events::downcast_event::<crate::events::ZoneChangeEvent>(record.event.inner())
+                .is_some_and(|movement| movement.to == Zone::Battlefield
+                    && movement.result_objects == vec![current])
+        }).count(), 1, "the committed entry has one exact destination receipt");
         assert_eq!(game.player(alice).unwrap().library.len(),0);
         drop(ctx);
         assert_eq!(choices.asked,0,"an authored entry attachment must not ask for a different attachment at commit");

@@ -390,14 +390,14 @@ fn catalog_bankbuster_pilot_crews_for_three_but_does_not_saddle_for_three() {
     assert_eq!(
         game.battlefield
             .iter()
-            .filter(|id| game.object(**id).unwrap().name == "Treasure")
+            .filter(|id| game.object(**id).unwrap().has_subtype(engine::types::Subtype::Treasure))
             .count(),
         1
     );
     let pilot = *game
         .battlefield
         .iter()
-        .find(|id| game.object(**id).unwrap().name == "Pilot")
+        .find(|id| game.object(**id).unwrap().has_subtype(engine::types::Subtype::Pilot))
         .unwrap();
     assert_eq!(
         game.calculated_characteristics(pilot).unwrap().power,
@@ -1543,6 +1543,9 @@ fn catalog_replacement_reflexive_trigger_waits_for_the_stack() {
             1,
             "token creation must wait for the reflexive trigger"
         );
+        engine::game_loop::put_triggers_on_stack_with_dm(
+            &mut game, &mut engine::triggers::TriggerQueue::new(), &mut dm,
+        ).unwrap();
         assert_eq!(game.stack.len(), usize::from(opponent));
         if opponent {
             game.move_object_by_effect(source, Zone::Graveyard);
@@ -2507,7 +2510,7 @@ fn catalog_oven_uses_the_sacrificed_creatures_last_known_toughness() {
         assert_eq!(
             game.battlefield
                 .iter()
-                .filter(|id| game.object(**id).unwrap().name == "Food")
+                .filter(|id| game.object(**id).unwrap().has_subtype(engine::types::Subtype::Food))
                 .count(),
             if toughness >= 4 { 2 } else { 1 }
         );

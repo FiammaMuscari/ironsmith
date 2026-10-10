@@ -94,6 +94,7 @@ fn end_step(g: &mut GameState, p: PlayerId) {
     let mut queue = TriggerQueue::new();
     let event = TriggerEvent::new_with_provenance(ironsmith::events::BeginningOfEndStepEvent::new(p), Default::default());
     for trigger in check_triggers(g, &event) { queue.add(trigger); }
+    for trigger in ironsmith::triggers::check_delayed_triggers(g, &event) { queue.add(trigger); }
     put_triggers_on_stack_with_dm(g, &mut queue, &mut SelectFirstDecisionMaker).unwrap();
     settle(g);
 }
@@ -118,7 +119,7 @@ fn all_four_frozen_bodies_keep_every_ability() {
             assert_eq!(abilities.iter().filter(|ability| matches!(&ability.kind, AbilityKind::Activated(_))).count(), 1);
             assert_eq!(g.current_has_static_ability_id(source, StaticAbilityId::Flying), name.ends_with("Dragon") || name == "Dragon Whelp");
             assert_eq!(g.current_has_static_ability_id(source, StaticAbilityId::Banding), name == "Nalathni Dragon");
-            assert_eq!(abilities.len(), match name { "Dragon Whelp" => 2, "Nalathni Dragon" => 3, _ => 1 });
+            assert_eq!(abilities.iter().filter(|ability| !matches!(&ability.kind, AbilityKind::Static(ability) if ability.id() == StaticAbilityId::SourceLineKeywordGroup)).count(), match name { "Dragon Whelp" => 2, "Nalathni Dragon" => 3, _ => 1 });
         }
     }
 }

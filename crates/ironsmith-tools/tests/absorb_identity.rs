@@ -301,12 +301,10 @@ fn absorb_identity_preserves_targeting_and_collective_copy_structure() {
         panic!("expected typed copy")
     };
     assert!(!source.is_target());
-    let ironsmith::target::ChooseSpec::Object(reference) = source.base() else {
-        panic!("expected departed object reference")
+    let ironsmith::target::ChooseSpec::Tagged(reference) = source.base() else {
+        panic!("expected exact departed object reference: {source:?}")
     };
-    assert_eq!(reference.zone, Some(ironsmith::Zone::Battlefield));
-    assert_eq!(reference.tagged_constraints.len(), 1);
-    assert_eq!(reference.tagged_constraints[0].tag, bounce.tag);
+    assert_eq!(*reference, bounce.tag);
     let snapshot = ironsmith_tools::compile_authoritative_snapshot_from_payload(&payloads[0]);
     assert_eq!(
         snapshot.parse_status,

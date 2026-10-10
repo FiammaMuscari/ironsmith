@@ -60,7 +60,10 @@ fn current_condition_operands_override_earlier_comparison_inside_the_branch() {
     assert_eq!(
         count,
         &Value::absolute_difference(Value::CardsInHand(PlayerFilter::You), Value::Fixed(7))
-            .with_surface_hint(ValueSurfaceHint::Difference)
+            .with_surface_hints([
+                ValueSurfaceHint::Difference,
+                ValueSurfaceHint::ComparisonDifferenceReference,
+            ])
     );
 }
 

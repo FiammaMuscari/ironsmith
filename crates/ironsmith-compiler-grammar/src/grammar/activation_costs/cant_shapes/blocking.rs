@@ -135,6 +135,7 @@ fn parse_except_by_tail<'a>(input: &mut LexStream<'a>) -> WResult<BlockingCantTa
 fn parse_maximum_blockers<'a>(input: &mut LexStream<'a>) -> WResult<BlockingCantTail> {
     let minimum = parse_minimum_quantity.parse_next(input)?;
     parse_creature_noun.parse_next(input)?;
+    opt(primitives::phrase(&["each", "combat"])).parse_next(input)?;
     let maximum_blockers = minimum.checked_sub(1).ok_or_else(|| {
         primitives::backtrack_err("maximum blockers", "positive blocker quantity")
     })?;

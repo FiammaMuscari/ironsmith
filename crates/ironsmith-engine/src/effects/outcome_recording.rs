@@ -184,6 +184,20 @@ pub(crate) fn complete_outcome(
     mut recorded: Vec<ExecutionFact>,
 ) {
     if let Some(original) = outcome.instruction_result.as_mut() {
+        // A replaced scalar instruction can publish its payload's queued
+        // observations after the payload scope has closed. Those records
+        // belong to the aggregate, never to the unperformed original action.
+        if original.status == crate::effect::OutcomeStatus::Replaced
+            && original.as_count() == Some(0)
+        {
+            complete_outcome(game, action, actor, original, Vec::new());
+            for fact in recorded {
+                if !outcome.execution_facts.contains(&fact) {
+                    outcome.execution_facts.push(fact);
+                }
+            }
+            return;
+        }
         complete_outcome(game, action, actor, original, recorded);
         return;
     }

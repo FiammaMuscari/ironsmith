@@ -335,13 +335,20 @@ pub(crate) fn execute_simultaneous_destroy_with_outputs(
                 let result = receipt.result.clone();
                 let object_id = receipt.permanent;
                 let pre_snapshot = receipt.snapshot.clone().or(pre_snapshot);
+                let receipt_result_objects = receipt.result_objects();
                 receipts.push(receipt);
                 if matches!(result, EventOutcome::Proceed(Zone::Graveyard)) {
                     applied_count += 1;
                     if let Some(snapshot) = pre_snapshot.as_ref() {
                         destroyed_memory.push(Clone::clone(snapshot));
                     }
-                    let result_objects = staged_game.take_zone_change_results(object_id);
+                    // Prepared moves own their exact arrival identities. The legacy
+                    // side channel may already have been consumed by that owner.
+                    let result_objects = if receipt_result_objects.is_empty() {
+                        staged_game.take_zone_change_results(object_id)
+                    } else {
+                        receipt_result_objects
+                    };
                     if let Some(snapshot) = pre_snapshot {
                         graveyard_zone_changes.push((object_id, result_objects.clone(), snapshot));
                     }
@@ -445,6 +452,8 @@ pub(crate) fn execute_simultaneous_destroy_with_outputs(
             if !destroyed_objects.is_empty() {
                 outcome =
                     outcome.with_execution_fact(ExecutionFact::AffectedObjects(destroyed_objects));
+            }
+            if !destroyed_memory.is_empty() {
                 outcome = outcome.with_affected_object_memory(destroyed_memory);
             }
 

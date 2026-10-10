@@ -160,7 +160,7 @@ fn plunderer_uses_current_artifacts_and_retains_its_optional_reflexive_treasures
             ironsmith::game_loop::generate_and_queue_step_triggers(&mut game,&mut queue);choices.accept=accept;choices.targets=vec![Target::Player(D)];
             admit(&mut game,&mut queue,&mut choices);resolve(&mut game,&mut choices);admit(&mut game,&mut queue,&mut choices);
             if accept{assert_eq!(game.stack.len(),1);resolve(&mut game,&mut choices);}assert_eq!(game.battlefield.len(),before+if accept{2}else{0});
-            if accept{let treasures:Vec<_>=game.battlefield.iter().copied().filter(|id|game.object(*id).is_some_and(|object|object.name.as_str()=="Treasure")).collect();assert_eq!(treasures.len(),2);
+            if accept{let treasures:Vec<_>=game.battlefield.iter().copied().filter(|id|game.object(*id).is_some_and(|object|object.kind==ironsmith::object::ObjectKind::Token && object.subtypes.contains(&ironsmith::Subtype::Treasure))).collect();assert_eq!(treasures.len(),2);
                 for id in treasures{let owner=game.current_controller(id).unwrap();assert!(owner==A||owner==D);assert_eq!(game.is_tapped(id),owner==D);}}
         }
     }

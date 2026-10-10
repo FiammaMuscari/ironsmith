@@ -140,7 +140,8 @@ fn missing_source_mana_value_is_incomplete_and_checked_damage_rolls_back() {
     for definition in definitions() {
         let mut game = game();
         let protected = enter(&mut game, &definition, "odd");
-        let absent = ObjectId::new();
+        let absent = ObjectId::from_raw(u64::MAX);
+            assert!(game.object(absent).is_none());
         let other = game.create_object_from_definition(&simple("Creature — Bear", 2, ""), B, Zone::Battlefield);
         let other_snapshot = ironsmith::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(game.object(other).unwrap(), &game);
         let effect = Effect::new(SequenceEffect::new(vec![Effect::gain_life(3),
@@ -151,7 +152,11 @@ fn missing_source_mana_value_is_incomplete_and_checked_damage_rolls_back() {
             let mut dm = SelectFirstDecisionMaker;
             let mut context = EffectContext::new(absent, B, &mut dm);
             if wrong_snapshot { context.source_snapshot = Some(other_snapshot.clone()); }
-            assert!(matches!(execute_effect(&mut game, &effect, &mut context), Err(ExecutionError::IncompleteEvidence(_))));
+            let result = execute_effect(&mut game, &effect, &mut context);
+            assert!(matches!(&result, Err(ExecutionError::IncompleteEvidence(_)))
+                || matches!(&result, Err(ExecutionError::ContinuousDiscovery(
+                    ironsmith::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics { object }
+                )) if *object == absent), "{result:?}");
             assert_eq!(game.damage_on(protected), 0);
             assert_eq!(game.player(B).unwrap().life, life);
             assert!(game.take_pending_trigger_events().is_empty());

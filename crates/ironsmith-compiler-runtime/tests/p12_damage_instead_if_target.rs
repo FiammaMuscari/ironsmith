@@ -29,10 +29,34 @@ fn definitions(name: &str, text: &str) -> [CardDefinition; 2] {
 #[test]
 fn barrage_upgrades_damage_only_for_a_white_or_blue_target() {
     for definition in definitions("Lithomantic Barrage", BARRAGE) {
-        let debug = format!("{definition:?}");
-        assert!(debug.contains("TargetMatches"), "condition reads the target: {debug}");
-        assert!(debug.contains("Fixed(5)"), "{debug}");
-        assert!(debug.contains("Fixed(1)"), "{debug}");
-        assert!(debug.contains("White") && debug.contains("Blue"), "{debug}");
+        use ironsmith::color::ColorSet;
+        use ironsmith::decision::SelectFirstDecisionMaker;
+        use ironsmith::game_loop::resolve_stack_entry_with;
+        use ironsmith::game_state::{StackEntry, TargetAssignment};
+        use ironsmith::{CardId, CardType, GameState, PlayerId, Zone};
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        for (colors, expected) in [
+            (ColorSet::WHITE, 5), (ColorSet::BLUE, 5),
+            (ColorSet::WHITE.union(ColorSet::BLUE), 5),
+            (ColorSet::RED, 1), (ColorSet::GREEN, 1),
+        ] {
+            let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+            let source = game.create_object_from_definition(&definition, alice, Zone::Stack);
+            let creature = ironsmith::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Recipient")
+                .card_types(vec![CardType::Creature]).color_indicator(colors)
+                .power_toughness(ironsmith::card::PowerToughness::fixed(2, 8)).build();
+            let target = game.create_object_from_definition(&creature, bob, Zone::Battlefield);
+            let requirements = ironsmith::game_loop::extract_target_requirements_from_program_with_modes(
+                &game, definition.spell_effect.as_ref().unwrap(), alice, Some(source), None);
+            assert_eq!(requirements.len(), 1);
+            game.push_to_stack(StackEntry::new(source, alice)
+                .with_targets(vec![ironsmith::Target::Object(target)])
+                .with_target_assignments(vec![TargetAssignment {
+                    spec: requirements[0].spec.clone(), range: 0..1,
+                }]));
+            resolve_stack_entry_with(&mut game, &mut SelectFirstDecisionMaker).unwrap();
+            assert_eq!(game.damage_on(target), expected, "target colors: {colors:?}");
+        }
     }
 }

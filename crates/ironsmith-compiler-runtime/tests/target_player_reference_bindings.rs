@@ -712,7 +712,7 @@ impl DecisionMaker for CopyChoice {
             && !context
                 .description
                 .to_ascii_lowercase()
-                .contains("new target")
+                .starts_with("choose new target")
     }
 }
 #[test]

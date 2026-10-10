@@ -69,7 +69,11 @@ impl DecisionMaker for Script {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
         self.option_prompts
             .push((ctx.player, ctx.description.clone()));
-        if ctx.description.starts_with("Choose mode") && !self.modes.is_empty() {
+        if ctx.description.starts_with("Choose ")
+            && ctx.description.contains("mode")
+            && !ctx.description.starts_with("Choose a player to choose the mode")
+            && !self.modes.is_empty()
+        {
             return self.modes.clone();
         }
         SelectFirstDecisionMaker.decide_options(game, ctx)

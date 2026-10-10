@@ -159,7 +159,13 @@ impl UntapSelection {
             outcome.set_status(summary.status);
             outcome.set_value(summary.value);
         }
+        // Even a nontargeted reference ("untap enchanted creature") must
+        // retain its selected object for following "it" clauses. Untapping
+        // changes state but need not return an object-valued result.
         outcome
+            .with_execution_fact(crate::effect::ExecutionFact::ChosenObjects(self.objects.clone()))
+            .with_chosen_object_memory(self.objects.iter()
+                .filter_map(|id| self.before.get(id).cloned()).collect())
     }
     fn bind_actor(&self, outcome: &mut EffectOutcome) {
         for event in &mut outcome.events {
@@ -417,6 +423,24 @@ mod tests {
             game.tap(id);
         }
         id
+    }
+
+    #[test]
+    fn nontargeted_untap_retains_its_object_for_following_references() {
+        for tapped in [false, true] {
+            let mut game = setup_game();
+            let alice = PlayerId::from_index(0);
+            let creature = create_creature(&mut game, "Reference witness", alice, tapped);
+            let source = game.new_object_id();
+            let mut ctx = ExecutionContext::new_default(source, alice);
+            let effect = crate::effect::Effect::new(UntapEffect {
+                target: ChooseSpec::SpecificObject(creature), actor: None,
+            }).tag("untapped");
+            crate::effects::execute_effect(&mut game, &effect, &mut ctx).unwrap();
+            assert!(!game.is_tapped(creature));
+            assert_eq!(ctx.get_tagged_all("untapped").unwrap().iter()
+                .map(|snapshot| snapshot.object_id).collect::<Vec<_>>(), vec![creature]);
+        }
     }
 
     // === Targeted untap tests ===

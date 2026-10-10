@@ -124,6 +124,9 @@ fn parse_turn_history_value_gate(tokens: &[OwnedLexToken]) -> Option<PredicateAs
     let clean = crate::util::trim_edge_punctuation_tokens(tokens);
     if clean.len() > 6
         && crate::lexer::parser_token_word_refs(&clean[..3]) == ["you", "attacked", "with"]
+        // Numeric thresholds belong to the count reader. The object-filter
+        // parser can consume their words without preserving the minimum.
+        && crate::util::parse_number_word_u32(clean[3].parser_text()).is_none()
         && crate::lexer::parser_token_word_refs(&clean[clean.len() - 2..]) == ["this", "turn"]
         && let Ok(filter) = crate::grammar::filters::parse_object_filter_with_grammar_entrypoint_lexed(
             &clean[3..clean.len() - 2], false,
@@ -1260,6 +1263,42 @@ fn parse_source_state_gate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
 fn parse_existing_zone_history_gate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
     let clause = LexedClause::new(tokens);
 
+    // Count historical arrivals, using their last-known characteristics even
+    // when those cards have since left the graveyard.
+    let words = clause.word_refs();
+    if words.get(1..3) == Some(&["or", "more"])
+        && let Some(amount) = words.first().and_then(|word| crate::util::parse_number_word_u32(word))
+        && let Some(passive) = words.iter().position(|word| matches!(*word, "was" | "were"))
+        && passive > 3
+    {
+        let tail = &words[passive + 1..];
+        let history = match tail {
+            ["put", "into", "graveyards", "from", "anywhere", "this", "turn"] => Some((None, false)),
+            ["put", "into", "your", "graveyard", "from", "anywhere", "this", "turn"] => Some((Some(PlayerFilter::You), false)),
+            ["put", "into", "your", "graveyard", "from", "anywhere", "other", "than", "the", "battlefield", "this", "turn"] => Some((Some(PlayerFilter::You), true)),
+            _ => None,
+        };
+        if let Some((owner, exclude_battlefield)) = history {
+            let span = crate::lexer::TokenWordView::new(tokens).token_span_for_words(3, passive)?;
+            let mut filter = parse_object_filter_lexed(&tokens[span.start..span.end], false).ok()?;
+            filter.zone = None;
+            filter.owner = owner;
+            let all = Value::TurnHistoryCount(TurnHistoryCount::MovedZones {
+                filter: filter.clone(), from: None, to: Some(Zone::Graveyard),
+            });
+            let count = if exclude_battlefield {
+                Value::Add(Box::new(all), Box::new(Value::Scaled(Box::new(
+                    Value::TurnHistoryCount(TurnHistoryCount::MovedZones {
+                        filter, from: Some(Zone::Battlefield), to: Some(Zone::Graveyard),
+                    }),
+                ), -1)))
+            } else {
+                all
+            };
+            return Some(value_at_least(count, i32::try_from(amount).ok()?));
+        }
+    }
+
     // Keep the object descriptor owned by the shared filter grammar.  The
     // history clause only owns the passive zone-change frame, so card-type
     // unions and ordinary permanent descriptors do not need one-off entries
@@ -1398,8 +1437,16 @@ fn parse_existing_zone_history_gate_exact(clause: LexedClause<'_>) -> Option<Pre
 
 fn parse_player_counter_gate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
     let condition = crate::grammar::conditions::parse_player_counter_condition(tokens)?;
-    if condition.counter_type != CounterType::Poison {
-        return None;
+    if condition.counter_type != CounterType::Poison
+        || matches!(condition.player, PlayerFilter::Target(_))
+        || comparison_to_at_least_threshold(&condition.comparison).is_none()
+    {
+        let (operator, amount) = comparison_to_value_comparison_operator(condition.comparison)?;
+        return Some(PredicateAst::ValueComparison {
+            left: Value::PlayerCounters(condition.player, condition.counter_type),
+            operator,
+            right: Value::Fixed(amount),
+        });
     }
     let count = comparison_to_at_least_threshold(&condition.comparison)?;
     let player = if condition.player == PlayerFilter::ControllerOf(crate::target::ObjectRef::tagged(

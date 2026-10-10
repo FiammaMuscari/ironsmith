@@ -1620,9 +1620,8 @@ fn pre_rule_permission_payment_followup(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<PreParseFollowupResult>, CardTextError> {
     let words = crate::lexer::parser_token_word_refs(tokens);
-    let Some(tail) = words.strip_prefix(&["if", "you", "cast", "a", "spell", "this", "way"]) else {
-        return Ok(None);
-    };
+    let tail = words.strip_prefix(&["if", "you", "cast", "a", "spell", "this", "way"])
+        .unwrap_or(&words);
     let life = matches!(
         tail,
         [
@@ -1657,6 +1656,11 @@ fn pre_rule_permission_payment_followup(
         ]
     );
     let mode = match tail {
+        ["mana", "of", "any", "type", "can", "be", "spent", "to", "cast", rest @ ..]
+            if matches!(rest, ["a", "spell", "this", "way"] | ["spells", "this", "way"]
+                | ["them", "this", "way"] | ["that", "spell", "this", "way"] | ["it"]) =>
+                Some(ironsmith_core::value_model::ManaSpendMode::AnyType),
+
         [
             "you",
             "may",
@@ -2186,6 +2190,7 @@ const PRE_PARSE_SUBJECT_VERB_FOLLOWUP_RULES: &[SubjectVerbFollowupRuleDef] = &[
         &["destroy", "then"],
         pre_rule_destroy_those_creatures_followup
     ),
+    pre_followup_rule!("elliptical-condition-fallback", &["if"], pre_rule_elliptical_condition_fallback),
     pre_followup_rule!("otherwise", &["otherwise"], pre_rule_otherwise_followup),
     pre_followup_rule!("x-maximum-followup", &["x"], pre_rule_x_maximum_followup),
 ];
@@ -2409,6 +2414,7 @@ mod subject_verb_followups_core_programs;
 use subject_verb_followups_core_programs::{
     is_destroy_those_creatures_sentence, post_rule_numeric_result_branch_label,
     pre_rule_destroy_those_creatures_followup, pre_rule_otherwise_followup,
+    pre_rule_elliptical_condition_fallback,
     pre_rule_x_maximum_followup,
 };
 #[path = "subject_verb_followups/subject_verb_followups_choice.rs"]

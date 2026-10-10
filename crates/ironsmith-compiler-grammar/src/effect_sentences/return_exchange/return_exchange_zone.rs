@@ -192,6 +192,14 @@ pub fn parse_return(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTextError
     }
     let delayed_timing = destination.timing.map(|timing| match timing {
         crate::grammar::effects::ReturnTimingShape::NextEndStep(player) => {
+            // "under its owner's control ... that player's next end step"
+            // names the returned card's owner, not a previous target player.
+            let player = if player == PlayerFilter::IteratedPlayer
+                && destination.controller == crate::grammar::effects::ReturnControllerShape::Owner
+            {
+                PlayerFilter::OwnerOf(crate::target::ObjectRef::tagged(
+                    crate::tag::CompilerReferenceTag::It.key()))
+            } else { player };
             DelayedReturnTimingAst::NextEndStep(player)
         }
         crate::grammar::effects::ReturnTimingShape::NextUpkeep(player) => {

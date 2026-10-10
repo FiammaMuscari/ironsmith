@@ -55,7 +55,9 @@ fn is_keyword_value(tokens: &[OwnedLexToken]) -> bool {
         && !tokens
             .iter()
             .any(|token| token.is_any_word(&["counter", "counters"]))
-        && crate::grammar::filters::parse_counter_type_from_tokens(tokens).is_some()
+        // Named counters accept arbitrary words, so they cannot establish
+        // that a repeat value is a keyword (e.g. "an enchantment").
+        && crate::keyword_static::parse_ability_line(tokens).is_some()
 }
 
 fn parse_repeat_values(tokens: &[OwnedLexToken]) -> Option<RepeatValues<'_>> {

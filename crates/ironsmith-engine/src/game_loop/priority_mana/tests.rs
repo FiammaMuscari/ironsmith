@@ -2122,8 +2122,13 @@ fn native_linked_mana_keeps_pair_ownership_in_immediate_pending_and_special_acti
             .with_ability(if route == 3 { Ability::activated(cost, consumer.clone()) }
                 else { Ability::mana_with_effects(cost, consumer.clone()) }).build();
         let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
-        let event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::EnterBattlefieldEvent::new(source, Zone::Hand), Default::default());
+        let mut entry = crate::events::ZoneChangeEvent::with_cause(
+            source, Zone::Hand, Zone::Battlefield,
+            crate::events::cause::EventCause::effect(), None);
+        entry.result_objects = vec![source];
+        entry.destination_snapshots = vec![crate::snapshot::ObjectSnapshot::from_object(
+            game.object(source).unwrap(), &game)];
+        let event = crate::triggers::TriggerEvent::new_with_provenance(entry, Default::default());
         let mut queue = TriggerQueue::new();
         for entry in crate::triggers::check_triggers(&game, &event) { queue.add(entry); }
         assert_eq!(queue.entries.len(), 1);

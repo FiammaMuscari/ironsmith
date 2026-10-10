@@ -86,7 +86,7 @@ fn ward_waterbend_materializes_and_preserves_its_keyword_cost() {
     let definition = compile_with_types(text, vec![CardType::Creature], vec![]);
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&definition),
-        [text]
+        ["Ward Waterbend {4}"]
     );
     let debug = format!("{definition:#?}");
     assert!(debug.contains("Ward"), "{debug}");
