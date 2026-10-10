@@ -301,6 +301,21 @@ pub fn preserve_and_reason(
     if current.is_empty() || remaining.is_empty() {
         return None;
     }
+    let words = crate::lexer::parser_token_word_refs(current);
+    let tail = crate::lexer::parser_token_word_refs(remaining);
+    if contains_any(current, &["lose", "loses"]) {
+        // The first conjunction joins removed characteristics; a subsequent
+        // explicit grant starts its own action. Both coordination readers
+        // use this boundary rule.
+        if words.ends_with(&["types"]) && tail.first() == Some(&"abilities") {
+            return Some(AndPreservation::CardTypeList);
+        }
+        if words.ends_with(&["types", "and", "abilities"])
+            && tail.first().is_some_and(|word| matches!(*word, "has" | "have" | "gains" | "gain"))
+        {
+            return None;
+        }
+    }
     if color_pair_boundary(current, remaining) {
         return Some(AndPreservation::ColorPair);
     }
@@ -312,7 +327,7 @@ pub fn preserve_and_reason(
     // `tapped and attacking` is one token-entry modifier. At this boundary
     // the token noun is necessarily in the right-hand slice, so the generic
     // "current clause contains token" guard below cannot recognize it yet.
-    if starts_any(current, &[&["create"], &["creates"]])
+    if contains_any(current, &["create", "creates"])
         && ends_any(current, &[&["tapped"]])
         && starts_any(remaining, &[&["attacking"]])
         && (contains_any(current, &["token", "tokens"])

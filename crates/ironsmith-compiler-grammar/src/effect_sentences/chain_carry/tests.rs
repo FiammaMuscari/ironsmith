@@ -523,6 +523,11 @@ fn multicolor_source_animation_then_unblockable_keeps_both_typed_arms() {
             ..
         }),
         EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action: SubjectVerbActionAst::TargetOnly {
+                target: TargetAst::Tagged(reference, _), explicit_declaration: false,
+            }, ..
+        }),
+        EffectAst::SubjectVerb(SubjectVerbEffectAst {
             action:
                 SubjectVerbActionAst::Cant {
                     restriction: crate::effect::Restriction::BeBlocked(restricted),
@@ -551,14 +556,11 @@ fn multicolor_source_animation_then_unblockable_keeps_both_typed_arms() {
     );
     assert_eq!(duration, &crate::effect::Until::EndOfTurn);
     assert_eq!(restriction_duration, &crate::effect::Until::EndOfTurn);
-    assert!(
-        restricted.source
-            && matches!(
-                restricted.source_surface,
-                Some(crate::target::SourceReferenceSurface::ThisPermanentType(_))
-            ),
-        "the bare restriction must retain its shared-source reference: {restricted:#?}"
-    );
+    assert_eq!(reference.as_str(), crate::tag::CompilerReferenceTag::It.as_str());
+    assert!(restricted.tagged_constraints.iter().any(|constraint| {
+        constraint.tag.as_str() == reference.as_str()
+            && constraint.relation == crate::target::TaggedOpbjectRelation::IsTaggedObject
+    }), "restriction must reuse the animated source: {restricted:#?}");
 }
 
 #[test]
@@ -3033,7 +3035,8 @@ fn source_card_return_preserves_identity_and_explicit_graveyard() {
 
     assert!(debug.contains("ReturnFromGraveyardToHandEffect"), "{debug}");
     assert!(
-        debug.contains("target: Source")
+        debug.contains("source: true")
+            && debug.contains("Graveyard")
             && debug.contains("graveyard_player_surface: Some(\n")
             && debug.contains("You"),
         "{debug}"
@@ -4399,9 +4402,8 @@ fn descent_into_madness_exact_body_does_not_collapse_the_zone_arms() {
     assert_eq!(filter.any_of.len(), 2, "{filter:#?}");
     assert!(matches!(
         count_value.unhinted(),
-        Value::CountersOnSource(crate::object::CounterType::Named(name))
-            | Value::CountersOn(_, Some(crate::object::CounterType::Named(name)))
-            if name.as_str() == "despair"
+        Value::CountersOnSource(crate::object::CounterType::Despair)
+            | Value::CountersOn(_, Some(crate::object::CounterType::Despair))
     ));
     assert!(
         !filter.any_of.iter().any(|arm| {

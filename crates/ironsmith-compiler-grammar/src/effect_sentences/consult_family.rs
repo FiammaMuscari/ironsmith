@@ -39,6 +39,14 @@ pub fn parse_exile_top_library_prefix(tokens: &[OwnedLexToken]) -> Option<Vec<Ef
 pub fn parse_consult_traversal_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<ConsultSentenceParts>, CardTextError> {
+    parse_consult_traversal_sentence_with_player(tokens, None)
+}
+
+/// A compositor that owns a quantified subject supplies its iteration player.
+pub(crate) fn parse_consult_traversal_sentence_with_player(
+    tokens: &[OwnedLexToken],
+    scoped_player: Option<PlayerAst>,
+) -> Result<Option<ConsultSentenceParts>, CardTextError> {
     let Some(shape) = effect_grammar::parse_consult_traversal_shape(tokens) else {
         return Ok(None);
     };
@@ -79,7 +87,7 @@ pub fn parse_consult_traversal_sentence(
             _ => None,
         }
     });
-    let player = match shape.player {
+    let player = if let Some(player) = scoped_player { player } else { match shape.player {
         effect_grammar::ConsultTraversalPlayerShape::ImpliedByPrefixOrYou => {
             inferred_prefix_player.unwrap_or(PlayerAst::You)
         }
@@ -90,7 +98,7 @@ pub fn parse_consult_traversal_sentence(
                 _ => return Ok(None),
             }
         }
-    };
+    } };
     if let Some(prefix_player) = inferred_prefix_player {
         apply_consult_prefix_player_surface(&mut prefix_effects, prefix_player);
     }
@@ -768,11 +776,14 @@ pub fn if_you_dont_result_predicate(
     if let Some(prefix) = if_you_dont_prefix_len(tokens)
         && let Some(comma) = tokens.iter().position(|token| token.is_comma())
         && prefix <= comma
-        && crate::lexer::token_word_refs(&tokens[prefix..comma])
-            == ["draw", "a", "card", "this", "way"]
+        && let Some(action) = match crate::lexer::token_word_refs(&tokens[prefix..comma]).as_slice() {
+            ["draw", "a", "card", "this", "way"] => Some(ironsmith_core::PriorEffectAction::Drawn),
+            ["copy", "a", "spell", "this", "way"] => Some(ironsmith_core::PriorEffectAction::Copied),
+            _ => None,
+        }
     {
         let mut result = ironsmith_core::PriorEffectResultSurface::new(
-            ironsmith_core::PriorEffectAction::Drawn,
+            action,
             ObjectFilter::default(),
             ironsmith_core::PriorEffectResultActor::You,
             ironsmith_core::PriorEffectResultQuantifier::One,

@@ -276,8 +276,9 @@ impl EffectExecutor for TaggedEffect {
         crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
         ExecutionError,
     > {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
     fn supports_prepared_action_program(&self) -> bool {
@@ -401,6 +402,11 @@ impl EffectExecutor for TaggedEffect {
     }
 
     fn target_reuse_policy(&self) -> TargetReusePolicy {
+        // Tagging a synthetic declaration must preserve its one-use binding
+        // for the later action instead of declaring another independent target.
+        if self.effect.0.target_reuse_policy() == TargetReusePolicy::SyntheticPrelude {
+            return TargetReusePolicy::SyntheticPrelude;
+        }
         // A tagged action declares its own target slot. A composite (such as
         // a trailing-if conditional) only forwards a nested action's target,
         // so it keeps that composite's policy and can consume the target its
@@ -595,7 +601,77 @@ impl TagAllEffect {
     }
 }
 
+struct TagAllOriginalOutcome {
+    tag: TagKey,
+    runtime: TaggedRuntimeState,
+    fallback_snapshots: Vec<ObjectSnapshot>,
+}
+
+impl TagAllOriginalOutcome {
+    fn capture(effect: &TagAllEffect, game: &GameState, ctx: &ExecutionContext) -> Self {
+        let mut runtime = capture_tagged_runtime_state(game, &effect.effect, ctx);
+        runtime.outcome_only = true;
+        Self {
+            tag: effect.tag.clone(),
+            runtime,
+            fallback_snapshots: capture_all_effect_target_snapshots(game, &effect.effect, ctx),
+        }
+    }
+}
+
+impl super::OriginalOutcomeAdapter for TagAllOriginalOutcome {
+    fn finish(
+        self: Box<Self>, game: &mut GameState, ctx: &mut ExecutionContext,
+        result: Result<EffectOutcome, ExecutionError>,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        let outcome = result?;
+        if ctx.decision_maker.awaiting_choice() { return Ok(outcome); }
+        let has_result_objects = outcome.objects().is_some_and(|objects| !objects.is_empty())
+            || outcome.affected_objects().is_some_and(|objects| !objects.is_empty())
+            || outcome.affected_object_memory().is_some_and(|memory| !memory.is_empty())
+            || outcome.chosen_objects().is_some_and(|objects| !objects.is_empty())
+            || outcome.chosen_object_memory().is_some_and(|memory| !memory.is_empty());
+        if has_result_objects {
+            apply_tagged_runtime_state(game, ctx, self.tag, &outcome, self.runtime);
+        } else if outcome.something_happened() && !self.fallback_snapshots.is_empty() {
+            ctx.tag_objects(self.tag, self.fallback_snapshots);
+        } else {
+            ctx.set_tagged_objects(self.tag, Vec::new());
+        }
+        Ok(outcome)
+    }
+}
+
 impl EffectExecutor for TagAllEffect {
+    fn supports_prepared_action_program(&self) -> bool {
+        self.effect.0.supports_prepared_action_program()
+    }
+    fn select_prepared_action_program(
+        &self, game: &mut GameState, ctx: &mut ExecutionContext,
+    ) -> Result<Option<Box<dyn crate::effects::ActionProgramCursor>>, ExecutionError> {
+        if ctx.decision_maker.awaiting_choice() { return Ok(None); }
+        Ok(Some(super::action_program::adapted_child_program_cursor(
+            self.effect.as_ref().clone(),
+            Box::new(TagAllOriginalOutcome::capture(self, game, ctx)),
+        )))
+    }
+    fn supports_replacement_draw_continuation(&self) -> bool {
+        crate::effects::replacement::replacement_effect_supported(&self.effect)
+    }
+    fn prepare_replacement_draw_continuation_with_outputs(
+        &self, game: &mut GameState, ctx: &mut ExecutionContext,
+    ) -> Result<crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>, ExecutionError> {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
+        let cursor = self.select_prepared_action_program(game, ctx)?;
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
+    }
+    fn visit_prepared_selection_bindings(
+        &self, visitor: &mut dyn FnMut(crate::effects::PreparedSelectionBinding),
+    ) {
+        visitor(crate::effects::PreparedSelectionBinding::ObjectTag(self.tag.clone()));
+        self.effect.0.visit_prepared_selection_bindings(visitor);
+    }
+
     fn as_cost_executable(&self) -> Option<&dyn CostExecutableEffect> {
         self.effect
             .0
@@ -629,34 +705,9 @@ impl EffectExecutor for TagAllEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-        let fallback_snapshots = capture_all_effect_target_snapshots(game, &self.effect, ctx);
-        let mut runtime = capture_tagged_runtime_state(game, &self.effect, ctx);
-        runtime.outcome_only = true;
-
-        // Execute the inner effect, then tag the objects the effect actually
-        // reports as affected. This keeps "destroyed this way" style tags from
-        // including objects protected by replacement/prevention.
-        let outputs = crate::effects::execute_effect_with_outputs(game, &self.effect, ctx)?;
-        let outcome = &outputs.outcome;
-        let has_result_objects = outcome.objects().is_some_and(|objects| !objects.is_empty())
-            || outcome
-                .affected_objects()
-                .is_some_and(|objects| !objects.is_empty())
-            || outcome
-                .affected_object_memory()
-                .is_some_and(|memory| !memory.is_empty())
-            || outcome
-                .chosen_objects()
-                .is_some_and(|objects| !objects.is_empty())
-            || outcome
-                .chosen_object_memory()
-                .is_some_and(|memory| !memory.is_empty());
-        if has_result_objects {
-            apply_tagged_runtime_state(game, ctx, self.tag.clone(), outcome, runtime);
-        } else if outcome.something_happened() && !fallback_snapshots.is_empty() {
-            ctx.tag_objects(self.tag.clone(), fallback_snapshots);
-        }
-        Ok(outputs)
+        let adapter = Box::new(TagAllOriginalOutcome::capture(self, game, ctx));
+        let outputs = crate::effects::execute_effect_with_outputs(game, &self.effect, ctx);
+        adapter.finish_with_outputs(game, ctx, outputs)
     }
 
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
@@ -683,6 +734,11 @@ impl EffectExecutor for TagAllEffect {
     }
 
     fn target_reuse_policy(&self) -> TargetReusePolicy {
+        // Tagging a synthetic declaration must preserve its one-use binding
+        // for the later action instead of declaring another independent target.
+        if self.effect.0.target_reuse_policy() == TargetReusePolicy::SyntheticPrelude {
+            return TargetReusePolicy::SyntheticPrelude;
+        }
         if self.effect.0.get_target_spec().is_some() {
             TargetReusePolicy::AlwaysDeclareNew
         } else {
@@ -951,6 +1007,70 @@ mod tests {
         assert_eq!(tagged[1].object_id, bob_target);
     }
 
+    #[test]
+    fn tagged_synthetic_prelude_shares_only_one_target_selection() {
+        for tag_all in [false, true] {
+            let mut game = setup_game();
+            let alice = PlayerId::from_index(0);
+            let creature = create_creature(&mut game, "Target", alice);
+            let source = game.new_object_id();
+            let spec = ChooseSpec::target(ChooseSpec::creature());
+            let wrap = |effect| {
+                if tag_all {
+                    Effect::new(TagAllEffect::new("chosen", effect))
+                } else {
+                    Effect::new(TaggedEffect::new("chosen", effect))
+                }
+            };
+            for explicit in [false, true] {
+                let prelude = if explicit {
+                    crate::effects::TargetOnlyEffect::explicit(spec.clone())
+                } else {
+                    crate::effects::TargetOnlyEffect::new(spec.clone())
+                };
+                let condition = crate::effect::Condition::TaggedObjectMatches(
+                    "chosen".into(),
+                    crate::filter::ObjectFilter {
+                        mana_value: Some(crate::target::Comparison::LessThanOrEqual(2)),
+                        ..Default::default()
+                    },
+                );
+                let mut program = crate::resolution::ResolutionProgram::from_effects(vec![
+                    wrap(Effect::new(prelude)),
+                    Effect::conditional_only(condition, vec![wrap(Effect::destroy(spec.clone()))]),
+                ]);
+                let requirements =
+                    crate::game_loop::extract_target_requirements_from_program_with_modes(
+                        &game,
+                        &program,
+                        alice,
+                        Some(source),
+                        None,
+                    );
+                assert_eq!(
+                    requirements.len(),
+                    if explicit { 2 } else { 1 },
+                    "tag_all={tag_all}, explicit={explicit}"
+                );
+                assert_eq!(
+                    requirements[0].legal_targets,
+                    vec![crate::game_state::Target::Object(creature)]
+                );
+                // A second independently authored action cannot consume the same prelude again.
+                program.push(wrap(Effect::destroy(spec.clone())));
+                let requirements =
+                    crate::game_loop::extract_target_requirements_from_program_with_modes(
+                        &game,
+                        &program,
+                        alice,
+                        Some(source),
+                        None,
+                    );
+                assert_eq!(requirements.len(), if explicit { 3 } else { 2 });
+            }
+        }
+    }
+
     // ========================================
     // TagAllEffect Tests
     // ========================================
@@ -1118,10 +1238,10 @@ mod tests {
         assert_eq!(tagged.len(), 2);
         assert_eq!(tagged[0].name, "Alice Target");
         assert_eq!(tagged[0].stable_id, alice_stable_id);
-        assert_eq!(tagged[0].zone, Zone::Graveyard);
+        assert_eq!(tagged[0].zone, Zone::Battlefield);
         assert_eq!(tagged[1].name, "Bob Target");
         assert_eq!(tagged[1].stable_id, bob_stable_id);
-        assert_eq!(tagged[1].zone, Zone::Graveyard);
+        assert_eq!(tagged[1].zone, Zone::Battlefield);
     }
 
     #[test]
@@ -1133,26 +1253,16 @@ mod tests {
             .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
             .card_types(vec![CardType::Sorcery])
             .build();
-        game.add_object(Object::from_card(card_id, &card, alice, Zone::Hand));
+        game.add_object(Object::from_card(card_id, &card, alice, Zone::Library));
+        game.player_mut(alice).unwrap().library.push(card_id);
 
         let effect = TaggedEffect::new("drawn", Effect::draw(1));
-        let outcome = crate::effect::EffectOutcome::count(1).with_events(vec![
-            crate::triggers::TriggerEvent::new(
-                crate::events::CardsDrawnEvent::single(alice, card_id, false),
-                crate::provenance::ProvNodeId::default(),
-            ),
-        ]);
         let mut context = ExecutionContext::new_default(game.new_object_id(), alice);
-        apply_outcome_tags(
-            &effect,
-            &mut game,
-            &mut context,
-            &outcome,
-            TaggedRuntimeState::default(),
-        );
+        effect.execute(&mut game, &mut context).expect("draw should resolve");
 
         let tagged = context.get_tagged("drawn").expect("drawn card tag");
-        assert_eq!(tagged.object_id, card_id);
+        assert_eq!(game.player(alice).unwrap().hand, vec![tagged.object_id]);
+        assert_ne!(tagged.object_id, card_id);
         assert_eq!(tagged.name, "Drawn Four Drop");
         assert_eq!(tagged.zone, Zone::Hand);
     }

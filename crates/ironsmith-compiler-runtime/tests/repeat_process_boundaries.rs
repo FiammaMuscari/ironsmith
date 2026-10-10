@@ -238,7 +238,8 @@ fn countryside_consumes_each_land_and_stops_on_nonland_or_empty_latest_reveal() 
             let outcome = execute(&definition, "Countryside Crusher", &mut g, source, &mut dm, 0, None);
             assert_eq!(g.player(A).unwrap().graveyard.len(), 3);
             assert_eq!(g.player(A).unwrap().library.len(), usize::from(stop_nonland));
-            assert_eq!(outcome.events_of_type::<ironsmith::events::ZoneChangeEvent>()
+            assert_eq!(g.turn_store.turn_history.event_records.iter().map(|record| &record.event)
+                .filter_map(|event| event.downcast::<ironsmith::events::ZoneChangeEvent>())
                 .filter(|event| event.from == Zone::Library && event.to == Zone::Graveyard)
                 .map(|event| event.objects.len()).sum::<usize>(), 3);
         }
@@ -289,7 +290,10 @@ fn scalpelexis_repeats_for_any_pair_but_does_not_union_separate_batches() {
             }
             let mut dm = Decisions::default();
             let mut ctx = ExecutionContext::new(source, A, &mut dm);
-            ctx.iteration.iterated_player = Some(B);
+            ctx.triggering_event = Some(ironsmith::triggers::TriggerEvent::new(
+                ironsmith::events::DamageEvent::with_cause(source,
+                    ironsmith::events::DamageTarget::Player(B), 1, true,
+                    ironsmith::events::EventCause::from_effect(source, A)), Default::default()));
             let outcome = SequenceEffect::new(effects(&definition, "Scalpelexis")).execute(&mut g, &mut ctx).unwrap();
             assert_eq!(outcome.as_count(), Some(1), "only the first batch authorizes another execution");
             assert!(g.player(B).unwrap().library.is_empty());
@@ -318,7 +322,8 @@ fn another_round_blinks_initial_and_x_additional_passes_with_fresh_choices_and_o
             assert_eq!(g.object(current_own).unwrap().zone, Zone::Battlefield);
             assert_eq!(g.current_controller(current_own), Some(A));
             assert_eq!(g.current_controller(current_borrowed), Some(B));
-            assert_eq!(outcome.events_of_type::<ironsmith::events::ZoneChangeEvent>()
+            assert_eq!(g.turn_store.turn_history.event_records.iter().map(|record| &record.event)
+                .filter_map(|event| event.downcast::<ironsmith::events::ZoneChangeEvent>())
                 .filter(|event| event.from == Zone::Exile && event.to == Zone::Battlefield)
                 .map(|event| event.objects.len()).sum::<usize>(), x as usize + 2,
                 "borrowed creature returns to its owner and is unavailable for later choices");

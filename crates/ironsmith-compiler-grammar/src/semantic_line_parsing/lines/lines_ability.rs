@@ -369,15 +369,11 @@ pub(super) fn parse_static_line_impl(
     {
         return Ok(LineAst::Ability(level_up));
     }
-    if matches!(
-        special_shape,
-        Some(semantic_grammar::StaticSpecialLineShape::DoesntUntap)
-    ) {
-        let chunk =
-            LineAst::StaticAbilities(vec![crate::cards::builders::StaticAbilityAst::Static(
-                StaticAbility::doesnt_untap(),
-            )]);
-        return wrap_chosen_option_static_chunk(chunk, chosen_option);
+    // The static grammar owns complete untap restrictions, including a
+    // shared enters-tapped subject and conditional restrictions. A suffix
+    // probe cannot replace that complete line with one unconditional rule.
+    if let Some(ability) = crate::keyword_static::parse_doesnt_untap_during_untap_step_line(lexed)? {
+        return wrap_chosen_option_static_chunk(LineAst::StaticAbility(ability), chosen_option);
     }
     let input = static_line_readings::StaticLine {
         tokens: parse_tokens,

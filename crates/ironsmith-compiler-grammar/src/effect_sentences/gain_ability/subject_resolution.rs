@@ -33,6 +33,13 @@ pub(super) fn parse_gain_ability_sentence_with_subject(
         gain_shapes::parse_leading_affected_object_counter_duration_shape(tokens)
             .or_else(|| gain_shapes::parse_leading_gain_duration_shape(&word_list))
             .map(|shape| (shape.consumed_words, shape.duration));
+    if leading_duration_phrase.is_none()
+        && tokens.first().is_some_and(|token| token.is_any_word(&["until", "during"]))
+    {
+        // A duration that this reader cannot bind must not become part of
+        // a permissive object filter with an implicit permanent lifetime.
+        return Ok(None);
+    }
     let subject_start_word_idx = leading_duration_phrase
         .as_ref()
         .map(|(len, _)| *len)
@@ -357,8 +364,13 @@ pub(super) fn parse_gain_ability_sentence_with_subject(
     }
     let ability_tokens = trim_commas(&tokens[ability_start_token_idx..ability_end_token_idx]);
 
-    let (mut abilities, grant_is_choice) =
-        parse_granted_abilities_for_gain_clause(&ability_tokens, &word_list, !losing)?;
+    let (mut abilities, grant_is_choice) = if losing
+        && let Some(families) = lose_bare_ability_families(&ability_tokens, &word_list)?
+    {
+        families
+    } else {
+        parse_granted_abilities_for_gain_clause(&ability_tokens, &word_list, !losing)?
+    };
     if !trailing_tail_tokens.is_empty() {
         let tail_tokens = strip_leading_token_words_any(&trailing_tail_tokens, &["and", "then"]);
         let (trailing_abilities, trailing_is_choice) =

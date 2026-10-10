@@ -1741,7 +1741,7 @@ pub(super) fn rewrite_nontoken_opponent_creature_would_die_static_replacement_wi
     assert!(debug.contains("nontoken: true"), "{debug}");
     assert!(debug.contains("follow_up_effects"), "{debug}");
     assert!(debug.contains("CreateTokenEffect"), "{debug}");
-    assert!(debug.contains("name: \"Zombie\""), "{debug}");
+    assert!(debug.contains("name: \"Zombie Token\""), "{debug}");
 }
 
 #[test]
@@ -2143,7 +2143,7 @@ pub(super) fn rewrite_lexed_destroy_all_keeps_named_counter_filter() {
 
     assert!(debug.contains("DestroyAll"), "{debug}");
     assert!(debug.contains("with_counter: Some"), "{debug}");
-    assert!(debug.contains("doom"), "{debug}");
+    assert!(debug.contains("Doom"), "{debug}");
 }
 
 #[test]
@@ -2950,7 +2950,7 @@ pub(super) fn rewrite_ecological_appreciation_multi_zone_search_keeps_the_divvy_
         compact_rendered.contains("zone:some(library")
             && compact_rendered.contains("additional_zones:[graveyard")
             && compact_rendered.contains("revealtaggedeffect")
-            && compact_rendered.contains("shufflelibraryeffect"),
+            && compact_rendered.contains("shuffleobjectsintolibraryeffect"),
         "expected the compiled search structure to preserve the multi-zone reveal/shuffle shape, got {rendered}"
     );
 

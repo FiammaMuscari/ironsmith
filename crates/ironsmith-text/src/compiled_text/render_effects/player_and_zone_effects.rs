@@ -2824,7 +2824,10 @@ pub(crate) fn describe_choose_then_exile(
     };
     let chooser = describe_player_filter(&choose.chooser);
     let verb = player_verb(&chooser, "exile", "exiles");
-    let mut chosen = describe_choose_selection(choose);
+    // The origin phrase below owns the single-graveyard qualification.
+    let mut displayed_choice = choose.clone();
+    displayed_choice.filter.single_graveyard = false;
+    let mut chosen = describe_choose_selection(&displayed_choice);
     if zones
         .iter()
         .any(|zone| matches!(zone, Zone::Hand | Zone::Graveyard | Zone::Library))

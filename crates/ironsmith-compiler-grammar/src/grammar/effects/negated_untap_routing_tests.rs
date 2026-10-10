@@ -85,7 +85,6 @@ fn negative_words_inside_operands_and_conditions_do_not_reclassify_outer_actions
 #[test]
 fn malformed_or_different_lifetimes_do_not_fall_through_to_affirmative_untap() {
     for text in [
-        "Those creatures don't untap during their controllers' next two untap steps.",
         "Those creatures don't untap during their controllers' next untap steps instead nonsense.",
         "Those creatures don't untap until their controllers' next untap steps.",
     ] {
@@ -127,10 +126,27 @@ fn conditional_documents_keep_the_predicate_outside_the_untap_restriction() {
 fn conditional_restrictions_do_not_hide_invalid_predicates_or_durations() {
     for text in [
         "If the moon tastes blue, those creatures don't untap during their controllers' next untap steps.",
-        "If you control a creature with power 4 or greater, those creatures don't untap during their controllers' next two untap steps.",
         "If you control a creature with power 4 or greater, those creatures don't untap during their controllers' next untap steps except on Tuesdays.",
     ] {
         let tokens = lex_line(text, 0).unwrap();
         assert!(crate::effect_sentences::parse_effect_sentences_lexed(&tokens).is_err(), "{text}");
+    }
+}
+
+#[test]
+fn counted_untap_steps_keep_their_complete_restriction_at_clause_entry() {
+    for text in [
+        "It doesn't untap during its controller's next two untap steps.",
+        "Those creatures don't untap during their controllers' next two untap steps.",
+    ] {
+        let tokens = lex_line(text, 0).unwrap();
+        let effects = parse_cant_effect_sentence(&tokens).unwrap().unwrap_or_else(|| panic!("missing counted restriction: {text}"));
+        assert_one_object_bound_untap(&effects);
+        assert!(matches!(effects.as_slice(), [EffectAst::SubjectVerb(subject_verb)]
+            if matches!(&subject_verb.action, SubjectVerbActionAst::Cant {
+                duration_surface: crate::effect::RestrictionDurationSurface::NextUntapSteps(2), ..
+            })));
+        let clause = crate::effect_sentences::parse_effect_clause_lexed(&tokens).unwrap();
+        assert_one_object_bound_untap(&[clause]);
     }
 }

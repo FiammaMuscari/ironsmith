@@ -384,6 +384,12 @@ fn flashback_x_cannot_be_paid_with_itself_or_ineligible_cards() {
             result.is_err(),
             "unpayable proposal must be rejected: {result:?}"
         );
+        // Invalid interactive X input may leave the announcement open for a
+        // corrected answer. Cancel that unfinished proposal before checking
+        // restoration of its origin zone and resources.
+        if state.pending_cast.is_some() {
+            assert!(state.rollback_action(&mut game));
+        }
         assert_eq!(
             game.object(game.find_object_by_stable_id(stable).unwrap())
                 .unwrap()

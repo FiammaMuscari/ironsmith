@@ -1148,6 +1148,17 @@ impl StaticAbilityModelInterpreter {
                     leaf = inner.as_ref();
                 }
                 let converted = StaticAbility::from_model(leaf.clone());
+                // Combat-damage assignment changes a game rule, so its
+                // condition reads the receiver's completed characteristics
+                // when damage is assigned. A layer-6 self-grant would test
+                // intermediate P/T and publish an unconditional duplicate.
+                if matches!(converted.id(),
+                    StaticAbilityId::ThisCreatureAssignsCombatDamageUsingToughness
+                        | StaticAbilityId::CreaturesAssignCombatDamageUsingToughness
+                        | StaticAbilityId::CreaturesYouControlAssignCombatDamageUsingToughness
+                ) {
+                    return Some(converted);
+                }
                 // A rule-modifying leaf ("This ability costs {2} less to
                 // activate if you have one or fewer cards in hand") carries
                 // the condition natively when it supports one.

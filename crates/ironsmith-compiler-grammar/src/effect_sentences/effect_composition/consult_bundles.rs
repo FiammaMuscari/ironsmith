@@ -230,6 +230,48 @@ fn lower_consult_repeated_move(
     ))
 }
 
+pub(super) fn parse_look_manifest_partition_bundle(
+    sentences: &[&[OwnedLexToken]],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let [look, partition] = sentences else { return Ok(None); };
+    let words = crate::lexer::parser_token_word_refs(partition);
+    if words != ["manifest", "one", "of", "those", "cards", "then", "put", "the", "other",
+        "on", "the", "top", "or", "bottom", "of", "your", "library"]
+    { return Ok(None); }
+    let mut effects = effect_sentences::parse_effect_sentence_lexed(look)?;
+    let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        subject,
+        action: SubjectVerbActionAst::RevealLook(RevealLookActionAst::LookAtTopCards {
+            count, tag: looked, reveal: false,
+        }),
+    })] = effects.as_slice() else { return Ok(None); };
+    if count.unhinted() != &Value::Fixed(2)
+        || !matches!(subject.player, PlayerAst::You | PlayerAst::Implicit)
+    { return Ok(None); }
+    let looked = looked.clone();
+    let chosen = helper_tag_for_tokens(partition, "manifest_chosen");
+    let remainder = helper_tag_for_tokens(partition, "manifest_remainder");
+    effects.push(EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseTaggedObjectsInZone {
+        filter: ObjectFilter::tagged(looked.key.clone()),
+        count: ChoiceCount::exactly(1), player: PlayerAst::You,
+        tag: crate::tag::TagRef::of(chosen.clone()), zone: Zone::Library,
+    }));
+    effects.push(EffectAst::subject_verb_manifest_onto_battlefield(
+        PlayerAst::You, TargetAst::Tagged(crate::tag::TagRef::of(chosen.clone()), None),
+        false, ReturnControllerAst::You, false,
+    ));
+    effects.push(EffectAst::subject_verb_tag_matching_objects(
+        ObjectFilter::tagged(looked.key).match_tagged(chosen, TaggedOpbjectRelation::IsNotTaggedObject),
+        vec![Zone::Library], crate::tag::TagRef::of(remainder.clone()),
+    ));
+    effects.push(EffectAst::subject_verb(SubjectVerbRoleAst::Actor, PlayerAst::You,
+        SubjectVerbActionAst::Library(LibraryActionAst::MoveToLibraryTopOrBottomChoice {
+            target: TargetAst::Tagged(crate::tag::TagRef::of(remainder), None), top_position: 0,
+        }),
+    ));
+    Ok(Some(effects))
+}
+
 pub fn parse_consult_disposition_bundle(tokens: &[OwnedLexToken]) -> Option<Vec<EffectAst>> {
     let leading_result = crate::grammar::structure::split_leading_result_prefix_lexed(tokens);
     let bundle_tokens = leading_result

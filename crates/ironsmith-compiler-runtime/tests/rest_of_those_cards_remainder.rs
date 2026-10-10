@@ -33,12 +33,27 @@ fn definitions(name: &str, text: &str) -> [CardDefinition; 2] {
     [direct, decoded]
 }
 
+fn without_runtime_instance_ids(mut debug: String) -> String {
+    // Independently materialized abilities intentionally receive different
+    // runtime identities. Compare their rules while preserving reference tags.
+    let marker = "StaticAbilityInstanceId(";
+    let mut offset = 0;
+    while let Some(start) = debug[offset..].find(marker) {
+        let start = offset + start + marker.len();
+        let end = start + debug[start..].find(')').expect("complete instance id");
+        assert!(debug[start..end].chars().all(|c| c.is_ascii_digit()));
+        debug.replace_range(start..end, "_");
+        offset = start + 1;
+    }
+    debug
+}
+
 fn triggered_effects(definition: &CardDefinition) -> Vec<String> {
     definition
         .abilities
         .iter()
         .filter_map(|ability| match &ability.kind {
-            AbilityKind::Triggered(triggered) => Some(format!("{:?}", triggered.effects.all_effects())),
+            AbilityKind::Triggered(triggered) => Some(without_runtime_instance_ids(format!("{:?}", triggered.effects.all_effects()))),
             _ => None,
         })
         .collect()

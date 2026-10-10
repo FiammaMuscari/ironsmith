@@ -442,7 +442,7 @@ fn f15_self_fight_deals_one_combined_damage_event_and_one_fight_event() {
     for (power, prevent_one, expected) in [
         (2, false, 4),
         (2, true, 3),
-        (i32::MAX, false, i32::MAX as u32),
+        (i32::MAX, false, (i32::MAX as u32) * 2),
     ] {
         let mut g = game();
         let src = g.new_object_id();

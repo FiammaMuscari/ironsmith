@@ -16,7 +16,10 @@ fn hisoka_counters_only_a_spell_matching_the_discarded_cards_mana_value() {
         let debug = format!("{:?}", support::activated_effects(activated.last().unwrap()));
         assert!(debug.contains("SameManaValueAsTagged"), "{debug}");
         assert!(debug.contains("Counter"), "{debug}");
-        assert!(debug.contains("Discard"), "{debug}");
+        // The discard is paid on activation, before the countering effect
+        // resolves and compares against the discarded card's retained value.
+        let cost = format!("{:?}", activated.last().unwrap().mana_cost);
+        assert!(cost.contains("Discard"), "{cost}");
     }
 }
 

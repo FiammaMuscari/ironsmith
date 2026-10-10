@@ -1,7 +1,7 @@
 //! Poison counters effect implementation.
 
 use crate::effect::{EffectOutcome, Value};
-use crate::effects::{CompletedEffectOutputs, EffectExecutor};
+use crate::effects::{CompletedEffectOutputs, CostExecutableEffect, CostValidationError, EffectExecutor};
 use crate::effects::helpers::{resolve_player_filter, resolve_nonnegative_u32};
 use crate::effects::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -48,6 +48,17 @@ impl PoisonCountersEffect {
 }
 
 impl EffectExecutor for PoisonCountersEffect {
+    fn as_cost_executable(&self) -> Option<&dyn CostExecutableEffect> {
+        Some(self)
+    }
+
+    fn cost_description(&self) -> Option<String> {
+        match self.count {
+            Value::Fixed(count) => Some(format!("Get {count} poison counters")),
+            _ => Some("Get poison counters".to_string()),
+        }
+    }
+
     fn execute(
         &self,
         game: &mut GameState,
@@ -95,5 +106,45 @@ impl EffectExecutor for PoisonCountersEffect {
             ));
         }
         result
+    }
+}
+
+impl CostExecutableEffect for PoisonCountersEffect {
+    fn can_execute_as_cost(
+        &self,
+        game: &GameState,
+        _source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+    ) -> Result<(), CostValidationError> {
+        let player = match self.player {
+            PlayerFilter::You => controller,
+            PlayerFilter::Specific(player) => player,
+            _ => return Err(CostValidationError::Other("poison cost requires a known payer".into())),
+        };
+        if game.player(player).is_some()
+            && (matches!(self.count, Value::Fixed(0)) || game.can_get_poison_counters(player))
+        {
+            Ok(())
+        } else {
+            Err(CostValidationError::Other("payer cannot get poison counters".into()))
+        }
+    }
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+
+    #[test]
+    fn poison_cost_respects_the_payers_counter_prohibition() {
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let alice = crate::ids::PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let cost = PoisonCountersEffect::you(5);
+        assert!(crate::costs::Cost::try_effect(crate::effect::Effect::new(cost.clone())).is_ok());
+        assert!(CostExecutableEffect::can_execute_as_cost(&cost, &game, source, alice).is_ok());
+        game.effect_store.cant_effects.cant_get_poison_counters.insert(alice);
+        assert!(CostExecutableEffect::can_execute_as_cost(&cost, &game, source, alice).is_err());
+        assert!(CostExecutableEffect::can_execute_as_cost(&PoisonCountersEffect::you(0), &game, source, alice).is_ok());
     }
 }

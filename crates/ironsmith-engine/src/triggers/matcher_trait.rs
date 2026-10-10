@@ -145,6 +145,24 @@ impl<'a> TriggerContext<'a> {
         self
     }
 
+    /// Bind a live ability using the current frame already evaluated by the
+    /// trigger registry. Re-querying a dirty game here discards its batch cache.
+    pub(crate) fn with_ability_index_and_characteristics(
+        mut self,
+        ability_index: usize,
+        chars: &crate::continuous::CalculatedCharacteristics,
+    ) -> Self {
+        self.ability_index = Some(ability_index);
+        self.filter_ctx.source_number_owner = chars.abilities.get(ability_index).and_then(|ability| {
+            crate::source_numbers::capture(
+                self.source_id,
+                crate::source_numbers::ability_pair(ability),
+                chars.abilities.origin(ability_index),
+            )
+        });
+        self
+    }
+
     pub fn with_trigger_identity(mut self, trigger_identity: super::TriggerIdentity) -> Self {
         self.trigger_identity = Some(trigger_identity);
         self

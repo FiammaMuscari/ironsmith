@@ -589,8 +589,13 @@ impl Cost {
             }
             effect = current.0.transparent_child_effect();
         };
-        let opened_batch =
-            !self.is_mana_cost() && !sequential_program && game.open_simultaneous_action();
+        // Prepared payment owners close their original group before observing
+        // it and executing additions. An outer synthetic group would suppress
+        // those observers until after a later cost can remove their source.
+        let opened_batch = !self.is_mana_cost()
+            && !sequential_program
+            && !self.0.supports_prepared_payment()
+            && game.open_simultaneous_action();
         let result = body(game);
         game.close_simultaneous_action(opened_batch);
         result
@@ -1037,7 +1042,7 @@ pub(crate) fn legal_discard_cost_cards(
     filter: &crate::filter::ObjectFilter,
 ) -> Vec<crate::ids::ObjectId> {
     let ctx = crate::filter::FilterContext::new(player).with_source(source);
-    legal_discard_cost_cards_with_filter_context(game, player, source, filter, &ctx)
+    legal_discard_cost_cards_with_filter_context(game, player, source, filter, &ctx, true)
 }
 
 /// Eligible selected-discard subjects, using the actual payment input scope.
@@ -1047,6 +1052,7 @@ fn legal_discard_cost_cards_with_filter_context(
     source: crate::ids::ObjectId,
     filter: &crate::filter::ObjectFilter,
     ctx: &crate::filter::FilterContext,
+    exclude_source: bool,
 ) -> Vec<crate::ids::ObjectId> {
     use crate::filter::ObjectFilterExt;
     let hand: Vec<crate::ids::ObjectId> = game
@@ -1064,7 +1070,7 @@ fn legal_discard_cost_cards_with_filter_context(
     };
     hand.into_iter()
         .filter(|id| {
-            *id != source
+            (!exclude_source || *id != source)
                 && (placeholders.contains(id)
                     || game
                         .object(*id)
@@ -1090,6 +1096,7 @@ pub(crate) fn legal_discard_cost_cards_in_context(
         ctx.source,
         filter,
         &execution.filter_context(game),
+        ctx.reason == crate::costs::PaymentReason::CastSpell,
     )
     .into_iter()
     .filter(|id| !ctx.replacement.entry_reserved_objects.contains(id))

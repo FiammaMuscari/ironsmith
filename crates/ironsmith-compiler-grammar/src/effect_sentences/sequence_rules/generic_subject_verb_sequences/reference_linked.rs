@@ -295,8 +295,9 @@ pub fn parse_controller_defending_loot_then_greatest_mana_value_followup(
     Ok(Some(vec![EffectAst::Conditionals(
         ConditionalEffectAst::IfEffectResult {
             effect: Box::new(loot),
-            predicate: EffectPredicate::PlayerAffectedObjectHasGreatestManaValue {
+            predicate: EffectPredicate::PlayerActionObjectHasGreatestManaValue {
                 player: PlayerFilter::You,
+                action: ironsmith_core::PriorEffectAction::Discarded,
             },
             if_true: followup,
         },

@@ -412,7 +412,7 @@ fn sacrificed_source_consult_keeps_gate_and_new_creature_damage() {
                     crate::effects::execute_effect(&mut game, effect, &mut ctx).unwrap();
                     if !sacrifice_available
                         && effect
-                            .downcast_ref::<crate::effects::TagTriggeringObjectEffect>()
+                            .downcast_ref::<crate::effects::TagTriggeringSourceEffect>()
                             .is_some()
                     {
                         game.move_object_by_effect(source, Zone::Graveyard).unwrap();

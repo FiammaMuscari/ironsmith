@@ -35,7 +35,7 @@ fn run_attached_source_counter_release(capture_granting_source: bool) {
                 .build();
             let captive = game.create_object_from_definition(&creature, bob, Zone::Battlefield);
             let attacker = game.create_object_from_definition(&creature, alice, Zone::Battlefield);
-            let task = crate::CounterType::Named("task".into());
+            let task = crate::CounterType::Task;
             let aura = game
                 .move_object_with_etb_processing(aura, Zone::Battlefield)
                 .map(require_plain_entry_for_test)

@@ -232,20 +232,24 @@ fn read_typed_attack_history_threshold_condition(
         return Ok(None);
     }
     let words = crate::lexer::parser_token_word_refs(input.tokens);
-    let ["you", "attacked", "with", count, "or", "more", tail @ ..] = words.as_slice() else {
-        return Ok(None);
+    let (count, tail) = match words.as_slice() {
+        ["you", "attacked", "with", "a" | "an", tail @ ..] => (1, tail),
+        ["you", "attacked", "with", count, "or", "more", tail @ ..] => {
+            let Some(count) = crate::util::parse_number_word_u32(count).and_then(|n| i32::try_from(n).ok()) else {
+                return Ok(None);
+            };
+            (count, tail)
+        }
+        _ => return Ok(None),
     };
     let [descriptor @ .., "this", "turn"] = tail else { return Ok(None); };
-    let Some(count) = crate::util::parse_number_word_u32(count).and_then(|n| i32::try_from(n).ok()) else {
-        return Ok(None);
-    };
     // A compound subtype phrase needs an explicit intersection owner, not
     // the filter's implicit any-subtype union.
     let subtype_word = match descriptor {
         [subtype] | [subtype, "creature" | "creatures"] => *subtype,
         _ => return Ok(None),
     };
-    let Some(subtype) = crate::util::parse_subtype_flexible(subtype_word).filter(Subtype::is_creature_type) else {
+    let Some(subtype) = crate::util::parse_subtype_flexible(subtype_word) else {
         return Ok(None);
     };
     Ok(Some(PredicateAst::ValueComparison {
@@ -339,6 +343,21 @@ fn read_player_counter_condition(
     let tokens = input.tokens;
     let display = input.display;
     if let Some(counter) = crate::grammar::conditions::parse_player_counter_condition(&tokens) {
+        let words = crate::lexer::token_word_refs(tokens);
+        let existential_player = if words.starts_with(&["an", "opponent"]) {
+            Some(PlayerAst::Opponent)
+        } else if words.starts_with(&["a", "player"]) || words.starts_with(&["any", "player"]) {
+            Some(PlayerAst::Any)
+        } else { None };
+        if counter.counter_type == crate::CounterType::Poison
+            && let Some(player) = existential_player
+            && let crate::effect::Comparison::GreaterThanOrEqual(count) = &counter.comparison
+            && let Ok(count) = u32::try_from(*count)
+        {
+            return Ok(Some(PredicateAst::Player(PlayerPredicateAst::PlayerHasPoisonCountersOrMore {
+                player, count,
+            })));
+        }
         let Some((operator, value)) =
             crate::util::comparison_to_value_comparison_operator(counter.comparison)
         else {

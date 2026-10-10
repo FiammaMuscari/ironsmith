@@ -16,15 +16,11 @@ fn detention_vortex_is_activated_only_by_opponents_at_sorcery_speed() {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(activated.timing, ActivationTiming::SorcerySpeedByOpponents);
+        assert_opponent_timing(activated, true);
         assert!(activated.allows_any_player_to_activate());
-        assert!(
-            !activated
-                .additional_restrictions
-                .iter()
-                .any(|restriction| restriction.contains("opponents")),
-            "the typed timing owns the permission; no stringly restriction"
-        );
+        // Original wording remains available for display; executable
+        // restrictions are the typed fields checked above.
+        assert!(activated.activation_restrictions.is_empty());
     }
 }
 
@@ -41,9 +37,21 @@ fn opponent_only_timing_sentences_are_typed() {
         let definition =
             ironsmith_compiler_runtime::compile_to_runtime_definition("Opponent activation probe", &source, false)
                 .unwrap();
-        assert!(definition.abilities.iter().any(|ability| matches!(
-            &ability.kind,
-            AbilityKind::Activated(activated) if activated.timing == timing
-        )), "{text}");
+        let activated = definition.abilities.iter().find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        }).unwrap();
+        assert_opponent_timing(activated, timing == ActivationTiming::SorcerySpeedByOpponents);
     }
+}
+
+fn assert_opponent_timing(activated: &ironsmith::ability::ActivatedAbility, sorcery_only: bool) {
+    // Coordinated restrictions may retain the activator in `timing` and the
+    // independent sorcery window as a typed condition. Both must survive.
+    if sorcery_only && activated.timing == ActivationTiming::SorcerySpeedByOpponents {
+        return;
+    }
+    assert_eq!(activated.timing, ActivationTiming::AnyTimeByOpponents);
+    let expected = sorcery_only.then_some(ironsmith::ConditionExpr::ActivationTiming(ActivationTiming::SorcerySpeed));
+    assert_eq!(activated.activation_condition, expected);
 }

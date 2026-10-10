@@ -176,8 +176,9 @@ impl DecisionMaker for Choices {
         if context.context == "copy" {
             assert_eq!(context.player, A);
             let targets = self.copy_targets.pop_front().unwrap();
-            assert_eq!(context.requirements.len(), targets.len());
-            for (requirement, target) in context.requirements.iter().zip(&targets) {
+            assert_eq!(context.requirements.iter().map(|requirement| requirement.min_targets).sum::<usize>(), targets.len());
+            for (requirement, target) in context.requirements.iter()
+                .filter(|requirement| requirement.min_targets > 0).zip(&targets) {
                 assert!(requirement.legal_targets.contains(target));
             }
             return targets;
@@ -459,9 +460,10 @@ fn stream_replicate_pays_twice_and_resolves_each_complete_body_with_its_own_choi
         assert_eq!(game.stack[0].targets, vec![Target::Player(B)]);
         assert!(game.stack[1].is_ability);
         let paid = &game.stack[0].optional_costs_paid.costs;
-        assert_eq!(paid.len(), 1);
-        assert_eq!(paid[0].0.kind, ironsmith::cost::OptionalCostKind::Replicate);
-        assert_eq!(paid[0].1, 2);
+        // The ledger also records cast-context markers such as main-phase
+        // timing. Count only the repeatable cost actually paid here.
+        assert_eq!(paid.iter().filter(|(cost, _)| cost.kind == ironsmith::cost::OptionalCostKind::Replicate)
+            .map(|(_, count)| *count).sum::<u32>(), 2);
         assert!(shuffles(&game).is_empty(), "casting does not resolve the body");
 
         resolve_one(&mut game, &mut dm);

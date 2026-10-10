@@ -282,7 +282,7 @@ pub(super) fn rewrite_lexed_effect_sentence_supports_equal_to_damage_to_any_targ
     let debug = format!("{parsed:?}");
 
     assert!(
-        debug.contains("CountersOnSource(Named(\"pressure\"))"),
+        debug.contains("CountersOnSource(Pressure)"),
         "{debug}"
     );
     assert!(
@@ -317,7 +317,7 @@ pub(super) fn rewrite_lexed_effect_sentence_supports_draw_for_each_counter_on_th
 
     assert!(debug.contains("Draw"), "{debug}");
     assert!(
-        debug.contains("CountersOnSource(Named(\"page\"))"),
+        debug.contains("CountersOnSource(Page)"),
         "{debug}"
     );
 }

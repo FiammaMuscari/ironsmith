@@ -1106,6 +1106,9 @@ impl GameState {
         incarnation: Option<u64>, permission: &crate::alternative_cast::GrantSelection,
     ) -> bool {
         let Some(object) = self.object(id).filter(|object| object.zone == Zone::Exile) else { return false; };
+        // Cryptographically tracked faces retain a later authentication
+        // obligation even when locally materialized. Untracked native cards
+        // have no such ledger, so validate their declared keyword here.
         let tracked = self.hidden_card_info(id).is_some();
         let permitted = match kind {
             FaceDownCastKind::Permission { source } => self.active_face_down_cast_permission(source, player, Zone::Exile)

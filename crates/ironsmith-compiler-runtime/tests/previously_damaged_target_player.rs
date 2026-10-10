@@ -29,7 +29,7 @@ fn diseased_vermin_targets_only_an_opponent_it_has_damaged() {
         assert!(!ironsmith::cards::generated_definition_has_unimplemented_content(&definition));
         let debug = format!("{:?}", definition.abilities);
         assert!(
-            debug.contains("WasDealtDamageBySourceThisGame { base: Opponent }"),
+            debug.contains("WasDealtDamageBySourceThisGame { base: Opponent, this_turn: false }"),
             "{debug}"
         );
         assert!(debug.contains("Infection"), "{debug}");

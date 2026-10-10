@@ -41,9 +41,22 @@ fn same_name_existence_conditions_gate_the_action() {
     for name in ["Winnow", "Bazaar of Wonders"] {
         for definition in common::definitions(common::row(&rows, name)) {
             let debug = format!("{:?}", common::all_effects(&definition));
-            assert!(debug.contains("SameNameAsTagged"), "{name}: {debug}");
             if name == "Winnow" {
-                assert!(debug.contains("IsNotTaggedObject"), "{name}: {debug}");
+                let effects = common::all_effects(&definition);
+                let conditional = effects.iter().find_map(|effect|
+                    effect.downcast_ref::<ironsmith::effects::ConditionalEffect>()
+                ).expect("destruction must remain conditional");
+                let ironsmith_core::Condition::TaggedObjectMatches(_, filter) = &conditional.condition else {
+                    panic!("expected a condition on the targeted permanent: {:?}", conditional.condition);
+                };
+                assert!(filter.characteristic_relations.iter().any(|relation|
+                    relation.kind == ironsmith_core::ObjectCharacteristicRelationKind::SharesAny
+                    && relation.characteristics == [ironsmith_core::ObjectCharacteristic::Name]
+                    && relation.comparison.zone == Some(ironsmith::zone::Zone::Battlefield)
+                    && relation.exclude_candidate
+                ), "{filter:?}");
+            } else {
+                assert!(debug.contains("SameNameAsTagged"), "{name}: {debug}");
             }
         }
     }

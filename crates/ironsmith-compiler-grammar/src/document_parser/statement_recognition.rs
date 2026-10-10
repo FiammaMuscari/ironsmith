@@ -177,6 +177,9 @@ pub(super) fn recognize_statement_line(
         .tokens
         .first()
         .is_some_and(|token| token.is_word("create"))
+        // A following reflexive trigger is part of the spell program, not
+        // part of an attachment target in the creation fast path.
+        && split_lexed_sentences(&line.tokens).len() == 1
         && let Some(shape) = parse_create_head_tokens(&line.tokens)
         && {
             let tail = crate::util::trim_edge_punctuation(shape.tail_tokens);
@@ -410,7 +413,10 @@ fn recognize_statement_line_general(
             token.is_any_word(&["deal", "deals"])
         });
         match (raw_verb, normalized_verb) {
-            (Some(raw_verb), Some(normalized_verb)) => {
+            (Some(raw_verb), Some(normalized_verb)) if sentences.len() == 1 => {
+                // Replacing only the first source in a multi-sentence rule
+                // leaves later source names unnormalized and can split a
+                // conditional replacement away from its default action.
                 let mut hybrid = line.tokens[..=normalized_verb].to_vec();
                 hybrid.extend_from_slice(&line.info.source_tokens[raw_verb + 1..]);
                 crate::effect_sentences::parse_compound_damage_fanout_sentence(&hybrid)?
@@ -936,6 +942,18 @@ pub(super) fn extend_statement_line_with_result_followups_in_place(
         // preceding spell statement's action; kept apart it has no action of
         // its own to replace.
         let conditional_instead = is_restatement_of_statement(&line.tokens, &statement.parse_tokens);
+        if conditional_instead {
+            statement.info.semantic_facts.statement.replacement_starts_new_source_line = true;
+            if let Some((label, label_tokens, _)) =
+                super::split_label_prefix_lexed(&line.info.source_tokens)
+            {
+                // The replacement needs the preceding action to resolve
+                // omitted targets. Preserve its authored label while joining
+                // the normalized bodies for that contextual parse.
+                statement.info.semantic_facts.statement.presentation_label =
+                    Some(super::trigger_presentation(label_tokens, &label));
+            }
+        }
         if !conditional_instead && super::is_nonkeyword_choice_labeled_line(line) {
             break;
         }
@@ -1326,6 +1344,11 @@ pub(super) fn normalize_statement_parse_groups_lexed(
 pub(super) fn parse_colon_nonactivation_statement_fallback(
     line: &PreprocessedLine,
 ) -> Result<Option<RecognizedStatementLine>, CardTextError> {
+    // A colon inside a triggered body cannot turn its suffix into an
+    // unconditional spell instruction by dropping the trigger and prefix.
+    if line_starts_with_trigger_intro_tokens(&line.tokens) {
+        return Ok(None);
+    }
     let Some((left_tokens, right_tokens)) = split_lexed_once_on_colon_outside_quotes(&line.tokens)
     else {
         return Ok(None);

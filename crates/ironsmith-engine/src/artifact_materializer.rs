@@ -1451,6 +1451,7 @@ macro_rules! with_native_direct_effect_types {
             crate::effects::BolsterEffect,
             crate::effects::CantEffect,
             crate::effects::CastSourceEffect,
+            crate::effects::ChangeTextEffect,
             crate::effects::ChooseCardNameEffect,
             crate::effects::ChooseCardTypeEffect,
             crate::effects::RippleEffect,
@@ -1564,6 +1565,7 @@ macro_rules! with_native_direct_effect_types {
             crate::effects::RevealTaggedEffect,
             crate::effects::RevealTopEffect,
             crate::effects::ReverseTurnOrderEffect,
+            crate::effects::RollToVisitAttractionsEffect,
             crate::effects::SacrificeTargetEffect,
             crate::effects::ScryEffect,
             crate::effects::SearchLibraryEffect,
@@ -1630,6 +1632,14 @@ pub fn encode_runtime_effect(
         };
     }
     with_native_direct_effect_types!(encode_direct);
+    if let Some(payload) = effect.downcast_ref::<crate::effects::InvestigateEffect>() {
+        let converted = ironsmith_core::InvestigateEffect::new(
+            payload.count.clone(), payload.player.clone(),
+        );
+        return serde_json::to_value(converted)
+            .map(|payload| wire::WireEffect::new("InvestigateEffect", payload))
+            .map_err(|error| RuntimePayloadEncodingError::InvalidEffectModel { detail: error.to_string() });
+    }
     if let Some(payload) = effect.downcast_ref::<crate::effects::RedirectNextTimeDamageToSourceEffect>() {
         let source = match &payload.source {
             crate::effects::RedirectNextTimeDamageSource::Choice => ironsmith_core::RedirectNextTimeDamageSource::Choice,

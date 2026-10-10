@@ -41,6 +41,13 @@ struct Choices {
 }
 
 impl DecisionMaker for Choices {
+    fn decide_options(&mut self, _game: &GameState, ctx: &ironsmith::decisions::context::SelectOptionsContext) -> Vec<usize> {
+        if ctx.description == "Choose a Miracle reveal" {
+            vec![1] // Reveal now; the later cast decision may still be declined.
+        } else {
+            ctx.options.iter().find(|option| option.legal).map(|option| vec![option.index]).unwrap_or_default()
+        }
+    }
     fn decide_boolean(&mut self, _game: &GameState, _ctx: &BooleanContext) -> bool {
         self.miracle_prompts += 1;
         self.cast_for_miracle
@@ -122,7 +129,7 @@ fn first_draw_of_the_turn_can_be_cast_for_its_miracle_cost() {
         cast_for_miracle: true,
         miracle_prompts: 0,
     };
-    let events = ironsmith::turn::execute_draw_step(&mut game).unwrap();
+    let events = ironsmith::turn::execute_draw_step_with(&mut game, &mut dm).unwrap();
     assert_eq!(zone_of(&game, fanatic_stable), Zone::Hand);
     assert_eq!(
         queue_and_stack(&mut game, events, &mut dm),
@@ -176,7 +183,7 @@ fn declining_the_miracle_keeps_the_card_in_hand() {
         cast_for_miracle: false,
         miracle_prompts: 0,
     };
-    let events = ironsmith::turn::execute_draw_step(&mut game).unwrap();
+    let events = ironsmith::turn::execute_draw_step_with(&mut game, &mut dm).unwrap();
     assert_eq!(queue_and_stack(&mut game, events, &mut dm), 1);
     ironsmith::game_loop::resolve_stack_entry_with(&mut game, &mut dm).unwrap();
     assert_eq!(zone_of(&game, fanatic_stable), Zone::Hand);
@@ -203,7 +210,7 @@ fn a_second_draw_in_the_turn_does_not_trigger_miracle() {
         cast_for_miracle: true,
         miracle_prompts: 0,
     };
-    let events = ironsmith::turn::execute_draw_step(&mut game).unwrap();
+    let events = ironsmith::turn::execute_draw_step_with(&mut game, &mut dm).unwrap();
     assert_eq!(queue_and_stack(&mut game, events, &mut dm), 0);
 
     game.turn.phase = ironsmith::game_state::Phase::FirstMain;

@@ -220,11 +220,11 @@ fn action_for(game: &mut GameState, player: PlayerId, action: LegalAction, dm: &
     let mut queue = TriggerQueue::new();
     let mut progress = apply_priority_response_with_dm(game, &mut queue, &mut state, &PriorityResponse::PriorityAction(action), dm).unwrap();
     for _ in 0..64 {
-        if state.pending_cast.is_none() && state.pending_activation.is_none() { break; }
+        if !state.has_pending_action() { break; }
         let ironsmith::GameProgress::NeedsDecisionCtx(context) = progress else { panic!("{progress:?}"); };
         progress = apply_decision_context_with_dm(game, &mut queue, &mut state, &context, dm).unwrap();
     }
-    assert!(state.pending_cast.is_none() && state.pending_activation.is_none());
+    assert!(!state.has_pending_action());
     put_triggers_on_stack_with_dm(game, &mut queue, dm).unwrap();
 }
 fn cast(game: &mut GameState, spell: ObjectId, dm: &mut Choices) {
@@ -286,7 +286,7 @@ fn herald_keeps_life_gain_and_treasure_tail_inside_the_correct_paid_row() {
             settle(&mut game, &mut dm);
             assert_eq!(game.player(A).unwrap().life, if result >= 10 { 32 } else { 30 });
             assert_eq!(game.player(B).unwrap().life, 28);
-            assert_eq!(game.battlefield.iter().filter(|id| game.object(**id).unwrap().name == "Treasure").count(), if result == 20 { 2 } else { 0 });
+            assert_eq!(game.battlefield.iter().filter(|id| game.object(**id).unwrap().kind == ironsmith::object::ObjectKind::Token && game.current_has_subtype(**id, ironsmith::Subtype::Treasure)).count(), if result == 20 { 2 } else { 0 });
             assert_eq!(game.turn_store.turn_history.completed_die_roll_count(A), 1);
         }
     }
@@ -373,7 +373,6 @@ fn malformed_die_suffixes_and_unbound_roll_quantities_fail_without_partial_artif
         "Roll a six-sided die banana.",
         "Roll a d20 and add the number of cards in your hand banana.",
         "Roll a d20 and subtract.",
-        "Roll a d20 and add three {R}.",
         "Roll a d20 and add the number of cards {R} in your hand.",
         "Roll a d20 and add the number of cards in your hand:",
         "Roll a d20 and add three ???.",
@@ -385,6 +384,21 @@ fn malformed_die_suffixes_and_unbound_roll_quantities_fail_without_partial_artif
         assert!(compile_to_runtime_definition("Incomplete die instruction", &text, false).is_err(), "{text}");
     }
 }
+#[test]
+fn die_roll_can_be_followed_by_an_independent_mana_action() {
+    for definition in program_definitions("Roll and mana", "Mana cost: {0}\nType: Sorcery\nRoll a d20 and add three {R}.") {
+        let mut game = game();
+        let spell = game.create_object_from_definition(&definition, A, Zone::Hand);
+        let before = game.player(A).unwrap().mana_pool.red;
+        game.force_next_die_roll(12);
+        let mut dm = Choices::default();
+        cast(&mut game, spell, &mut dm);
+        settle(&mut game, &mut dm);
+        assert_eq!(game.player(A).unwrap().mana_pool.red, before + 3);
+        assert_die_receipt(&game, 12, 12);
+    }
+}
+
 #[test]
 fn numeric_rows_without_a_local_die_and_incomplete_headers_fail_on_both_public_routes() {
     for text in [

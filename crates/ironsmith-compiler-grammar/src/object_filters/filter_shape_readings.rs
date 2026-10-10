@@ -360,6 +360,11 @@ mod cast_quantity_filter_tests {
         let filter = parse_object_filter(&tokens, false).unwrap();
         assert_eq!(filter.target_count, Some(crate::effect::ChoiceCount::at_least(1)));
         assert!(filter.targets_object.is_none() && filter.targets_player.is_none());
+        let tokens = crate::lexer::lex_line("a spell or ability with one or more targets", 0).unwrap();
+        let filter = parse_object_filter(&tokens, false).unwrap();
+        assert_eq!(filter.stack_kind, Some(crate::filter::StackObjectKind::SpellOrAbility));
+        assert!(!filter.has_mana_cost);
+        assert_eq!(filter.target_count, Some(crate::effect::ChoiceCount::at_least(1)));
     }
 
     #[test]

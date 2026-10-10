@@ -16,7 +16,7 @@ use crate::grammar::{leaf, primitives};
 use crate::lexer::{OwnedLexToken, TokenKind, token_word_refs};
 use ironsmith_core::{LoyaltyActivationAllowance, LoyaltyActivationScope};
 use winnow::Parser;
-use winnow::combinator::opt;
+use winnow::combinator::{alt, opt};
 
 fn is_authored_name(tokens: &[OwnedLexToken]) -> bool {
     !tokens.is_empty()
@@ -105,10 +105,11 @@ pub(super) fn parse(tokens: &[OwnedLexToken]) -> Result<Option<EffectAst>, CardT
         return Ok(Some(effect(scope, LoyaltyActivationAllowance::ExtraActivation)));
     }
     if let Some((index, (), tail)) = primitives::find_prefix(rest, || {
-        primitives::phrase(&[
-            "on", "any", "players", "turn", "any", "time", "you", "could", "cast", "an",
-            "instant",
-        ])
+        (
+            primitives::phrase(&["on", "any"]),
+            alt((primitives::kw("players"), primitives::kw("player's"), primitives::kw("player’s"))),
+            primitives::phrase(&["turn", "any", "time", "you", "could", "cast", "an", "instant"]),
+        ).void()
     }) {
         if !instant_prefix
             || primitives::probe_all(tail, primitives::sentence_end(), "loyalty instant").is_none()

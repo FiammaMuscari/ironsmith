@@ -40,11 +40,15 @@ fn optional_payment_in_otherwise_owns_reflexive_followup() {
     let effects = parsed(
         "Create a Treasure token if this is the first or second time this ability has resolved this turn. Otherwise, you may pay {X}. When you do, this creature deals that much damage to any target.",
     );
-    let Some(EffectAst::Conditionals(ConditionalEffectAst::IfResult { effects, .. })) =
-        effects.last()
-    else {
-        panic!("expected optional payment branch: {effects:#?}");
+    let [EffectAst::ControlFlow(flow)] = effects.as_slice() else {
+        panic!("expected condition with an otherwise branch: {effects:#?}");
     };
+    let crate::model::ControlFlowNodeAst::Condition {
+        alternative_program: Some(alternative), ..
+    } = &flow.node else {
+        panic!("expected an alternative program: {flow:#?}");
+    };
+    let effects = &flow.programs[*alternative].effects;
     assert!(
         matches!(
             effects.last(),

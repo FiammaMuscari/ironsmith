@@ -533,7 +533,10 @@ mod additional_owner_contract_tests {
                     assert_eq!(game.object(arrived).unwrap().counters.get(&crate::object::CounterType::PlusOnePlusOne), Some(&1));
                     assert!(!game.object(source).unwrap().counters.contains_key(&crate::object::CounterType::PlusOnePlusOne));
                     let occurrences = outcome.execution_facts.iter().filter_map(|fact| match fact { crate::effect::ExecutionFact::AffectedObjectMemory(memory) => Some(memory.as_slice()), _ => None }).flatten().filter(|memory| memory.object_id == arrived && memory.zone == to).count();
-                    assert!(occurrences >= if owner == 0 { 2 } else { 1 }, "added action memory reaches the original owner");
+                    assert_eq!(occurrences, 1, "object-memory sets deduplicate the same arrival across actions");
+                    assert_eq!(outcome.events_of_type::<crate::events::MarkersChangedEvent>()
+                        .filter(|event| event.is_added() && event.amount == 1).count(), 1,
+                        "the added counter action retains its separate event");
                     assert_eq!(outcome.affected_object_memory().unwrap_or(&[]).iter().filter(|memory| memory.object_id == arrived && memory.zone == to).count(), usize::from(owner == 0), "original memory excludes auxiliary duplicates and retains its own exile result");
                 } else {
                     assert_eq!(game.player(bob).unwrap().life, 27);

@@ -42,8 +42,8 @@ impl PermanentUntappedEvent {
     pub fn capture(game: &GameState, permanent: ObjectId, actor: Option<PlayerId>) -> Self {
         Self {
             permanent,
-            snapshot: game.object(permanent).map(|object| {
-                ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
+            snapshot: game.object(permanent).and_then(|object| {
+                ObjectSnapshot::capture_for_execution(object, game)
             }),
             actor,
             before_snapshot: None,

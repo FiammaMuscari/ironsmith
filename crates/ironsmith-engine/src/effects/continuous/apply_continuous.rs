@@ -86,7 +86,13 @@ fn resolve_target(
     };
 
     let mut objects = if spec.is_target() {
-        resolve_objects_for_effect(game, ctx, spec)?
+        match resolve_objects_for_effect(game, ctx, spec) {
+            Ok(objects) => objects,
+            Err(ExecutionError::InvalidTarget) => {
+                return Ok((EffectTarget::AllPermanents, Some(Vec::new()), true));
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         resolve_non_target_continuous_objects(game, ctx, spec)?
     };
@@ -1430,6 +1436,8 @@ impl crate::effects::SimultaneousEffectProposal for ContinuousActionProposal {
 }
 
 impl EffectExecutor for ApplyContinuousEffect {
+    fn visit_resolution_child_effects(&self, _visitor: &mut dyn FnMut(&crate::effect::Effect)) {}
+
     fn visit_child_effects(&self, visitor: &mut dyn FnMut(&crate::effect::Effect)) {
         for modification in self
             .modification

@@ -28,7 +28,6 @@ pub enum UnsupportedRewriteLineKind {
     SaddledConditional,
     LookedCardFallback,
     AnthemSubject,
-    AdditionalLandPermission,
     TargetOnlyRestriction,
     GenericLine,
     TemporaryLosesAbilitiesBecomes,
@@ -65,7 +64,6 @@ impl UnsupportedRewriteLineKind {
             Self::SaddledConditional => "unsupported saddled conditional tail",
             Self::LookedCardFallback => "unsupported looked-card fallback tail",
             Self::AnthemSubject => "unsupported anthem subject",
-            Self::AdditionalLandPermission => "unsupported additional-land-play permission clause",
             Self::TargetOnlyRestriction => "unsupported target-only restriction clause",
             Self::GenericLine => "unsupported line",
             Self::TemporaryLosesAbilitiesBecomes => {
@@ -117,14 +115,6 @@ const RULES: &[UnsupportedRule] = &[
             "target", "this", "turn", "by", "red", "sources",
         ],
         kind: UnsupportedRewriteLineKind::TrailingPreventNextDamage,
-    },
-    UnsupportedRule {
-        match_kind: UnsupportedRuleMatch::Exact,
-        phrase: &[
-            "you", "may", "play", "any", "number", "of", "lands", "on", "each", "of", "your",
-            "turns",
-        ],
-        kind: UnsupportedRewriteLineKind::AdditionalLandPermission,
     },
     UnsupportedRule {
         match_kind: UnsupportedRuleMatch::Exact,

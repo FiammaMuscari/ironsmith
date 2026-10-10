@@ -2,6 +2,9 @@
 use ironsmith::card::{CardBuilder, PowerToughness};
 use ironsmith::cards::CardDefinition;
 use ironsmith::events::{DamagePreventedEvent, DamageTarget};
+use ironsmith::effects::{DealDamageEffect, EffectExecutor};
+use ironsmith::target::ChooseSpec;
+use ironsmith::effects::EffectContext as ExecutionContext;
 use ironsmith::events::cause::EventCause;
 use ironsmith::events::processing::process_damage_assignments_with_event_with_source_snapshot_opts;
 use ironsmith::object::AttachmentTarget;
@@ -44,12 +47,21 @@ fn damage(
     unpreventable: bool,
 ) -> (u32, Vec<(u32, ObjectId, PlayerId)>) {
     game.take_pending_trigger_events();
-    let processed = process_damage_assignments_with_event_with_source_snapshot_opts(
-        game, source, target, amount, combat, unpreventable, EventCause::effect(), None,
-    ).unwrap();
-    let remaining = processed.assignments.iter().map(|assignment| assignment.amount).sum();
-    let prevented = game.take_pending_trigger_events().into_iter().filter_map(|event| {
-        event.downcast::<DamagePreventedEvent>()
+    let event_start = game.turn_store.turn_history.event_records.len();
+    let controller = game.current_controller(source).unwrap();
+    let target = match target {
+        DamageTarget::Player(player) => ChooseSpec::SpecificPlayer(player),
+        DamageTarget::Object(object) => ChooseSpec::SpecificObject(object),
+    };
+    let mut context = ExecutionContext::new_default(source, controller);
+    let outcome = DealDamageEffect::new(amount as i32, target)
+        .with_combat(combat)
+        .with_unpreventable(unpreventable)
+        .execute(game, &mut context)
+        .unwrap();
+    let remaining = outcome.count_or_zero() as u32;
+    let prevented = game.turn_store.turn_history.event_records.iter().skip(event_start).filter_map(|record| {
+        record.event.downcast::<DamagePreventedEvent>()
             .map(|event| (event.amount, event.prevention_source, event.prevention_controller))
     }).collect();
     (remaining, prevented)
@@ -281,7 +293,7 @@ fn prevention_life_followup_uses_actual_prevention_and_noncombat_scope() {
         assert_eq!(damage(&mut game, source, DamageTarget::Player(alice), 3, false, false), (0, vec![(3, host, alice)]));
         assert_eq!(game.player(alice).unwrap().life, 23);
         assert_eq!(damage(&mut game, source, DamageTarget::Player(alice), 2, false, true), (2, vec![]));
-        assert_eq!(game.player(alice).unwrap().life, 23, "actual prevention is zero");
+        assert_eq!(game.player(alice).unwrap().life, 21, "unpreventable damage loses life and gains none");
         assert_eq!(damage(&mut game, source, DamageTarget::Player(alice), 2, true, false), (2, vec![]));
         assert_eq!(damage(&mut game, source, DamageTarget::Player(bob), 2, false, false), (2, vec![]));
     }

@@ -607,6 +607,11 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
             StaticAbilityLineHeadHint::Single("you"),
             StaticAbilityLineHeadHint::Single("as"),
         ],
+        "parse_spend_mana_as_any_color_line" => vec![
+            StaticAbilityLineHeadHint::Single("you"),
+            StaticAbilityLineHeadHint::Single("players"),
+            StaticAbilityLineHeadHint::Single("mana"),
+        ],
         "parse_play_from_top_pay_life_line" => vec![StaticAbilityLineHeadHint::Single("you")],
         "parse_double_counters_replacement_line" => vec![StaticAbilityLineHeadHint::Single("if")],
         // "Skip your upkeep step [if <condition>]" may follow an ability-word
@@ -913,6 +918,7 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
         }
         "parse_leading_condition_wrapped_static_line" => vec![
             StaticAbilityLineHeadHint::Pair("during", "your"),
+            StaticAbilityLineHeadHint::Pair("during", "each"),
             StaticAbilityLineHeadHint::Pair("as", "long"),
         ],
         "parse_commander_ninjutsu_line" => vec![StaticAbilityLineHeadHint::Pair("commander", "ninjutsu")],
@@ -960,7 +966,11 @@ fn static_ability_rule_head_hints(rule_id: RuleId) -> Vec<StaticAbilityLineHeadH
             StaticAbilityLineHeadHint::Single("the"),
             StaticAbilityLineHeadHint::Pair("the", "legend"),
         ],
-        "parse_lose_game_replacement_line" | "parse_token_creation_templates_line" => {
+        "parse_token_creation_templates_line" => vec![
+            StaticAbilityLineHeadHint::Single("if"),
+            StaticAbilityLineHeadHint::Single("the"),
+        ],
+        "parse_lose_game_replacement_line" => {
             vec![StaticAbilityLineHeadHint::Single("if")]
         }
         // The rule name describes the changed characteristic, not the
@@ -2303,6 +2313,12 @@ fn bind_that_card_to_library_top(tokens: &[OwnedLexToken], abilities: &mut [Stat
 fn parse_static_ability_ast_line_lexed_committed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    // A quoted static ability in a trigger's effect belongs to the created
+    // object. Reject the outer trigger before any conditional-anthem probe
+    // can mistake that quoted predicate for the whole line's predicate.
+    if looks_like_trigger_intro_tokens(tokens) || looks_like_trigger_intro_after_label(tokens) {
+        return Ok(None);
+    }
     crate::clause_support::validate_protection_static_line(tokens)?;
     if let Some(abilities) =
         enters_tapped_untap_conjunction::parse_enters_tapped_and_doesnt_untap_line(tokens)?
@@ -2511,6 +2527,17 @@ mod compound_line_readings;
 fn parse_static_ability_ast_line_lexed_unstacked(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    // Prevention and its counter follow-up form one replacement program.
+    // Recognize that complete owner before splitting independent static sentences.
+    if let Some(ability) = parse_prevent_damage_to_other_creature_you_control_put_counters_line(tokens)? {
+        return Ok(Some(vec![StaticAbilityAst::Static(ability)]));
+    }
+    if let Some(ability) = parse_prevent_damage_to_source_put_counters_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_prevent_damage_to_source_remove_counter_line(tokens)? {
+        return Ok(Some(vec![ability.into()]));
+    }
     // Direct lexer callers still carry parenthetical reminder text.  It is not
     // a second rules sentence, and parsing it independently can turn an
     // explanatory comma into an unsupported effect clause.  Preserve
@@ -2609,6 +2636,15 @@ fn parse_static_ability_ast_line_lexed_unstacked(
     // A quoted attached grant has its own complete tail grammar, including
     // type additions. Keep its quoted body out of the sibling-clause splitter.
     if tokens.iter().any(|token| token.kind == TokenKind::Quote) {
+        if split_as_long_as_condition_prefix_lexed(tokens).is_some_and(|split| {
+            split.condition_tokens.first().is_some_and(|token| {
+                token.is_word("enchanted") || token.is_word("equipped") || token.is_word("fortified")
+            })
+        })
+            && let Some(abilities) = parse_filter_has_granted_ability_line(tokens)?
+        {
+            return Ok(Some(abilities));
+        }
         if let Some(abilities) = parse_anthem_with_trailing_segments_line(tokens)? {
             return Ok(Some(abilities));
         }
@@ -2616,8 +2652,17 @@ fn parse_static_ability_ast_line_lexed_unstacked(
             return Ok(Some(abilities));
         }
     }
+    // This continuation carries the first sentence's recipient into a
+    // conditional bonus and grant. A single-sentence anthem reader cannot
+    // validate that tail in isolation.
+    if let Some(abilities) = parse_carried_conditional_anthem_grant_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     // Complete sibling stat/grant clauses must own the line before a
     // characteristic-only or attached-continuation probe can reject a tail.
+    if let Some(abilities) = parse_attached_gets_and_cant_block_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     if let Some(abilities) = parse_composed_anthem_effects_line(tokens)? {
         return Ok(Some(abilities));
     }
@@ -2629,11 +2674,6 @@ fn parse_static_ability_ast_line_lexed_unstacked(
         && words.contains(&"instead")
         && let Some(abilities) = parse_static_ability_ast_line_lexed_single(tokens)?
     {
-        return Ok(Some(abilities));
-    }
-    // An attached stat bonus and an ability share one affected object. Read
-    // that complete compound before the broad characteristic-only routes.
-    if let Some(abilities) = parse_attached_gets_and_has_ability_line(tokens)? {
         return Ok(Some(abilities));
     }
     // Independent static sentences must be read before a permissive anthem
@@ -2670,11 +2710,19 @@ fn parse_static_ability_ast_line_lexed_unstacked(
             return Ok(Some(abilities));
         }
     }
+    // Read the complete serial tail first: a keyword followed by a type,
+    // goad, or combat restriction is not a single granted ability.
+    if let Some(abilities) = parse_attached_gets_and_has_ability_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     let input = compound_line_readings::StaticLine { tokens };
     match compound_line_readings::read(&input) {
         ParseOutcome::Match(matched) => return Ok(Some(matched.value.value)),
         ParseOutcome::NoMatch => {}
         ParseOutcome::Error(diagnostic) => return Err(diagnostic.into_card_text_error()),
+    }
+    if let Some(abilities) = parse_compound_self_predicate_line(tokens)? {
+        return Ok(Some(abilities));
     }
     // The declines the ladder made before its fallback still gate the fallback.
     if compound_line_readings::declines(&input) {
@@ -3965,6 +4013,11 @@ fn static_ability_ast_has_explicit_condition(ability: &StaticAbilityAst) -> bool
 }
 
 fn looks_like_player_counter_gain_effect_tokens(tokens: &[OwnedLexToken]) -> bool {
+    // A Ward payment is embedded in a keyword static ability, even when
+    // paying it instructs the payer to get poison or energy counters.
+    if tokens.first().is_some_and(|token| token.is_word("ward")) {
+        return false;
+    }
     // A typed conditional anthem can mention player counters in its condition
     // before a later permanent subject "gets" a bonus. Do not let the broad
     // player-resource effect guard steal that already-recognized static shape.
@@ -4605,9 +4658,9 @@ fn comma_separated_anthem_subject_is_not_split_into_sibling_abilities() {
     ] {
         let tokens =
             crate::lexer::lex_line(text, 0).expect("comma-separated anthem subject should lex");
-        let abilities = parse_composed_anthem_effects_line(&tokens)
+        let abilities = parse_static_ability_ast_line_lexed(&tokens)
             .expect("comma-separated anthem should parse")
-            .expect("the composed family should delegate one complete anthem");
+            .expect("the public reader should preserve one complete anthem");
         assert_eq!(abilities.len(), 1, "{text}: {abilities:#?}");
     }
 }
@@ -8334,3 +8387,24 @@ mod entry_copy_exception_root_tests {
 #[cfg(test)]
 #[path = "compound_static_body_tests.rs"]
 mod compound_static_body_tests;
+
+#[cfg(test)]
+mod ward_counter_payment_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn normalized_counter_payments_remain_ward_static_abilities() {
+        for resource in ["poison", "energy"] {
+            let mut parsed = Vec::new();
+            for verb in ["Get", "get"] {
+                let tokens = crate::lexer::lex_line(
+                    &format!("ward—{verb} five {resource} counters."), 0,
+                ).unwrap();
+                parsed.push(parse_static_ability_ast_line_lexed(&tokens)
+                    .expect("counter payment should parse")
+                    .expect("Ward must not be declined as a standalone counter effect"));
+            }
+            assert_eq!(parsed[0], parsed[1]);
+        }
+    }
+}

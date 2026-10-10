@@ -73,10 +73,16 @@ fn trigger(game: &mut GameState, event: &TriggerEvent, dm: &mut Choices) -> usiz
     for entry in entries { queue.add(entry); }
     put_triggers_on_stack_with_dm(game, &mut queue, dm).unwrap(); count
 }
+fn dispatch_effect_events(game: &mut GameState, events: Vec<TriggerEvent>, dm: &mut Choices) {
+    for event in events { trigger(game, &event, dm); }
+    let mut queue = TriggerQueue::new();
+    ironsmith::game_loop::drain_pending_trigger_events_with_dm(game, &mut queue, dm).unwrap();
+    put_triggers_on_stack_with_dm(game, &mut queue, dm).unwrap();
+}
 fn enter(game: &mut GameState, definition: &CardDefinition, dm: &mut Choices) -> ObjectId {
     let old = game.create_object_from_definition(definition, A, Zone::Hand); let stable = game.object(old).unwrap().stable_id;
     let result = execute_effect(game, &Effect::move_to_zone(ChooseSpec::SpecificObject(old), Zone::Battlefield, false), &mut EffectContext::new(old, A, dm)).unwrap();
-    for event in result.events { trigger(game, &event, dm); }
+    dispatch_effect_events(game, result.events, dm);
     game.find_object_by_stable_id(stable).unwrap()
 }
 fn resolve(game: &mut GameState, dm: &mut Choices) {
@@ -200,7 +206,7 @@ fn black_panther_survey_triggers_for_self_and_other_owned_creatures_only() {
             let old = witness(&mut game, owner, Zone::Hand, "Creature", 0);
             dm.targets.push_back(Target::Object(land));
             let out = execute_effect(&mut game, &Effect::move_to_zone(ChooseSpec::SpecificObject(old), Zone::Battlefield, false), &mut EffectContext::new(source, owner, &mut dm)).unwrap();
-            for event in out.events { trigger(&mut game, &event, &mut dm); } resolve(&mut game, &mut dm);
+            dispatch_effect_events(&mut game, out.events, &mut dm); resolve(&mut game, &mut dm);
             assert_eq!(game.counter_count(land, KIND), expected);
         }
     }

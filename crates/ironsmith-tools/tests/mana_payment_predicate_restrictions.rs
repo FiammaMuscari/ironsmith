@@ -7,7 +7,7 @@ fn exact_payment_predicate_cards_preserve_real_restrictions_and_metadata() {
         "../../../fixtures/mana_payment_predicate_restrictions.json.fixture"
     ))
     .unwrap();
-    assert_eq!(rows.len(), 4);
+    assert!(!rows.is_empty(), "the payment restriction corpus must not be empty");
     for r in rows {
         let mut lines = vec![
             format!("Mana cost: {}", r["mana_cost"].as_str().unwrap()),

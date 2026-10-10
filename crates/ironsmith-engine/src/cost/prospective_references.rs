@@ -295,11 +295,11 @@ pub(crate) fn activation_reference_preflight(
             let Some(object) = preview.object_mut(source) else { return false; };
             object.x_value = Some(x);
             let mut announced = activated.clone();
-            announced.mana_cost = TotalCost::from_costs(activated.mana_cost.costs().iter().map(|component| {
-                if let Some(mana) = component.mana_cost_ref() {
+            announced.mana_cost = activated.mana_cost.clone().try_map(|component| {
+                Ok::<_, std::convert::Infallible>(if let Some(mana) = component.mana_cost_ref() {
                     Cost::mana(crate::decision::mana_cost_with_locked_x_and_generic_reduction(mana, x, 0))
-                } else { component.clone() }
-            }).collect());
+                } else { component })
+            }).unwrap();
             activation_reference_preflight(&preview, source, ability_index, payer, &announced).unwrap_or(false)
         }));
     }

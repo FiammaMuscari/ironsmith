@@ -687,8 +687,13 @@ fn parse_filtered_object_animation_static_line(
     };
     // "… is a 0/0 creature in addition to its other types and it has
     // annihilator 2": the in-addition-and-has rule owns that pairing.
+    let animation_words = crate::lexer::parser_token_word_refs(animation_tokens);
+    let keywords_precede_addition = animation_words.iter().position(|word| *word == "with")
+        .zip(animation_words.windows(3).position(|words| words == ["in", "addition", "to"]))
+        .is_some_and(|(with, addition)| with < addition);
     if shape.preserve_other_types
         && !shape.still_other_card_type
+        && !keywords_precede_addition
         && (!shape.granted_keyword_words.is_empty() || shape.dependent_subject)
     {
         return Ok(None);
@@ -1510,33 +1515,12 @@ pub fn parse_granted_keyword_static_line(
         (None, None) => None,
     };
 
-    // A fixed flashback price belongs to the ordinary alternative-cast
-    // model. Source grants are explicitly self/graveyard scoped; the live
-    // predicate is retained by the conditional static owner.
-    if keyword_tokens.first().is_some_and(|token| token.is_word("flashback"))
-        && keyword_tokens.len() > 1 && trailing_clause_tokens.is_empty()
-        && let Some(method) = crate::util::parse_flashback_line(&keyword_tokens)?
+    if trailing_clause_tokens.is_empty()
+        && let Some(abilities) = parse_fixed_flashback_static_grant(
+            &subject_tokens, &keyword_tokens, condition.clone(),
+        )?
     {
-        let spec = match parse_anthem_subject(&subject_tokens)? {
-            AnthemSubjectAst::Source => crate::model::CompilerGrantSpecCore::new(
-                crate::model::CompilerGrantableCore::AlternativeCast(method),
-                ObjectFilter::source(), Zone::Graveyard,
-            ),
-            AnthemSubjectAst::Filter(mut filter) => {
-                let zone = filter.zone.unwrap_or(Zone::Graveyard);
-                filter.zone = None;
-                crate::model::CompilerGrantSpecCore::new(
-                    crate::model::CompilerGrantableCore::AlternativeCast(method), filter, zone,
-                )
-            }
-        };
-        let ability = StaticAbilityAst::Static(StaticAbility::grants(spec));
-        return Ok(Some(vec![match condition {
-            Some(condition) => StaticAbilityAst::ConditionalStaticAbility {
-                ability: Box::new(ability), condition,
-            },
-            None => ability,
-        }]));
+        return Ok(Some(abilities));
     }
 
     let keyword_kind = anthem_grant_grammar::classify_granted_keyword_tokens(&keyword_tokens);
@@ -2911,6 +2895,12 @@ pub fn parse_anthem_subject(tokens: &[OwnedLexToken]) -> Result<AnthemSubjectAst
         _ => tokens,
     };
     let subject_words = crate::lexer::parser_token_word_refs(tokens);
+    // A duration is not part of the affected-object set. Its owning reader
+    // must consume it before this subject parser can apply a grant; otherwise
+    // the tolerant filter can turn a timed target into every creature forever.
+    if subject_words.first().is_some_and(|word| matches!(*word, "until" | "during")) {
+        return Err(CardTextError::ParseError("unowned duration in anthem subject".to_string()));
+    }
     if subject_words.as_slice() == ["also"] {
         return Err(CardTextError::ParseError("anthem adverb has no subject".to_string()));
     }
@@ -5819,4 +5809,43 @@ mod dynamic_anthem_tests {
             PredicateAst::Source(SourcePredicateAst::SourceAttackedBattleThisTurn)
         );
     }
+}
+
+
+/// Interpret a cost-bearing keyword before a broad keyword-marker fallback.
+pub(super) fn parse_fixed_flashback_static_grant(
+    subject_tokens: &[OwnedLexToken],
+    keyword_tokens: &[OwnedLexToken],
+    condition: Option<PredicateAst>,
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    // A fixed flashback price belongs to the ordinary alternative-cast
+    // model. Source grants are explicitly self/graveyard scoped; the live
+    // predicate is retained by the conditional static owner.
+    if keyword_tokens.first().is_some_and(|token| token.is_word("flashback"))
+        && keyword_tokens.len() > 1
+        && let Some(method) = crate::util::parse_flashback_line(keyword_tokens)?
+    {
+        let spec = match parse_anthem_subject(subject_tokens)? {
+            AnthemSubjectAst::Source => crate::model::CompilerGrantSpecCore::new(
+                crate::model::CompilerGrantableCore::AlternativeCast(method),
+                ObjectFilter::source(), Zone::Graveyard,
+            ),
+            AnthemSubjectAst::Filter(mut filter) => {
+                let zone = filter.zone.unwrap_or(Zone::Graveyard);
+                filter.zone = None;
+                crate::model::CompilerGrantSpecCore::new(
+                    crate::model::CompilerGrantableCore::AlternativeCast(method), filter, zone,
+                )
+            }
+        };
+        let ability = StaticAbilityAst::Static(StaticAbility::grants(spec));
+        return Ok(Some(vec![match condition {
+            Some(condition) => StaticAbilityAst::ConditionalStaticAbility {
+                ability: Box::new(ability), condition,
+            },
+            None => ability,
+        }]));
+    }
+
+    Ok(None)
 }

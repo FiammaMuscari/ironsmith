@@ -193,16 +193,17 @@ fn substitutions_keep_intrinsic_keywords_and_outer_tap_cleanup_instructions() {
                 .to_vec();
             assert_eq!(ids.len(), 3);
             assert_eq!(subtype_count(&game, &ids, expected), 3);
-            for id in ids {
+            for &id in &ids {
                 assert!(game.is_tapped(id));
                 assert_eq!(game.current_power(id), Some(power));
                 assert!(game.current_has_static_ability_id(id, StaticAbilityId::Flying));
             }
             assert_eq!(
                 game.effect_store.delayed_triggers.len(),
-                3,
-                "replacement tokens inherit the original cleanup instruction"
+                1,
+                "replacement tokens share the original batch cleanup instruction"
             );
+            assert_eq!(game.effect_store.delayed_triggers[0].target_objects, ids);
         }
     }
 }
@@ -562,7 +563,8 @@ fn copy_owner_preserves_outer_instructions_without_copying_inline_exceptions_to_
                 .to_vec();
             assert_eq!(ids.len(), 2);
             assert!(ids.iter().all(|id| game.is_tapped(*id)));
-            assert_eq!(game.effect_store.delayed_triggers.len(), 2);
+            assert_eq!(game.effect_store.delayed_triggers.len(), 1);
+            assert_eq!(game.effect_store.delayed_triggers[0].target_objects, ids);
             let frog = *ids
                 .iter()
                 .find(|id| game.current_has_subtype(**id, Subtype::Frog))
@@ -592,7 +594,8 @@ fn affordable_501_originals_plus_added_template_are_exact_and_keep_cleanup() {
         assert_eq!(subtype_count(&game, ids, Subtype::Soldier), 501);
         assert_eq!(subtype_count(&game, ids, Subtype::Frog), 1);
         assert!(ids.iter().all(|id| game.is_tapped(*id)));
-        assert_eq!(game.effect_store.delayed_triggers.len(), 502);
+        assert_eq!(game.effect_store.delayed_triggers.len(), 1);
+        assert_eq!(game.effect_store.delayed_triggers[0].target_objects.as_slice(), ids);
         let creations: Vec<_> = out
             .events
             .iter()
@@ -641,7 +644,8 @@ fn affordable_501_copies_keep_original_and_additional_instruction_scopes() {
         assert_eq!(subtype_count(&game, ids, Subtype::Frog), 1);
         assert!(ids.iter().all(|id| game.is_tapped(*id)
             && game.current_has_static_ability_id(*id, StaticAbilityId::Haste)));
-        assert_eq!(game.effect_store.delayed_triggers.len(), 502);
+        assert_eq!(game.effect_store.delayed_triggers.len(), 1);
+        assert_eq!(game.effect_store.delayed_triggers[0].target_objects.as_slice(), ids);
     }
 }
 

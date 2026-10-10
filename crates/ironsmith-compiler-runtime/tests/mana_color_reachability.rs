@@ -1,16 +1,18 @@
 use ironsmith::{GameState, PlayerId, Zone};
 use ironsmith::mana_payment::{ManaPaymentRequest, plan_first_mana_payment, last_mana_payment_perf};
 
-// Exact baked programs from the natural Pioneer menu failure. This is a
-// program/board regression; the unchanged full gameplay prefix remains the
-// production acceptance witness.
+// Freeze the source board and compile through the current artifact envelope.
+// UI cache files belong to a deployment and may use an older wire format.
 #[test]
 fn unrelated_channel_reduction_preserves_missing_color_proof() {
-    let load = |name: &str| {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../web/ui/public/cards").join(format!("{name}.json"));
-        let data: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let artifact = serde_json::from_value(data["artifacts"][0].clone()).unwrap();
+    let rows: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../fixtures/mana_color_reachability.json.fixture"
+    )).unwrap();
+    let load = |slug: &str| {
+        let row = rows.iter().find(|row| row["slug"] == slug).unwrap();
+        let (artifact, _) = ironsmith_compiler_runtime::compile_to_artifact(
+            row["name"].as_str().unwrap(), row["text"].as_str().unwrap(), false,
+        ).unwrap();
         ironsmith_runtime_catalog::artifact_materializer::materialize_artifact(&artifact).unwrap()
     };
     let alice = PlayerId::from_index(0);

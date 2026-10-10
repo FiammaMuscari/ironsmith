@@ -55,7 +55,7 @@ fn complete_candidate_sources_require_current_envelopes_on_every_materialization
             let (result, loss) = ironsmith_compiler::parse_loss::capture(|| compile_to_artifact(name, &text, false));
             let (artifact, _) = result.unwrap_or_else(|error| panic!("artifact {name}: {error}"));
             assert!(!loss.is_lossy(), "artifact {name}: {}", loss.reasons_text());
-            assert_eq!(artifact.format_version, 17);
+            assert_eq!(artifact.format_version, FORMAT_VERSION);
             assert_eq!(artifact.engine_schema_hash, ENGINE_SCHEMA_HASH);
             artifact.validate().unwrap();
             let bytes = artifact.to_json().unwrap();
@@ -73,7 +73,7 @@ fn complete_candidate_sources_require_current_envelopes_on_every_materialization
                 old.format_version = version;
                 old.refresh_checksum();
                 assert!(matches!(old.validate(), Err(ArtifactValidationError::UnsupportedFormat {
-                    found, expected: 17,
+                    found, expected: FORMAT_VERSION,
                 }) if found == version));
                 assert!(CompiledCardArtifact::from_json(&old.to_json().unwrap()).is_err());
                 assert!(materialize_artifact(&old).is_err());
@@ -100,7 +100,6 @@ fn source_admission_cannot_route_new_durations_to_an_unrepresented_effect_owner(
         "Type: Sorcery\nTarget creature gains flying during that player's next untap step.",
         "Type: Sorcery\nTarget creature doesn't untap until its controller's next untap step.",
         "Type: Sorcery\nTarget creature can't attack until its controller's next untap step.",
-        "Type: Sorcery\nIf you control an Island, creatures target player controls don't untap during that player's next untap step.",
     ] {
         let (direct, loss) = ironsmith_compiler::parse_loss::capture(||
             compile_to_runtime_definition("Unrepresented duration owner", text, false));

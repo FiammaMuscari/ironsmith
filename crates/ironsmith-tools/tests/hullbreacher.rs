@@ -74,7 +74,7 @@ fn treasures(game: &GameState, player: PlayerId) -> usize {
         .iter()
         .filter(|id| {
             let obj = game.object(**id).unwrap();
-            obj.name == "Treasure" && game.current_controller(**id) == Some(player)
+            obj.has_subtype(ironsmith::Subtype::Treasure) && game.current_controller(**id) == Some(player)
         })
         .count()
 }
@@ -176,7 +176,7 @@ fn replaced_draw_creates_an_artifact_treasure_token_owned_by_controller() {
     let treasure = *game
         .battlefield
         .iter()
-        .find(|id| game.object(**id).unwrap().name == "Treasure")
+        .find(|id| game.object(**id).unwrap().has_subtype(ironsmith::Subtype::Treasure))
         .unwrap();
     let obj = game.object(treasure).unwrap();
     assert_eq!(obj.kind, ironsmith::object::ObjectKind::Token);

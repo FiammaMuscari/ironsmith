@@ -25,8 +25,9 @@ fn leading_duration_covers_both_pump_and_quoted_death_trigger() {
         let target = game.create_object_from_card(&creature, alice, Zone::Battlefield);
         let other = game.create_object_from_card(&creature, alice, Zone::Battlefield);
         let entry = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::ZoneChangeEvent::with_cause(
+            crate::events::ZoneChangeEvent::with_results(
                 source,
+                vec![source],
                 Zone::Stack,
                 Zone::Battlefield,
                 crate::events::cause::EventCause::effect(),

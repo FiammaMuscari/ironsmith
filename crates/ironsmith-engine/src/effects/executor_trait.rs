@@ -1566,7 +1566,8 @@ pub trait EffectExecutor:
     /// Used for displaying alternative casting costs like "Pay 1 life, exile a blue card".
     /// Returns None if no description is available, in which case a generic display is used.
     fn cost_description(&self) -> Option<String> {
-        None
+        self.transparent_child_effect()
+            .and_then(|child| child.0.cost_description())
     }
 
     /// Return the semantically transparent child effect for wrappers whose
@@ -1588,6 +1589,14 @@ pub trait EffectExecutor:
     /// Implementations should expose only direct children. Recursive traversal is
     /// provided by the default capability helpers below.
     fn visit_child_effects(&self, _visitor: &mut dyn FnMut(&Effect)) {}
+
+    /// Children executed by this instruction's resolution. Granted or deferred
+    /// ability bodies remain visible to structural visitors but do not create
+    /// draw boundaries while the grant itself resolves.
+    fn visit_resolution_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        self.visit_child_effects(visitor);
+    }
+
 
     /// Typed Suspend casting identity for this program's current source.
     /// Only executors which perform that cast, or wrappers which preserve its

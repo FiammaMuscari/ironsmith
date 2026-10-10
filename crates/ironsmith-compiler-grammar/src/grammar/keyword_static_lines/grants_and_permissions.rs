@@ -68,6 +68,9 @@ pub enum ManaSpendPermissionShape<'a> {
     AnyTypeToCast {
         filter_tokens: &'a [OwnedLexToken],
     },
+    AnyTypeForSourceActivation {
+        subject_tokens: &'a [OwnedLexToken],
+    },
     AnyColor {
         player: ManaSpendPlayerKind,
         activation_filter_tokens: Option<&'a [OwnedLexToken]>,
@@ -147,6 +150,7 @@ pub fn parse_mana_spend_permission_tokens(
             parse_symbol_mana_spend_lexed,
             parse_symbol_source_activation_mana_spend_lexed,
             parse_any_type_cast_mana_spend_lexed,
+            parse_any_type_activation_mana_spend_lexed,
             parse_any_color_mana_spend_lexed,
         )),
         "mana spend permission",
@@ -410,6 +414,19 @@ fn parse_any_type_cast_mana_spend_lexed<'a>(
     Ok(ManaSpendPermissionShape::AnyTypeToCast {
         filter_tokens: trim_lexed_commas(filter_tokens),
     })
+}
+
+fn parse_any_type_activation_mana_spend_lexed<'a>(
+    input: &mut LexStream<'a>,
+) -> WResult<ManaSpendPermissionShape<'a>> {
+    primitives::phrase(&["mana", "of", "any", "type", "can", "be", "spent", "to", "activate"])
+        .parse_next(input)?;
+    let subject_tokens = repeat_till::<_, _, (), _, _, _, _>(
+        1.., any.void(), peek(primitives::kw("abilities")),
+    ).map(|((), _)| ()).take().parse_next(input)?;
+    primitives::kw("abilities").parse_next(input)?;
+    primitives::sentence_end().parse_next(input)?;
+    Ok(ManaSpendPermissionShape::AnyTypeForSourceActivation { subject_tokens })
 }
 
 fn parse_any_color_mana_spend_lexed<'a>(

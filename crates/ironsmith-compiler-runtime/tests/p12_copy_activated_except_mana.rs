@@ -29,8 +29,13 @@ fn definitions(name: &str, text: &str) -> [CardDefinition; 2] {
 #[test]
 fn sharkey_copies_only_nonmana_land_abilities() {
     for definition in definitions("Sharkey, Tyrant of the Shire", SHARKEY) {
-        let debug = format!("{definition:?}");
-        assert!(debug.contains("CopyActivatedAbilities"), "{debug}");
-        assert!(debug.contains("include_mana: false"), "{debug}");
+        let copied = definition.abilities.iter().find_map(|ability| {
+            let ironsmith::ability::AbilityKind::Static(ability) = &ability.kind else { return None };
+            let ironsmith_core::StaticAbilityPayload::CopyActivatedAbilities(copied) = &ability.compiled_model()?.payload else { return None };
+            Some(copied)
+        }).expect("copy activated abilities permission");
+        assert!(copied.exclude_mana_abilities);
+        assert_eq!(copied.filter.card_types, vec![ironsmith::CardType::Land]);
+        assert_eq!(copied.filter.controller, Some(ironsmith::PlayerFilter::Opponent));
     }
 }

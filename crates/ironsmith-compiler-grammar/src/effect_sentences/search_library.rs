@@ -763,7 +763,9 @@ pub fn parse_for_each_exiled_this_way_sentence(
             },
         )]));
     }
-    let effects = parse_effect_chain(effect_tokens)?;
+    // Keep a copy-and-cast instruction together. Splitting it into verb
+    // clauses would try to copy an exiled card as a spell on the stack.
+    let effects = crate::clause_support::parse_effect_sentences_lexed(effect_tokens)?;
     if effects.is_empty() {
         return Err(CardTextError::ParseError(format!(
             "empty effect after 'for each ... exiled this way' clause (clause: '{}')",

@@ -197,17 +197,23 @@ impl EffectExecutor for TapEffect {
         } else {
             ObjectApplyResultPolicy::CountApplied
         };
-        let provenance = ctx.provenance;
+        let mut selected = Vec::new();
 
         let apply_result = apply_to_selected_objects(
             game,
             ctx,
             &self.target,
             result_policy,
-            |game, _ctx, object_id| Ok(action.tap(game, object_id)),
+            |game, _ctx, object_id| {
+                selected.push(object_id);
+                Ok(action.tap(game, object_id))
+            },
         )?;
         let taps = action.finish(game);
-        let outcome = EffectOutcome::aggregate_with_primary_result(apply_result.outcome, [taps]);
+        // "Those permanents" includes selected permanents that were already
+        // tapped. The tap receipt still records only actual state changes.
+        let outcome = EffectOutcome::aggregate_with_primary_result(apply_result.outcome, [taps])
+            .with_result_objects(selected);
 
         Ok(outcome)
     }
@@ -300,6 +306,26 @@ mod tests {
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn tagged_tap_retains_already_tapped_members_of_a_mixed_selection() {
+        let mut game = setup_game();
+        let player = PlayerId(0);
+        let first = create_creature(&mut game, "Already tapped", player);
+        let second = create_creature(&mut game, "Untapped", player);
+        game.tap(first);
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(first, player, &mut dm);
+        let effect = crate::effect::Effect::new(TapEffect::all(ObjectFilter::creature()))
+            .tag("selected");
+        let outcome = effect.0.execute(&mut game, &mut ctx).unwrap();
+        let mut selected = ctx.get_tagged_all("selected").unwrap().iter()
+            .map(|snapshot| snapshot.object_id).collect::<Vec<_>>();
+        selected.sort();
+        assert_eq!(selected, vec![first, second]);
+        assert_eq!(outcome.count_or_zero(), 1);
+        assert_eq!(outcome.affected_objects(), Some([second].as_slice()));
     }
 
     fn make_creature_card(card_id: u32, name: &str) -> crate::card::Card {

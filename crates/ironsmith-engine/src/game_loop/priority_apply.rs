@@ -396,7 +396,9 @@ pub(super) fn begin_mana_ability_activation_with_outputs(
                     ));
                 }
                 drop(mana_ctx);
-                queue_triggers_for_events(game, trigger_queue, outcome.outcome.events.clone())?;
+                queue_triggers_for_events_including_delayed(
+                    game, trigger_queue, outcome.outcome.events.clone(),
+                )?;
                 root_outputs.retain_published_children([outcome]);
 
                 // Execute additional effects (for complex mana abilities)
@@ -433,7 +435,7 @@ pub(super) fn begin_mana_ability_activation_with_outputs(
                         emitted_events.extend(outcome.outcome.events.iter().cloned());
                         root_outputs.retain_published_children([outcome]);
                     }
-                    queue_triggers_for_events(game, trigger_queue, emitted_events)?;
+                    queue_triggers_for_events_including_delayed(game, trigger_queue, emitted_events)?;
                     try_drain_pending_trigger_events(game, trigger_queue)?;
                 }
 
@@ -446,8 +448,14 @@ pub(super) fn begin_mana_ability_activation_with_outputs(
 
                 root_outputs.retain_published_children(notification);
 
-                // Player retains priority after activating mana ability
-                return advance_priority_with_dm(game, trigger_queue, decision_maker).map(
+                // A mana activation during payment returns to that announcement.
+                // Priority (and queued triggers/SBAs) waits until it completes.
+                let progress = if state.has_pending_action() {
+                    Ok(GameProgress::Continue)
+                } else {
+                    advance_priority_with_dm(game, trigger_queue, decision_maker)
+                };
+                return progress.map(
                     |progress| ManaActivationProgress {
                         progress,
                         outputs: Some(root_outputs),
@@ -515,9 +523,12 @@ pub(super) fn begin_mana_ability_activation_with_outputs(
             }
         }
 
-        // Player retains priority after activating mana ability
-        advance_priority_with_dm(game, trigger_queue, decision_maker)
-            .map(ManaActivationProgress::without_outputs)
+        let progress = if state.has_pending_action() {
+            Ok(GameProgress::Continue)
+        } else {
+            advance_priority_with_dm(game, trigger_queue, decision_maker)
+        };
+        progress.map(ManaActivationProgress::without_outputs)
     })();
     if result.is_err() || decision_maker.awaiting_choice() {
         *game = checkpoint.0;

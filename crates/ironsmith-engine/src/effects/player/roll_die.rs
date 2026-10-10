@@ -300,8 +300,8 @@ mod tests {
 
         let die_event = outcome
             .events
-            .first()
-            .and_then(|event| event.downcast::<DieRolledEvent>())
+            .iter()
+            .find_map(|event| event.downcast::<DieRolledEvent>())
             .expect("roll should emit a die-rolled event");
         assert_eq!(outcome.as_count(), Some(7));
         assert_eq!(die_event.natural_result, 6);
@@ -331,8 +331,8 @@ mod tests {
 
         let die_event = outcome
             .events
-            .first()
-            .and_then(|event| event.downcast::<DieRolledEvent>())
+            .iter()
+            .find_map(|event| event.downcast::<DieRolledEvent>())
             .expect("roll should emit a die-rolled event");
         assert_eq!(outcome.as_count(), Some(6));
         assert_eq!(die_event.result, 6);

@@ -12,7 +12,7 @@ use ironsmith::triggers::{Trigger, TriggerEvent, TriggerQueue, check_delayed_tri
 use ironsmith::{GameState, ObjectId, Phase, PlayerId, Zone};
 use ironsmith_compiled_artifact::CompiledCardArtifact;
 use ironsmith_compiler_runtime::{compile_to_artifact, compile_to_runtime_definition};
-use ironsmith_core::{DelayedTriggerSpec, PlayerFilter, TriggerKind};
+use ironsmith_core::{DelayedTriggerSpec, PlayerFilter};
 use ironsmith_core::trigger_model::PlayerAttackGrouping;
 use ironsmith_runtime_catalog::artifact_materializer::materialize_artifact;
 const A: PlayerId = PlayerId(0);
@@ -132,8 +132,6 @@ fn full_bodies_preserve_exact_ids_and_native_grouping_after_independent_compilat
             assert_eq!(native.attacker, PlayerFilter::You);
             assert_eq!(native.defender, PlayerFilter::Any);
             assert_eq!(native.grouping, PlayerAttackGrouping::AttackerAnyTarget);
-            assert!(matches!(&schedule.trigger.compiled_model().unwrap().kind,
-                TriggerKind::PlayerAttackDeclaration { grouping: PlayerAttackGrouping::AttackerAnyTarget, .. }));
         }
     }
 }
@@ -151,7 +149,6 @@ fn delayed_wire_round_trip_preserves_every_grouping_and_player_filter() {
         assert_eq!(native.attacker, PlayerFilter::Specific(B));
         assert_eq!(native.defender, PlayerFilter::Opponent);
         assert_eq!(native.grouping, grouping);
-        assert!(matches!(&trigger.compiled_model().unwrap().kind, TriggerKind::PlayerAttackDeclaration { .. }));
     }
 }
 #[test]

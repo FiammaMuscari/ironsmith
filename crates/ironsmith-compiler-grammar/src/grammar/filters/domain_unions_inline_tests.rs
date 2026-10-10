@@ -280,6 +280,17 @@ fn relative_characteristic_union_is_not_split_from_its_common_domain() {
 }
 
 #[test]
+fn relative_card_type_union_keeps_its_shared_trailing_zone() {
+    let tokens = lex_line("card that's an instant or sorcery from your graveyard", 0).unwrap();
+    assert!(contains_relative_characteristic_union(&tokens));
+    let filter = crate::object_filters::parse_object_filter(&tokens, false).unwrap();
+    assert_eq!(filter.zone, Some(crate::Zone::Graveyard));
+    assert_eq!(filter.owner, Some(crate::target::PlayerFilter::You));
+    assert!(filter.card_types.contains(&crate::types::CardType::Instant));
+    assert!(filter.card_types.contains(&crate::types::CardType::Sorcery));
+}
+
+#[test]
 fn historical_block_partner_relation_is_not_split_as_an_or_union() {
     let tokens = lex_line(
         "creature that blocked or was blocked by a Zombie this turn",
@@ -449,7 +460,7 @@ fn preserves_equipped_state_on_only_its_conjunctive_union_arm() {
     assert!(equipment.tagged_constraints.is_empty(), "{equipment:#?}");
     assert_eq!(
         filter.description(),
-        "a creature you control with an Equipment attached to it and an Equipment you control"
+        "an equipped creature you control and an Equipment you control"
     );
 }
 

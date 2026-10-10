@@ -822,6 +822,9 @@ pub fn declare_blockers(
 ) -> Result<(), CombatError> {
     declare_blockers_internal(game, combat, declarations, true, None)?;
     combat.block_declaration_complete = true;
+    // Blocking changes continuous conditions even when no object is tapped.
+    // The caller installs this combat state before refreshing characteristics.
+    game.mark_continuous_state_dirty();
     Ok(())
 }
 
@@ -2167,10 +2170,6 @@ mod tests {
         let attacker_id = game.create_object_from_card(&attacker, alice, Zone::Battlefield);
         let blocker_id = game.create_object_from_card(&blocker, bob, Zone::Battlefield);
         game.remove_summoning_sickness(attacker_id);
-        game.effect_store
-            .cant_effects
-            .must_be_blocked
-            .insert(attacker_id);
 
         let mut combat = CombatState::default();
         declare_attackers(
@@ -2179,6 +2178,12 @@ mod tests {
             vec![(attacker_id, AttackTarget::Player(bob))],
         )
         .expect("attacker should be declared");
+
+        // Declaration refreshes derived restrictions; install this blocker-phase fixture afterward.
+        game.effect_store
+            .cant_effects
+            .must_be_blocked
+            .insert(attacker_id);
 
         let missing_block = declare_blockers(&game, &mut combat.clone(), Vec::new());
         assert_eq!(
@@ -2671,10 +2676,10 @@ mod tests {
             &mut CombatState::default(),
             vec![(attacker_id, AttackTarget::Player(bob))],
         );
-        assert_eq!(
-            without_mana,
-            Err(CombatError::CreatureCannotAttack(attacker_id))
-        );
+        assert!(matches!(without_mana,
+            Err(CombatError::InvalidDeclaration(message))
+                if message.contains("Cannot pay required attack cost of {2}")
+        ));
 
         game.player_mut(alice)
             .expect("attacking player should exist")

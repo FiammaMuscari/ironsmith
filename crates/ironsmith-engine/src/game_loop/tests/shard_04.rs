@@ -1657,6 +1657,7 @@ pub(super) fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
             not_before_turn: None,
             expires_at_turn: None,
             expires_before_controller_turn_after: None,
+            expires_after_controller_turn_after: None,
             expires_at_end_of_combat: false,
             bound_extra_turn_index: None,
             while_any_tagged_object_in_zone: None,

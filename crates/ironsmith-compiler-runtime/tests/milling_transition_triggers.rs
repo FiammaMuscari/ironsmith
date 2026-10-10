@@ -204,18 +204,17 @@ fn actual_mill_is_distinct_from_arbitrary_library_moves_and_keeps_public_replace
         );
         let original = resource(&mut game, B, Zone::Library, "Creature");
         mill(&mut game, source, B, 1);
-        let events = game.take_pending_trigger_events();
-        let actual = events
-            .iter()
-            .find_map(|event| event.downcast::<ironsmith::events::CardMilledEvent>())
+        // Replacement completion may already have matched the event's
+        // triggers. Its physical receipt remains in history in either case.
+        let history = &game.turn_store.turn_history;
+        let actual = history.event_records.iter().chain(history.staged_event_records.iter())
+            .filter_map(|record| record.event.downcast::<ironsmith::events::CardMilledEvent>())
+            .find(|event| event.original_card == original)
             .unwrap();
         assert_eq!(actual.original_card, original);
         assert_ne!(actual.card, original);
         assert_eq!(actual.snapshot.as_ref().unwrap().object_id, actual.card);
         assert_eq!(actual.snapshot.as_ref().unwrap().zone, Zone::Exile);
-        for event in events {
-            game.queue_trigger_event(event.provenance(), event);
-        }
         assert_eq!(settle(&mut game, &mut SelectFirstDecisionMaker), 1);
         assert_eq!(game.player(A).unwrap().life, 23);
         mill(&mut game, source, B, 0);

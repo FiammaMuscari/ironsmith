@@ -1463,7 +1463,11 @@ pub fn split_if_clause_lexed(
             let comma_fragment_looks_like_delayed_trigger = effect_tokens
                 .first()
                 .is_some_and(|token| token.is_word("when") || token.is_word("whenever"));
-            if (comma_fragment_looks_like_effect || comma_fragment_looks_like_delayed_trigger)
+            // A leading duration owns its comma but is not an effect by
+            // itself. Keep it with the full consequence, including any
+            // nested trigger's condition and comma.
+            let consequence_has_duration = super::effects::chain_carry::parse_carry_duration_prefix_tokens(effect_tokens).is_some();
+            if (comma_fragment_looks_like_effect || comma_fragment_looks_like_delayed_trigger || consequence_has_duration)
                 && let Ok(effects) =
                     parse_conditional_consequence(effect_tokens, &mut parse_effects)
                 && !effects.is_empty()

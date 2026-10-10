@@ -669,7 +669,12 @@ impl EffectExecutor for CopySpellEffect {
             .execute_child(game, ctx)?;
         }
 
-        Ok(EffectOutcome::with_objects(created_ids))
+        let copied = created_ids.iter().filter_map(|id| game.object(*id))
+            .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, game))
+            .collect();
+        Ok(EffectOutcome::with_objects(created_ids).with_action_objects(
+            crate::effect::PriorEffectAction::Copied, Some(copier), copied,
+        ))
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

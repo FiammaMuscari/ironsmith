@@ -126,8 +126,9 @@ fn leading_target_modifier_excludes_an_embedded_source_reference() {
         }
         let target = if opponent_target { opponent } else { own };
         let entry = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::ZoneChangeEvent::with_cause(
+            crate::events::ZoneChangeEvent::with_results(
                 own,
+                vec![own],
                 Zone::Stack,
                 Zone::Battlefield,
                 crate::events::cause::EventCause::effect(),

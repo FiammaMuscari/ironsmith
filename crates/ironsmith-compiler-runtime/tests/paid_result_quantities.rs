@@ -100,7 +100,10 @@ fn paid(game: &GameState, amount: u32) {
     assert_eq!(entry.effect_outcomes[&EffectId::ACTIVATION_COUNTER_COST].instruction_result().count_or_zero(), i64::from(amount));
 }
 fn apply(game: &mut GameState, source: ObjectId, effect: Effect) {
-    execute_effect(game, &effect, &mut EffectContext::new(source, A, &mut SelectFirstDecisionMaker)).unwrap();
+    let outcome = execute_effect(game, &effect, &mut EffectContext::new(source, A, &mut SelectFirstDecisionMaker)).unwrap();
+    for event in outcome.events {
+        game.queue_trigger_event(event.provenance(), event);
+    }
 }
 fn queue_event(game: &mut GameState, event: TriggerEvent, dm: &mut Choices) -> usize {
     let mut queue = TriggerQueue::new();
@@ -146,6 +149,9 @@ fn essence_bottle_both_activations_read_only_actual_elixir_payment_and_accept_kn
         apply(&mut game, source, Effect::new(ironsmith::effects::CopySpellEffect::single(ChooseSpec::SpecificObject(activation_id))));
         assert_eq!(game.stack.len(), 2); paid(&game, count);
         apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Graveyard, false));
+        ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
         game = game.clone();
         for _ in 0..2 { resolve_stack_entry_with(&mut game, &mut dm).unwrap(); }
         assert_eq!(game.player(A).unwrap().life, 20 + 4 * count as i32, "the copy retains the same actual payment without paying again");
@@ -172,6 +178,9 @@ fn ooze_flux_distributed_payment_restricts_kind_control_and_zone_and_keeps_actua
         assert_eq!(game.counter_count(foreign, CounterType::PlusOnePlusOne), 4); assert_eq!(game.counter_count(buried, CounterType::PlusOnePlusOne), 4);
         assert_eq!(game.counter_count(first, CounterType::Charge), 8); assert_eq!(game.player(A).unwrap().mana_pool.total(), 0);
         apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Graveyard, false));
+        ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
         game = game.clone(); resolve_stack_entry_with(&mut game, &mut dm).unwrap(); let token = ooze(&game);
         assert_eq!((game.current_power(token), game.current_toughness(token)), (Some(actual as i32), Some(actual as i32)));
     }}
@@ -208,6 +217,9 @@ fn vish_kal_uses_sacrifice_lki_then_paid_counter_receipt_even_when_source_or_tar
         assert_eq!(game.counter_count(source, CounterType::PlusOnePlusOne), 0);
         if target_leaves { game.move_object_by_game_rule(target, Zone::Hand).unwrap(); }
         apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Graveyard, false));
+        ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
         game = game.clone(); resolve_stack_entry_with(&mut game, &mut dm).unwrap();
         if !target_leaves { assert_eq!((game.current_power(target), game.current_toughness(target)), (Some(3), Some(4))); }
         assert!(game.stack.is_empty());
@@ -238,6 +250,9 @@ fn bishop_entry_links_exact_opponent_and_attack_reads_exile_characteristic_until
         game = game.clone(); resolve_stack_entry_with(&mut game, &mut dm).unwrap();
         let power = if scenario == 0 { 5 } else { 2 }; assert_eq!(game.current_power(recipient), Some(power));
         apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Graveyard, false));
+        ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
         let current = game.find_object_by_stable_id(victim_stable).unwrap();
         assert_eq!(game.object(current).unwrap().zone, if link_leaves { Zone::Hand } else { Zone::Battlefield });
     }}
@@ -572,6 +587,9 @@ fn bishop_borrowed_plain_exile_neither_boosts_the_linked_reader_nor_returns_on_d
         game = game.clone(); resolve_stack_entry_with(&mut game, &mut dm).unwrap();
         assert_eq!(game.current_power(recipient), Some(6), "the borrowed ability's 9 power is unrelated");
         apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Hand, false));
+                ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
         assert_eq!(game.object(game.find_object_by_stable_id(victim_stable).unwrap()).unwrap().zone, Zone::Battlefield);
         assert_eq!(game.object(game.find_object_by_stable_id(unrelated_stable).unwrap()).unwrap().zone, Zone::Exile);
     }
@@ -612,6 +630,9 @@ fn bishop_copied_entry_uses_the_original_pair_and_sums_only_live_victim_incarnat
             2 => { game.set_face_down(second); }
             3 => { // A pending reader retains the old source while duration returns run.
                 apply(&mut game, source, Effect::move_to_zone(ChooseSpec::Source, Zone::Hand, false));
+                ironsmith::game_loop::drain_pending_trigger_events_with_dm(
+            &mut game, &mut TriggerQueue::new(), &mut SelectFirstDecisionMaker,
+        ).unwrap();
                 let hand = game.find_object_by_stable_id(source_stable).unwrap();
                 game.move_object_by_game_rule(hand, Zone::Battlefield).unwrap();
             }
@@ -635,7 +656,10 @@ fn borrowed_pairs_keep_independent_donor_and_grant_acquisitions_on_one_host() {
         let second = creature(&mut game, B, Zone::Battlefield, "Second victim", 7, 8, "Elf");
         let recipient = creature(&mut game, A, Zone::Battlefield, "Recipient", 2, 4, "Vampire");
         let event = TriggerEvent::new_with_provenance(
-            ironsmith::events::EnterBattlefieldEvent::new(host, Zone::Hand), Default::default());
+            ironsmith::events::ZoneChangeEvent::with_results(
+                host, vec![host], Zone::Hand, Zone::Battlefield,
+                ironsmith::events::EventCause::effect(), None,
+            ), Default::default());
         let entries = check_triggers(&game, &event); assert_eq!(entries.len(), 2);
         assert_ne!(entries[0].linked_exile_owner, entries[1].linked_exile_owner);
         let mut dm = Choices::default();

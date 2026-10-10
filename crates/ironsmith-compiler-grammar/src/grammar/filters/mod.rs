@@ -68,6 +68,7 @@ use color_and_sticker_facts::*;
 pub use extremum::{parse_extremum_object_filter_lexed, parse_extremum_object_filter_words};
 pub(super) use meld_and_special_subjects::*;
 use naming_and_reference::*;
+pub(crate) use naming_and_reference::parse_source_number_spell_axes;
 use player_relations::*;
 pub(super) use predicate_phrases::*;
 pub use predicate_phrases::{

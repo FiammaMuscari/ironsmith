@@ -82,7 +82,9 @@ fn misfortune_mode_prompt_goes_to_the_chosen_opponent() {
         let mode_prompts = dm
             .option_prompts
             .iter()
-            .filter(|(_, description)| description.starts_with("Choose mode"))
+            .filter(|(_, description)| description.starts_with("Choose ")
+                && description.contains("mode")
+                && !description.starts_with("Choose a player to choose the mode"))
             .collect::<Vec<_>>();
         assert_eq!(mode_prompts.len(), 1);
         assert_eq!(mode_prompts[0].0, play::B, "the opponent chooses the mode");

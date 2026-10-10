@@ -13,8 +13,12 @@ fn card(game: &mut GameState, zone: Zone, types: Vec<CardType>) -> ObjectId {
         .power_toughness(PowerToughness::fixed(1, 1)).build(), A, zone)
 }
 fn set_types(game: &mut GameState, object: ObjectId, types: Vec<CardType>) {
-    ApplyContinuousEffect::with_spec(ChooseSpec::SpecificObject(object), Modification::SetCardTypes(types), Until::EndOfTurn)
-        .execute(game, &mut EffectContext::new_default(object, A)).unwrap();
+    let zone = game.object(object).unwrap().zone;
+    ApplyContinuousEffect::new(
+        crate::continuous::EffectTarget::Filter(ObjectFilter::specific(object).in_zone(zone)),
+        Modification::SetCardTypes(types.clone()), Until::EndOfTurn,
+    ).execute(game, &mut EffectContext::new_default(object, A)).unwrap();
+    assert_eq!(game.current_card_types(object).unwrap(), types, "fixture must change characteristics in its explicit zone");
 }
 fn tagged(tag: &str) -> ObjectFilter { ObjectFilter::default().shares_card_type_with_tagged(tag) }
 fn live(negative: bool) -> ObjectFilter {
@@ -112,7 +116,8 @@ fn legacy_land_actor_notice_cannot_invent_a_completed_characteristic_frame() {
         let notice = event(crate::events::LandPlayedEvent::new(land, B, Zone::Hand));
         set_types(&mut game, land, vec![CardType::Artifact]);
         let actor_only = crate::triggers::PlayerPlaysLandTrigger::new(PlayerFilter::Opponent, ObjectFilter::default());
-        assert!(actor_only.matches(&notice, &TriggerContext::for_source(source, A, &game)));
+        assert!(!actor_only.matches(&notice, &TriggerContext::for_source(source, A, &game)),
+            "an incomplete land-play notice cannot stand in for a completed play");
         let predicate = Condition::TaggedObjectMatches("triggering".into(), ObjectFilter::artifact());
         let condition = if negative { Condition::Not(Box::new(predicate)) } else { predicate };
         let result = if resolution { verify_intervening_if_at_resolution_checked(&game, &condition, A, &notice, source, None, None) }

@@ -312,6 +312,7 @@ pub struct CopyActivatedAbilitiesFact {
     pub filter_start_token: usize,
     pub filter_end_token: usize,
     pub only_loyalty: bool,
+    pub exclude_mana_abilities: bool,
     pub once_each_turn_word_start: Option<usize>,
     pub exclude_source_name: bool,
 }
@@ -954,6 +955,12 @@ pub fn parse_copy_activated_abilities_tokens(
     let once_each_turn_token_start =
         once_tail.map(|(relative, (), _)| filter_start_token + relative);
     let filter_end_token = once_each_turn_token_start.unwrap_or(tokens.len());
+    let excluded_mana_start = primitives::find_prefix(
+        &tokens[filter_start_token..filter_end_token],
+        || (semantic_phrase(&["except", "mana", "abilities"]), semantic_finish),
+    ).map(|(relative, _, _)| filter_start_token + relative);
+    let exclude_mana_abilities = excluded_mana_start.is_some();
+    let filter_end_token = excluded_mana_start.unwrap_or(filter_end_token);
     let once_each_turn_word_start = once_each_turn_token_start
         .and_then(|token_start| semantic_word_count(&tokens[..token_start]));
     let exclude_source_name = tokens_have_parser(tokens, || {
@@ -969,6 +976,7 @@ pub fn parse_copy_activated_abilities_tokens(
         filter_start_token,
         filter_end_token,
         only_loyalty,
+        exclude_mana_abilities,
         once_each_turn_word_start,
         exclude_source_name,
     })
@@ -1165,8 +1173,14 @@ mod tests {
         );
         let parsed = parse_copy_activated_abilities_tokens(&tokens).unwrap();
         assert!(!parsed.only_loyalty);
+        assert!(!parsed.exclude_mana_abilities);
         assert!(parsed.once_each_turn_word_start.is_some());
         assert!(parsed.filter_end_token < tokens.len());
+        let tokens = lex("This creature has all activated abilities of lands your opponents control except mana abilities.");
+        let parsed = parse_copy_activated_abilities_tokens(&tokens).unwrap();
+        assert!(parsed.exclude_mana_abilities);
+        assert_eq!(render_token_slice(&tokens[parsed.filter_start_token..parsed.filter_end_token]),
+            "lands your opponents control");
     }
 }
 

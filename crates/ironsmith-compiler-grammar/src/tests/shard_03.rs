@@ -2226,7 +2226,7 @@ pub(super) fn rewrite_grammar_chosen_type_static_line_probes_match_keyword_stati
             "Double all damage that sources you control of the chosen type would deal.",
             super::super::grammar::abilities::is_double_damage_from_sources_you_control_of_chosen_type_line_lexed as Probe,
             super::super::keyword_static::parse_double_damage_from_sources_you_control_of_chosen_type_line as Parser,
-            crate::static_abilities::StaticAbilityId::DoubleDamageFromSourcesYouControlOfChosenType,
+            crate::static_abilities::StaticAbilityId::ModifyDamageAmountReplacement,
         ),
     ] {
         let tokens =
@@ -2956,7 +2956,7 @@ pub(super) fn rewrite_lexed_triggered_line_parses_player_contraction_dealt_damag
     assert!(debug.contains("DealsDamageToPlayer"), "{debug}");
     assert!(debug.contains("You"), "{debug}");
     assert!(debug.contains("PutCounters"), "{debug}");
-    assert!(debug.contains("vitality"), "{debug}");
+    assert!(debug.contains("Vitality"), "{debug}");
     assert!(
         debug.contains("EventValue") && debug.contains("Amount"),
         "{debug}"
@@ -3197,12 +3197,12 @@ pub(super) fn rewrite_lexed_triggered_line_parses_named_counter_threshold_state_
             );
             assert!(
                 trigger_debug.contains("SourceHasCounterAtLeast")
-                    && trigger_debug.contains("tide")
+                    && trigger_debug.contains("Tide")
                     && trigger_debug.contains("count: 4"),
                 "expected four-or-more tide counter predicate, got {trigger_debug}"
             );
             assert!(
-                effects_debug.contains("RemoveUpToAnyCounters") && effects_debug.contains("tide"),
+                effects_debug.contains("RemoveUpToAnyCounters") && effects_debug.contains("Tide"),
                 "expected remove-tide-counters effect, got {effects_debug}"
             );
         }
@@ -3586,7 +3586,7 @@ pub(super) fn rewrite_lexed_predicate_parser_handles_exiled_source_with_named_co
         "expected exile zone predicate, got {debug}"
     );
     assert!(
-        debug.contains("SourceHasCounterAtLeast") && debug.contains("scream"),
+        debug.contains("SourceHasCounterAtLeast") && debug.contains("Scream"),
         "expected named scream counter threshold, got {debug}"
     );
 }
@@ -3602,7 +3602,7 @@ pub(super) fn rewrite_lexed_predicate_parser_handles_no_more_named_counters_on_i
     let debug = format!("{parser_root:?}");
 
     assert!(
-        debug.contains("SourceHasNoCounter") && debug.contains("scream"),
+        debug.contains("SourceHasNoCounter") && debug.contains("Scream"),
         "expected named scream no-counter predicate, got {debug}"
     );
 }
@@ -3624,7 +3624,7 @@ pub(super) fn rewrite_lexed_predicate_parser_handles_named_counter_threshold_on_
     assert_eq!(debug, format!("{grammar:?}"));
     assert!(
         debug.contains("SourceHasCounterAtLeast")
-            && debug.contains("tide")
+            && debug.contains("Tide")
             && debug.contains("count: 4"),
         "expected four-or-more tide counter predicate, got {debug}"
     );

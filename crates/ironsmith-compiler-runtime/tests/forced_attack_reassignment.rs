@@ -29,7 +29,7 @@ fn portal_manipulator_redirects_targeted_attackers_to_the_target_player() {
         let reselect = &reselects[0];
         assert!(reselect.players_only);
         assert!(
-            matches!(&reselect.attacked_player, Some(PlayerFilter::Target(_))),
+            matches!(&reselect.attacked_player, Some(PlayerFilter::AliasedTarget(_))),
             "the creatures now attack the declared target player: {:?}",
             reselect.attacked_player
         );

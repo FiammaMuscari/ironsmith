@@ -66,4 +66,10 @@ fn parses_negated_creature_with_conditions() {
     let shape = parse_isnt_creature_shape(&tokens).unwrap().unwrap();
     assert!(shape.leading_condition_tokens.is_some());
     assert!(shape.unless_condition_tokens.is_some());
+    let tokens = lex_line(
+        "This card isn't a creature as long as your devotion to blue and red is less than seven.", 0,
+    ).unwrap();
+    let shape = parse_isnt_creature_shape(&tokens).unwrap().unwrap();
+    assert!(shape.leading_condition_tokens.is_some());
+    assert!(shape.unless_condition_tokens.is_none());
 }

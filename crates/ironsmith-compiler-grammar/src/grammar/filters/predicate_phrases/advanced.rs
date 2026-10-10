@@ -176,6 +176,28 @@ fn parse_turn_history_intervening_predicate(
 ) -> Result<Option<PredicateAst>, CardTextError> {
     let clause = LexedClause::new(tokens);
     let words = clause.word_refs();
+    if let Some(played) = words.iter().position(|word| *word == "played")
+        && words[played..]
+            == ["played", "a", "land", "or", "cast", "a", "spell", "this", "turn",
+                "from", "anywhere", "other", "than", "your", "hand"]
+        && let Some(player) =
+            turn_history_player_subject(clause.between_words_trimmed(0, played))
+    {
+        // Playing a card includes both land plays and spell casts. Keep the
+        // shared origin restriction on both alternatives, rather than splitting
+        // this sentence at its surface "or".
+        let predicate = [Zone::Library, Zone::Battlefield, Zone::Graveyard,
+            Zone::Stack, Zone::Exile, Zone::Command, Zone::Ante, Zone::OutsideGame]
+            .into_iter()
+            .map(|zone| PredicateAst::TurnHistory(
+                TurnHistoryPredicateAst::PlayerPlayedCardFromZoneThisTurn {
+                    player: player.clone(), zone,
+                },
+            ))
+            .reduce(|left, right| PredicateAst::Or(Box::new(left), Box::new(right)))
+            .expect("non-hand zones are nonempty");
+        return Ok(Some(predicate));
+    }
     if let Some(dealt) = crate::word_primitives::parse_sequence_start(&words, &["has", "dealt"])
         && words.ends_with(&["damage", "this", "turn"])
         && let Some(source) = clause.between_word_range(0, dealt)
@@ -1824,6 +1846,27 @@ pub(super) fn parse_value_reference_comparison_predicate(
         bind_other_aggregate_to_compared_object(&left, &mut right);
         let mut left = left;
         mark_demonstrative_characteristic_subject(&mut left, &tokens[..comparison_start]);
+        // A singular card predicate requires the referenced card to exist.
+        // Numeric evaluation alone would turn an empty selection into zero
+        // and incorrectly satisfy "the card's mana value is 1 or less".
+        if let (Value::ManaValueOf(spec), Value::Fixed(number)) = (left.unhinted(), right.unhinted())
+            && matches!(spec.base(), crate::target::ChooseSpec::Tagged(tag)
+                if tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str())
+        {
+            use crate::effect::ValueComparisonOperator as Op;
+            use crate::filter::Comparison as C;
+            let comparison = match operator {
+                Op::Equal => C::Equal(*number),
+                Op::NotEqual => C::NotEqual(*number),
+                Op::LessThan => C::LessThan(*number),
+                Op::LessThanOrEqual => C::LessThanOrEqual(*number),
+                Op::GreaterThan => C::GreaterThan(*number),
+                Op::GreaterThanOrEqual => C::GreaterThanOrEqual(*number),
+            };
+            let mut filter = ObjectFilter::default();
+            filter.mana_value = Some(comparison);
+            return Some(PredicateAst::ItMatches(filter));
+        }
         return Some(PredicateAst::ValueComparison {
             left,
             operator,
@@ -4995,18 +5038,29 @@ pub(super) fn parse_counted_object_counter_constraint_clause(
 pub(super) fn parse_counted_source_exiled_objects_predicate(
     tokens: &[OwnedLexToken],
 ) -> Option<PredicateAst> {
-    let relation = parse_has_relation_clauses(tokens)?;
-    let counted_object = relation.subject_clause;
+    let (counted_object, tail) = if surface::prefix_tokens(tokens, &["there", "are"]) {
+        let exiled = tokens.iter().position(|token| token.is_word("exiled"))?;
+        if exiled <= 2 {
+            return None;
+        }
+        (LexedClause::new(&tokens[2..exiled]), LexedClause::new(&tokens[exiled..]))
+    } else {
+        let relation = parse_has_relation_clauses(tokens)?;
+        (relation.subject_clause, relation.tail_clause)
+    };
     let (comparison, used) = predicate_quantity_prefix_tokens(counted_object.tokens())?;
     let (operator, count) = comparison_to_value_comparison_operator(comparison)?;
     if used >= counted_object.tokens().len() {
         return None;
     }
 
-    let tail = relation.tail_clause;
     if !surface::prefix_any(tail, BEEN_EXILED_WITH_THIS_SOURCE_PREFIXES) {
         return None;
     }
+    let source_words = tail.word_refs();
+    let with = source_words.iter().position(|word| *word == "with")?;
+    let source_surface = source_reference_surface_for_words(&source_words[with + 1..])
+        .or_else(|| this_source_surface_for_words(&source_words[with + 1..]))?;
 
     let object_tokens = &counted_object.tokens()[used..];
     let mut filter = if object_tokens
@@ -5018,6 +5072,7 @@ pub(super) fn parse_counted_source_exiled_objects_predicate(
         crate::grammar::primitives::probe_shape(parse_object_filter(object_tokens, false))?
     };
     filter.zone = Some(Zone::Exile);
+    filter.source_surface = Some(source_surface);
     filter.tagged_constraints.push(TaggedObjectConstraint {
         tag: (crate::tag::CompilerReferenceTag::SourceExiled.bind()).into(),
         relation: TaggedOpbjectRelation::IsTaggedObject,
@@ -5904,6 +5959,26 @@ pub fn parse_predicate(tokens: &[OwnedLexToken]) -> Result<PredicateAst, CardTex
     } else {
         tokens
     };
+    // Universal subtype assertions compare the complete candidate set with
+    // its matching subset; an empty candidate set satisfies "all" as well.
+    if predicate_tokens.first().is_some_and(|token| token.is_word("all"))
+        && let Some(are) = predicate_tokens.iter().position(|token| token.is_word("are"))
+        && are > 1
+    {
+        let tail = crate::lexer::parser_token_word_refs(&predicate_tokens[are + 1..]);
+        if let [subtype] = tail.as_slice()
+            && let Ok(subtype) = crate::grammar::leaf::parse_leaf_subtype_flexible_complete(subtype)
+        {
+            let all = crate::object_filters::parse_object_filter(&predicate_tokens[1..are], false)?;
+            let mut matching = all.clone();
+            matching.all_subtypes.push(subtype);
+            return Ok(PredicateAst::ValueComparison {
+                left: Value::Count(all),
+                operator: ValueComparisonOperator::Equal,
+                right: Value::Count(matching),
+            });
+        }
+    }
     if let Some(predicate) = combat_participants::parse(predicate_tokens) {
         return Ok(predicate);
     }

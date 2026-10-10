@@ -622,7 +622,7 @@ fn simultaneous_instead_life_action_is_prepared_then_observed_after_every_payer_
     );
 }
 #[test]
-fn unsupported_compound_simultaneous_instead_fails_before_originals() {
+fn compound_simultaneous_instead_retains_payments_and_executes_each_child() {
     let (mut game, source) = fixture();
     life_replacement(
         &mut game,
@@ -632,19 +632,16 @@ fn unsupported_compound_simultaneous_instead_fails_before_originals() {
             Effect::gain_life(2),
         ]),
     );
-    assert!(matches!(
-        game.pay_life_simultaneously(&[(A, 2), (B, 2)]),
-        Err(ExecutionError::UnresolvableValue(_))
-    ));
-    assert_eq!(game.player(A).unwrap().life, 20);
-    assert_eq!(game.player(B).unwrap().life, 20);
+    assert!(game.pay_life_simultaneously(&[(A, 2), (B, 2)]).unwrap());
+    assert_eq!(game.player(A).unwrap().life, 23);
+    assert_eq!(game.player(B).unwrap().life, 18);
     assert_eq!(
         game.turn_store
             .turn_history
             .event_kind_count(EventKind::LifePaid),
-        0
+        2
     );
-    assert!(game.take_pending_trigger_entries().is_empty());
+    assert_eq!(game.take_pending_trigger_entries().len(), 1);
 }
 #[test]
 fn direct_payment_and_multiple_payer_completions_share_one_token_resource_budget() {

@@ -95,7 +95,7 @@ struct Choices {
 }
 impl DecisionMaker for Choices {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
-        if ctx.description.starts_with("Choose mode") {
+        if (ctx.description.starts_with("Choose ") && ctx.description.contains("mode")) {
             return vec![ctx.options[self.mode].index];
         }
         if ctx.description.starts_with("Choose optional costs") {

@@ -236,7 +236,7 @@ pub(super) fn predicate_paid_cost_label_uses_predicate_tokens() {
     let parser = function_source(
         &content,
         "fn parse_paid_cost_label_predicate",
-        "fn paid_cost_tail_is_negated",
+        "fn paid_cost_tail",
     );
 
     for required in [
@@ -1727,7 +1727,7 @@ pub(super) fn keyword_static_marker_support_uses_token_shapes() {
         ".ends_with(LOYALTY_COUNTER_CREW_COST_SUFFIX)",
     ] {
         assert!(
-            !content.contains(forbidden),
+            !marker_support.contains(forbidden),
             "{relative} should classify supported keyword-static crew markers through token shapes, not raw fragment `{forbidden}`"
         );
     }

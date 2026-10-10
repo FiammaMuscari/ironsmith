@@ -41,8 +41,6 @@ fn parse_attached_prevent_all_lexed<'a>(
             "and",
             "dealt",
             "by",
-            "enchanted",
-            "creature",
         ])
         .value(AttachedPreventAllKind::DamageDealtToAndBy),
         semantic_phrase(&[
@@ -55,8 +53,6 @@ fn parse_attached_prevent_all_lexed<'a>(
             "be",
             "dealt",
             "by",
-            "enchanted",
-            "creature",
         ])
         .value(AttachedPreventAllKind::CombatDamageDealtBy),
         semantic_phrase(&[
@@ -68,8 +64,6 @@ fn parse_attached_prevent_all_lexed<'a>(
             "be",
             "dealt",
             "by",
-            "enchanted",
-            "creature",
         ])
         .value(AttachedPreventAllKind::DamageDealtBy),
         semantic_phrase(&[
@@ -81,12 +75,14 @@ fn parse_attached_prevent_all_lexed<'a>(
             "be",
             "dealt",
             "to",
-            "enchanted",
-            "creature",
         ])
         .value(AttachedPreventAllKind::DamageDealtTo),
     ))
     .parse_next(input)?;
+    alt((
+        semantic_phrase(&["enchanted", "creature"]),
+        semantic_phrase(&["equipped", "creature"]),
+    )).parse_next(input)?;
     semantic_finish(input)?;
     Ok(kind)
 }
@@ -107,6 +103,16 @@ mod tests {
             parse_attached_prevent_all_tokens(&combat),
             Some(AttachedPreventAllKind::CombatDamageDealtBy)
         );
+
+        let equipped = lex_line(
+            "Prevent all damage that would be dealt to equipped creature.", 0,
+        ).unwrap();
+        assert_eq!(parse_attached_prevent_all_tokens(&equipped),
+            Some(AttachedPreventAllKind::DamageDealtTo));
+        let incomplete = lex_line(
+            "Prevent all damage that would be dealt to equipped creature and draw a card.", 0,
+        ).unwrap();
+        assert_eq!(parse_attached_prevent_all_tokens(&incomplete), None);
 
         let combined = lex_line(
             "Prevent all damage that would be dealt to and dealt by enchanted creature.",

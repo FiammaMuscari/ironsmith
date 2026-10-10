@@ -1769,6 +1769,9 @@ fn resolve_event_value(
             if let Some(zone_change_event) = triggering_event.downcast::<ZoneChangeEvent>() {
                 return Ok(i64::from(zone_change_event.count() as i64));
             }
+            if let Some(draw) = triggering_event.downcast::<crate::events::DrawEvent>() {
+                return Ok(i64::from(draw.count));
+            }
             if let Some(keyword_action_event) = triggering_event.downcast::<KeywordActionEvent>() {
                 return Ok(i64::from(keyword_action_event.amount as i64));
             }

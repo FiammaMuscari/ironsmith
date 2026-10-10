@@ -35,6 +35,15 @@ fn until_source_leaves<'a>(input: &mut LexStream<'a>) -> WResult<()> {
     primitives::sentence_end().parse_next(input)
 }
 
+/// A complete source-lifetime tail shared by continuous effect bodies.
+pub fn parse_source_lifetime_duration(tokens: &[OwnedLexToken]) -> Option<Until> {
+    if primitives::parse_all(tokens, until_source_leaves, "source lifetime duration").is_ok() {
+        return Some(Until::ThisLeavesTheBattlefield);
+    }
+    as_long_as_source_remains_on_battlefield(tokens)
+        .then(Until::while_source_remains_on_battlefield)
+}
+
 fn as_long_as_marker<'a>(input: &mut LexStream<'a>) -> WResult<()> {
     primitives::phrase(&["for", "as", "long", "as"])
         .void()

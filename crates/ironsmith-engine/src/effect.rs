@@ -1258,12 +1258,17 @@ impl EffectPredicateRuntimeExt for EffectPredicate {
             // and the producer's per-player partitions. The context-aware
             // `IfEffect` evaluator handles it.
             Self::PlayerAffectedObjectHasGreatestManaValue { .. }
+            | Self::PlayerActionObjectHasGreatestManaValue { .. }
             | Self::AffectedObjectsShare { .. } => false,
             Self::PriorEffectResult(surface) => {
                 if surface.negated {
                     let mut positive = surface.clone();
                     positive.negated = false;
                     return !Self::PriorEffectResult(positive).evaluate_outcome(outcome);
+                }
+                if surface.action == crate::effect::PriorEffectAction::Copied {
+                    return crate::effects::outcome_recording::action_objects(outcome, surface.action, None)
+                        .is_some_and(|objects| objects.len() >= surface.required_count.unwrap_or(1) as usize);
                 }
                 if matches!(
                     surface.action,

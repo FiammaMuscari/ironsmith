@@ -423,8 +423,9 @@ impl EffectExecutor for SequenceEffect {
         crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>,
         ExecutionError,
     > {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
     fn supports_prepared_action_program(&self) -> bool {
@@ -533,6 +534,7 @@ struct SequenceCursor {
     chosen_modes: Option<Vec<usize>>,
     consumed_modal_selection: bool,
     coordinated_target_state: crate::game_loop::CoordinatedTargetState,
+    declared_targets: Vec<crate::game_loop::DeclaredTarget>,
     assignment_cursor: usize,
     active_scope: Option<(
         Vec<crate::effects::ResolvedTarget>,
@@ -551,7 +553,7 @@ impl std::fmt::Debug for SequenceCursor {
             .finish_non_exhaustive()
     }
 }
-fn sequence_cursor(
+pub(super) fn sequence_cursor(
     sequence: &SequenceEffect,
     ctx: &ExecutionContext,
 ) -> Box<dyn crate::effects::ActionProgramCursor> {
@@ -568,6 +570,7 @@ fn sequence_cursor(
         chosen_modes: ctx.chosen_modes.clone(),
         consumed_modal_selection: false,
         coordinated_target_state: crate::game_loop::CoordinatedTargetState::default(),
+        declared_targets: Vec::new(),
         assignment_cursor: 0,
         active_scope: None,
         outputs,
@@ -594,7 +597,10 @@ impl SequenceCursor {
         }
         let mut outcome = EffectOutcome::aggregate_terminal(self.outcomes);
         outcome.events = self.events;
-        outcome.execution_facts = self.facts;
+        // Result/selection facts are set-valued. Leaving one fact per child
+        // makes their readers see only the first child's objects when a
+        // following plural reference tags the whole sequence.
+        outcome.execution_facts = EffectOutcome::merge_execution_facts(self.facts);
         self.outputs.project_aggregate(outcome)
     }
 }
@@ -627,41 +633,34 @@ impl crate::effects::ActionProgramCursor for SequenceCursor {
                 self.events.iter(),
             )?;
         }
-        let assignment_count = if self.child_assignments.is_some() {
-            if self.coordinated {
-                crate::game_loop::count_target_selection_slots_for_coordinated_child(
+        if let Some(assignments) = self.child_assignments.as_ref() {
+            let selected = if self.coordinated {
+                let count = crate::game_loop::count_target_selection_slots_for_coordinated_child(
                     effect,
                     self.chosen_modes.as_deref(),
                     &mut self.consumed_modal_selection,
                     &mut self.coordinated_target_state,
-                )
+                );
+                let end = self.assignment_cursor.saturating_add(count).min(assignments.len());
+                let selected = assignments[self.assignment_cursor..end].to_vec();
+                self.assignment_cursor = end;
+                selected
             } else {
-                crate::game_loop::count_target_selection_slots_for_isolated_effect(
+                // Use the same declaration history as announcement. A later
+                // composite may reuse multiple earlier targets, even after a
+                // preceding child narrowed its own execution scope.
+                crate::game_loop::active_target_assignments_for_effect(
                     effect,
                     self.chosen_modes.as_deref(),
                     &mut self.consumed_modal_selection,
+                    &mut self.declared_targets,
+                    assignments,
+                    &mut self.assignment_cursor,
                 )
+            };
+            if !selected.is_empty() {
+                self.active_scope = Some(rebase_target_scope(&ctx.targets, &selected));
             }
-        } else {
-            0
-        };
-        let assignments_exhausted = self
-            .child_assignments
-            .as_ref()
-            .is_some_and(|assignments| self.assignment_cursor >= assignments.len())
-            && self.active_scope.is_some();
-        if assignment_count > 0 && !assignments_exhausted {
-            let assignments = self
-                .child_assignments
-                .as_ref()
-                .expect("child assignments checked above");
-            let end = self
-                .assignment_cursor
-                .saturating_add(assignment_count)
-                .min(assignments.len());
-            let selected = assignments[self.assignment_cursor..end].to_vec();
-            self.assignment_cursor = end;
-            self.active_scope = Some(rebase_target_scope(&ctx.targets, &selected));
         }
         let index = self.next;
         self.next += 1;
@@ -912,6 +911,23 @@ mod tests {
     }
 
     #[test]
+    fn tagged_tap_sequence_retains_both_children_including_already_tapped_objects() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_creature(&mut game, "First", alice);
+        let second = create_creature(&mut game, "Second", alice);
+        game.tap(second);
+        let sequence = Effect::new(SequenceEffect::coordinated(vec![
+            Effect::tap(ChooseSpec::SpecificObject(first)),
+            Effect::tap(ChooseSpec::SpecificObject(second)),
+        ])).tag("tapped_group");
+        let mut ctx = ExecutionContext::new_default(first, alice);
+        execute_effect(&mut game, &sequence, &mut ctx).unwrap();
+        let tagged = ctx.get_tagged_all("tapped_group").unwrap();
+        assert_eq!(tagged.iter().map(|object| object.object_id).collect::<Vec<_>>(), vec![first, second]);
+    }
+
+    #[test]
     fn direct_and_dispatched_sequences_keep_all_original_object_results_and_all_replacement_actions() {
         use crate::replacement::{ReplacementAction, ReplacementEffect};
         for dispatched in [false, true] {
@@ -931,7 +947,9 @@ mod tests {
             let mut ctx = ExecutionContext::new_default(source, alice);
             let outcome = if dispatched { execute_effect(&mut game, &Effect::new(sequence), &mut ctx) }
                 else { sequence.execute(&mut game, &mut ctx) }.unwrap();
-            assert_eq!(outcome.instruction_result().count_or_zero(), 1, "terminal original summary is retained");
+            assert_eq!(outcome.instruction_result().status, crate::effect::OutcomeStatus::Succeeded);
+            assert_eq!(outcome.instruction_result().value, crate::effect::OutcomeValue::None,
+                "a single-target destruction has a successful uncounted summary");
             let memory = outcome.affected_object_memory().unwrap();
             assert_eq!(memory.iter().map(|object| object.object_id).collect::<Vec<_>>(), vec![first, second]);
             assert!(game.object(first).is_none() && game.object(second).is_none() && game.object(added).is_none());
@@ -1044,6 +1062,37 @@ mod tests {
             "instruction order does not require the preceding instruction to succeed"
         );
         assert_eq!(outcome.status, crate::effect::OutcomeStatus::Succeeded);
+    }
+
+    #[test]
+    fn repeated_child_rebinds_an_earlier_target_after_a_second_declaration() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId(0);
+        let source = create_creature(&mut game, "Source", alice);
+        let enemy = create_creature(&mut game, "Enemy", PlayerId(1));
+        let own = create_creature(&mut game, "Own", alice);
+        let enemy_stable = game.object(enemy).unwrap().stable_id;
+        let enemy_spec = ChooseSpec::target(ChooseSpec::Object(crate::ObjectFilter::creature().opponent_controls()));
+        let own_spec = ChooseSpec::target(ChooseSpec::Object(crate::ObjectFilter::creature().you_control()));
+        let sequence = SequenceEffect::new(vec![
+            Effect::new(crate::effects::TargetOnlyEffect::new(enemy_spec.clone())),
+            Effect::new(crate::effects::TargetOnlyEffect::new(own_spec.clone())),
+            Effect::new(crate::effects::RepeatProcessEffect::new(
+                vec![Effect::destroy(enemy_spec.clone()), Effect::with_id(73, Effect::gain_life(0))],
+                crate::effect::EffectId(73),
+                crate::effect::EffectPredicate::Value(crate::effect::Comparison::GreaterThan(0)),
+            )),
+        ]);
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(enemy), ResolvedTarget::Object(own)])
+            .with_target_assignments(vec![
+                TargetAssignment { spec: enemy_spec, range: 0..1 },
+                TargetAssignment { spec: own_spec, range: 1..2 },
+            ]);
+        sequence.execute(&mut game, &mut ctx).unwrap();
+        let departed = game.find_object_by_stable_id(enemy_stable).unwrap();
+        assert_eq!(game.object(departed).unwrap().zone, Zone::Graveyard);
+        assert_eq!(game.object(own).unwrap().zone, Zone::Battlefield);
     }
 
     #[test]

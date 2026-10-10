@@ -91,6 +91,20 @@ fn emerge_receipt_reads_immutable_characteristics_rather_than_a_live_object() {
     let value = Value::ToughnessOf(Box::new(ChooseSpec::Tagged(crate::tag::SOURCE_EMERGE_SACRIFICE_TAG.into())));
     assert_eq!(resolve_value(&game, &value, &ctx).unwrap(), 2);
     assert_eq!(game.current_toughness(material), Some(9));
+    ctx.resolution_object_id_floor = Some(ObjectId(game.next_object_id_counter()));
+    game.move_object_by_effect(material, Zone::Graveyard).unwrap();
+    let mut retained = ctx.tagged_objects.clone();
+    pin_tagged_objects_to_current(&game, &ctx, &mut retained);
+    let frozen = &retained[crate::tag::SOURCE_EMERGE_SACRIFICE_TAG][0];
+    assert_eq!(frozen.object_id, material);
+    assert_eq!(frozen.zone, Zone::Battlefield);
+    let mut entry = crate::game_state::StackEntry::new(source, PlayerId::from_index(0));
+    entry.tagged_objects = retained;
+    game.push_to_stack(entry);
+    let frozen = &game.stack.last().unwrap().tagged_objects[crate::tag::SOURCE_EMERGE_SACRIFICE_TAG][0];
+    assert_eq!(frozen.object_id, material);
+    assert_eq!(frozen.zone, Zone::Battlefield);
+    assert_eq!(frozen.toughness, Some(2));
 }
 
 #[test]

@@ -342,6 +342,10 @@ fn read_inline_looked_card_partition_chain(
     input: &InnerChain<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
+    if crate::grammar::effects::control_copy_attach_shapes::parse_tagged_battlefield_partition_shape(tokens).is_some() {
+        return super::super::verb_handlers::parse_put_into_hand(tokens, None)
+            .map(|effect| Some(vec![effect]));
+    }
     if let Some(effects) = parse_inline_looked_card_partition_chain(tokens) {
         return Ok(Some(effects));
     }

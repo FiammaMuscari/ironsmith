@@ -58,7 +58,9 @@ fn creature(game: &mut GameState, owner: PlayerId) -> ObjectId {
 }
 fn spell(game: &mut GameState, owner: PlayerId) -> ObjectId {
     let card = CardBuilder::new(CardId::new(), "Spell damage witness").card_types(vec![CardType::Instant]).build();
-    game.create_object_from_card(&card, owner, Zone::Stack)
+    let id = game.create_object_from_card(&card, owner, Zone::Stack);
+    game.stack.push(ironsmith::game_state::StackEntry::new(id, owner));
+    id
 }
 #[derive(Default)]
 struct Choices { targets: Vec<Target>, x: u32, redirect_allocations: Vec<u32>, allocation_players: Vec<PlayerId> }

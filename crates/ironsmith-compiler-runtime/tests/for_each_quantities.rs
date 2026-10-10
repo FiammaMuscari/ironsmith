@@ -16,10 +16,13 @@ fn might_of_the_nephilim_scales_by_the_targets_colors() {
     let row = support::row(&rows, "Might of the Nephilim");
     assert_eq!(row["oracle_id"], "4fda9b70-8da5-4292-b05a-0a0e5a2ad809");
     for definition in support::definitions(row) {
-        let debug = format!("{:?}", support::spell_effects(&definition));
-        assert!(debug.contains("ColorsOf"), "the bonus counts colors: {debug}");
-        assert!(debug.contains("Scaled"), "+2/+2 per color: {debug}");
-        assert!(!debug.contains("Fixed(2), toughness: Fixed(2)"), "{debug}");
+        let bonuses = support::find::<ironsmith::effects::ModifyPowerToughnessForEachEffect>(
+            &support::spell_effects(&definition),
+        );
+        assert_eq!(bonuses.len(), 1);
+        assert_eq!((bonuses[0].power_per, bonuses[0].toughness_per), (2, 2));
+        assert!(matches!(bonuses[0].count.unhinted(), Value::ColorsOf(_)));
+        assert!(bonuses[0].target.is_target());
     }
 }
 

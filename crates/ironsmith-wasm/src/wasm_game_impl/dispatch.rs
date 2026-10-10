@@ -180,6 +180,7 @@ impl WasmGame {
         }
         let mut artifact = baked.artifact.clone();
         artifact.payload.definition = serde_json::from_value(payload).map_err(|error| error.to_string())?;
+        artifact.refresh_checksum();
         // The original envelope was validated above; only its typed identities
         // changed, so materialize the rebased payload without recompilation.
         let definition = ironsmith_runtime_catalog::artifact_materializer::materialize_artifact(&artifact)

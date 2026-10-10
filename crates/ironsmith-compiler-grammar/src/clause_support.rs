@@ -395,6 +395,20 @@ pub fn validate_protection_static_line(tokens: &[OwnedLexToken]) -> Result<(), C
             continue;
         }
         if in_quote { continue; }
+        if token.is_word("this") && tokens.get(index + 1).is_some_and(|token| token.is_word("effect")) {
+            let tail = &tokens[index..];
+            let end = tail.iter().position(|token| token.kind == crate::lexer::TokenKind::Period)
+                .map_or(tail.len(), |index| index + 1);
+            let sentence = &tail[..end];
+            let words = TokenWordView::new(sentence).word_refs();
+            if words.get(2).is_some_and(|word| matches!(*word, "doesn't" | "doesnt"))
+                && words.get(3) == Some(&"remove")
+                && crate::grammar::keyword_static_lines::parse_static_text_marker_kind_tokens(sentence).is_none()
+                && words.get(4..) != Some(&["auras", "and", "equipment", "you", "control", "that", "are", "already", "attached", "to", "it"][..])
+            {
+                return Err(CardTextError::ParseError("unsupported protection attachment exception".into()));
+            }
+        }
         if token.kind == crate::lexer::TokenKind::Colon { resolution_body = true; }
         if token.kind == crate::lexer::TokenKind::Period { continuous_grant = false; }
         if token.is_any_word(&["gain", "gains"]) {
@@ -411,6 +425,21 @@ pub fn validate_protection_static_line(tokens: &[OwnedLexToken]) -> Result<(), C
             if !quoted_tail && token.is_word("protection") { has_protection = true; }
             !quoted_tail && token.kind == crate::lexer::TokenKind::Period
         }).unwrap_or(tail.len());
+        // A static grant cannot become an imperative action midway through
+        // its ability list. Reject it before a conjunction reader can discard
+        // the protection prefix and admit only the trailing action.
+        if has_protection && !resolution_body {
+            let mut quoted = false;
+            for pair in tail[..end].windows(2) {
+                if pair[0].is_quote() { quoted = !quoted; }
+                if !quoted && pair[0].is_word("and")
+                    && crate::grammar::document_shapes::is_imperative_effect_verb_token(&pair[1])
+                {
+                    return Err(CardTextError::ParseError(
+                        "imperative action in a static protection grant".into()));
+                }
+            }
+        }
         if has_protection && invalid_protection_list_delimiters(&tail[..end]) {
             return Err(CardTextError::ParseError("malformed protection grant list delimiter".into()));
         }

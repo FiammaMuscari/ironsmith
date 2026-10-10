@@ -93,7 +93,7 @@ pub(super) fn read_each_player_opponent_excludes(
     if !super::super::consult_family::consult_subject_is(first_tokens, &["each", "player"]) {
         return Ok(None);
     }
-    let Some(parts) = super::super::consult_family::parse_consult_traversal_sentence(first_tokens)?
+    let Some(parts) = super::super::consult_family::parse_consult_traversal_sentence_with_player(first_tokens, Some(PlayerAst::That))?
     else {
         return Ok(None);
     };

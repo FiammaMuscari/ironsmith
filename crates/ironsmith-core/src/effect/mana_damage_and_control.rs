@@ -3083,8 +3083,8 @@ impl MoveCountersEffect {
         Self::new(
             crate::counter::CounterType::PlusOnePlusOne,
             count,
-            ChooseSpec::creature(),
-            ChooseSpec::creature(),
+            ChooseSpec::target(ChooseSpec::creature()),
+            ChooseSpec::target(ChooseSpec::creature()),
         )
     }
 }

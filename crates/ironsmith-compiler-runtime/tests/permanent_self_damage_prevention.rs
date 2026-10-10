@@ -247,12 +247,13 @@ fn missing_or_wrong_source_lki_does_not_claim_a_filtered_damage_result() {
         let source = source_for(&mut game, "Argothian Treefolk");
         let unrelated = creature(&mut game, B);
         let wrong = snapshot(&game, unrelated);
-        game.move_object_by_effect(source, Zone::Graveyard).unwrap();
-        game.turn_store.turn_history.clear_for_new_turn();
+        // Remove without a zone-change receipt to model genuinely missing
+        // evidence. Turn rollover retains departure LKI in action history.
+        game.remove_object(source);
         for lki in [None, Some(&wrong)] {
             let result = process_damage_assignments_with_event_with_source_snapshot_opts(
                 &mut game, source, DamageTarget::Object(host), 3, false, false, EventCause::effect(), lki);
-            assert!(result.is_err(), "filtered damage needs the exact missing source's evidence");
+            assert!(result.is_err(), "filtered damage needs the exact missing source's evidence: {result:?}, lki={lki:?}");
         }
     }
 }

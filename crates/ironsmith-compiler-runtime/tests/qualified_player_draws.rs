@@ -225,7 +225,13 @@ fn watcher_enters_with_stun_and_qualifies_opponent_turns_then_resolves_both_deat
         draw(&mut game, source, A, 2);
         assert_eq!(pending(&mut game, &mut dm), 2);
         settle(&mut game, &mut dm);
-        let tentacles = battlefield(&game, "Tentacle", A);
+        let tentacles: Vec<_> = game.battlefield.iter().copied().filter(|id| {
+            game.object(*id).is_some_and(|object| {
+                game.controller_of(object) == A
+                    && object.kind == ironsmith::object::ObjectKind::Token
+                    && object.subtypes.contains(&ironsmith::types::Subtype::Tentacle)
+            })
+        }).collect();
         assert_eq!(tentacles.len(), 2);
         let kraken = resource(
             &mut game,

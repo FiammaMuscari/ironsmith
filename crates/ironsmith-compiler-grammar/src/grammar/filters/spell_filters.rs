@@ -162,6 +162,16 @@ pub fn parse_object_filter_with_grammar_entrypoint(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    if tokens.first().is_some_and(|token| token.is_word("fortified"))
+        && tokens.get(1).is_some_and(|token| token.is_word("land"))
+    {
+        let mut filter = parse_object_filter_with_grammar_entrypoint(&tokens[1..], other)?;
+        filter.tagged_constraints.push(crate::filter::TaggedObjectConstraint {
+            tag: crate::tag::CompilerReferenceTag::Fortified.bind().into(),
+            relation: crate::filter::TaggedOpbjectRelation::IsTaggedObject,
+        });
+        return Ok(filter);
+    }
     if tokens.first().is_some_and(|token| token.is_word("all")) {
         let mut filter = parse_object_filter_with_grammar_entrypoint(&tokens[1..], other)?;
         filter.set_set_quantifier_surface(Some(ironsmith_core::SetQuantifierSurface::All));
@@ -273,15 +283,19 @@ pub fn parse_object_filter_with_grammar_entrypoint(
     // "permanent that's one or more colors" (Ugin, Eye of the Storms),
     // "creatures of one or more colors": a trailing color-count phrase
     // narrows the head noun phrase.
-    if let Some((head_tokens, count)) = split_trailing_color_count_phrase_tokens(tokens) {
-        if count >= 3 {
+    if let Some((head_tokens, count, exact)) = split_trailing_color_count_phrase_tokens(tokens) {
+        if count > i32::MAX as u32 {
             return Err(CardTextError::ParseError(format!(
-                "unsupported color-count object filter '{}'",
+                "out-of-range color-count object filter '{}'",
                 crate::lexer::render_token_slice(tokens)
             )));
         }
         let mut filter = parse_object_filter_with_grammar_entrypoint(head_tokens, other)?;
-        if count == 1 {
+        if exact && count == 2 {
+            filter.exactly_two_colors = Some(true);
+        } else if exact {
+            filter.color_count = Some(crate::filter::Comparison::Equal(count as i32));
+        } else if count == 1 {
             filter.colors = Some(crate::color::Color::ALL.into_iter().collect());
         } else {
             filter.color_count = Some(crate::filter::Comparison::GreaterThanOrEqual(count as i32));
@@ -349,7 +363,7 @@ pub fn parse_object_filter_with_grammar_entrypoint(
 /// end of the slice.
 fn split_trailing_color_count_phrase_tokens(
     tokens: &[OwnedLexToken],
-) -> Option<(&[OwnedLexToken], u32)> {
+) -> Option<(&[OwnedLexToken], u32, bool)> {
     let view = crate::lexer::TokenWordView::new(tokens);
     let words = view.word_refs();
     let starts = view.token_start_indices();
@@ -357,12 +371,21 @@ fn split_trailing_color_count_phrase_tokens(
         if !matches!(*link, "of" | "thats" | "that's" | "that") {
             continue;
         }
-        let Some((count, consumed)) =
-            super::naming_and_reference::parse_color_count_phrase_words(&words[link_idx + 1..])
-        else {
-            continue;
+        let mut start = link_idx + 1;
+        if words.get(start).is_some_and(|word| matches!(*word, "is" | "are")) {
+            start += 1;
+        }
+        let exact = words.get(start) == Some(&"exactly");
+        let parsed = if exact {
+            words.get(start + 1).and_then(|word| {
+                parse_number_word_u32(word).or_else(|| crate::util::decimal_count(word))
+            }).filter(|_| words.get(start + 2).is_some_and(|word| matches!(*word, "color" | "colors")))
+                .map(|count| (count, 3))
+        } else {
+            super::naming_and_reference::parse_color_count_phrase_words(&words[start..])
         };
-        if link_idx + 1 + consumed != words.len() {
+        let Some((count, consumed)) = parsed else { continue; };
+        if start + consumed != words.len() {
             continue;
         }
         let link_token = *starts.get(link_idx)?;
@@ -370,7 +393,7 @@ fn split_trailing_color_count_phrase_tokens(
         if head.is_empty() {
             return None;
         }
-        return Some((head, count));
+        return Some((head, count, exact));
     }
     None
 }

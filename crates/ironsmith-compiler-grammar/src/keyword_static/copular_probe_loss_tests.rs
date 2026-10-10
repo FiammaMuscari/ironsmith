@@ -6,6 +6,16 @@ fn lex(text: &str) -> Vec<OwnedLexToken> {
 }
 
 #[test]
+fn trigger_with_quoted_conditional_anthem_is_not_a_static_line() {
+    let tokens = lex("Whenever another nontoken artifact you control enters, create a 2/2 white Human Knight creature token with \"This token gets +2/+2 as long as an artifact entered the battlefield under your control this turn.\"");
+    let (parsed, loss) = crate::parse_loss::capture(|| {
+        super::super::parse_static_ability_ast_line_lexed(&tokens)
+    });
+    assert!(parsed.unwrap().is_none());
+    assert!(!loss.is_lossy(), "{loss:?}");
+}
+
+#[test]
 fn rejected_animation_ownership_probe_does_not_report_subject_recovery() {
     let tokens = lex("If this card is in your opening hand, you may begin the game with it on the battlefield.");
     // Establish the adversarial witness: the legacy reader reaches a lossy

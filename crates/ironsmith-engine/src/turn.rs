@@ -2101,10 +2101,10 @@ mod tests {
             Some(Zone::Hand)
         );
         assert!(
-            game.effect_store
-                .pending_trigger_events
-                .iter()
-                .any(|event| {
+            game.turn_store.turn_history
+                .projected_records()
+                .any(|record| {
+                    let event = &record.event;
                     event.kind() == crate::events::EventKind::ZoneChange
                         && event.snapshot().is_some_and(|snapshot| {
                             snapshot.stable_id == stable_id && snapshot.tapped

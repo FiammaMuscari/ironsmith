@@ -41,7 +41,7 @@ use super::dispatch_inner::{
 };
 use super::for_each_helpers::{
     is_mana_replacement_clause_words, is_mana_trigger_additional_clause_words,
-    is_target_player_dealt_damage_by_this_turn_subject, parse_for_each_object_subject,
+    parse_for_each_object_subject,
     parse_get_for_each_count_value, parse_get_modifier_values_with_tail,
     parse_has_base_power_clause, parse_has_base_power_toughness_clause,
 };

@@ -4013,6 +4013,20 @@ pub(super) fn describe_delirium_countered_spell_same_name_search(
     })
 }
 
+pub(crate) fn describe_search_choose_then_put(
+    choose: &crate::effects::ChooseObjectsEffect,
+    put: &crate::effects::PutOntoBattlefieldEffect,
+    shuffle: Option<&crate::effects::ShuffleLibraryEffect>,
+) -> Option<String> {
+    if !matches!(put.target.base(), ChooseSpec::Tagged(tag) if tag == &choose.tag) {
+        return None;
+    }
+    let collection = crate::effects::ForEachTaggedEffect::new(
+        choose.tag.clone(), vec![Effect::new(put.clone())],
+    );
+    describe_search_choose_for_each(choose, &collection, shuffle, false)
+}
+
 pub(crate) fn describe_search_choose_for_each(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
@@ -5647,6 +5661,12 @@ pub(crate) fn describe_search_sequence(
         return None;
     }
     let choose = sequence.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
+    if let Some(put) = sequence.effects[1].downcast_ref::<crate::effects::PutOntoBattlefieldEffect>() {
+        let shuffle = if sequence.effects.len() == 3 {
+            Some(sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?)
+        } else { None };
+        return describe_search_choose_then_put(choose, put, shuffle);
+    }
     if sequence.effects.len() == 3
         && let Some(with_id) = sequence.effects[1].downcast_ref::<crate::effects::WithIdEffect>()
         && let Some(for_each) = with_id

@@ -363,10 +363,16 @@ fn execute_prepared_mill_with_completion<'a, R>(
                 }
                 game.close_simultaneous_action(opened_batch);
 
+                let result_memory = milled.iter().filter_map(|id| {
+                    game.object(*id).map(|object| {
+                        ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
+                    })
+                }).collect();
                 let original_outcome = if !milled.is_empty() {
                     EffectOutcome::with_objects(milled.clone())
                         .with_affected_objects(milled)
                         .with_affected_object_memory(milled_memory)
+                        .with_execution_fact(crate::effect::ExecutionFact::ResultObjectMemory(result_memory))
                 } else if any_prevented {
                     EffectOutcome::prevented()
                 } else {

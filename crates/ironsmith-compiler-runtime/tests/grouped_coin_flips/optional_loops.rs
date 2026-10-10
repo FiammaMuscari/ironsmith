@@ -397,7 +397,7 @@ fn scales_paid_cast_and_activation_keep_two_saved_targets_and_charge_each_repeat
             settle(&mut g, &mut dm);
             assert_eq!(g.player(A).unwrap().mana_pool.total(), initial_mana - 8 - paid * 3);
             assert_eq!(dm.option_players, vec![A; faces.len()]); assert_eq!(dm.boolean_players, vec![A; payments.len()]);
-            assert_eq!(g.object(g.find_object_by_stable_id(enemy_stable).unwrap()).unwrap().zone, if win { Zone::Graveyard } else { Zone::Battlefield });
+            assert_eq!(g.object(g.find_object_by_stable_id(enemy_stable).unwrap()).unwrap().zone, if win { Zone::Graveyard } else { Zone::Battlefield }, "faces: {faces:?}, payments: {payments:?}");
             assert_eq!(g.object(g.find_object_by_stable_id(own_stable).unwrap()).unwrap().zone, if win { Zone::Battlefield } else { Zone::Graveyard });
             assert_eq!(g.object(unchosen).unwrap().zone, Zone::Battlefield);
         }

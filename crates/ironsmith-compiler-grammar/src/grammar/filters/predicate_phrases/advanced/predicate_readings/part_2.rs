@@ -447,6 +447,7 @@ pub(super) const READINGS: &[Reading] = &[
                 // Readings ranked above this one that read the input read it.
                 && !input.read_by("empty-battlefield-predicate")
                 && !input.read_by("source-zone-predicate")
+                && !input.read_by("another-same-name-object-exists")
         },
         read: |input| input.outcome(read_object_on_battlefield_predicate(input)),
     },

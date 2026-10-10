@@ -128,29 +128,19 @@ pub(super) fn read_cast_target_without_paying(
         ),
     };
     if let Some(shape) = clause_grammar::parse_cast_target_without_paying_shape(tokens) {
-        let _ = parse_target_phrase(shape.target_tokens)?;
-        return Ok(Some(EffectAst::SubjectVerb(
-            crate::model::ast::SubjectVerbEffectAst {
-                subject: crate::model::ast::SubjectVerbSubjectAst {
-                    role: SubjectVerbRoleAst::Actor,
-                    player: PlayerAst::Implicit,
+        let target = parse_target_phrase(shape.target_tokens)?;
+        let tag = crate::util::helper_tag_for_tokens(tokens, "cast_target");
+        return Ok(Some(EffectAst::Sequence {
+            effects: vec![
+                EffectAst::TagAffected {
+                    effect: Box::new(EffectAst::subject_verb_target_only(target)),
+                    tag: tag.clone(),
                 },
-                action: SubjectVerbActionAst::Stack(StackActionAst::CastTagged {
-                    alternative_cost: None,
-                    tag: crate::tag::CompilerReferenceTag::It.bind(),
-                    player: PlayerAst::Implicit,
-                    allow_land: false,
-                    as_copy: false,
-                    copy_cast_reminder_surface: false,
-                    copy_instruction_surface: None,
-                    without_paying_mana_cost: true,
-                    additional_mana_cost: None,
-                    cost_reduction: None,
-                    mana_spend_mode: ironsmith_core::value_model::ManaSpendMode::Normal,
-                    alternative_payment: None,
-                }),
-            },
-        )));
+                EffectAst::subject_verb_cast_tagged(
+                    tag, PlayerAst::Implicit, false, false, true, None,
+                ),
+            ],
+        }));
     }
     Ok(None)
 }

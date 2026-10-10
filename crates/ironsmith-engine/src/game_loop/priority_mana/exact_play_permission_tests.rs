@@ -214,6 +214,7 @@ fn bestow_permission_queries_the_aura_face_and_an_excluded_face_does_not_poison_
         let card = game.create_object_from_definition(&definition, player, Zone::Exile);
         let grant = &mut game.effect_store.grant_registry.grants[0]; grant.target_id = Some(card);
         let mut filter = if aura_only { crate::target::ObjectFilter::enchantment() } else { crate::target::ObjectFilter::creature() };
+        filter.zone = Some(Zone::Exile);
         if aura_only { filter.excluded_card_types.push(CardType::Creature); }
         grant.filter = Some(filter);
         let methods = marked_methods_for(&game, card);
@@ -252,7 +253,7 @@ fn prototype_on_a_linked_face_is_selected_before_permission_filter_and_price() {
         game.register_linked_face_definition(&back);
         let card = game.create_object_from_definition(if linked { &front } else { &back }, player, Zone::Exile);
         let grant = &mut game.effect_store.grant_registry.grants[0]; grant.target_id = Some(card);
-        grant.filter = Some(crate::target::ObjectFilter::creature().with_mana_value(crate::filter::Comparison::Equal(1)));
+        grant.filter = Some(crate::target::ObjectFilter::creature().in_zone(Zone::Exile).with_mana_value(crate::filter::Comparison::Equal(1)));
         let methods = marked_methods_for(&game, card);
         assert_eq!(methods.len(), 1);
         assert!(match methods[0].origin_method() {

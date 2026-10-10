@@ -201,7 +201,8 @@ fn rewrite_mana_restriction(restriction: &ManaUsageRestriction, change: TextChan
 fn rewrite_result_predicate(predicate: &EffectPredicate, change: TextChange) -> Result<EffectPredicate, Error> {
     let mut rewritten = predicate.clone();
     match &mut rewritten {
-        EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player } => {
+        EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player }
+        | EffectPredicate::PlayerActionObjectHasGreatestManaValue { player, .. } => {
             *player = rewrite_player_filter_words(player, change)?;
         }
         EffectPredicate::PriorEffectResult(surface) => surface.filter = rewrite_filter_words(&surface.filter, change)?,

@@ -275,21 +275,29 @@ fn object_iteration_cursor(
     } else {
         effect.effects.as_slice()
     };
-    let (effects, shuffle) = if let [move_effect, shuffle_effect] = batched_effects
+    if let [move_effect, shuffle_effect] = batched_effects
         && let Some(movement) = move_effect.downcast_ref::<crate::effects::MoveToZoneEffect>()
+        && movement.zone == crate::zone::Zone::Library
         && matches!(movement.target.base(), ChooseSpec::Iterated)
         && let Some(shuffle) = shuffle_effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>()
         && matches!(&shuffle.player, crate::target::PlayerFilter::OwnerOf(crate::filter::ObjectRef::Tagged(tag)) if tag == &it_tag)
     {
-        (vec![move_effect.clone()], Some(shuffle.clone()))
-    } else {
-        (effect.effects.clone(), None)
-    };
+        // This recognized owner-shuffle instruction has one original batch:
+        // all moves and owner shuffles precede added replacement programs.
+        // A cursor postlude runs too late, after each move's replacement draw.
+        let shuffle = crate::effects::ShuffleObjectsIntoLibraryEffect::new(
+            ChooseSpec::all(effect.filter.clone()),
+            crate::target::PlayerFilter::OwnerOf(crate::filter::ObjectRef::Target),
+        ).with_owner_library_destination();
+        return super::sequence::sequence_cursor(
+            &crate::effects::SequenceEffect::new(vec![Effect::new(shuffle)]), ctx,
+        );
+    }
     super::iteration_program::selected_iteration_cursor(
         Box::new(ObjectIterationPlan {
             matching,
-            effects,
-            shuffle,
+            effects: effect.effects.clone(),
+            shuffle: None,
             owners: Vec::new(),
         }),
         ctx,
@@ -427,8 +435,9 @@ impl EffectExecutor for ForEachObject {
     fn prepare_replacement_draw_continuation_with_outputs(
         &self, game: &mut GameState, ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>, ExecutionError> {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
 }

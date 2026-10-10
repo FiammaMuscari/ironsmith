@@ -160,10 +160,9 @@ fn exercise_bat(definition: &ironsmith::cards::CardDefinition) {
             );
             if !left_before {
                 game.move_object_by_effect(source, Zone::Graveyard);
-                ironsmith::game_loop::drain_pending_trigger_events(
-                    &mut game,
-                    &mut ironsmith::triggers::TriggerQueue::new(),
-                );
+                ironsmith::game_loop::run_priority_loop_with(
+                    &mut game, &mut ironsmith::triggers::TriggerQueue::new(), &mut dm,
+                ).expect("source departure should complete the duration return");
             }
             let returned = game.find_object_by_stable_id(chosen_stable).unwrap();
             assert_eq!(game.object(returned).unwrap().zone, Zone::Hand);
@@ -201,15 +200,29 @@ fn shown_hand_exile_preserves_owner_and_card_qualifiers() {
             })
             .unwrap();
         assert_eq!(trigger.choices.len(), 1);
-        let optional = trigger
-            .effects
-            .flattened_default_effects()
-            .iter()
-            .find_map(|effect| effect.downcast_ref::<ironsmith::effects::MayEffect>())
-            .unwrap();
-        let exile = optional.effects[0]
-            .downcast_ref::<ironsmith::effects::ExileUntilEffect>()
-            .unwrap();
+        fn find_optional(effect: &ironsmith::effect::Effect) -> Option<ironsmith::effects::MayEffect> {
+            if let Some(optional) = effect.downcast_ref::<ironsmith::effects::MayEffect>() {
+                return Some(optional.clone());
+            }
+            let mut found = None;
+            effect.visit_child_effects(&mut |child| {
+                if found.is_none() { found = find_optional(child); }
+            });
+            found
+        }
+        fn find_exile(effect: &ironsmith::effect::Effect) -> Option<ironsmith::effects::ExileUntilEffect> {
+            if let Some(exile) = effect.downcast_ref::<ironsmith::effects::ExileUntilEffect>() {
+                return Some(exile.clone());
+            }
+            let mut found = None;
+            effect.visit_child_effects(&mut |child| {
+                if found.is_none() { found = find_exile(child); }
+            });
+            found
+        }
+        let optional = trigger.effects.flattened_default_effects().iter()
+            .find_map(|effect| find_optional(effect)).expect("optional exile branch");
+        let exile = optional.effects.iter().find_map(find_exile).expect("typed duration exile");
         let ironsmith::target::ChooseSpec::Object(filter) = exile.spec.base() else {
             panic!("{:?}", exile.spec);
         };

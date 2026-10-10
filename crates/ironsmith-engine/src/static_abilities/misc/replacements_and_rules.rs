@@ -280,7 +280,7 @@ impl DamageAmountReplacementMatcher {
     fn source_matches(
         &self,
         damage: &DamageEvent,
-        ctx: &crate::events::context::EventContext<'_>,
+        ctx: &crate::events::context::PreparedEventContext<'_>,
     ) -> bool {
         // "Enchanted creature" is the object currently attached to this
         // replacement's source. An old damage snapshot may remember an Aura
@@ -330,12 +330,13 @@ impl DamageAmountReplacementMatcher {
         let Some(snapshot) = ctx.event_source_snapshot
             .filter(|snapshot| snapshot.object_id == damage.source)
         else {
-            // A filtered replacement cannot treat absent source evidence as
-            // a known nonmatch. The checked execution scope rolls back the
-            // entire operation when this shared failure latch is set.
-            ctx.game.record_token_resource_failure(&crate::effects::ExecutionError::IncompleteEvidence(
-                "filtered damage replacement requires the exact live source or its last-known snapshot".into(),
-            ));
+            // Matching must fail even when called without an execution root
+            // and therefore without a shared resource-error latch.
+            ctx.record_match_failure(
+                crate::static_ability_processor::StaticEffectDiscoveryError::UnavailableCharacteristics {
+                    object: damage.source,
+                },
+            );
             return false;
         };
         let filter_ctx = if snapshot.zone == Zone::Stack {

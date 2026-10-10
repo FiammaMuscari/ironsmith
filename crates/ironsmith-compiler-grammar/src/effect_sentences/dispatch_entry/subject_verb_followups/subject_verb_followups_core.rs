@@ -1,5 +1,34 @@
 use super::*;
 
+pub(super) fn pre_rule_elliptical_condition_fallback(
+    state: &mut SentenceDispatchState<'_>,
+    _sentences: &[SentenceInput],
+    _sentence_idx: usize,
+    sentence_tokens: &[OwnedLexToken],
+) -> Result<Option<PreParseFollowupResult>, CardTextError> {
+    let Some((intro, body)) = crate::split_lexed_once_on_comma(sentence_tokens) else {
+        return Ok(None);
+    };
+    let words = crate::lexer::parser_token_word_refs(intro);
+    if !matches!(words.as_slice(), ["if", "it", "doesn't" | "doesnt"] | ["if", "it", "does", "not"]) {
+        return Ok(None);
+    }
+    // The omitted predicate must have a preceding state condition. It does
+    // not mean that a preceding draw or counter-placement action failed.
+    if !state.effects.last().is_some_and(|effect| match effect {
+        EffectAst::Conditionals(ConditionalEffectAst::TrailingIf { .. }
+            | ConditionalEffectAst::Conditional { .. }) => true,
+        EffectAst::ControlFlow(flow) => matches!(flow.node,
+            crate::model::ControlFlowNodeAst::Condition { .. }),
+        _ => false,
+    }) {
+        return Ok(None);
+    }
+    let mut plan = SentenceParsePlan::new(body.to_vec());
+    plan.wrap_if_result = Some(IfResultPredicate::Otherwise);
+    Ok(Some(PreParseFollowupResult::Plan(plan)))
+}
+
 pub(super) fn pre_rule_otherwise_followup(
     _state: &mut SentenceDispatchState<'_>,
     _sentences: &[SentenceInput],

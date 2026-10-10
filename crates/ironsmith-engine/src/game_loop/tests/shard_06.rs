@@ -135,7 +135,7 @@ pub(super) fn magma_mine_activated_ability_sacrifices_source_and_deals_counter_s
     let mine_id = game.create_object_from_definition(&mine_def, alice, Zone::Battlefield);
     game.add_counters(
         mine_id,
-        crate::object::CounterType::Named("pressure".into()),
+        crate::object::CounterType::Pressure,
         3,
     )
     .expect("pressure counters should be addable to Magma Mine");

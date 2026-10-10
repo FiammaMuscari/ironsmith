@@ -49,7 +49,7 @@ fn lavabrink_counter_sacrifice_upkeep_choice_and_reflexive_damage() {
         let alice = game.players[0].id;
         let bob = game.players[1].id;
         let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
-        game.add_counters(source, CounterType::Named("doom".into()), initial);
+        game.add_counters(source, CounterType::Doom, initial);
         let creature = crate::card::CardBuilder::new(crate::ids::CardId::new(), "Damage Recipient")
             .card_types(vec![CardType::Creature])
             .power_toughness(crate::card::PowerToughness::fixed(2, 10))

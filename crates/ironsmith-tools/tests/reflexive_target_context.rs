@@ -327,22 +327,22 @@ fn excess_damage_limit_applies_to_both_artifacts_and_enchantments() {
 }
 
 #[test]
-fn missing_aggregate_result_is_an_error_instead_of_an_unlimited_budget() {
+fn missing_aggregate_result_has_zero_budget_instead_of_an_unlimited_budget() {
     let alice = PlayerId::from_index(0);
     let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
     let def = definition("Ancient Brass Dragon");
     let trigger = reflexive(&def);
     let source = game.create_object_from_definition(&def, alice, Zone::Battlefield);
     let ctx = EffectContext::new_default(source, alice);
-    assert!(
-        ironsmith::targeting::resolved_target_aggregate_constraint_with_context(
+    let constraint = ironsmith::targeting::resolved_target_aggregate_constraint_with_context(
             &game,
             &trigger.choices[0],
             &ctx,
             &[],
         )
-        .is_err()
-    );
+        .expect("a missing optional producer contributes zero")
+        .expect("the authored aggregate restriction remains present");
+    assert_eq!(constraint.maximum, 0);
 }
 
 #[test]

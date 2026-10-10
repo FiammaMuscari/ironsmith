@@ -853,6 +853,8 @@ fn read_optional_result_exile_choice_play(
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let sentences = &input.sentences;
     if let Some(effects) = parse_exile_hand_draw_play_bundle(sentences)? { return Ok(Some(effects)); }
+    if let Some(effects) = parse_private_exile_inspection_bundle(sentences)? { return Ok(Some(effects)); }
+    if let Some(effects) = consult_bundles::parse_look_manifest_partition_bundle(sentences)? { return Ok(Some(effects)); }
     if sentences.len() == 4
         && let Some(effects) = parse_optional_private_exile_play_bundle(sentences)?
     { return Ok(Some(effects)); }

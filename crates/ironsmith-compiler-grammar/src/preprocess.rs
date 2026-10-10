@@ -570,6 +570,14 @@ fn replace_names_with_map(
         previous_word(bytes, with_start) == Some(b"exiled".as_slice())
     }
 
+    fn preceded_by_copy_of(bytes: &[u8], idx: usize) -> bool {
+        if previous_word(bytes, idx) != Some(b"of".as_slice()) { return false; }
+        let mut start = idx;
+        while start > 0 && !bytes[start - 1].is_ascii_alphanumeric() { start -= 1; }
+        while start > 0 && bytes[start - 1].is_ascii_alphanumeric() { start -= 1; }
+        previous_word(bytes, start).is_some_and(|word| matches!(word, b"copy" | b"copies"))
+    }
+
     fn preceded_by_ability_grant_word(bytes: &[u8], idx: usize) -> bool {
         previous_word(bytes, idx)
             .is_some_and(|word| matches!(word, b"has" | b"have" | b"gain" | b"gains"))
@@ -727,6 +735,7 @@ fn replace_names_with_map(
             )
         }) || apostrophe_s
             || preceded_by_exiled_with(bytes, idx)
+            || preceded_by_copy_of(bytes, idx)
     }
 
     fn is_result_optional_companion_short_name_context(
@@ -790,7 +799,7 @@ fn replace_names_with_map(
                 .get(idx + len + 1)
                 .is_some_and(|byte| matches!(*byte, b's' | b'S'));
 
-        if prev.is_some_and(|word| word == b"as") {
+        if prev.is_some_and(|word| word == b"as") || preceded_by_copy_of(bytes, idx) {
             return false;
         }
 
@@ -2157,6 +2166,9 @@ pub fn preprocess_document_with_provenance(
             if spell_card_prefers_resolution_line_merge(&card)
                 && looks_like_resolution_followup
                 && !is_standalone_keyword_action
+                && !split_tokens.as_deref().is_some_and(|tokens| {
+                    super::grammar::document_shapes::parse_statement_label_split_tokens(tokens).is_some()
+                })
                 && let Some(PreprocessedItem::Line(previous)) = items.last_mut()
             {
                 let combined_raw_line =

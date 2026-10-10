@@ -1074,6 +1074,9 @@ fn split_top_level_granted_ability_items(tokens: &[OwnedLexToken]) -> Vec<&[Owne
                 if next_opens_quote {
                     items.push(&tokens[start..=idx]);
                     start = idx + 1;
+                } else if tokens.get(idx + 1).is_some_and(|next| next.is_word("and")) {
+                    items.push(&tokens[start..=idx]);
+                    start = idx + 2;
                 }
             } else {
                 inside_quote = true;
@@ -1744,7 +1747,25 @@ fn parse_leading_simple_ability_duration(tokens: &[OwnedLexToken]) -> Option<(us
 pub fn parse_simple_gain_ability_clause_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
+    if let Some(effect) = parse_activated_ability_snapshot_grant(tokens)? { return Ok(Some(effect)); }
     parse_simple_ability_modifier_clause_lexed(tokens, false)
+}
+
+fn parse_activated_ability_snapshot_grant(tokens: &[OwnedLexToken]) -> Result<Option<EffectAst>, CardTextError> {
+    let tokens = crate::util::trim_edge_punctuation_tokens(tokens);
+    let Some(gain) = tokens.iter().position(|token| token.is_any_word(&["gain", "gains"])) else { return Ok(None); };
+    let rest = &tokens[gain + 1..];
+    if gain == 0 || rest.len() < 9
+        || !rest.iter().take(4).zip(["all", "activated", "abilities", "of"]).all(|(token, word)| token.is_word(word))
+        || !rest[rest.len() - 4..].iter().zip(["until", "end", "of", "turn"]).all(|(token, word)| token.is_word(word))
+    { return Ok(None); }
+    let target = parse_target_phrase(&tokens[..gain])?;
+    let source = parse_target_phrase(&rest[4..rest.len() - 4])?;
+    Ok(Some(EffectAst::subject_verb(crate::cards::builders::SubjectVerbRoleAst::Actor, PlayerAst::You,
+        SubjectVerbActionAst::Grants(crate::cards::builders::GrantActionAst::GrantActivatedAbilitiesFrom {
+            target, source, duration: Until::EndOfTurn,
+        }),
+    )))
 }
 
 pub fn parse_simple_lose_ability_clause_lexed(
@@ -1968,7 +1989,7 @@ fn lose_bare_ability_families(
     Ok(Some((abilities, false)))
 }
 
-fn parse_lose_family_types_and_abilities(
+pub(super) fn parse_lose_family_types_and_abilities(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     use crate::grammar::primitives;
@@ -2041,6 +2062,11 @@ fn parse_simple_ability_modifier_clause_lexed(
     tokens: &[OwnedLexToken],
     losing: bool,
 ) -> Result<Option<EffectAst>, CardTextError> {
+    if !losing
+        && let Some(mut effects) = super::flashback_grants::parse_fixed_flashback_grant(tokens)?
+    {
+        return Ok(effects.pop());
+    }
     if !losing && let Some(effect) = parse_complete_source_base_pt_assignment(tokens) {
         return Ok(Some(effect));
     }
@@ -2585,6 +2611,10 @@ fn parse_complete_simple_source_gain_ability_sentence(
 fn parse_gain_ability_sentence_inner(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if let Some(effect) = parse_activated_ability_snapshot_grant(tokens)? { return Ok(Some(vec![effect])); }
+    if let Some(effects) = super::flashback_grants::parse_fixed_flashback_grant(tokens)? {
+        return Ok(Some(effects));
+    }
     // `can be the target ... as though` is a targeting permission relation,
     // not a grant of the ability named in the comparison. Keep that complete
     // typed domain outside every gain-ability route.

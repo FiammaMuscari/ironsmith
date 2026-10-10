@@ -23,9 +23,14 @@ pub(in crate::compiled_text) fn describe_optional_source_exiled_copy_then_cast_p
     let [optional_cast_effect] = result.then.as_slice() else {
         return None;
     };
-    let optional_cast = optional_cast_effect.downcast_ref::<crate::effects::MayEffect>()?;
-    let [cast_effect] = optional_cast.effects.as_slice() else {
-        return None;
+    let optional_cast = optional_cast_effect.downcast_ref::<crate::effects::MayEffect>();
+    let cast_effect = if let Some(optional) = optional_cast {
+        let [cast] = optional.effects.as_slice() else { return None; };
+        cast
+    } else {
+        // CastTagged owns the optional casting decision after lowering
+        // removes the redundant outer May wrapper.
+        optional_cast_effect
     };
     let cast = cast_effect.downcast_ref::<crate::effects::CastTaggedEffect>().filter(|permission| permission.alternative_cost.is_none())?;
 
@@ -53,11 +58,10 @@ pub(in crate::compiled_text) fn describe_optional_source_exiled_copy_then_cast_p
         || result.predicate != crate::effect::EffectPredicate::Happened
         || !result.else_.is_empty()
         || result.prior_result_replacement_surface
-        || optional_cast
-            .decider
-            .as_ref()
-            .is_some_and(|decider| *decider != PlayerFilter::You)
-        || optional_cast.fallback != crate::decision::FallbackStrategy::Decline
+        || optional_cast.is_some_and(|optional| {
+            optional.decider.as_ref().is_some_and(|decider| *decider != PlayerFilter::You)
+                || optional.fallback != crate::decision::FallbackStrategy::Decline
+        })
         || cast.tag != choice.tag
         || cast.player != PlayerFilter::You
         || cast.allow_land

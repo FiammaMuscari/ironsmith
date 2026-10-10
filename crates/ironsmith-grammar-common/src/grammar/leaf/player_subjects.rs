@@ -31,6 +31,7 @@ struct PlayerSubjectPhrase {
 
 const CONTROL_SUBJECT_PHRASES: &[PlayerSubjectPhrase] = &[
     subject_phrase(&["that", "player"], LeafPlayerReference::ThatPlayer),
+    subject_phrase(&["that", "opponent"], LeafPlayerReference::ThatPlayer),
     subject_phrase(&["they"], LeafPlayerReference::ThatPlayer),
     subject_phrase(
         &["defending", "player"],
@@ -337,6 +338,7 @@ mod tests {
             &[
                 ("you", LeafPlayerReference::You),
                 ("that player", LeafPlayerReference::ThatPlayer),
+                ("that opponent", LeafPlayerReference::ThatPlayer),
                 ("opponent", LeafPlayerReference::Opponent),
                 ("opponents", LeafPlayerReference::Opponent),
                 ("an opponent", LeafPlayerReference::Opponent),

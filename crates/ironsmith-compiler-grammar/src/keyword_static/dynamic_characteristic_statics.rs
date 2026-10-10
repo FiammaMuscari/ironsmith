@@ -76,9 +76,14 @@ pub(super) fn parse_timed_source_pt(
         (&["during", "turns", "other", "than", "yours"][..],
             PredicateAst::Not(Box::new(PredicateAst::YourTurn))),
     ].into_iter().find(|(prefix, _)| words.starts_with(prefix));
-    let Some((prefix, condition)) = condition_and_prefix else { return Ok(None); };
+    let owns_definition = words.first() == Some(&"during")
+        && words.contains(&"power") && words.contains(&"toughness") && words.contains(&"each");
+    if !owns_definition { return Ok(None); }
+    let Some((prefix, condition)) = condition_and_prefix else {
+        return Err(CardTextError::ParseError("incomplete timed power/toughness condition prefix".into()));
+    };
     if !words.windows(5).any(|words| words == ["power", "and", "toughness", "are", "each"]) {
-        return Ok(None);
+        return Err(CardTextError::ParseError("incomplete timed power/toughness axis".into()));
     }
     let comma = tokens.iter().position(|token| token.is_comma())
         .filter(|comma| tokens[..*comma].iter().all(|token| token.as_word().is_some())
@@ -137,7 +142,9 @@ mod tests {
             assert_eq!(power.unhinted(), &Value::LifeTotal(PlayerFilter::You));
             assert_eq!(toughness, power);
             assert_eq!(filter.source, subject == "This creature");
-            assert_eq!(filter.with_attached_object.is_some(),
+            assert_eq!(filter.tagged_constraints.iter().any(|constraint|
+                matches!(constraint.tag.as_str(), "equipped" | "enchanted")
+                    && constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject),
                 matches!(subject, "Equipped creature" | "Enchanted creature"));
         }
     }

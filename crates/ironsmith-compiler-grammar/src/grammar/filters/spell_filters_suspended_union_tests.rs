@@ -174,3 +174,18 @@ fn an_enclosing_target_relation_keeps_its_supported_union_operand() {
         }
     }
 }
+
+#[test]
+fn spell_filters_preserve_exact_and_minimum_color_counts() {
+    for (text, expected) in [
+        ("spell you cast that's exactly three colors", crate::filter::Comparison::Equal(3)),
+        ("spell you cast that is exactly four colors", crate::filter::Comparison::Equal(4)),
+        ("creatures of three or more colors", crate::filter::Comparison::GreaterThanOrEqual(3)),
+    ] {
+        let tokens = crate::lexer::lex_line(text, 0).unwrap();
+        for reader in readers() {
+            let filter = reader(&tokens, false).unwrap();
+            assert_eq!(filter.color_count, Some(expected.clone()), "{text}");
+        }
+    }
+}

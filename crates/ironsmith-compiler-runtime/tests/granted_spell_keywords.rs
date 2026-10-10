@@ -209,7 +209,7 @@ fn wort_granted_conspire_remains_a_cast_time_tap_cost_with_its_copy_trigger() {
     for wort in compile::compile_both("Wort, the Raidmother", WORT) {
         for color_matches in [true, false] {
             let mut game = game();
-            game.create_object_from_definition(&wort, A, Zone::Battlefield);
+            let wort_id = game.create_object_from_definition(&wort, A, Zone::Battlefield);
             let helper = fixture("Red helper", "Mana cost: {R}\nType: Creature — Goblin\nPower/Toughness: 1/1");
             let first = game.create_object_from_definition(&helper, A, Zone::Battlefield);
             let second = game.create_object_from_definition(&helper, A, Zone::Battlefield);
@@ -225,9 +225,12 @@ fn wort_granted_conspire_remains_a_cast_time_tap_cost_with_its_copy_trigger() {
             cast(&mut game, &spell, &mut dm);
             let offered = dm.seen_optional_costs.iter().any(|label| label.to_ascii_lowercase().contains("conspire"));
             assert_eq!(offered, color_matches, "{:?}", dm.seen_optional_costs);
-            for id in [first, second] {
-                assert_eq!(game.is_tapped(id), color_matches);
-            }
+            // Wort itself is also a red creature eligible for conspire.
+            // The default chooser may tap it instead of either helper.
+            assert_eq!(
+                [wort_id, first, second].into_iter().filter(|id| game.is_tapped(*id)).count(),
+                if color_matches { 2 } else { 0 },
+            );
             assert_eq!(game.stack.len(), if color_matches { 2 } else { 1 });
             while !game.stack.is_empty() {
                 resolve_stack_entry_with(&mut game, &mut dm).unwrap();

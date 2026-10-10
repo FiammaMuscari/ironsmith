@@ -189,6 +189,7 @@ fn parse_statement_semantic_facts(
     };
 
     StatementLineSemanticFacts {
+        replacement_starts_new_source_line: false,
         instead_followup: InsteadFollowupFacts {
             semantics: instead_semantics,
             conditional_intro: instead.conditional_intro,

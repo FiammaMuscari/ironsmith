@@ -6,7 +6,7 @@ use ironsmith::cards::CardDefinition;
 use ironsmith::decision::{DecisionMaker, LegalAction, SelectFirstDecisionMaker};
 use ironsmith::decisions::context::{BooleanContext, ManaPaymentContext, NumberContext, SelectOptionsContext, TargetsContext};
 use ironsmith::game_loop::{PriorityLoopState, PriorityResponse, apply_decision_context_with_dm,
-    apply_priority_response_with_dm, extract_target_requirements_from_program_with_modes,
+    apply_priority_response_with_dm,
     generate_and_queue_step_triggers, put_triggers_on_stack_with_dm, resolve_stack_entry_with};
 use ironsmith::grant_registry::GrantSource;
 use ironsmith::mana::{ManaCost, ManaSymbol};
@@ -290,7 +290,9 @@ impl DecisionMaker for Choices {
         vec![target]
     }
     fn decide_boolean(&mut self, _: &GameState, ctx: &BooleanContext) -> bool {
-        assert!(ctx.description.to_ascii_lowercase().contains("cast"), "unexpected optional branch: {ctx:?}");
+        // Prompts may use the sanitized generic wording; the scenario verifies
+        // the actual suspend cast and the number of offers independently.
+        assert!(ctx.description.to_ascii_lowercase().contains("cast") || ctx.description == "Perform the effect", "unexpected optional branch: {ctx:?}");
         self.cast_offers += 1;
         self.accept_cast
     }
@@ -310,11 +312,11 @@ fn action(g: &mut GameState, action: LegalAction, dm: &mut Choices) {
     let mut progress = apply_priority_response_with_dm(g, &mut triggers, &mut state,
         &PriorityResponse::PriorityAction(action), dm).unwrap();
     for _ in 0..64 {
-        if state.pending_cast.is_none() && state.pending_activation.is_none() { break; }
+        if !state.has_pending_action() { break; }
         let ironsmith::GameProgress::NeedsDecisionCtx(ctx) = progress else { panic!("{progress:?}"); };
         progress = apply_decision_context_with_dm(g, &mut triggers, &mut state, &ctx, dm).unwrap();
     }
-    assert!(state.pending_cast.is_none() && state.pending_activation.is_none());
+    assert!(!state.has_pending_action());
     put_triggers_on_stack_with_dm(g, &mut triggers, dm).unwrap();
 }
 
@@ -588,11 +590,10 @@ fn battlefield_rechecking_keeps_the_counter_qualifier_on_the_put_arm_only(route:
                 queue(&mut g, &mut dm);
                 assert_eq!(g.stack.len(), 1);
                 let entry = g.stack.last().unwrap();
-                let program = entry.ability_effects.as_ref().or(definition.spell_effect.as_ref()).unwrap();
-                let requirements = extract_target_requirements_from_program_with_modes(&g, program,
-                    entry.controller, Some(entry.object_id), entry.chosen_modes.as_deref());
-                assert_eq!(requirements.len(), 1);
-                assert_eq!(requirements[0].legal_targets.contains(&Target::Object(target)), !put);
+                assert_eq!(entry.target_assignments.len(), 1);
+                let legal = ironsmith::game_loop::compute_legal_targets(&g,
+                    &entry.target_assignments[0].spec, entry.controller, Some(entry.object_id));
+                assert_eq!(legal.contains(&Target::Object(target)), !put);
                 resolve(&mut g, &mut dm);
                 assert_eq!(g.counter_count(target, CounterType::Time), 0);
                 assert!(g.stack_is_empty());
@@ -644,11 +645,10 @@ fn losing_the_last_time_counter_in_response_invalidates_the_exile_arm_before_res
                 assert_eq!(dm.cast_offers, 1);
                 assert_eq!(g.stack.len(), 1);
                 let entry = g.stack.last().unwrap();
-                let program = entry.ability_effects.as_ref().or(definition.spell_effect.as_ref()).unwrap();
-                let requirements = extract_target_requirements_from_program_with_modes(&g, program,
-                    entry.controller, Some(entry.object_id), entry.chosen_modes.as_deref());
-                assert_eq!(requirements.len(), 1);
-                assert!(!requirements[0].legal_targets.contains(&Target::Object(target)));
+                assert_eq!(entry.target_assignments.len(), 1);
+                let legal = ironsmith::game_loop::compute_legal_targets(&g,
+                    &entry.target_assignments[0].spec, entry.controller, Some(entry.object_id));
+                assert!(!legal.contains(&Target::Object(target)));
                 resolve(&mut g, &mut dm);
                 assert_eq!(g.object(target).unwrap().zone, Zone::Exile);
                 assert_eq!(g.counter_count(target, CounterType::Time), 0, "put cannot recreate suspended status");
@@ -858,11 +858,10 @@ fn losing_granted_suspend_in_response_invalidates_every_counter_mode(route: Comp
                     g.refresh_continuous_state().unwrap();
                     assert!(g.current_abilities(target).unwrap().is_empty(), "{loss}");
                     let entry = g.stack.last().unwrap();
-                    let program = entry.ability_effects.as_ref().or(definition.spell_effect.as_ref()).unwrap();
-                    let requirements = extract_target_requirements_from_program_with_modes(&g, program,
-                        entry.controller, Some(entry.object_id), entry.chosen_modes.as_deref());
-                    assert_eq!(requirements.len(), 1);
-                    assert!(!requirements[0].legal_targets.contains(&Target::Object(target)));
+                    assert_eq!(entry.target_assignments.len(), 1);
+                    let legal = ironsmith::game_loop::compute_legal_targets(&g,
+                        &entry.target_assignments[0].spec, entry.controller, Some(entry.object_id));
+                    assert!(!legal.contains(&Target::Object(target)));
                     resolve(&mut g, &mut dm);
                     assert_eq!(g.counter_count(target, CounterType::Time), 5, "{name}: {loss}");
                     assert_eq!(g.counter_count(ungranted, CounterType::Time), 5);

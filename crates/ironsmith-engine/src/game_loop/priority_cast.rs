@@ -2549,12 +2549,20 @@ fn optional_cost_branch_is_affordable_for_pending(
             extract_modal_spec_from_spell(game, pending.spell_id, pending.caster)
     {
         let all_modes: Vec<usize> = (0..modal_spec.mode_descriptions.len()).collect();
-        let all_modes_have_targets = game
+        // Validate the selection under the cost being offered. Before that
+        // hypothetical payment the modal limit is still "choose one", so a
+        // check of every mode would reject entwine even with legal targets.
+        let mut preview = game.clone();
+        if let Some(spell) = preview.object_mut(pending.spell_id) {
+            spell.optional_costs_paid = pending.optional_costs_paid.clone();
+            spell.optional_costs_paid.pay_times(optional_cost_index, 1);
+        }
+        let all_modes_have_targets = preview
             .object(pending.spell_id)
             .and_then(|spell| spell.spell_effect.as_ref())
             .is_none_or(|program| {
                 spell_program_has_legal_targets_with_modes(
-                    game,
+                    &preview,
                     program,
                     pending.caster,
                     Some(pending.spell_id),
@@ -3551,7 +3559,10 @@ pub(super) fn continue_to_targeting_or_finalize(
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<GameProgress, GameLoopError> {
     let mut pending = pending;
-    announce_modal_mana_costs(game, &mut pending, decision_maker)?;
+    if let Err(error) = announce_modal_mana_costs(game, &mut pending, decision_maker) {
+        state.rollback_action(game);
+        return Err(error);
+    }
     if decision_maker.awaiting_choice() {
         // This is an effect-backed announcement, resumed by its captured root.
         // It must not be mistaken for the optional-cost ordering response.
@@ -4133,8 +4144,26 @@ pub(super) fn finalize_pending_spell_cast_with_outputs(
         let cost = pending_cast_base_mana_cost(game, &pending).ok_or_else(|| {
             GameLoopError::InvalidState("revealed Miracle lost its captured base price".into())
         })?;
-        let cost = mana_cost_with_announced_hybrid_choices(&cost, &pending.hybrid_choices)
-            .reduce_generic(unspent_alternative_base_reduction(&pending));
+        let alternative = pending.effect_alternative_cost.as_ref().ok_or_else(|| {
+            GameLoopError::InvalidState("revealed Miracle lost its alternative price".into())
+        })?;
+        let alternative = alternative.costs().iter().filter_map(|cost| cost.mana_cost_ref())
+            .fold(crate::mana::ManaCost::new(), |sum, part| crate::decision::add_mana_cost(&sum, part));
+        // Announcement indices include additional costs. Bind the alternative's
+        // own hybrid pips by their preserved order before recording its price.
+        let announced_hybrids = cost.pips().iter().enumerate().filter(|(_, pip)| pip.len() > 1);
+        let mut choices = Vec::new();
+        for ((original_index, _), (announced_index, _)) in alternative.pips().iter()
+            .enumerate().filter(|(_, pip)| pip.len() > 1).zip(announced_hybrids)
+        {
+            if let Some((_, symbol)) = pending.hybrid_choices.iter().find(|(index, _)| *index == announced_index) {
+                choices.push((original_index, *symbol));
+            }
+        }
+        let cost = mana_cost_with_announced_hybrid_choices(&alternative, &choices);
+        let cost = crate::decision::mana_cost_with_locked_x_and_generic_reduction(
+            &cost, pending.x_value.unwrap_or(0), pending.effect_alternative_base_generic_reduction,
+        );
         if let Some(spell) = game.object_mut(pending.spell_id) {
             spell.cast_alternative_method = Some(Box::new(
                 crate::alternative_cast::AlternativeCastingMethod::Miracle { cost },
@@ -5361,8 +5390,26 @@ fn spell_mana_with_announced_miracle_recipe(
     base: &crate::mana::ManaCost,
 ) -> crate::mana::ManaCost {
     let base_pips = base.pips().len();
+    // The announced base already contains mandatory additional mana. Only
+    // generic mana introduced by the alternative's own hybrid choices can
+    // consume its remaining recipe reduction; additional mana stays payable.
+    let is_non_generic = |pip: &&Vec<crate::mana::ManaSymbol>| {
+        !matches!(pip.as_slice(), [crate::mana::ManaSymbol::Generic(_) | crate::mana::ManaSymbol::X])
+    };
+    let alternative_non_generic = pending.effect_alternative_cost.as_ref().map_or(0, |cost| {
+        cost.costs().iter().filter_map(|cost| cost.mana_cost_ref())
+            .flat_map(|mana| mana.pips().iter()).filter(is_non_generic).count()
+    });
+    let selected_base_generic = base.pips().iter().enumerate()
+        .filter(|(_, pip)| is_non_generic(pip))
+        .take(alternative_non_generic)
+        .filter_map(|(index, _)| pending.hybrid_choices.iter().find(|(chosen, _)| *chosen == index))
+        .filter_map(|(_, symbol)| match symbol {
+            crate::mana::ManaSymbol::Generic(amount) => Some(u32::from(*amount)),
+            _ => None,
+        }).sum::<u32>();
     let base = mana_cost_with_announced_hybrid_choices(base, &pending.hybrid_choices)
-        .reduce_generic(unspent_alternative_base_reduction(pending));
+        .reduce_generic(unspent_alternative_base_reduction(pending).min(selected_base_generic));
     let extras = mana_cost_with_paid_optional_and_splice_costs(
         &crate::mana::ManaCost::new(),
         spell,
@@ -6244,6 +6291,20 @@ fn freeze_target_aggregate_cost(
     game: &GameState,
     targets: &[Target],
 ) -> Option<crate::effect::Effect> {
+    if let Some(evidence) = effect.downcast_ref::<crate::effects::CollectEvidenceEffect>() {
+        let crate::effect::Value::AnnouncedTargetTotal(metric) = evidence.amount.unhinted() else {
+            return None;
+        };
+        let ids: std::collections::HashSet<_> = targets.iter().filter_map(|target| match target {
+            Target::Object(id) => Some(*id),
+            Target::Player(_) => None,
+        }).collect();
+        let mut frozen = evidence.clone();
+        frozen.amount = crate::effect::Value::Fixed(
+            crate::targeting::aggregate_object_set_value(game, ids, *metric),
+        );
+        return Some(crate::effect::Effect::new(frozen));
+    }
     if let Some(choose) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
         let constraint = choose.aggregate_constraint.as_ref()?;
         let crate::effect::Value::AnnouncedTargetTotal(metric) =

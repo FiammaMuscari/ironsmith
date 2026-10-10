@@ -326,6 +326,12 @@ pub fn parse_filter_comparison_tokens(
     // aliases of this card into typed source references. Do not guess that an
     // arbitrary possessive name is the source, or consume a following zone.
     let parse_operand_value = |words: &[&str]| -> Option<(Value, usize)> {
+        // Object-filter normalization drops articles, including the one in
+        // the previously chosen scalar "the number".
+        if words == ["number"] {
+            return value_expr::parse_value_expr_words(&["the", "number"])
+                .map(|(value, _)| (value, 1));
+        }
         value_expr::parse_value_expr_words(words).or_else(|| {
             if !matches!(axis, "power" | "toughness") {
                 return None;

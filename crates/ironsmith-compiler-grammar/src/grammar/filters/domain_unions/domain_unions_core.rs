@@ -134,6 +134,24 @@ pub(super) fn contains_relative_characteristic_union(tokens: &[OwnedLexToken]) -
     let Some(characteristics) = words.get(characteristic_start..) else {
         return false;
     };
+    // A single trailing zone applies to the shared card noun before the
+    // relative clause: "card that's an instant or sorcery from your
+    // graveyard". It must not become the domain of only the last type arm.
+    let characteristics = if let Some(zone_start) = characteristics.iter()
+        .position(|word| matches!(*word, "from" | "in"))
+    {
+        let zone_words = &characteristics[zone_start + 1..];
+        let zone = match zone_words {
+            [zone] | ["your" | "their" | "a" | "any" | "the", zone] => *zone,
+            _ => return false,
+        };
+        if crate::util::parse_zone_word(zone).is_none() {
+            return false;
+        }
+        &characteristics[..zone_start]
+    } else {
+        characteristics
+    };
     if !characteristics
         .iter()
         .any(|word| matches!(*word, "or" | "and/or"))

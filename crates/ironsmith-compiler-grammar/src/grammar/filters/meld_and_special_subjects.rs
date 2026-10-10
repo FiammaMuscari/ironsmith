@@ -726,6 +726,20 @@ mod tests {
     }
 
     #[test]
+    fn mana_value_counter_reference_accepts_each_source_surface() {
+        for source in ["artifact", "enchantment", "creature", "permanent", "planeswalker", "land"] {
+            let text = format!("spell with mana value equal to the number of doom counters on this {source}");
+            let tokens = lex_line(&text, 0).unwrap();
+            let filter = parse_object_filter_with_grammar_entrypoint_lexed(&tokens, false).unwrap();
+            assert!(filter.mana_value_eq_counters_on_source.is_some()
+                || matches!(&filter.mana_value, Some(crate::filter::Comparison::EqualExpr(value))
+                    if matches!(value.unhinted(), crate::effect::Value::CountersOn(spec, Some(counter))
+                        if matches!(spec.base(), crate::target::ChooseSpec::Source)
+                            && counter.description() == "doom")), "{text}: {filter:?}");
+        }
+    }
+
+    #[test]
     fn parse_object_filter_lexed_handles_mana_value_lte_counters_on_source_clause() {
         let tokens = lex_line(
             "creature card with mana value less than or equal to the number of void counters on it",

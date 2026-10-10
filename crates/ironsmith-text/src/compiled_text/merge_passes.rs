@@ -227,7 +227,10 @@ pub(super) fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, 
     })?;
     let subject = line[..idx].trim();
     let rest = line[idx + verb.len()..].trim();
-    if !subject.is_empty() && !rest.is_empty() {
+    // A verb in a later sentence is not a predicate of the whole line.
+    // In particular, linked reveal groups retain separate producer/trigger
+    // identities even when their sentence prefixes happen to be identical.
+    if !subject.is_empty() && !subject.contains(". ") && !rest.is_empty() {
         Some((subject, verb.trim(), rest))
     } else {
         None
@@ -589,7 +592,7 @@ fn singularize_terminal_subject_word(phrase: &str) -> String {
     }
 }
 
-fn singularize_subject_word(word: &str) -> String {
+pub(super) fn singularize_subject_word(word: &str) -> String {
     let lower = word.to_ascii_lowercase();
     let preserve_cap = word
         .chars()
@@ -2856,6 +2859,11 @@ pub(super) fn merge_subject_animation_lines(lines: Vec<String>) -> Vec<String> {
     let mut idx = 0usize;
 
     while idx < lines.len() {
+        if let Some(line) = compact_colored_plural_animation(&lines[idx]) {
+            merged.push(line);
+            idx += 1;
+            continue;
+        }
         if idx + 1 < lines.len()
             && let Some(line) = merge_split_plural_animation_bundle(&lines[idx], &lines[idx + 1])
         {
@@ -3056,6 +3064,20 @@ pub(super) fn merge_subject_animation_lines(lines: Vec<String>) -> Vec<String> {
     }
 
     merged
+}
+
+fn compact_colored_plural_animation(line: &str) -> Option<String> {
+    let (subject, tail) = line.trim().trim_end_matches('.').split_once(
+        " are creatures in addition to their other types and are "
+    )?;
+    let (color, pt) = tail.split_once(" and have base power and toughness ")?;
+    if !matches!(color, "white" | "blue" | "black" | "red" | "green" | "colorless") {
+        return None;
+    }
+    let (power, toughness) = pt.split_once('/')?;
+    power.parse::<i32>().ok()?;
+    toughness.parse::<i32>().ok()?;
+    Some(format!("{subject} are {pt} {color} creatures in addition to their other types"))
 }
 
 fn merge_split_plural_animation_bundle(animation: &str, modifiers: &str) -> Option<String> {

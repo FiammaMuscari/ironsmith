@@ -36,3 +36,31 @@ fn moonlit_meditation_replaces_only_the_first_creation_with_copies() {
         assert!(debug.contains("optional: true"), "{debug}");
     }
 }
+
+#[test]
+fn first_creation_copies_the_attached_permanent_and_later_creations_are_unchanged() {
+    use ironsmith::{GameState, PlayerId, Zone};
+    use ironsmith::effects::{EffectContext, execute_effect};
+    let alice = PlayerId(0);
+    let donor_definition = compile_to_runtime_definition("Original body",
+        "Type: Creature\nPower/Toughness: 2/3\nFlying", false).unwrap();
+    let maker = compile_to_runtime_definition("Make tokens",
+        "Type: Sorcery\nCreate two Treasure tokens.", false).unwrap();
+    for aura_definition in definitions("Moonlit Meditation", MOONLIT_MEDITATION) {
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let donor = game.create_object_from_definition(&donor_definition, alice, Zone::Battlefield);
+        let aura = game.create_object_from_definition(&aura_definition, alice, Zone::Battlefield);
+        assert!(game.attach_object_to_target(aura, ironsmith::object::AttachmentTarget::Object(donor)));
+        for creation in 0..2 {
+            let source = game.create_object_from_definition(&maker, alice, Zone::Stack);
+            let mut ctx = EffectContext::new_default(source, alice);
+            for effect in maker.spell_effect.as_ref().unwrap().flattened_default_effects() {
+                execute_effect(&mut game, effect, &mut ctx).unwrap();
+            }
+            let copies = game.battlefield.iter().filter(|id| game.object(**id).unwrap().name == "Original body").count();
+            assert_eq!(copies, 3, "the first two tokens copy the attached permanent");
+            let treasures = game.battlefield.iter().filter(|id| game.object(**id).unwrap().subtypes.contains(&ironsmith::Subtype::Treasure)).count();
+            assert_eq!(treasures, creation * 2, "later creation retains its original templates");
+        }
+    }
+}

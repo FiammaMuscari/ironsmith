@@ -111,10 +111,14 @@ impl DecisionMaker for Choices {
         vec![chosen]
     }
     fn decide_options(&mut self, _: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
+        if ctx.description.starts_with("Confirm mana payment") {
+            return vec![ctx.options.iter().find(|option| option.legal
+                && option.description == "Confirm payment").unwrap().index];
+        }
         let skip = self.replacement_calls < self.skip_draws;
         self.replacement_calls += 1;
         vec![ctx.options.iter().find(|option| option.legal
-            && option.description.starts_with("Do not apply") == !skip).expect("optional draw replacement").index]
+            && option.description.starts_with("Do not apply") == !skip).unwrap_or_else(|| panic!("optional draw replacement: {ctx:?}")).index]
     }
     fn awaiting_choice(&self) -> bool { self.pending }
 }
@@ -199,6 +203,7 @@ fn sage_insufficient_lands_and_summoning_sickness_cannot_announce_or_pay() {
         assert_eq!(game.object(outside).unwrap().zone, Zone::Hand);
         let second = card(&mut game, A, Zone::Battlefield, CardType::Land, "Second own land");
         let sick = game.create_object_from_definition(&definition, A, Zone::Battlefield);
+        game.set_summoning_sick(sick);
         assert!(!compute_legal_actions(&game, A).unwrap().contains(&sage_action(&definition, sick)));
         assert_eq!(game.object(second).unwrap().zone, Zone::Battlefield);
     }

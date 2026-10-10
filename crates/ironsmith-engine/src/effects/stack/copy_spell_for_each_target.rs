@@ -322,10 +322,10 @@ mod tests {
                     .find(|entry| entry.object_id == *copy_id)
                     .expect("copy should have a stack entry");
                 assert_eq!(entry.x_value, original_entry.x_value);
-                assert_eq!(
-                    entry.optional_costs_paid,
-                    original_entry.optional_costs_paid
-                );
+                let mut expected_costs = original_entry.optional_costs_paid.clone();
+                // A copy is not cast from exile via foretell.
+                expected_costs.cast_was_foretold = Some(false);
+                assert_eq!(entry.optional_costs_paid, expected_costs);
                 entry.targets[0]
             })
             .collect();

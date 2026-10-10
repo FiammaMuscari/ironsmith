@@ -86,7 +86,7 @@ fn same_name_exile_investigates_only_for_the_actual_nontoken_exiled_set() {
             .battlefield
             .iter()
             .filter_map(|id| game.object(*id))
-            .filter(|object| object.name == "Clue")
+            .filter(|object| object.subtypes.contains(&Subtype::Clue))
             .collect();
         assert_eq!(
             clues.len(),

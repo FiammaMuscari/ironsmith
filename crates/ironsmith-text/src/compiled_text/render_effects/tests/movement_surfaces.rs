@@ -320,7 +320,7 @@ fn comma_then_preserves_a_trailing_plural_hand_choice_move() {
 
     assert_eq!(
         describe_effect(&sequence),
-        "Draw two cards, then put any number of creature cards from your hand onto the battlefield"
+        "You draw two cards, then put any number of creature cards from your hand onto the battlefield"
     );
 }
 

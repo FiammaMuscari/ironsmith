@@ -1413,7 +1413,7 @@ mod wide_distributed_continuation_contract_tests {
             [CounterType::Charge,CounterType::PlusOnePlusOne].into_iter().filter(|kind|ctx.available_counters.iter().any(|(k,_)|k==kind)).map(|kind|(kind,u32::MAX)).collect()
         }
         fn decide_options(&mut self,game:&GameState,ctx:&crate::decisions::context::SelectOptionsContext)->Vec<usize> {
-            assert!(!self.pending);self.choices+=1;assert_eq!(ctx.player,PlayerId::from_index(0));assert_eq!(ctx.options.len(),2);assert_eq!(game.player(PlayerId::from_index(0)).unwrap().life,21,"first selected kind's replacement must execute before the next kind's choice");
+            assert!(!self.pending);self.choices+=1;assert_eq!(ctx.player,PlayerId::from_index(0));assert_eq!(ctx.options.len(),2);assert_eq!(game.player(PlayerId::from_index(0)).unwrap().life,20,"all original replacement choices precede replacement programs");
             if self.pause_replacement{self.pending=true;vec![]}else{vec![ctx.options.iter().find(|option|option.legal).unwrap().index]}
         }
     }

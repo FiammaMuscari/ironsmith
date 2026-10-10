@@ -221,8 +221,9 @@ impl EffectExecutor for WithIdEffect {
     fn prepare_replacement_draw_continuation_with_outputs(
         &self, game: &mut GameState, ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::SimultaneousEffectCommit<crate::effects::CompletedEffectOutputs>, ExecutionError> {
+        let parent = crate::effects::ExecutionContextCheckpoint::capture(ctx);
         let cursor = self.select_prepared_action_program(game, ctx)?;
-        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx)
+        super::object_iteration::prepare_iteration_continuation(cursor, game, ctx, parent)
     }
 
     fn supports_prepared_action_program(&self) -> bool {
@@ -368,6 +369,37 @@ fn execute_with_id_with_outputs(
 }
 
 impl CostExecutableEffect for WithIdEffect {
+    // Typed activation receipts carry counter quantities independently of X.
+    // Keep legacy unlabelled counter costs working, but do not turn "remove
+    // any number" or "remove all" into an announcement of X.
+    fn payment_x_from_prepared_payment(
+        &self,
+        proposal: &dyn crate::effects::SimultaneousEffectProposal,
+        execution: &ExecutionContext,
+    ) -> Result<Option<u32>, CostValidationError> {
+        if self.id == ironsmith_core::EffectId::ACTIVATION_COUNTER_COST {
+            return Ok(None);
+        }
+        match self.effect.0.as_cost_executable() {
+            Some(cost) => cost.payment_x_from_prepared_payment(proposal, execution),
+            None => Ok(None),
+        }
+    }
+
+    fn payment_x_from_outcome(
+        &self,
+        outcome: &EffectOutcome,
+        execution: &ExecutionContext,
+    ) -> Result<Option<u32>, CostValidationError> {
+        if self.id == ironsmith_core::EffectId::ACTIVATION_COUNTER_COST {
+            return Ok(None);
+        }
+        match self.effect.0.as_cost_executable() {
+            Some(cost) => cost.payment_x_from_outcome(outcome, execution),
+            None => Ok(None),
+        }
+    }
+
     fn cost_choice_candidate_is_eligible(
         &self,
         game: &GameState,
@@ -389,12 +421,17 @@ impl CostExecutableEffect for WithIdEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-        execute_with_id_with_outputs(
+        let announced_x = ctx.x_value;
+        let result = execute_with_id_with_outputs(
             self,
             game,
             ctx,
             crate::effects::EffectExecutionPurpose::Payment,
-        )
+        );
+        if self.id == ironsmith_core::EffectId::ACTIVATION_COUNTER_COST {
+            ctx.x_value = announced_x;
+        }
+        result
     }
 
     fn payment_bindings_are_owned_by_children(&self) -> bool {
@@ -705,7 +742,9 @@ mod pending_result_publication_contract_tests {
                 effect.execute(&mut game, &mut ctx).unwrap()
             };
             assert!(ctx.decision_maker.awaiting_choice());
-            assert_eq!(out.as_count(), Some(0));
+            // Pending work has no completed quantity; both empty and zero
+            // projections must leave the actual receipt map unchanged.
+            assert_eq!(out.count_or_zero(), 0);
             assert!(out.events.is_empty());
             assert_eq!(game.player(bob).unwrap().energy_counters, 0);
             assert_eq!(

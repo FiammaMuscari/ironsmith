@@ -123,7 +123,7 @@ fn parses_leading_affected_object_counter_duration_before_real_grant_verb() {
         shape.duration,
         Until::ForAsLongAs(
             ironsmith_core::ContinuousDurationPredicate::affected_object_has_counter(
-                crate::object::CounterType::Named("bounty".into())
+                crate::object::CounterType::Bounty
             )
         )
     );

@@ -54,6 +54,7 @@ fn biting_palm_reflexive_requires_counter_removal_and_uses_damaged_hand() {
         let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
         game.remove_counters(source, CounterType::Menace, 100, None, None);
         game.add_counters(source, CounterType::Menace, initial);
+        assert_eq!(game.counter_count(source, CounterType::Menace), initial);
         let card = crate::card::CardBuilder::new(crate::ids::CardId::new(), "Eligible Card")
             .card_types(vec![CardType::Instant])
             .build();
@@ -94,7 +95,7 @@ fn biting_palm_reflexive_requires_counter_removal_and_uses_damaged_hand() {
         assert_eq!(
             game.stack.len(),
             usize::from(succeeds),
-            "initial={initial}, accept={accept}"
+            "initial={initial}, accept={accept}: {definition:#?}"
         );
         if succeeds {
             crate::game_loop::resolve_stack_entry_with(&mut game, &mut dm).unwrap();

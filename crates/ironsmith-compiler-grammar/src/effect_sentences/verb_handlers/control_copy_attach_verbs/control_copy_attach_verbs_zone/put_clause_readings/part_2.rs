@@ -14,7 +14,7 @@ fn validate_fixed_entry_reference_tokens(
 ) -> Result<(), CardTextError> {
     let fixed = match target {
         TargetAst::Source(_) | TargetAst::Tagged(..) => true,
-        TargetAst::Object(filter, ..) => filter.source,
+        TargetAst::Object(filter, ..) => filter.source || !filter.tagged_constraints.is_empty(),
         TargetAst::WithCount(inner, _) | TargetAst::WithCountValue(inner, ..) => {
             return validate_fixed_entry_reference_tokens(tokens, inner);
         }

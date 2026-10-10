@@ -188,7 +188,7 @@ fn named_source_counter_anthems_count_the_correct_object_and_update_live() {
         let original = fixture["name"].as_str().unwrap();
         let equipment = original == "Excalibur II";
         let (subtype, counted, counts_all) = match original {
-            "Kangee, Aerie Keeper" => (Subtype::Bird, CounterType::Named("feather".into()), false),
+            "Kangee, Aerie Keeper" => (Subtype::Bird, CounterType::Feather, false),
             "Kyler, Sigardian Emissary" => (Subtype::Human, CounterType::PlusOnePlusOne, true),
             _ => (Subtype::Soldier, CounterType::Charge, false),
         };

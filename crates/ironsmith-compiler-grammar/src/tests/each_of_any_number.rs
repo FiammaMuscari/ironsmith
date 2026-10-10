@@ -255,7 +255,9 @@ fn counter_removed_from_activation_cost_scales_each_pt_bonus() {
             runtime_pt.0
         );
     };
-    assert_eq!(basis.unhinted(), &crate::effect::Value::X);
+    assert_eq!(basis.unhinted(), &crate::effect::Value::EffectValue(
+        crate::effect::EffectId::ACTIVATION_COUNTER_COST,
+    ));
     assert!(
         basis.has_surface_hint(ironsmith_core::ValueSurfaceHint::CountersRemoved),
         "{basis:#?}"
@@ -280,7 +282,7 @@ fn twice_x_create_count_remains_dynamic_and_outside_token_name() {
         .expect("the second sentence should create Pest tokens");
 
     assert_eq!(create.count.unhinted(), &crate::effect::Value::XTimes(2));
-    assert_eq!(create.token.card.name, "Pest");
+    assert_eq!(create.token.card.name, "Pest Token");
     assert_ne!(create.token.card.name, "X");
 }
 

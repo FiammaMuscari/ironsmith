@@ -305,7 +305,12 @@ fn predefined_profiles_preserve_implied_words_and_card_names() {
             assert_eq!(changed.token.card.subtypes, subtypes);
             assert_eq!(changed.token.card.colors(), colors);
             assert_eq!(changed.token.card.mana_cost, original.token.card.mana_cost);
-            assert_eq!(changed.token.abilities, original.token.abilities);
+            // Native decoding constructs new executor identities. Compare the
+            // complete encoded definition to verify the implied rules survive.
+            assert_eq!(
+                ironsmith_runtime_catalog::artifact_materializer::encode_runtime_effect(restored.clone()).unwrap(),
+                ironsmith_runtime_catalog::artifact_materializer::encode_runtime_effect(effect.clone()).unwrap(),
+            );
             assert_eq!(changed.text_roles, original.text_roles);
         }
     }

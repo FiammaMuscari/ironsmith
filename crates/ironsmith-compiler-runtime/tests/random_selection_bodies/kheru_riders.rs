@@ -63,8 +63,17 @@ fn kheru_keeps_payment_decline_empty_pool_and_returned_identity_separate() {
                     assert_eq!(game.effect_store.delayed_triggers.len(), 1);
                 } else {
                     assert_eq!(game.battlefield, vec![source]);
-                    assert!(game.effect_store.delayed_triggers.is_empty());
                     if let Some(own) = own { assert_eq!(game.object(own).unwrap().zone, Zone::Graveyard); }
+                    // A paid instruction may register an empty delayed exile.
+                    // Its frozen empty reference must never adopt the source
+                    // or a creature belonging to another graveyard.
+                    end_step(&mut game, A, &mut dm);
+                    while !game.stack.is_empty() {
+                        resolve_stack_entry_with(&mut game, &mut dm).unwrap();
+                    }
+                    assert_eq!(game.battlefield, vec![source]);
+                    assert_eq!(game.object(foreign).unwrap().zone, Zone::Graveyard);
+                    assert!(game.effect_store.delayed_triggers.is_empty());
                 }
             }
         }

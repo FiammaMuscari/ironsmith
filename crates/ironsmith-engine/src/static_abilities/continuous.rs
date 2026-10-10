@@ -1795,6 +1795,15 @@ fn describe_static_value_threshold_condition(
 ) -> Option<String> {
     use crate::effect::ValueComparisonOperator as Op;
     match (left, operator, right) {
+        (Value::TurnHistoryCount(ironsmith_core::TurnHistoryCount::CreaturesAttackedWith {
+            player, filter,
+        }), Op::GreaterThanOrEqual, Value::Fixed(count)) if *count > 0 => {
+            let mut objects = filter.clone();
+            objects.zone = None;
+            Some(format!("{} attacked with {} or more {} this turn",
+                describe_static_player(player), number_word_u32(*count as u32).unwrap_or_else(|| count.to_string()),
+                pluralized_subject_text(&objects)))
+        }
         // "you have more cards in hand than each opponent": compared with the
         // opponent holding the most cards.
         (Value::CardsInHand(player), Op::GreaterThan, Value::MaxCardsInHand(PlayerFilter::Opponent)) => {

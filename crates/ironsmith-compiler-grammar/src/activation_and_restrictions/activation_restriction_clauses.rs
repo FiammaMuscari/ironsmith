@@ -494,6 +494,12 @@ pub fn parse_cant_restriction_clause(
         return Ok(None);
     }
 
+    // A per-turn action limit owns its trailing "each turn". Recognize the
+    // complete player restriction before stripping a generic duration.
+    if let Some(parsed) = parse_player_negated_restriction_clause(tokens)? {
+        return Ok(Some(parsed));
+    }
+
     if let Some((_, remainder)) = parse_restriction_duration(tokens)?
         && !remainder.is_empty()
         && remainder.len() < tokens.len()
@@ -1411,6 +1417,13 @@ pub fn parse_negated_object_restriction_clause(
         Some(NegatedObjectTailShape::BeBlockedBy { payload_words })
             if remainder_words.len() > payload_words =>
         {
+            let mut blocking_clause = crate::lexer::synthetic_word_tokens(&["can't"]);
+            blocking_clause.extend_from_slice(&remainder_tokens);
+            if let Some(crate::grammar::activation_costs::cant_shapes::BlockingCantFact::MaximumBlockers {
+                maximum_blockers, ..
+            }) = crate::grammar::activation_costs::cant_shapes::parse_blocking_cant_fact_tokens(&blocking_clause) {
+                Restriction::MaximumBlockers { filter, maximum: maximum_blockers }
+            } else {
             let mut blocker_tokens = trim_commas(&remainder_tokens[payload_words..]);
             // "can't be blocked by creatures with greater power" compares each
             // blocker with the restricted attacker, not a fixed number.
@@ -1468,6 +1481,7 @@ pub fn parse_negated_object_restriction_clause(
                 )));
             }
             Restriction::block_specific_attacker(blocker_filter, filter)
+            }
         }
         Some(NegatedObjectTailShape::BeActivated) => match ability_scope {
             Some(ActivatedAbilityScope::All) => Restriction::activate_abilities_of(filter),

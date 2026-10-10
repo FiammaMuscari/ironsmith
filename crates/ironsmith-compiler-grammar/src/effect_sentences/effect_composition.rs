@@ -633,6 +633,7 @@ fn parse_exile_top_library_then_play_bundle(
 #[path = "effect_composition/private_exile_permission.rs"]
 mod private_exile_permission;
 use private_exile_permission::parse_optional_private_exile_play_bundle;
+use private_exile_permission::parse_private_exile_inspection_bundle;
 #[path = "effect_composition/exile_hand_draw_play.rs"]
 mod exile_hand_draw_play;
 use exile_hand_draw_play::parse_exile_hand_draw_play_bundle;
@@ -1430,7 +1431,9 @@ fn parse_choose_mixed_targets_then_for_each_bundle(
     }];
     combined.push(EffectAst::ForEach(
         ForEachEffectAst::ForEachPlayersFiltered {
-            sequential: false,
+            // Finish each member's instructions before starting the next:
+            // later actions can consume a card exiled earlier in that iteration.
+            sequential: true,
             // The mixed declaration above already made the target choice. This
             // is an anaphoric view over its player members, not a second target
             // declaration.

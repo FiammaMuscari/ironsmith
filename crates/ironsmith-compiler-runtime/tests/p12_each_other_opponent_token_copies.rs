@@ -2,6 +2,8 @@
 //! that's a copy of ~ tapped and attacking that player, except it isn't
 //! legendary" (CR 508.4, CR 707.9b). Source-authored, unrun.
 use ironsmith::cards::CardDefinition;
+#[path = "cf8_p10_support/mod.rs"]
+mod support;
 use ironsmith_compiled_artifact::CompiledCardArtifact;
 use ironsmith_compiler::parse_loss;
 use ironsmith_compiler_runtime::{compile_to_artifact, compile_to_runtime_definition};
@@ -30,7 +32,15 @@ fn definitions(name: &str, text: &str) -> [CardDefinition; 2] {
 fn shredder_copies_attack_each_other_opponent() {
     for definition in definitions("Shredder, Shadow Master", SHREDDER) {
         let debug = format!("{definition:?}");
-        assert!(debug.contains("ForEachPlayers") || debug.contains("ForEachPlayer"), "{debug}");
+        let loops = support::find_all::<ironsmith::effects::ForPlayersEffect>(&definition);
+        assert_eq!(loops.len(), 1, "{debug}");
+        assert_eq!(loops[0].filter, ironsmith::target::PlayerFilter::Excluding {
+            base: Box::new(ironsmith::target::PlayerFilter::Opponent),
+            excluded: Box::new(ironsmith::target::PlayerFilter::Defending),
+        });
+        assert!(loops[0].effects.iter().any(|effect|
+            effect.downcast_ref::<ironsmith::effects::ScheduleDelayedTriggerEffect>().is_some()),
+            "each opponent's creation captures its own delayed sacrifice");
         assert!(debug.contains("Defending"), "excludes the attacked player: {debug}");
         assert!(debug.contains("IteratedPlayer"), "attacks the iterated opponent: {debug}");
         assert!(debug.contains("Legendary"), "removes legendary: {debug}");

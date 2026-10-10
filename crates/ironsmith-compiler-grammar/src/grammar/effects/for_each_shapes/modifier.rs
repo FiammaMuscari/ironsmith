@@ -139,6 +139,13 @@ pub fn parse_modifier_tail_shape(tokens: &[OwnedLexToken]) -> ModifierTailShape<
             action: ModifierTailAction::Complete,
         };
     }
+    if let Some(duration) = crate::grammar::effects::search_library::parse_source_lifetime_duration(tail) {
+        return ModifierTailShape {
+            duration,
+            condition: None,
+            action: ModifierTailAction::Complete,
+        };
+    }
     if leaf::parse_leaf_conditional_duration_kind_tokens(tail)
         == Some(leaf::LeafConditionalDurationKind::SourceRemainsTapped)
     {

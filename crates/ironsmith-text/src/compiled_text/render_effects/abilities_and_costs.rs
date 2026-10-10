@@ -3263,7 +3263,7 @@ pub(crate) fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> S
         } else {
             action
         };
-        return format!("As an additional cost to cast this spell, you may {action}");
+        return format!("As an additional cost to cast this spell, you may {}", lowercase_first(&action));
     }
     if cost.kind == OptionalCostKind::Casualty
         && let Some([sacrifice]) = cost.cost.as_all()

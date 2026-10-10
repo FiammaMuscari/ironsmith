@@ -22,7 +22,7 @@ fn conditional_quoted_grant_depends_on_defending_players_actual_sacrifice() {
             .unwrap();
     let rendered = crate::compiled_text::compiled_text_lines(&definition).join("\n");
     assert!(
-        rendered.contains("\" until end of turn unless defending player sacrifices a creature"),
+        rendered.contains("\" until end of turn unless the defending player sacrifices a creature"),
         "{rendered}"
     );
     let crate::ability::AbilityKind::Triggered(triggered) = &definition.abilities[0].kind else {

@@ -269,7 +269,8 @@ fn traprunner_creates_one_tapped_attacker_for_each_called_win() {
             assert_eq!(g.stack.len(), 1);
             settle(&mut g, &mut dm);
             let tokens: Vec<_> = g.battlefield.iter().copied()
-                .filter(|id| *id != source && g.object(*id).unwrap().name == "Goblin").collect();
+                .filter(|id| *id != source && g.object(*id).unwrap().kind == ironsmith::object::ObjectKind::Token
+                    && g.calculated_subtypes(*id).contains(&ironsmith::Subtype::Goblin)).collect();
             assert_eq!(tokens.len(), wins);
             assert_eq!(dm.option_players, vec![A; 3]);
             for token in tokens {

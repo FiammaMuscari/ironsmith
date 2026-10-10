@@ -224,7 +224,22 @@ pub fn parse_protection_chain_tokens(tokens: &[OwnedLexToken]) -> Option<Protect
             target_token_end -= 1;
         }
         if target_word_end <= target_word || target_token_end <= target_token_first { return None; }
+        let quality_tokens = &tokens[target_token_first..target_token_end];
+        if quality_tokens.iter().any(|token| matches!(token.kind, TokenKind::ManaGroup | TokenKind::Colon))
+            || quality_tokens.last().is_some_and(|token| token.is_any_word(&["and", "or"]) || token.is_comma())
+        {
+            return None;
+        }
         let kind = classify_protection_target(&words[..target_word_end], target_word);
+        let quality_words = &words[target_word..target_word_end];
+        // A malformed parity phrase must not fall through to the broad
+        // object-filter reader, which can recover only part of its words.
+        if matches!(kind, ProtectionTargetKind::Named)
+            && (matches!(quality_words.first(), Some(&"odd" | &"even"))
+                || quality_words.starts_with(&["each", "mana", "value"]))
+        {
+            return None;
+        }
         // Fixed qualities own their complete token span. A word-only view
         // cannot erase mana symbols, punctuation, or an unrecognized tail.
         let fixed = !matches!(kind,

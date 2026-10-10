@@ -136,6 +136,9 @@ fn damage(game: &mut GameState, source: ObjectId, target: Target, combat: bool, 
 fn end_turn(game: &mut GameState) {
     let turn = game.turn.turn_number;
     for _ in 0..40 {
+        if game.turn.step == Some(ironsmith::Step::Cleanup) {
+            ironsmith::turn::execute_cleanup_step(game);
+        }
         ironsmith::turn::advance_step(game).unwrap();
         if game.turn.turn_number != turn { return; }
     }
@@ -303,7 +306,7 @@ fn native_prevention_payloads_recover_filters_choices_and_nested_programs() {
 }
 
 #[test]
-fn native_chosen_color_pending_and_resource_failure_publish_no_partial_shield() {
+fn native_chosen_color_pending_publishes_no_shield_and_token_limits_do_not_block_prevention() {
     let mut native = ironsmith::effects::PreventAllDamageToTargetEffect::new(ChooseSpec::SpecificPlayer(A), Until::EndOfTurn);
     native.source_color_of_your_choice = true;
     for effect in [Effect::new(native.clone()), materialize_effect(encode_runtime_effect(Effect::new(native)).unwrap()).unwrap()] {
@@ -315,14 +318,12 @@ fn native_chosen_color_pending_and_resource_failure_publish_no_partial_shield() 
         choices.pending = false; choices.pause = false;
         execute_effect(&mut game, &effect, &mut EffectContext::new(source, A, &mut choices)).unwrap();
         assert_eq!(game.effect_store.prevention_effects.shields().len(), 1);
-        let before = game.effect_store.prevention_effects.next_id();
         game.set_token_creation_limits(ironsmith::effects::tokens::TokenCreationLimits {
             max_instructions: 0, ..Default::default()
         });
-        let error = execute_effect(&mut game, &effect, &mut EffectContext::new(source, A, &mut choices)).unwrap_err();
-        assert!(matches!(error, ExecutionError::ResourceLimitExceeded { .. }));
-        assert_eq!(game.effect_store.prevention_effects.next_id(), before);
-        assert_eq!(game.effect_store.prevention_effects.shields().len(), 1);
+        // Token creation limits apply to token instructions, not to shields.
+        execute_effect(&mut game, &effect, &mut EffectContext::new(source, A, &mut choices)).unwrap();
+        assert_eq!(game.effect_store.prevention_effects.shields().len(), 2);
     }
 }
 

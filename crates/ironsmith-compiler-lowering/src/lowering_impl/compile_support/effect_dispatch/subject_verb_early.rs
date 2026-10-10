@@ -95,6 +95,7 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Control(ControlActionAst::GainControl { .. })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::GainLife { .. })
             | SubjectVerbActionAst::Grants(GrantActionAst::GrantProtectionChoice { .. })
+            | SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Incubate { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Investigate { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Learn)
@@ -442,6 +443,14 @@ pub(super) fn compile_subject_verb_early(
     let role = subject_verb_role(subject_verb.subject.role);
     let player = subject_verb.subject.player;
     let result = match &subject_verb.action {
+        SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, source, duration }) => {
+            let (target, mut choices) = resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+            let (source, source_choices) = resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
+            for choice in source_choices { push_choice(&mut choices, choice); }
+            let mut grant = crate::effects::GrantAbilitiesTargetEffect::new(target, Vec::new(), duration.clone());
+            grant.activated_from = Some(source);
+            Ok((vec![Effect::new(grant)], choices))
+        }
         SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count }) => {
             compile_subject_verb_player_value_effect(
                 role,
@@ -851,7 +860,9 @@ pub(super) fn compile_subject_verb_early(
                 spec = ChooseSpec::All(filter.clone());
             }
             let tag = ctx.next_tag("airbent");
-            let move_effect = Effect::move_to_zone(spec, Zone::Exile, true).tag_all(tag.clone());
+            // The follow-up permission names the new exiled objects, rather
+            // than the affected permanents' pre-move characteristics.
+            let move_effect = Effect::move_to_zone(spec, Zone::Exile, true).tag(tag.clone());
             let grant = Effect::grant(
                 crate::grant::Grantable::AlternativeCast(
                     crate::alternative_cast::AlternativeCastingMethod::alternative_cost(
@@ -881,34 +892,24 @@ pub(super) fn compile_subject_verb_early(
             ctx.last_object_tag = Some(tag.clone());
             let mut exiled = ObjectFilter::default();
             exiled.zone = Some(Zone::Exile);
+            // Only successful destination objects grant permission and emit
+            // the keyword event. An optional empty target set has no objects
+            // to iterate and needs no last-known reference lookup.
+            let event = Effect::new(crate::effects::EmitKeywordActionEffect::new(
+                crate::events::KeywordActionKind::Airbend,
+                1,
+            ));
             let grant = Effect::conditional(
                 Condition::TaggedObjectMatchedLastKnown(
                     (crate::tag::CompilerReferenceTag::It.bind()).into(),
-                    exiled.clone(),
+                    exiled,
                 ),
-                vec![play, grant],
+                vec![play, grant, event],
                 Vec::new(),
             );
-            // The destination snapshots come only from this move's results.
-            // A prevented move or a replacement into another zone is not an
-            // airbend event (CR 701.65b), even if the target still exists.
-            let event = Effect::conditional(
-                Condition::TaggedObjectMatchedLastKnown(tag.clone().into(), exiled),
-                vec![Effect::new(crate::effects::EmitKeywordActionEffect::new(
-                    crate::events::KeywordActionKind::Airbend,
-                    1,
-                ))],
-                Vec::new(),
-            );
-            Ok((
-                vec![
-                    move_effect,
-                    Effect::for_each_tagged(tag, vec![grant]),
-                    event,
-                ],
-                choices,
-            ))
+            Ok((vec![move_effect, Effect::for_each_tagged(tag, vec![grant])], choices))
         }
+
         SubjectVerbActionAst::KeywordActions(KeywordActionAst::Explore { target }) => {
             let (spec, choices) =
                 resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;

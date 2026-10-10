@@ -1347,8 +1347,21 @@ pub(super) fn parse_object_filter(
     tokens: &[OwnedLexToken],
     other: bool,
 ) -> Result<ObjectFilter, CardTextError> {
+    // Preserve the complete name-reference operand before projecting words:
+    // punctuation inside a reference must not disappear from its grammar.
+    if let Some(filter) = crate::object_filters::parse_terminal_same_name_filter(tokens, other)? {
+        return Ok(filter);
+    }
     let words = TokenWordView::new(tokens);
     let refs = words.word_refs();
+    if refs.starts_with(&["fortified", "land"]) {
+        let mut filter = parse_object_filter(&tokens[words.token_start_indices()[1]..], other)?;
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: crate::tag::CompilerReferenceTag::Fortified.bind().into(),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
+        });
+        return Ok(filter);
+    }
     if let Some(index) = refs
         .windows(4)
         .position(|part| part == ["blocking", "or", "blocked", "by"])

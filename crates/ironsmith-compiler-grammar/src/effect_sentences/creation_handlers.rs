@@ -806,8 +806,22 @@ fn intrinsic_token_ability_represents_dynamic_power_toughness(
     granted_abilities: &[GrantedAbilityAst],
     dynamic: &(Value, Value),
 ) -> bool {
+    fn same_value(left: &Value, right: &Value) -> bool {
+        let (left, right) = (left.unhinted(), right.unhinted());
+        if left == right { return true; }
+        match (left, right) {
+            (Value::CardTypesInGraveyard(player), Value::CardTypesAmong(filter))
+            | (Value::CardTypesAmong(filter), Value::CardTypesInGraveyard(player)) => {
+                filter == &ObjectFilter::default().in_zone(crate::Zone::Graveyard).owned_by(player.clone())
+            }
+            (Value::Add(left_a, left_b), Value::Add(right_a, right_b)) => {
+                same_value(left_a, right_a) && same_value(left_b, right_b)
+            }
+            _ => false,
+        }
+    }
     let same_values = |power: &Value, toughness: &Value| {
-        power.unhinted() == dynamic.0.unhinted() && toughness.unhinted() == dynamic.1.unhinted()
+        same_value(power, &dynamic.0) && same_value(toughness, &dynamic.1)
     };
     if granted_abilities.iter().any(|ability| {
         let payload = match ability {
@@ -1503,6 +1517,16 @@ pub fn parse_create(
     );
     let authored_appositive_name = token_definition_grammar::leading_appositive_token_name(tokens);
     let mut definition_tokens = head.name_tokens.to_vec();
+    // Keep the authored noun that closes the description. Appositive names
+    // are separated from characteristics by `, a ... token`; dropping `token`
+    // made name words such as Red Elf look like colors and creature types.
+    if let Some(last) = head.name_tokens.last()
+        && let Some(marker) = head.body_tokens.iter().find(|token| {
+            token.span.start >= last.span.end && token.is_any_word(&["token", "tokens"])
+        })
+    {
+        definition_tokens.push(marker.clone());
+    }
     let mut name_words = head.name_words;
     let mut tail_tokens = head.tail_tokens.to_vec();
     if needs_equal_to_dynamic_count {
@@ -1756,6 +1780,15 @@ pub fn parse_create(
                 && tail_surface.has(CreateWord::Toughness);
             let has_haste = tail_surface.has_phrase(CreatePhrase::HasteGrant)
                 || tail_surface.has(CreateWord::Haste);
+            if has_haste {
+                // The dedicated inline haste flag already contributes this
+                // copiable ability; the generic quoted-rule reader can also
+                // return its adjacent unquoted keyword.
+                granted_abilities.retain(|ability| !matches!(ability,
+                    GrantedAbilityAst::StaticAbility(ability)
+                        if matches!(ability.as_ref(), StaticAbilityAst::Static(ability)
+                            if ability.id == Some(crate::static_abilities::StaticAbilityId::Haste))));
+            }
             let token_modifier_words = tail_surface
                 .location(CreateWord::Token)
                 .map(|idx| &tail_words[..idx])
@@ -3367,12 +3400,11 @@ mod tests {
             panic!("expected a characteristic-defining P/T ability: {static_ability:#?}");
         };
         assert_eq!(power, toughness);
-        let Value::CountersOn(spec, Some(crate::CounterType::Named(counter_name))) =
+        let Value::CountersOn(spec, Some(crate::CounterType::Slime)) =
             power.unhinted()
         else {
             panic!("expected a named-source counter value: {power:#?}");
         };
-        assert_eq!(counter_name.as_str(), "slime");
         assert!(matches!(spec.base(), ChooseSpec::Source));
         assert_eq!(
             spec.source_reference_surface(),

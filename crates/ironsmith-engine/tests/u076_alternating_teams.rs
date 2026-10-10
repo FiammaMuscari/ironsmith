@@ -154,7 +154,7 @@ fn u076_multiple_players_attacks_only_both_adjacent_opponents_and_their_objects(
     .unwrap();
     let attacker = creature(&mut game, seats[0]);
     let left_walker = planeswalker(&mut game, seats[2]);
-    let right_battle = siege(&mut game, seats[4], seats[5]);
+    let right_battle = siege(&mut game, seats[0], seats[5]);
     let distant_walker = planeswalker(&mut game, seats[3]);
     game.turn.active_player = seats[0];
     game.turn.priority_player = Some(seats[0]);

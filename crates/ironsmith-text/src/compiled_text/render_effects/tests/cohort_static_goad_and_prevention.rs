@@ -197,7 +197,12 @@ fn cohort_participant_loot_compares_only_the_discarded_cards_and_accepts_ties() 
         }
         assert_eq!(
             game.counter_count(source, crate::object::CounterType::PlusOnePlusOne),
-            expected
+            expected,
+            "your={your_cost}, theirs={their_cost}, discarded={:?}",
+            game.players.iter().map(|player| player.graveyard.iter().map(|id| {
+                let card = game.object(*id).unwrap();
+                (player.id, card.name.clone(), card.mana_cost.clone())
+            }).collect::<Vec<_>>()).collect::<Vec<_>>()
         );
         for player in [alice, bob] {
             assert_eq!(game.player(player).unwrap().graveyard.len(), 1);
@@ -219,6 +224,7 @@ fn cohort_vote_result_ids_preserve_compact_shared_actions() {
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&card).join("\n"),
         text.replace("and draw a card", "and you draw a card")
+            .replace("this way, discard a card", "this way, you discard a card")
     );
 }
 

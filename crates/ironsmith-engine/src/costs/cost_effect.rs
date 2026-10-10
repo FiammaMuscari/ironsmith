@@ -398,6 +398,15 @@ fn tagged_choice_consumer_cost_precheck(
     if has_children {
         return None;
     }
+    // A bound counter source still has to afford the authored quantity.
+    // Merely retaining the chosen permanent does not pay a counter cost.
+    if let Some(removal) = effect.downcast_ref::<crate::effects::RemoveCountersEffect>() {
+        return Some(ctx.with_execution_context(|execution| {
+            CostExecutableEffect::can_execute_as_cost_with_context(
+                removal, game, execution, ctx.reason,
+            ).map_err(convert_validation_error)
+        }));
+    }
     let bindings = effect.0.cost_choice_bindings();
     if bindings.required.len() != 1 || !bindings.published.is_empty() {
         return None;
@@ -1682,7 +1691,9 @@ mod energy_cost_error_contract_tests {
                 crate::target::PlayerFilter::Specific(crate::ids::PlayerId::from_index(9))
             )
             .can_pay(&game, &ctx),
-            Err(CostPaymentError::PlayerNotFound)
+            Err(CostPaymentError::ExecutionFailed(crate::effects::ExecutionError::PlayerNotFound(
+                crate::ids::PlayerId::from_index(9),
+            )))
         );
     }
 }

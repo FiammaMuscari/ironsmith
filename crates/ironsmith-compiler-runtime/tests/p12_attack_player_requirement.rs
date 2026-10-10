@@ -57,7 +57,7 @@ fn sirens_and_ravener_require_attacking_the_named_player() {
             let effect = requirement(&definition);
             let player = format!("{:?}", effect.player);
             if name == "Alluring Siren" {
-                assert!(player.contains("You"), "{player}");
+                assert!(matches!(effect.player.base(), ChooseSpec::SourceController), "{player}");
                 assert!(format!("{:?}", effect.target).contains("Opponent"));
             } else {
                 assert!(player.contains("Opponent") && player.contains("Target"), "{player}");

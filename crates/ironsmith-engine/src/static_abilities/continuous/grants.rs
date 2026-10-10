@@ -936,7 +936,7 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
     }
 
     fn source_granted_inline_abilities(&self) -> Vec<&crate::ability::Ability> {
-        if !self.filter.source {
+        if !self.applies_to_source() {
             return Vec::new();
         }
         std::iter::once(&self.ability)

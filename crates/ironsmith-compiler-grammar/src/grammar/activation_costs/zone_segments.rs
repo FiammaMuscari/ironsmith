@@ -180,12 +180,36 @@ fn parse_reveal_source_from_hand<'a>(
 fn parse_reveal_cards_from_hand<'a>(
     input: &mut LexStream<'a>,
 ) -> WResult<ActivationCostSegmentCst> {
+    let tag = crate::util::helper_tag_for_tokens(input.as_ref(), "revealed_hand_cost");
     let count = parse_optional_reveal_count(input)?;
     let color_filter = parse_optional_color(input);
     let card_type = parse_optional_card_type(input);
+    let mut subtype_probe = input.clone();
+    let subtype = primitives::take_leaf(&mut subtype_probe, primitives::word_parser_text)
+        .and_then(|word| leaf::parse_leaf_subtype_flexible_complete(word).ok());
+    if subtype.is_some() {
+        *input = subtype_probe;
+    }
     alt((primitives::kw("card"), primitives::kw("cards"))).parse_next(input)?;
     parse_in_or_from_your_hand.parse_next(input)?;
     eof.parse_next(input)?;
+    if let Some(subtype) = subtype {
+        let Value::Fixed(quantity) = count else {
+            return Err(winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new()));
+        };
+        let mut filter = crate::target::ObjectFilter::default();
+        filter.zone = Some(Zone::Hand);
+        filter.owner = Some(PlayerFilter::You);
+        filter.colors = color_filter;
+        filter.card_types.extend(card_type);
+        filter.subtypes.push(subtype);
+        return Ok(ActivationCostSegmentCst::GroupedHandSelection {
+            count: quantity.max(0) as u32,
+            filter,
+            reveal: true,
+            tag,
+        });
+    }
     Ok(ActivationCostSegmentCst::RevealFromHand {
         count,
         color_filter,
@@ -513,5 +537,25 @@ mod linked_exile_movement_cost_tests {
                 .unwrap()
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod subtype_reveal_cost_tests {
+    use super::*;
+
+    #[test]
+    fn reveal_subtype_cost_keeps_selection_quality_and_complete_hand_scope() {
+        let tokens = crate::lexer::lex_line("reveal a Dragon card from your hand", 0).unwrap();
+        let ActivationCostSegmentCst::GroupedHandSelection { count, filter, reveal, .. } =
+            parse_reveal_segment_tokens(&tokens).unwrap() else { panic!("typed reveal selection"); };
+        assert_eq!(count, 1);
+        assert!(reveal);
+        assert_eq!(filter.zone, Some(Zone::Hand));
+        assert_eq!(filter.owner, Some(PlayerFilter::You));
+        assert_eq!(filter.subtypes, [crate::types::Subtype::Dragon]);
+        for text in ["reveal a Dragon card from your graveyard", "reveal a Dragon card from your hand then draw a card"] {
+            assert!(parse_reveal_segment_tokens(&crate::lexer::lex_line(text, 0).unwrap()).is_err());
+        }
     }
 }

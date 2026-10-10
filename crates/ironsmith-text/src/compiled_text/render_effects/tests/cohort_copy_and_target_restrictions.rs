@@ -340,7 +340,7 @@ fn cohort_each_mixed_target_gets_its_own_exiled_cards_damage_and_all_cards_remai
             .unwrap()
             .flattened_default_effects()
         {
-            crate::effects::execute_effect(&mut game, effect, &mut ctx).unwrap();
+            crate::effects::execute_effect(&mut game, effect, &mut ctx).unwrap_or_else(|error| panic!("empty={empty}: {error:?}: {effect:#?}"));
         }
         assert_eq!(
             game.player(alice).unwrap().life,
@@ -506,3 +506,4 @@ fn require_plain_entry_for_test(receipt: crate::game_state::EntryCommitResult)
     assert!(receipt.programs.is_empty(), "fixture must finish retained entry replacement programs");
     receipt.original.into_result()
 }
+

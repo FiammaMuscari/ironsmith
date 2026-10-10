@@ -383,9 +383,21 @@ pub(crate) fn prepare_reached_effect_inputs(
     }
     game.establish_control_transition_boundary()
         .map_err(ExecutionError::ContinuousDiscovery)?;
+    // An ordinary combat spell's object target is checked against the live
+    // defending-player domain, just as at announcement. It need not select
+    // one defending actor. Triggered roles still require their exact retained
+    // reference, including when their object target uses the same filter.
+    let uses_live_combat_target_domain = ctx.triggering_event.is_none()
+        && ctx.combat.defending_player.is_none()
+        && ctx.combat.defending_player_reference.is_none()
+        && effect.0.get_target_spec().is_some_and(|spec| {
+            spec.is_target()
+                && matches!(spec.base(), crate::target::ChooseSpec::Object(_))
+        });
     if effect
         .0
         .directly_mentions_player_filter(&crate::target::PlayerFilter::Defending)
+        && !uses_live_combat_target_domain
         && !ctx.bind_defending_player(game)?
     {
         return Ok(false);

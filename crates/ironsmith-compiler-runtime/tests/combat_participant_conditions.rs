@@ -207,16 +207,10 @@ fn kazuul_payment_uses_the_departing_attackers_last_controller_without_following
         let exiled = game.move_object(attacker, Zone::Exile, EventCause::from_effect(observer, A)).unwrap();
         let returned = game.move_object(exiled, Zone::Battlefield, EventCause::from_effect(observer, A)).unwrap();
         assert_ne!(returned, attacker);
-        let saved = game.clone();
+        // Turn-local records may expire; the physical event archive retains
+        // the old incarnation's exact departure controller.
         game.turn_store.turn_history.event_records.clear();
         game.turn_store.turn_history.staged_event_records.clear();
-        assert!(matches!(resolve_stack_entry_with(&mut game, &mut choices),
-            Err(ironsmith::game_loop::GameLoopError::ExecutionFailed(
-                ironsmith::effects::ExecutionError::IncompleteEvidence(_)))));
-        assert_eq!(game.stack.len(), 1);
-        assert_eq!(game.player(C).unwrap().mana_pool.total(), 3);
-        assert!(tokens(&game, A).is_empty());
-        game = saved;
         settle(&mut game, &mut queue, &mut choices);
         assert_eq!(game.player(C).unwrap().mana_pool.total(), 0, "the old incarnation's last controller pays");
         assert!(tokens(&game, A).is_empty());
@@ -286,7 +280,7 @@ fn kazuul_stacks_an_exact_attacker_reference_after_it_has_already_left() {
 }
 
 #[test]
-fn missing_attacker_and_departure_before_stacking_is_typed_incomplete_not_a_payment_decline() {
+fn archived_departure_before_stacking_survives_turn_history_cleanup() {
     for definition in definitions("Kazuul, Tyrant of the Cliffs") {
         let mut game = game(B);
         let observer = source(&mut game, &definition);
@@ -297,11 +291,9 @@ fn missing_attacker_and_departure_before_stacking_is_typed_incomplete_not_a_paym
         game.turn_store.turn_history.staged_event_records.clear();
         let mut choices = Choices::default();
         put_triggers_on_stack_with_dm(&mut game, &mut queue, &mut choices).unwrap();
-        assert!(matches!(resolve_stack_entry_with(&mut game, &mut choices),
-            Err(ironsmith::game_loop::GameLoopError::ExecutionFailed(
-                ironsmith::effects::ExecutionError::IncompleteEvidence(_)))));
-        assert_eq!(game.stack.len(), 1);
-        assert!(tokens(&game, A).is_empty());
+        resolve_stack_entry_with(&mut game, &mut choices).unwrap();
+        assert!(game.stack.is_empty());
+        assert_eq!(tokens(&game, A).len(), 1);
     }
 }
 
@@ -416,6 +408,7 @@ fn norns_decree_keeps_damage_actor_poison_and_attack_actor_draw_separate() {
 fn mirkwood_retains_the_attacking_chooser_across_pending_native_restore() {
     for definition in definitions("Mirkwood Trapper") {
         let mut game = game(B);
+        game.set_auto_choose_single_object_decisions(false);
         source(&mut game, &definition);
         let attacker = creature(&mut game, B);
         let mut queue = declare(&mut game, &[(attacker, AttackTarget::Player(C))]);

@@ -906,7 +906,7 @@ fn parses_last_named_counter_removed_from_typed_source() {
         panic!("expected a typed counter-removal trigger: {parsed:#?}");
     };
     assert!(filter.source);
-    assert_eq!(counter_type, Some(CounterType::Named("ore".into())));
+    assert_eq!(counter_type, Some(CounterType::Ore));
     assert!(last);
     assert!(!caused_by_source);
 }
@@ -2297,10 +2297,17 @@ fn end_of_combat_is_a_typed_phase_event_without_an_object_antecedent() {
         assert_eq!(trigger, crate::model::ast::TriggerSpec::EndOfCombat);
         assert!(ironsmith_compiler_semantic::trigger_references::phase_step_trigger_has_no_object_reference(&trigger));
     }
-    for text in [
-        "end of combat on your turn",
-        "end of combat during an opponent's turn",
-    ] {
+    let tokens = tokenize_line("end of combat on your turn", 0);
+    assert_eq!(
+        crate::activation_and_restrictions::parse_trigger_clause_lexed(&tokens).unwrap(),
+        crate::model::ast::TriggerSpec::ConditionQualified {
+            trigger: Box::new(crate::model::ast::TriggerSpec::EndOfCombat),
+            condition: crate::cards::builders::PredicateAst::YourTurn,
+            surface: "on your turn".into(),
+        },
+        "the supported turn qualifier must be retained"
+    );
+    for text in ["end of combat during an opponent's turn"] {
         let tokens = tokenize_line(text, 0);
         assert!(
             crate::activation_and_restrictions::parse_trigger_clause_lexed(&tokens).is_err(),
@@ -2518,5 +2525,26 @@ fn monarch_change_trigger_retains_exact_player_and_complete_event_boundary() {
     ] {
         let tokens = crate::lexer::lex_line(text, 0).unwrap();
         assert!(crate::activation_and_restrictions::parse_trigger_clause_lexed(&tokens).is_err());
+    }
+}
+
+#[test]
+fn counter_removal_while_exiled_owns_its_event_zone() {
+    for text in [
+        "a time counter is removed from this card while it's exiled",
+        "one or more charge counters are removed from this artifact while it is exiled",
+    ] {
+        let tokens = tokenize_line(text, 0);
+        let parsed = crate::activation_and_restrictions::parse_trigger_clause_lexed(&tokens)
+            .unwrap();
+        let crate::model::ast::TriggerSpec::CounterRemovedFrom { filter, .. } = &parsed else {
+            panic!("expected an event-zone filter: {parsed:?}");
+        };
+        assert!(filter.source);
+        assert_eq!(filter.zone, Some(ironsmith_core::Zone::Exile));
+        assert_eq!(
+            ironsmith_compiler_semantic::model::trigger_zones::base_trigger_functional_zones(&parsed),
+            vec![ironsmith_core::Zone::Exile],
+        );
     }
 }

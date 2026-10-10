@@ -1,6 +1,6 @@
 //! Frozen atlas observation 25231510: fixed library piles and resolution-time choices.
 use ironsmith::decision::DecisionMaker;
-use ironsmith::decisions::context::{BooleanContext, SelectOptionsContext, ViewCardsContext};
+use ironsmith::decisions::context::{BooleanContext, SelectObjectsContext, SelectOptionsContext, ViewCardsContext};
 use ironsmith::{CardType, GameState, ObjectId, PlayerId, Zone};
 struct Piles {
     pile: usize,
@@ -11,7 +11,7 @@ struct Piles {
 }
 impl DecisionMaker for Piles {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
-        if ctx.options.iter().any(|o| o.description == "First pile") {
+        if ctx.options.iter().any(|o| o.description == "Choose the face-down pile") {
             assert_eq!(ctx.player, self.opponent);
             assert_eq!(ctx.options.len(), 2);
             assert!(
@@ -37,6 +37,15 @@ impl DecisionMaker for Piles {
         } else {
             vec![ctx.options.iter().find(|o| o.legal).unwrap().index]
         }
+    }
+    fn decide_objects(&mut self, _: &GameState, ctx: &SelectObjectsContext) -> Vec<ObjectId> {
+        assert_eq!(ctx.player, PlayerId::from_index(0));
+        let count = if ctx.min == 0 {
+            self.cast_prompts += 1;
+            usize::from(self.accept)
+        } else { ctx.min };
+        ctx.candidates.iter().filter(|candidate| candidate.legal)
+            .take(count).map(|candidate| candidate.id).collect()
     }
     fn decide_boolean(&mut self, _: &GameState, ctx: &BooleanContext) -> bool {
         assert_eq!(ctx.player, PlayerId::from_index(0));

@@ -8,9 +8,11 @@ const SPY_NETWORK: &str = "Mana cost: {U}\nType: Instant\nLook at target player'
 #[test]
 fn spy_network_looks_at_hand_top_card_and_face_down_creatures() {
     for definition in support::definitions("Spy Network", SPY_NETWORK) {
-        let debug = format!("{:?}", definition.spell_effect);
-        assert!(debug.contains("LookAtHand"), "{debug}");
-        assert!(debug.contains("face_down: true"), "{debug}");
-        assert!(debug.contains("LookAtTopCards"), "{debug}");
+        assert_eq!(support::find_all::<ironsmith::effects::LookAtHandEffect>(&definition).len(), 1);
+        let objects = support::find_all::<ironsmith::effects::LookAtObjectsEffect>(&definition);
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].filter.face_down, Some(true));
+        assert!(objects[0].filter.card_types.contains(&ironsmith::CardType::Creature));
+        assert!(!support::find_all::<ironsmith::effects::LookAtTopCardsEffect>(&definition).is_empty());
     }
 }

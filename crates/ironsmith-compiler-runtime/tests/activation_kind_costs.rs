@@ -371,7 +371,7 @@ fn silver_fur_full_anthem_and_ninjutsu_keep_colored_cost_unblocked_return_and_de
             mana(&mut game, A, ManaSymbol::Black, 1);
             assert!(action(&game, A, source, n).is_none(), "ninjutsu still requires an unblocked attacker");
             let attacker = creature(&mut game, "Borrowed attacker", B, Zone::Battlefield);
-            game.object_mut(attacker).unwrap().initial_controller = A;
+            game.set_current_controller(attacker, A).unwrap();
             let returned_stable = game.object(attacker).unwrap().stable_id;
             unblocked(&mut game, attacker, C);
             assert_price(&game, A, source, n, vec![ManaSymbol::Generic(1), ManaSymbol::Blue, ManaSymbol::Black]);

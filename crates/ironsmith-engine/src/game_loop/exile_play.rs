@@ -227,7 +227,7 @@ mod tests {
         game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(source, B,
             crate::events::zones::matchers::WouldChangeZoneMatcher::new(crate::target::ObjectFilter::specific(card), Some(Zone::Exile), Some(Zone::Battlefield)),
             ReplacementAction::Additionally(vec![Effect::gain_life(3), Effect::destroy(
-                crate::target::ChooseSpec::Object(crate::target::ObjectFilter::specific(source)))])));
+                crate::target::ChooseSpec::SpecificObject(source))])));
         let mut observations = Vec::new();
         crate::special_actions::execute_land_play_with_observer(&mut game, B, card, false, Some(&permission),
             LandPlayObservationTiming::BeforeHistory, &mut SelectFirstDecisionMaker,

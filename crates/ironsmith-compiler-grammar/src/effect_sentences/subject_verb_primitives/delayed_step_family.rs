@@ -996,7 +996,10 @@ pub fn try_build_unless(
             // Consume every token; word projections alone discard punctuation.
             if crate::grammar::primitives::probe_all(
                 action_clause.tokens(),
-                crate::grammar::primitives::phrase(&["pay", "its", "mana", "cost"]),
+                (
+                    crate::grammar::primitives::phrase(&["pay", "its", "mana", "cost"]),
+                    crate::grammar::primitives::sentence_end(),
+                ),
                 "self-sacrifice-unless-source-mana-cost",
             ).is_some()
                 && !before_delayed_step

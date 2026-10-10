@@ -54,7 +54,7 @@ fn regenerated_full_bodies_admit_current_models_and_refuse_previous_envelopes() 
         old.format_version = 11;
         old.refresh_checksum();
         assert!(matches!(old.validate(),
-            Err(ArtifactValidationError::UnsupportedFormat { found: 11, expected: 17 })));
+            Err(ArtifactValidationError::UnsupportedFormat { found: 11, expected: FORMAT_VERSION })));
         assert!(CompiledCardArtifact::from_json(&old.to_json().unwrap()).is_err());
         assert!(materialize_artifact(&old).is_err());
 

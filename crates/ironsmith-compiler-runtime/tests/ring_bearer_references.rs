@@ -225,7 +225,8 @@ fn faramir_creates_the_full_token_body_and_retains_its_death_history_end_step() 
         settle(&mut game, &mut dm);
         assert!(game.battlefield.iter().any(|id| {
             game.object(*id).is_some_and(|object| {
-                object.name == "Human Soldier"
+                object.subtypes.contains(&ironsmith::types::Subtype::Human)
+                    && object.subtypes.contains(&ironsmith::types::Subtype::Soldier)
                     && object.kind == ironsmith::object::ObjectKind::Token
             })
         }));

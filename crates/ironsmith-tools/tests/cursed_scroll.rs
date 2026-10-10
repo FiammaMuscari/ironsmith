@@ -219,9 +219,7 @@ fn activation_requires_three_mana_and_untapped_source_at_instant_speed() {
             let available = |player| {
                 compute_legal_actions(&game, player).expect("fixture has complete replacement state").iter().any(|a| matches!(a, LegalAction::ActivateAbility { source: id, .. } if *id == source))
             };
-            // Legal actions deliberately expose activations before mana is
-            // floated; affordability belongs to the cost-payment API.
-            assert_eq!(available(alice), !tapped);
+            assert_eq!(available(alice), mana >= 3 && !tapped, "the checked menu requires a payable activation");
             let activation = def
                 .abilities
                 .iter()

@@ -1452,7 +1452,7 @@ fn relaxed_exchange_later_target_spec(spec: &ChooseSpec) -> ChooseSpec {
 }
 
 #[derive(Clone)]
-pub(super) struct DeclaredTarget {
+pub(crate) struct DeclaredTarget {
     spec: ChooseSpec,
     synthetic_prelude: bool,
     synthetic_prelude_consumed: bool,

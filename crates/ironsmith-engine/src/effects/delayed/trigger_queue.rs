@@ -38,6 +38,7 @@ pub struct DelayedTriggerConfig {
     /// Registration expires before events on its controller's first turn
     /// whose turn number is greater than this anchor.
     pub expires_before_controller_turn_after: Option<u32>,
+    pub expires_after_controller_turn_after: Option<u32>,
     pub expires_at_end_of_combat: bool,
     pub bound_extra_turn_index: Option<usize>,
     pub while_any_tagged_object_in_zone: Option<(TagKey, crate::zone::Zone)>,
@@ -70,6 +71,7 @@ impl DelayedTriggerConfig {
             not_before_turn: None,
             expires_at_turn: None,
             expires_before_controller_turn_after: None,
+            expires_after_controller_turn_after: None,
             expires_at_end_of_combat: false,
             bound_extra_turn_index: None,
             while_any_tagged_object_in_zone: None,
@@ -98,6 +100,11 @@ impl DelayedTriggerConfig {
 
     pub fn with_expires_before_controller_turn_after(mut self, anchor_turn: Option<u32>) -> Self {
         self.expires_before_controller_turn_after = anchor_turn;
+        self
+    }
+
+    pub fn with_expires_after_controller_turn_after(mut self, anchor_turn: Option<u32>) -> Self {
+        self.expires_after_controller_turn_after = anchor_turn;
         self
     }
 
@@ -209,6 +216,7 @@ pub(crate) struct DelayedTriggerTemplate {
     pub not_before_turn: Option<u32>,
     pub expires_at_turn: Option<u32>,
     pub expires_before_controller_turn_after: Option<u32>,
+    pub expires_after_controller_turn_after: Option<u32>,
     pub expires_at_end_of_combat: bool,
     pub bound_extra_turn_index: Option<usize>,
     pub while_any_tagged_object_in_zone: Option<(TagKey, crate::zone::Zone)>,
@@ -239,6 +247,7 @@ impl DelayedTriggerTemplate {
             not_before_turn: None,
             expires_at_turn: None,
             expires_before_controller_turn_after: None,
+            expires_after_controller_turn_after: None,
             expires_at_end_of_combat: false,
             bound_extra_turn_index: None,
             while_any_tagged_object_in_zone: None,
@@ -266,6 +275,11 @@ impl DelayedTriggerTemplate {
 
     pub fn with_expires_before_controller_turn_after(mut self, anchor_turn: Option<u32>) -> Self {
         self.expires_before_controller_turn_after = anchor_turn;
+        self
+    }
+
+    pub fn with_expires_after_controller_turn_after(mut self, anchor_turn: Option<u32>) -> Self {
+        self.expires_after_controller_turn_after = anchor_turn;
         self
     }
 
@@ -383,6 +397,7 @@ pub fn queue_delayed_trigger(game: &mut GameState, config: DelayedTriggerConfig)
         not_before_turn: config.not_before_turn,
         expires_at_turn: config.expires_at_turn,
         expires_before_controller_turn_after: config.expires_before_controller_turn_after,
+        expires_after_controller_turn_after: config.expires_after_controller_turn_after,
         expires_at_end_of_combat: config.expires_at_end_of_combat,
         bound_extra_turn_index: config.bound_extra_turn_index,
         while_any_tagged_object_in_zone: config.while_any_tagged_object_in_zone,
@@ -422,6 +437,7 @@ pub(crate) fn queue_delayed_from_template(
                 )
                 .with_not_before_turn(template.not_before_turn)
                 .with_expires_at_turn(template.expires_at_turn)
+                .with_expires_after_controller_turn_after(template.expires_after_controller_turn_after)
                 .with_expires_before_controller_turn_after(
                     template.expires_before_controller_turn_after,
                 )
@@ -455,6 +471,7 @@ pub(crate) fn queue_delayed_from_template(
                     )
                     .with_not_before_turn(template.not_before_turn)
                     .with_expires_at_turn(template.expires_at_turn)
+                .with_expires_after_controller_turn_after(template.expires_after_controller_turn_after)
                     .with_expires_before_controller_turn_after(
                         template.expires_before_controller_turn_after,
                     )

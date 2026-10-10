@@ -1920,7 +1920,7 @@ fn resolve_comparison_operand(
                 .checked_div_euclid(i64::from(*divisor))
                 .ok_or_else(overflow)
         }
-        _ => resolve_value(game, value, ctx).map(i64::from),
+        _ => crate::effects::helpers::resolve_value_wide(game, value, ctx),
     }
 }
 
@@ -2224,12 +2224,11 @@ fn triggering_event_object_matches(
     game: &GameState,
     ctx: &ExternalEvaluationContext<'_>,
     filter: &crate::target::ObjectFilter,
-) -> bool {
+) -> Result<bool, ExecutionError> {
     let Some(event) = ctx.triggering_event else {
-        game.record_token_resource_failure(&ExecutionError::IncompleteEvidence(
+        return Err(ExecutionError::IncompleteEvidence(
             "triggered characteristic predicate has no triggering event".into(),
         ));
-        return false;
     };
     // The legacy global filter-source option does not erase a linked source
     // operand in an event-object characteristic predicate.
@@ -2303,7 +2302,7 @@ fn triggering_event_object_matches_with_filter_context(
     event: &TriggerEvent,
     filter: &crate::target::ObjectFilter,
     filter_ctx: &crate::filter::FilterContext,
-) -> bool {
+) -> Result<bool, ExecutionError> {
     // Admission owns the completed entry receipt, never origin LKI or a
     // guess based on the source object's later state.
     if let Some(played) = event.downcast::<crate::events::LandPlayedEvent>() {
@@ -2311,10 +2310,7 @@ fn triggering_event_object_matches_with_filter_context(
             Ok(snapshot) => matches_snapshot_with_required_suspected_evidence(
                 game, snapshot, filter, filter_ctx,
             ),
-            Err(error) => {
-                game.record_token_resource_failure(&error);
-                false
-            }
+            Err(error) => Err(error)
         };
     }
     if let Some(change) = event.downcast::<crate::events::ZoneChangeEvent>()
@@ -2325,10 +2321,9 @@ fn triggering_event_object_matches_with_filter_context(
             .and_then(|id| change.destination_snapshot(id))
             .filter(|snapshot| snapshot.zone == Zone::Battlefield);
         let Some(snapshot) = receipt else {
-            game.record_token_resource_failure(&ExecutionError::IncompleteEvidence(
+            return Err(ExecutionError::IncompleteEvidence(
                 "triggered entry predicate lacks an exact completed destination snapshot".into(),
             ));
-            return false;
         };
         return matches_snapshot_with_required_suspected_evidence(
             game, snapshot, filter, filter_ctx,
@@ -2338,10 +2333,9 @@ fn triggering_event_object_matches_with_filter_context(
         let Some(snapshot) = entry.completed_snapshot.as_ref().filter(|snapshot| {
             snapshot.object_id == entry.object && snapshot.zone == Zone::Battlefield
         }) else {
-            game.record_token_resource_failure(&ExecutionError::IncompleteEvidence(
+            return Err(ExecutionError::IncompleteEvidence(
                 "triggered entry predicate lacks its exact completed entry snapshot".into(),
             ));
-            return false;
         };
         return matches_snapshot_with_required_suspected_evidence(
             game, snapshot, filter, filter_ctx,
@@ -2351,22 +2345,20 @@ fn triggering_event_object_matches_with_filter_context(
         if event.object_id().is_some_and(|id| id != snapshot.object_id)
             || triggering_event_object_zone(event).is_some_and(|zone| zone != snapshot.zone)
         {
-            game.record_token_resource_failure(&ExecutionError::IncompleteEvidence(
+            return Err(ExecutionError::IncompleteEvidence(
                 "triggered characteristic predicate has a mismatched event-object snapshot".into(),
             ));
-            return false;
         }
         return matches_snapshot_with_required_suspected_evidence(
             game, snapshot, filter, filter_ctx,
         );
     }
     if let Some(object) = event.object_id().and_then(|id| game.object(id)) {
-        return filter.matches(object, filter_ctx, game);
+        return Ok(filter.matches(object, filter_ctx, game));
     }
-    game.record_token_resource_failure(&ExecutionError::IncompleteEvidence(
+    Err(ExecutionError::IncompleteEvidence(
         "triggered characteristic predicate lacks an event snapshot or exact live object".into(),
-    ));
-    false
+    ))
 }
 
 enum TriggeringObjectEvidence<'a> {
@@ -2447,28 +2439,19 @@ fn triggering_event_object_matches_at_resolution(
     event: &TriggerEvent,
     filter: &crate::target::ObjectFilter,
     filter_ctx: &crate::filter::FilterContext,
-) -> bool {
-    let result = (|| -> Result<bool, ExecutionError> {
-        match triggering_object_evidence_at_resolution(game, event)? {
-            TriggeringObjectEvidence::Current(object) => {
-                if filter.uses_non_pt_battlefield_characteristics()
-                    || filter.uses_power_or_toughness_characteristics()
-                {
-                    checked_triggering_characteristics(game, object.id)?;
-                }
-                Ok(filter.matches(object, filter_ctx, game))
+) -> Result<bool, ExecutionError> {
+    match triggering_object_evidence_at_resolution(game, event)? {
+        TriggeringObjectEvidence::Current(object) => {
+            if filter.uses_non_pt_battlefield_characteristics()
+                || filter.uses_power_or_toughness_characteristics()
+            {
+                checked_triggering_characteristics(game, object.id)?;
             }
-            TriggeringObjectEvidence::Retained(snapshot) => {
-                require_suspected_snapshot_evidence(filter, snapshot)?;
-                Ok(filter.matches_snapshot(snapshot, filter_ctx, game))
-            }
+            Ok(filter.matches(object, filter_ctx, game))
         }
-    })();
-    match result {
-        Ok(matches) => matches,
-        Err(error) => {
-            game.record_token_resource_failure(&error);
-            false
+        TriggeringObjectEvidence::Retained(snapshot) => {
+            require_suspected_snapshot_evidence(filter, snapshot)?;
+            Ok(filter.matches_snapshot(snapshot, filter_ctx, game))
         }
     }
 }
@@ -3606,21 +3589,16 @@ fn require_suspected_snapshot_evidence(
     Ok(())
 }
 
-/// A boolean event-matching adapter must retain unknown designation evidence
-/// for its enclosing checked condition owner, rather than answer false.
+/// Preserve missing designation evidence through the checked event matcher,
+/// including callers outside an active execution resource scope.
 fn matches_snapshot_with_required_suspected_evidence(
     game: &GameState,
     snapshot: &crate::snapshot::ObjectSnapshot,
     filter: &crate::target::ObjectFilter,
     filter_ctx: &crate::filter::FilterContext,
-) -> bool {
-    match require_suspected_snapshot_evidence(filter, snapshot) {
-        Ok(()) => filter.matches_snapshot(snapshot, filter_ctx, game),
-        Err(error) => {
-            game.record_token_resource_failure(&error);
-            false
-        }
-    }
+) -> Result<bool, ExecutionError> {
+    require_suspected_snapshot_evidence(filter, snapshot)?;
+    Ok(filter.matches_snapshot(snapshot, filter_ctx, game))
 }
 
 fn condition_objects_for_zone(
@@ -3749,7 +3727,7 @@ fn resolve_condition_player_simple(
             }
         }),
         PlayerFilter::Opponent => game.players.iter().find_map(|p| {
-            if p.id != controller && p.is_in_game() {
+            if p.is_in_game() && game.are_opponents(controller, p.id) {
                 Some(p.id)
             } else {
                 None
@@ -3897,7 +3875,13 @@ fn matching_condition_players_simple(
     player: &PlayerFilter,
 ) -> Vec<PlayerId> {
     match player {
-        PlayerFilter::Opponent | PlayerFilter::NotYou => game
+        PlayerFilter::Opponent => game
+            .players
+            .iter()
+            .filter(|p| p.is_in_game() && game.are_opponents(controller, p.id))
+            .map(|p| p.id)
+            .collect(),
+        PlayerFilter::NotYou => game
             .players
             .iter()
             .filter(|p| p.id != controller && p.is_in_game())
@@ -4084,6 +4068,10 @@ fn evaluate_condition_in_context(
             .into_iter()
             .any(|player_id| {
                 let filter_ctx = ctx.player_filter_context(game, player, player_id);
+                if filter.distinct_powers {
+                    return count_distinct_matching_powers(game, player_id, filter, &filter_ctx)
+                        >= *count as usize;
+                }
                 condition_objects_for_zone(game, filter.zone)
                     .filter(|obj| {
                         condition_object_matches_player_zone(game, obj, player_id, filter.zone)
@@ -4683,12 +4671,17 @@ fn evaluate_condition_in_context(
             if let Some(ctx) = ctx.execution() {
                 Ok(resolve_value(game, &Value::WasPaidLabel(label.clone()), ctx)? != 0)
             } else {
-                let Some(source) = game.object(ctx.source) else {
+                // A queued trigger keeps the casting receipt of its exact
+                // source incarnation even after that source leaves play.
+                let paid = game.object(ctx.source).map(|source| &source.optional_costs_paid)
+                    .or_else(|| game.source_last_known_snapshot(ctx.source)
+                        .map(|snapshot| &snapshot.optional_costs_paid));
+                let Some(paid) = paid else {
                     return if label.requires_current_turn() {
                         Err(ExecutionError::IncompleteEvidence("payment source is unavailable".into()))
                     } else { Ok(false) };
                 };
-                evaluate_paid_cost_receipt(&source.optional_costs_paid, label, game.turn.turn_number, shared.controller)
+                evaluate_paid_cost_receipt(paid, label, game.turn.turn_number, shared.controller)
             }
         }
         Condition::YouHaveFullParty => Ok(player_has_full_party(game, shared.controller)),
@@ -4999,7 +4992,7 @@ fn evaluate_condition_in_context(
         Condition::TaggedObjectMatches(tag, filter) => {
             if let Some(external) = ctx.external() {
                 if tag.as_str() == "triggering" {
-                    return Ok(triggering_event_object_matches(game, external, filter));
+                    return triggering_event_object_matches(game, external, filter);
                 }
                 if tag.as_str() == "damaged" {
                     let recipient = external.triggering_event
@@ -5036,12 +5029,7 @@ fn evaluate_condition_in_context(
             if tag.as_str() == "triggering"
                 && let Some(event) = ctx.triggering_event.as_ref()
             {
-                return Ok(triggering_event_object_matches_at_resolution(
-                    game,
-                    event,
-                    filter,
-                    &filter_ctx,
-                ));
+                return triggering_event_object_matches_at_resolution(game, event, filter, &filter_ctx);
             }
             if let Some(tagged) = ctx.get_tagged_all(tag.as_str()) {
                 for snapshot in tagged {
@@ -5229,7 +5217,7 @@ fn evaluate_condition_in_context(
                                 .is_some_and(|obj| filter.matches(obj, &filter_ctx, game))
                         }));
                     };
-                    triggering_event_object_matches(game, ctx, filter)
+                    triggering_event_object_matches(game, ctx, filter)?
                 });
             }
             let Some(ctx) = ctx.execution() else {
@@ -6504,23 +6492,23 @@ mod referenced_characteristic_frame_tests {
         let context = FilterContext::new(a);
         assert!(triggering_event_object_matches_at_resolution(
             &game, &event, &filter, &context
-        ));
+        ).unwrap());
         game.add_counters(subject, crate::object::CounterType::PlusOnePlusOne, 1)
             .unwrap();
         game.refresh_continuous_state().unwrap();
         assert!(
-            triggering_event_object_matches_with_filter_context(&game, &event, &filter, &context),
+            triggering_event_object_matches_with_filter_context(&game, &event, &filter, &context).unwrap(),
             "trigger-time snapshot remains 1/1"
         );
         assert!(
-            !triggering_event_object_matches_at_resolution(&game, &event, &filter, &context),
+            !triggering_event_object_matches_at_resolution(&game, &event, &filter, &context).unwrap(),
             "current 2/2 fails"
         );
         let exiled = game
             .move_object(subject, Zone::Exile, EventCause::effect())
             .unwrap();
         assert!(
-            !triggering_event_object_matches_at_resolution(&game, &event, &filter, &context),
+            !triggering_event_object_matches_at_resolution(&game, &event, &filter, &context).unwrap(),
             "departure LKI was 2/2"
         );
         let returned = game
@@ -6530,7 +6518,7 @@ mod referenced_characteristic_frame_tests {
         assert_eq!(game.calculated_power(returned), Some(1));
         assert!(!triggering_event_object_matches_at_resolution(
             &game, &event, &filter, &context
-        ));
+        ).unwrap());
         assert!(
             filter.matches_snapshot(&before, &context, &game),
             "past-tense condition stays at its captured frame"
@@ -6809,7 +6797,6 @@ mod suspected_current_trigger_evidence_tests {
                 if let Some(captured) = captured { assert_eq!(answer, Ok(captured != negated)); }
                 else {
                     assert!(matches!(answer, Err(ExecutionError::IncompleteEvidence(_))));
-                    assert!(game.token_resource_failure().is_some(), "the legacy bool adapter must retain the failure");
                 }
             }
             let game = base.clone();
@@ -6900,7 +6887,6 @@ mod suspected_current_trigger_evidence_tests {
             let external = ExternalEvaluationContext { controller: player, source, triggering_event: Some(&event),
                 options: ExternalEvaluationOptions { triggering_object_current: current, ..Default::default() }, ..Default::default() };
             assert!(matches!(evaluate_condition_external_checked(&game, &predicate(target_form, negated), &external, None), Err(ExecutionError::IncompleteEvidence(_))));
-            assert!(game.token_resource_failure().is_some());
         } } } }
     }
 }

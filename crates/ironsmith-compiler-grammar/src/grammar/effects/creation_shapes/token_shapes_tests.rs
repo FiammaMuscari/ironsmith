@@ -177,3 +177,11 @@ fn serial_create_token_operand_list_keeps_the_comma_only_middle_member() {
     assert_eq!(parser_token_word_refs(operands[1]), ["a", "food", "token"]);
     assert_eq!(parser_token_word_refs(operands[2]), ["a", "junk", "token"]);
 }
+
+#[test]
+fn copy_source_separates_bare_tapped_attacking_suffix() {
+    let tokens = lex_line("a copy of this creature tapped and attacking that player, except it isn't legendary", 0).unwrap();
+    let parsed = parse_copy_source_clause_tokens(&tokens).unwrap();
+    assert_eq!(token_word_refs(&parsed.source_tokens), ["this", "creature"]);
+    assert!(parsed.enters_tapped && parsed.enters_attacking && parsed.attacks_that_player_only);
+}

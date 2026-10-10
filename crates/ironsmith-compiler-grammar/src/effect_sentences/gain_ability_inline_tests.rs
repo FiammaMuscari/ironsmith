@@ -40,21 +40,14 @@ fn quoted_filtered_static_rule_remains_an_ability_of_the_token() {
     let [GrantedAbilityAst::StaticAbility(ability)] = parsed.as_slice() else {
         panic!("expected one filtered static carrier: {parsed:#?}");
     };
-    let crate::cards::builders::StaticAbilityAst::GrantStaticAbility {
-        filter, ability, ..
-    } = ability.as_ref()
-    else {
-        panic!("expected one compiler filtered static grant: {ability:#?}");
-    };
     let crate::cards::builders::StaticAbilityAst::Static(ability) = ability.as_ref() else {
-        panic!("expected one compiler static ability: {ability:#?}");
+        panic!("expected one compiler static rule: {ability:#?}");
     };
+    let crate::model::CompilerStaticAbilityPayloadCore::RuleRestriction {
+        restriction: crate::effect::Restriction::MustAttack(filter), ..
+    } = &ability.payload else { panic!("expected a filtered attack requirement: {ability:#?}"); };
     assert_eq!(filter.card_types, [CardType::Creature]);
     assert_eq!(filter.controller, Some(PlayerFilter::You));
-    assert_eq!(
-        ability.id(),
-        crate::static_abilities::StaticAbilityId::MustAttack
-    );
 }
 
 #[test]
@@ -1569,4 +1562,32 @@ fn quoted_first_target_trigger_keeps_its_event_history_gate() {
         !debug.contains("MaxTimesEachTurn"),
         "first-event history is not a trigger-count limit: {debug}"
     );
+}
+
+#[test]
+fn removing_a_subtype_family_and_all_abilities_retains_both_changes() {
+    let tokens = lex_line("Target land loses all land types and abilities.", 0).unwrap();
+    let effects = parse_effect_sentence_lexed(&tokens).unwrap();
+    let debug = format!("{effects:?}");
+    assert!(debug.contains("RemoveAllSubtypesOfFamily"), "{debug}");
+    assert!(debug.contains("RemoveAbilitiesFromTarget"), "{debug}");
+}
+
+#[test]
+fn broad_loss_reader_removes_bare_protection_and_ward_families() {
+    let tokens = lex_line(
+        "Permanents your opponents control lose hexproof, indestructible, protection, shroud, and ward until end of turn.",
+        0,
+    ).unwrap();
+    let effects = parse_gain_ability_sentence(&tokens).unwrap().unwrap();
+    let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesAll {
+            filter, abilities, duration: crate::effect::Until::EndOfTurn, ..
+        }), ..
+    })] = effects.as_slice() else { panic!("expected ability loss: {effects:#?}"); };
+    assert_eq!(filter.controller, Some(PlayerFilter::Opponent));
+    assert_eq!(filter.zone, Some(crate::Zone::Battlefield));
+    for family in [crate::static_abilities::StaticAbilityId::Protection, crate::static_abilities::StaticAbilityId::Ward] {
+        assert!(abilities.contains(&GrantedAbilityAst::StaticAbilityFamily(family)));
+    }
 }

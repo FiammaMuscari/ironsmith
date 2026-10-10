@@ -2,7 +2,7 @@ use super::*;
 use crate::card::CardBuilder;
 use crate::cards::{CardDefinition, CardDefinitionBuilder};
 use crate::decision::DecisionMaker;
-use crate::decisions::context::{BooleanContext, ViewCardsContext};
+use crate::decisions::context::{BooleanContext, SelectObjectsContext, ViewCardsContext};
 use crate::effect::{Effect, EffectId, EffectPredicate};
 use crate::ids::CardId;
 use crate::snapshot::ObjectSnapshot;
@@ -23,6 +23,13 @@ impl DecisionMaker for RevealAnswers {
         self.offered.push(ctx.clone());
         self.pending = self.answer.is_none();
         self.answer.unwrap_or(false)
+    }
+
+    fn decide_objects(&mut self, game: &GameState, ctx: &SelectObjectsContext) -> Vec<ObjectId> {
+        let selected: Vec<_> = ctx.candidates.iter().filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id).collect();
+        self.pending = selected.iter().any(|id| game.is_hidden_card_placeholder(*id));
+        selected
     }
 
     fn awaiting_choice(&self) -> bool {
@@ -151,7 +158,15 @@ fn hidden_conditional_reveal_accepts_with_a_verifiable_identity_obligation() {
             ..Default::default()
         };
         resolve(&mut game, alice, source, top, &effect, &mut dm).unwrap();
-        assert_eq!(dm.offered.len(), 1);
+        if !known {
+            assert!(dm.pending);
+            assert_eq!(dm.public_views, 0);
+            assert_eq!(game.player(alice).unwrap().life, 20);
+            game.reveal_hidden_card_with_definition(top, &identity(true)).unwrap();
+            dm.pending = false;
+            resolve(&mut game, alice, source, top, &effect, &mut dm).unwrap();
+        }
+        assert_eq!(dm.offered.len(), if known { 1 } else { 2 });
         assert_eq!(dm.public_views, 2);
         assert_eq!(game.player(alice).unwrap().life, 22);
         assert_eq!(game.hidden_identity_obligations().len(), 1);
@@ -201,6 +216,10 @@ fn hidden_conditional_reveal_claim_keeps_the_source_types_at_resolution() {
         answer: Some(true),
         ..Default::default()
     };
+    resolve(&mut game, alice, source, top, &effect, &mut dm).unwrap();
+    assert!(dm.pending, "an unknown selected card needs an authenticated opening");
+    game.reveal_hidden_card_with_definition(top, &identity(true)).unwrap();
+    dm.pending = false;
     resolve(&mut game, alice, source, top, &effect, &mut dm).unwrap();
     game.move_object_by_effect(source, Zone::Graveyard).unwrap();
     assert!(game.object(source).is_none());

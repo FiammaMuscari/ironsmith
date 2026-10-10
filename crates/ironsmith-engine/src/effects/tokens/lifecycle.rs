@@ -3,7 +3,7 @@
 use crate::ability::Ability;
 use crate::effect::{Effect, EffectOutcome};
 use crate::effects::{
-    EffectExecutor, EnterAttackingEffect, SacrificeTargetEffect, ScheduleDelayedTriggerEffect,
+    EffectExecutor, EnterAttackingEffect, ScheduleDelayedTriggerEffect,
 };
 use crate::effects::{ExecutionContext, ExecutionError, ResolvedTarget};
 #[cfg(test)]
@@ -530,15 +530,34 @@ pub(crate) fn schedule_token_cleanup_with_outputs(
     controller_id: PlayerId,
     options: TokenCleanupOptions,
 ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+    schedule_token_batch_cleanup_with_outputs(game, ctx, &[token_id], controller_id, options)
+}
+
+/// One authored cleanup instruction creates one delayed trigger for the whole
+/// token batch, including tokens added by replacement effects.
+pub(crate) fn schedule_token_batch_cleanup_with_outputs(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    token_ids: &[ObjectId],
+    controller_id: PlayerId,
+    options: TokenCleanupOptions,
+) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+    if token_ids.is_empty() {
+        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
+    }
+    let filter = crate::target::ObjectFilter {
+        any_of: token_ids.iter().copied().map(crate::target::ObjectFilter::specific).collect(),
+        ..Default::default()
+    };
     let mut children = Vec::new();
     if options.exile_at_end_of_combat {
-        children.push(schedule_token_delayed_effect_with_outputs(
+        children.push(schedule_token_batch_delayed_effect_with_outputs(
             game,
             ctx,
-            token_id,
+            token_ids,
             controller_id,
             Trigger::end_of_combat(),
-            vec![Effect::exile(ChooseSpec::SpecificObject(token_id))],
+            vec![Effect::new(crate::effects::ExileEffect::with_spec(ChooseSpec::All(filter.clone())))],
         )?);
         if ctx.decision_maker.awaiting_choice() {
             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
@@ -548,15 +567,16 @@ pub(crate) fn schedule_token_cleanup_with_outputs(
     }
 
     if options.sacrifice_at_end_of_combat {
-        children.push(schedule_token_delayed_effect_with_outputs(
+        children.push(schedule_token_batch_delayed_effect_with_outputs(
             game,
             ctx,
-            token_id,
+            token_ids,
             controller_id,
             Trigger::end_of_combat(),
-            vec![Effect::new(SacrificeTargetEffect::new(ChooseSpec::All(
-                crate::target::ObjectFilter::specific(token_id).you_control(),
-            )))],
+            vec![Effect::new(crate::effects::SacrificeEffect::you(
+                filter.clone().you_control(),
+                crate::effect::Value::Count(filter.clone().you_control()),
+            ))],
         )?);
         if ctx.decision_maker.awaiting_choice() {
             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
@@ -566,15 +586,16 @@ pub(crate) fn schedule_token_cleanup_with_outputs(
     }
 
     if options.sacrifice_at_next_end_step {
-        children.push(schedule_token_delayed_effect_with_outputs(
+        children.push(schedule_token_batch_delayed_effect_with_outputs(
             game,
             ctx,
-            token_id,
+            token_ids,
             controller_id,
             Trigger::beginning_of_end_step(options.next_end_step_player.clone()),
-            vec![Effect::new(SacrificeTargetEffect::new(ChooseSpec::All(
-                crate::target::ObjectFilter::specific(token_id).you_control(),
-            )))],
+            vec![Effect::new(crate::effects::SacrificeEffect::you(
+                filter.clone().you_control(),
+                crate::effect::Value::Count(filter.clone().you_control()),
+            ))],
         )?);
         if ctx.decision_maker.awaiting_choice() {
             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
@@ -584,13 +605,13 @@ pub(crate) fn schedule_token_cleanup_with_outputs(
     }
 
     if options.exile_at_next_end_step {
-        children.push(schedule_token_delayed_effect_with_outputs(
+        children.push(schedule_token_batch_delayed_effect_with_outputs(
             game,
             ctx,
-            token_id,
+            token_ids,
             controller_id,
             Trigger::beginning_of_end_step(options.next_end_step_player.clone()),
-            vec![Effect::exile(ChooseSpec::SpecificObject(token_id))],
+            vec![Effect::new(crate::effects::ExileEffect::with_spec(ChooseSpec::All(filter.clone())))],
         )?);
         if ctx.decision_maker.awaiting_choice() {
             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
@@ -607,10 +628,10 @@ pub(crate) fn schedule_token_cleanup_with_outputs(
     ))
 }
 
-fn schedule_token_delayed_effect_with_outputs(
+fn schedule_token_batch_delayed_effect_with_outputs(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
-    token_id: ObjectId,
+    token_ids: &[ObjectId],
     controller_id: PlayerId,
     trigger: Trigger,
     effects: Vec<Effect>,
@@ -619,7 +640,7 @@ fn schedule_token_delayed_effect_with_outputs(
         trigger,
         effects,
         true,
-        vec![token_id],
+        token_ids.to_vec(),
         PlayerFilter::Specific(controller_id),
     );
     schedule.execute_child_with_outputs(game, ctx)
@@ -638,6 +659,21 @@ mod tests {
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn token_batch_cleanup_registers_one_trigger_with_every_token() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let tokens = vec![game.new_object_id(), game.new_object_id()];
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        schedule_token_batch_cleanup_with_outputs(
+            &mut game, &mut ctx, &tokens, alice,
+            TokenCleanupOptions::new(false, false, true, false, PlayerFilter::Any),
+        ).unwrap();
+        assert_eq!(game.effect_store.delayed_triggers.len(), 1);
+        assert_eq!(game.effect_store.delayed_triggers[0].target_objects, tokens);
     }
 
     #[test]
@@ -687,6 +723,9 @@ mod tests {
         assert!(delayed.one_shot);
         assert_eq!(delayed.target_objects, vec![token_id]);
         assert_eq!(delayed.controller, bob);
+        let exile = delayed.effects.segments[0].default_effects[0]
+            .downcast_ref::<crate::effects::ExileEffect>().unwrap();
+        assert!(!exile.spec.is_target(), "token cleanup does not target");
     }
 
     #[test]
@@ -764,6 +803,10 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
         let mut events = Vec::new();
 
+        game.add_object(Object::new_token(
+            token_id, alice, "Token".to_string(), vec![CardType::Creature],
+            Vec::new(), Some(1), Some(1), ColorSet::default(),
+        ));
         game.tap(token_id); // The entry commit has already applied the final state.
 
         apply_token_battlefield_entry(

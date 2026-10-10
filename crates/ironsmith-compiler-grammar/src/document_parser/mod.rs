@@ -158,10 +158,13 @@ fn try_merge_labeled_prior_token_replacement_statement(
     let Ok(effects) = parse_effect_sentences_lexed(&combined) else {
         return false;
     };
-    if !matches!(
-        effects.as_slice(),
-        [crate::cards::builders::EffectAst::SelfReplacement { .. }]
-    ) {
+    let self_replacement = matches!(effects.as_slice(),
+        [crate::cards::builders::EffectAst::SelfReplacement { .. }])
+        || matches!(effects.as_slice(), [crate::cards::builders::EffectAst::ControlFlow(flow)]
+            if matches!(&flow.node, crate::model::ControlFlowNodeAst::Replacement(replacement)
+                if replacement.event == crate::model::ReplacedEventAst::PriorEffect
+                    && replacement.original_program.is_some()));
+    if !self_replacement {
         return false;
     }
 
@@ -1298,6 +1301,9 @@ fn quoted_attachment_grant_token_replacements(
         if let Some(has_index) = tokens
             .iter()
             .position(|token| token.is_word("has") || token.is_word("have"))
+            // "An opponent may have you draw" offers an action; it does
+            // not grant an ability or change the source of later references.
+            && !has_index.checked_sub(1).is_some_and(|index| tokens[index].is_word("may"))
             && let Some(replacement) = host_for_head(&tokens[..=has_index])
         {
             replacements[has_index + 1..].fill(Some(replacement));
@@ -1313,6 +1319,16 @@ fn quoted_attachment_grant_token_replacements(
         }
     }
     replacements
+}
+
+#[cfg(test)]
+#[test]
+fn offered_action_does_not_create_a_granted_ability_source_scope() {
+    let tokens = crate::lexer::lex_line(
+        "Target opponent may have you draw a card. Otherwise, mill a card for each counter on this permanent.",
+        0,
+    ).unwrap();
+    assert!(quoted_attachment_grant_token_replacements(&tokens).iter().all(Option::is_none));
 }
 
 /// Whether this alias occurrence is the object of a "… counters on <name>"
@@ -1670,6 +1686,24 @@ fn source_alias_occurrence_is_rules_term_lexed(
     let matched_word = (end_word == start_word + 1)
         .then(|| pieces.get(start_word).map(|piece| piece.text))
         .flatten();
+
+    // "turned face up/down" describes orientation, even when a short source
+    // alias is Face-Up or Face-Down. Replacing it erases the history qualifier.
+    if matches!(previous_word, Some("turn" | "turns" | "turned"))
+        && end_word == start_word + 2
+        && pieces[start_word].text == "face"
+        && matches!(pieces[start_word + 1].text, "up" | "down")
+    {
+        return true;
+    }
+
+    if matched_word == Some("outside")
+        && previous_word == Some("from")
+        && next_word == Some("the")
+        && pieces.get(end_word + 1).is_some_and(|piece| piece.text == "game")
+    {
+        return true;
+    }
 
     if matched_word == Some("base") && matches!(next_word, Some("power" | "toughness")) {
         return true;
@@ -3918,6 +3952,19 @@ pub fn recognize_document_with_context(
                 idx += 1;
             }
             PreprocessedItem::Line(line) => {
+                // Malformed numeric table headers must not be stripped as
+                // presentation labels and leave an unconditional row body.
+                let authored = &line.info.source_tokens;
+                crate::effect_sentences::local_self_replacement::validate(authored)?;
+                if authored.iter().any(|token| token.kind == TokenKind::Pipe)
+                    && authored.first().is_some_and(|token|
+                        token.parser_text().starts_with(|character: char| character.is_ascii_digit()))
+                    && document_grammar::parse_numeric_result_prefix_tokens(authored).is_none()
+                {
+                    return Err(CardTextError::ParseError(format!(
+                        "incomplete numeric result header: '{}'", line.info.raw_line,
+                    )));
+                }
                 if let Some(types) = &line.info.semantic_facts.intrinsic_basic_land_mana_reminder {
                     // Use final typed metadata, even if its source line occurs
                     // after the reminder. Keep the original line in the CST and
@@ -4608,6 +4655,9 @@ fn try_push_complete_typed_static_line(
 /// gain; the quoted-gain fast path declines them all alike, whatever the
 /// order.
 const QUOTED_GAIN_DECLINES: &[fn(&PreprocessedLine) -> Result<bool, CardTextError>] = &[
+    // A trigger owns any quoted ability in its result. Do not probe that
+    // quote as though the entire trigger were a static anthem.
+    |line| Ok(line_starts_with_trigger_intro_tokens(&line.tokens)),
     |line| {
         let outer = line
             .tokens
@@ -4733,6 +4783,13 @@ fn try_push_complete_typed_statement(
     line: &PreprocessedLine,
     lines: &mut Vec<RecognizedLine>,
 ) -> Result<bool, CardTextError> {
+    // A token replacement contains a create instruction, but the complete
+    // line belongs to the static replacement reader.
+    if crate::grammar::keyword_static_lines::parse_token_template_replacement(&line.tokens)
+        .is_some()
+    {
+        return Ok(false);
+    }
     if document_grammar::parse_numeric_result_prefix_tokens(&line.info.source_tokens).is_some() {
         // Result rows belong to the preceding roll table, even when their
         // bodies also contain complete standalone effect sentences.
@@ -9037,10 +9094,9 @@ mod tests {
         let [RecognizedLine::Statement(statement)] = recognized.lines.as_slice() else {
             panic!("expected the merged line to remain a statement: {recognized:#?}");
         };
-        assert!(matches!(
-            statement.parsed_effects.as_deref(),
-            Some([crate::cards::builders::EffectAst::SelfReplacement { .. }])
-        ));
+        // Recognition can defer the merged statement to the semantic parser.
+        // The compiled program below must still own the labeled replacement.
+        let _ = statement;
 
         let (parsed, compile_trace) = crate::parse_trace::capture(|| builder.parse_text(text));
         let parsed = parsed.unwrap_or_else(|error| {

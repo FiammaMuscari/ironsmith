@@ -141,20 +141,34 @@ fn counter_removal_instruction_event(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
 ) -> Result<Option<crate::events::Event>, ExecutionError> {
-    let target_id = resolve_single_object_for_effect(game, ctx, &effect.target)?;
-    let requested = resolve_bounded_nonnegative_u32(
-        game,
-        &effect.count,
-        ctx,
-        game.counter_count(target_id, effect.counter_type),
-    )?;
+    use crate::effects::ResolvedTarget;
+    let target = match effect.target.base() {
+        ChooseSpec::Player(_) | ChooseSpec::SpecificPlayer(_)
+        | ChooseSpec::AnyTarget | ChooseSpec::AnyOtherTarget
+        | ChooseSpec::ObjectOrPlayer(_, _) | ChooseSpec::PlayerOrPlaneswalker(_)
+        | ChooseSpec::AttackedPlayerOrPlaneswalker | ChooseSpec::SourceController
+        | ChooseSpec::SourceOwner | ChooseSpec::EachPlayer(_) =>
+            crate::effects::helpers::resolve_single_target_from_spec(game, &effect.target, ctx)?,
+        _ => ResolvedTarget::Object(resolve_single_object_for_effect(game, ctx, &effect.target)?),
+    };
+    let available = match target {
+        ResolvedTarget::Object(object) => game.counter_count(object, effect.counter_type),
+        ResolvedTarget::Player(player) => game.player(player)
+            .ok_or(ExecutionError::PlayerNotFound(player))?.counter_count(effect.counter_type),
+    };
+    let requested = resolve_bounded_nonnegative_u32(game, &effect.count, ctx, available)?;
     if ctx.decision_maker.awaiting_choice() {
         return Ok(None);
     }
-    Ok(Some(
-        crate::events::Event::remove_counters(target_id, effect.counter_type, requested)
-            .with_provenance(ctx.provenance),
-    ))
+    let event = match target {
+        ResolvedTarget::Object(object) =>
+            crate::events::Event::remove_counters(object, effect.counter_type, requested)
+                .with_provenance(ctx.provenance),
+        ResolvedTarget::Player(player) => crate::events::Event::new_with_provenance(
+            crate::events::RemovePlayerCountersEvent::new(player, effect.counter_type, requested,
+                Some(ctx.source), Some(ctx.controller)), ctx.provenance),
+    };
+    Ok(Some(event))
 }
 
 /// A counter instruction owns preparation only. The existing removal owner
@@ -1184,6 +1198,26 @@ impl CostExecutableEffect for RemoveCountersEffect {
         } else {
             Ok(None)
         }
+    }
+
+    fn can_execute_as_cost_with_context(
+        &self,
+        game: &GameState,
+        ctx: &mut ExecutionContext,
+        _reason: crate::costs::PaymentReason,
+    ) -> Result<(), crate::effects::CostValidationError> {
+        let ChooseSpec::Tagged(tag) = self.target.base() else {
+            return CostExecutableEffect::can_execute_as_cost(self, game, ctx.source, ctx.controller);
+        };
+        let selected = ctx.tagged_objects.get(tag.as_str())
+            .and_then(|objects| objects.first())
+            .ok_or_else(|| crate::effects::CostValidationError::Other(
+                "counter cost has no bound object".into()))?;
+        let mut bound = self.clone();
+        bound.target = ChooseSpec::SpecificObject(selected.object_id);
+        bound.count = Value::Fixed(crate::effects::helpers::resolve_value(game, &self.count, ctx)
+            .map_err(crate::effects::CostValidationError::ExecutionFailed)?);
+        CostExecutableEffect::can_execute_as_cost(&bound, game, ctx.source, ctx.controller)
     }
 
     fn can_execute_as_cost(

@@ -393,8 +393,14 @@ fn read_half_life_value(input: &PayClause<'_>) -> Result<Option<EffectAst>, Card
     Ok(None)
 }
 fn read_life_amount(input: &PayClause<'_>) -> Result<Option<EffectAst>, CardTextError> {
-    let tokens = input.tokens;
+    let tokens = crate::util::trim_edge_punctuation_tokens(input.tokens);
     let player = input.player;
+    if let Some(mut amount) = crate::effect_sentences::verb_handlers::parse_life_equal_to_value(tokens)? {
+        if crate::grammar::effects::control_copy_attach_shapes::parse_life_surface_shape(tokens).remap_its_source_stat {
+            amount = crate::effect_sentences::verb_handlers::remap_source_stat_value_to_it(amount);
+        }
+        return Ok(Some(EffectAst::subject_verb_pay_life(player, amount)));
+    }
     if let Some((amount, used)) = parse_value(tokens)
         && token_slice_at_is(tokens, used, "life")
     {

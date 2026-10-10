@@ -101,7 +101,7 @@ fn treasure_count(game: &GameState, controller: PlayerId) -> usize {
         .iter()
         .filter(|id| {
             game.object(**id)
-                .is_some_and(|object| object.name == "Treasure")
+                .is_some_and(|_| game.current_has_subtype(**id, ironsmith::Subtype::Treasure))
                 && game.current_controller(**id) == Some(controller)
         })
         .count()

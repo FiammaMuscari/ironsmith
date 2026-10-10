@@ -54,7 +54,7 @@ pub fn parse_compound_self_predicate_line(
         return Ok(None);
     };
     let subject = &tokens[..subject_end];
-    let subject_words = crate::lexer::token_word_refs(subject);
+    let subject_words = parser_token_word_refs(subject);
     if subject.is_empty() || !crate::util::is_source_reference_words(&subject_words) {
         return Ok(None);
     }

@@ -15,6 +15,7 @@ pub enum DelayedScheduleStep {
     DrawStep,
     FirstMainPhase,
     MainPhase,
+    MainPhaseThisTurn,
     EndStep,
 }
 
@@ -92,6 +93,8 @@ fn delayed_schedule_header<'a>(
     opt(primitives::kw("the")).parse_next(input)?;
 
     alt((
+        semantic_phrase(&["next", "main", "phase", "this", "turn"])
+            .value((DelayedScheduleStep::MainPhaseThisTurn, PlayerAst::Any, false)),
         (
             semantic_phrase(&["end", "step", "of"]),
             delayed_schedule_player,
@@ -205,6 +208,10 @@ mod tests {
         assert_eq!(main_phase.step, DelayedScheduleStep::MainPhase);
         assert_eq!(main_phase.player, PlayerAst::You);
         assert!(!main_phase.start_next_turn);
+        let this_turn = tokens("At the beginning of the next main phase this turn, draw a card.");
+        let this_turn = parse_delayed_schedule_sentence_shape(&this_turn).unwrap();
+        assert_eq!(this_turn.step, DelayedScheduleStep::MainPhaseThisTurn);
+        assert_eq!(this_turn.player, PlayerAst::Any);
         assert_eq!(
             LexedClause::new(main_phase.effect_tokens).word_refs(),
             ["add", "c"]

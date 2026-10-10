@@ -113,7 +113,8 @@ pub fn parse_labeled_dispatch_shape(tokens: &[OwnedLexToken]) -> LabeledDispatch
         ) && common::present_any(&words, HAND_WORDS)
             && common::present_any(&words, GRAVEYARD_WORDS),
         starts_enchant: common::prefix(&words, &["enchant"]),
-        starts_earthbend: common::prefix(&words, &["earthbend"]),
+        starts_earthbend: common::prefix(&words, &["earthbend"])
+            || common::prefix(&words, &["you", "earthbend"]),
         has_unless: common::present(&words, &["unless"]),
         has_gain_or_lose: common::present_any(&words, GAIN_LOSE_WORDS),
         has_vote: common::present_any(&words, VOTE_WORDS),

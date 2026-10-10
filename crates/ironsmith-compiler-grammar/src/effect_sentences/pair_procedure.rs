@@ -60,7 +60,9 @@ mod variable_mana_payments;
 #[path = "pair_procedure/life_bid.rs"]
 mod life_bid;
 #[path = "pair_procedure/same_way_balance.rs"]
-mod same_way_balance;
+pub(super) mod same_way_balance;
+#[path = "pair_procedure/moved_entry.rs"]
+mod moved_entry;
 #[path = "pair_procedure/viewer_face_down_play.rs"]
 mod viewer_face_down_play;
 #[path = "pair_procedure/each_opponent_consult_cast.rs"]
@@ -230,6 +232,12 @@ const PAIR_SHAPES: &[Shape] = &[
         read: |sentences, index| statements(sentences, index, same_way_balance::read(sentences, index)),
     },
     Shape {
+        id: RuleId::new("moved-object-tapped-entry"),
+        head: HeadDiscriminator::Any,
+        consumed: 2,
+        read: |sentences, index| statements(sentences, index, moved_entry::read(sentences, index)),
+    },
+    Shape {
         id: RuleId::new("each-player-consult-opponent-excludes-then-cast"),
         head: HeadDiscriminator::words(&["each"]),
         consumed: 3,
@@ -273,7 +281,7 @@ const PAIR_SHAPES: &[Shape] = &[
     },
     Shape {
         id: RuleId::new("collect-mana-payments-with-total"),
-        head: HeadDiscriminator::words(&["starting", "join"]),
+        head: HeadDiscriminator::words(&["starting", "join", "each"]),
         consumed: 2,
         read: |sentences, index| statements(sentences, index, collect_mana_payments::read(sentences, index)),
     },

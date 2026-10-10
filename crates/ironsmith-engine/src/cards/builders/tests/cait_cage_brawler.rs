@@ -18,7 +18,7 @@ fn cait_keeps_the_participant_loot_result_partition_and_tied_maximum_gate() {
     );
     assert!(debug.contains("ForPlayersEffect"), "{debug}");
     assert!(
-        debug.contains("PlayerAffectedObjectHasGreatestManaValue"),
+        debug.contains("PlayerActionObjectHasGreatestManaValue"),
         "{debug}"
     );
     assert!(debug.contains("Defending"), "{debug}");

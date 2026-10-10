@@ -55,7 +55,7 @@ fn chandra_ultimate_casts_three_copies_of_the_chosen_exiled_card() {
     for definition in definitions("Chandra, Pyromaster", CHANDRA_PYROMASTER) {
         let debug = format!("{definition:?}");
         assert!(debug.contains("ChooseObjects") || debug.contains("ChooseTagged"), "{debug}");
-        assert!(debug.contains("Fixed(3)"), "{debug}");
+        assert_eq!(debug.matches("CastTaggedEffect {").count(), 3, "three independent optional casts: {debug}");
         assert!(debug.contains("as_copy: true"), "{debug}");
     }
 }

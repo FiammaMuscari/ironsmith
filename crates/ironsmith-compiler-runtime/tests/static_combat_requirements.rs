@@ -84,6 +84,7 @@ fn defender_and_vigilance_bodies_enforce_only_feasible_combat_obligations() {
             let mut g = game();
             let required = g.create_object_from_definition(&definition, A, Zone::Battlefield);
             // Summoning sickness excuses attacking, but never blocking.
+            g.set_summoning_sick(required);
             assert!(attack(&mut g, A, &[]).is_ok());
             g.remove_summoning_sickness(required);
             let mut combat = CombatState::default();

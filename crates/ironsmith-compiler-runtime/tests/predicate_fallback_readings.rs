@@ -113,9 +113,9 @@ fn player_turn_facts_use_existing_conditions() {
 fn object_state_predicates_read_source_and_referents() {
     assert_cluster(&[
         ("Polis Crusher", &["SourceIsMonstrous"]),
-        ("Arachnus Web", &["Fixed(4)"]),
-        ("Domestication", &["Fixed(4)"]),
-        ("Anax, Hardened in the Forge", &["Fixed(4)"]),
+        ("Arachnus Web", &["AttachedToSourceMatches", "GreaterThanOrEqual(4)"]),
+        ("Domestication", &["AttachedToSourceMatches", "GreaterThanOrEqual(4)"]),
+        ("Anax, Hardened in the Forge", &["GreaterThanOrEqual(4)"]),
         ("Burn the Impure", &["Infect"]),
         ("Hotshot Investigators", &["MatchedLastKnown"]),
         ("Unyielding Gatekeeper", &["MatchedLastKnown"]),

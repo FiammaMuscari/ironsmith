@@ -87,6 +87,7 @@ fn step_right_up_opens_two_attractions() {
             .card_types(vec![CardType::Artifact])
             .subtypes(vec![ironsmith::types::Subtype::Attraction])
             .attraction_lights(vec![6])
+            .with_spell_effect(vec![ironsmith::effect::Effect::gain_life(1)])
             .build();
         game.enable_attractions(vec![(
             A,

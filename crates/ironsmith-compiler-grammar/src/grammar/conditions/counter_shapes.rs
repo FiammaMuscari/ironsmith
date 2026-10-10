@@ -56,6 +56,8 @@ pub fn parse_player_counter_condition(
 
 fn parse_player_subject(input: &mut LexStream<'_>) -> WResult<PlayerFilter> {
     alt((
+        primitives::phrase(&["target", "player"]).value(PlayerFilter::target_player()),
+        primitives::phrase(&["target", "opponent"]).value(PlayerFilter::target_opponent()),
         primitives::phrase(&["its", "controller"])
             .value(PlayerFilter::ControllerOf(crate::target::ObjectRef::tagged(
                 crate::tag::CompilerReferenceTag::It.bind()))),

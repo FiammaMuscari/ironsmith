@@ -48,7 +48,7 @@ pub(crate) fn is_candidate(tokens: &[OwnedLexToken]) -> bool {
     has_permanent_counter_exile_gate(tokens)
         || (counter_reference && cast_or_play_tail && words.contains(&"exile"))
         || (durable_tail
-            && words.contains(&"exile")
+            && words.iter().any(|word| matches!(*word, "exile" | "exiled"))
             && (counter_reference || words.first().is_some_and(|word| *word == "counter")))
 }
 

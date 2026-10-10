@@ -1444,6 +1444,7 @@ fn ending_entry_failure_or_pause_restores_stack_notifications_and_scheduler_pref
                 Default::default(),
             );
             game.queue_trigger_event(seed.provenance(), seed);
+            let seed_identity = game.effect_store.pending_trigger_events.last().unwrap().occurrence_key();
             let ids = prefix_entry_replacements(
                 &mut game,
                 source,
@@ -1535,7 +1536,9 @@ fn ending_entry_failure_or_pause_restores_stack_notifications_and_scheduler_pref
                     .get_effect(ids.1)
                     .is_none()
             );
-            let events = game.take_pending_trigger_events();
+            let events = game.turn_store.turn_history.projected_records()
+                .filter(|record| record.event.occurrence_key() != seed_identity)
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
             assert_eq!(
                 events
                     .iter()
@@ -1667,7 +1670,8 @@ fn graveyard_return_entry_failure_or_pause_restores_earlier_selected_card() {
                 .get_effect(ids.1)
                 .is_none()
         );
-        let events = game.take_pending_trigger_events();
+        let events = game.turn_store.turn_history.projected_records()
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
         assert_eq!(
             events
                 .iter()
@@ -1820,7 +1824,8 @@ fn shuffle_entry_redirect_commits_and_failure_or_pause_restores_the_library_pref
             panic!("one card actually reached the library");
         };
         assert_eq!(shuffled, vec![earlier]);
-        let events = game.take_pending_trigger_events();
+        let events = game.turn_store.turn_history.projected_records()
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
         assert_eq!(
             events
                 .iter()
@@ -2576,7 +2581,8 @@ fn general_move_entry_receipt_preserves_authored_options_history_and_rollback() 
                 panic!("expected actual moved objects");
             };
             assert_eq!(ids, vec![first, second]);
-            let events = game.take_pending_trigger_events();
+            let events = game.turn_store.turn_history.projected_records()
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
             let changes = events
                 .iter()
                 .filter_map(|event| {
@@ -2645,7 +2651,8 @@ fn general_move_nonbattlefield_counters_resolve_original_filter_and_apply_replac
         panic!("expected actual exile result");
     };
     assert_eq!(ids, vec![moved]);
-    let events = game.take_pending_trigger_events();
+    let events = game.turn_store.turn_history.projected_records()
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
     assert_eq!(
         events
             .iter()
@@ -2917,7 +2924,8 @@ fn general_move_entry_redirect_reports_the_actual_committed_object() {
             .get_effect(redirect)
             .is_none()
     );
-    let events = game.take_pending_trigger_events();
+    let events = game.turn_store.turn_history.projected_records()
+                .map(|record| record.event.clone()).collect::<Vec<_>>();
     assert_eq!(
         events
             .iter()

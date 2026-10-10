@@ -420,6 +420,7 @@ pub struct DelayedTrigger {
     /// Registration expires before events on its controller's first turn
     /// whose turn number is greater than this anchor.
     pub expires_before_controller_turn_after: Option<u32>,
+    pub expires_after_controller_turn_after: Option<u32>,
     /// Whether this delayed trigger expires as the current combat ends.
     pub expires_at_end_of_combat: bool,
     /// "That turn": the registration belongs to the extra turn queued at this
@@ -1676,6 +1677,10 @@ fn trigger_event_can_have_synthetic_triggers(trigger_event: &TriggerEvent) -> bo
             | crate::events::traits::EventKind::MarkersChanged
             | crate::events::traits::EventKind::BecomesTargeted
     ) || trigger_event
+        .downcast::<crate::events::CardsDrawnEvent>()
+        .and_then(|draw| draw.miracle.as_ref())
+        .is_some_and(|decision| !decision.revealed_instances().is_empty())
+        || trigger_event
         .downcast::<crate::events::KeywordActionEvent>()
         .is_some_and(|action| action.action == crate::events::KeywordActionKind::TakeInitiative)
 }
@@ -2523,9 +2528,12 @@ fn check_battlefield_trigger_subscriber(
     else {
         return;
     };
+    let Some(chars) = view.calculated_characteristics_arc(obj_id) else {
+        return;
+    };
     let ctx = TriggerContext::for_source(obj_id, controller, game)
         .with_trigger_identity(trigger_identity)
-        .with_ability_index(subscriber.ability_index);
+        .with_ability_index_and_characteristics(subscriber.ability_index, &chars);
 
     if !ability.functions_in(&obj.zone) {
         return;
@@ -2668,9 +2676,12 @@ fn battlefield_trigger_subscriber_matches_event(
         return false;
     };
     let trigger_identity = compute_trigger_identity(trigger_ability);
+    let Some(chars) = view.calculated_characteristics_arc(obj_id) else {
+        return;
+    };
     let ctx = TriggerContext::for_source(obj_id, controller, game)
         .with_trigger_identity(trigger_identity)
-        .with_ability_index(subscriber.ability_index);
+        .with_ability_index_and_characteristics(subscriber.ability_index, &chars);
 
     if !ability.functions_in(&obj.zone) {
         return false;

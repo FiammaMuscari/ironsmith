@@ -259,6 +259,9 @@ pub fn compile_delayed_trigger_spec(
                 first_spell_of_game: false,
             })
         }
+        TriggerSpec::BeginningOfMainPhase { player, .. } => Ok(
+            ironsmith_core::DelayedTriggerSpec::BeginningOfMainPhase(player.clone()),
+        ),
         TriggerSpec::PlayerPlaysLand { player, filter } => {
             Ok(ironsmith_core::DelayedTriggerSpec::PlayerPlaysLand {
                 player: player.clone(),
@@ -732,6 +735,7 @@ fn apply_delayed_trigger_duration(
         Until::EndOfTurn => Ok(delayed.until_end_of_turn()),
         Until::EndOfCombat => Ok(delayed.until_end_of_combat()),
         Until::YourNextTurn => Ok(delayed.until_controller_next_turn()),
+        Until::YourNextTurnEnd => Ok(delayed.until_controller_next_turn_end()),
         other => Err(CardTextError::ParseError(format!(
             "unsupported delayed-trigger duration: {other:?}"
         ))),
@@ -1127,6 +1131,11 @@ pub(super) fn try_compile_timing_and_control_effect(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let compiled = match effect {
         EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextEndStep { player, effects }) => {
+            let player_spec = crate::reference_helpers::resolve_choose_spec_it_tag(
+                &ChooseSpec::Player(player.clone()), &current_reference_env(ctx))?;
+            let ChooseSpec::Player(player) = player_spec else {
+                return Err(CardTextError::InvariantViolation("delayed timing lost its player".into()));
+            };
             // A prevention amount reaches a delayed body only as a counter
             // count ("put a counter on it for each 1 damage prevented this
             // way"); a bare "that many" elsewhere names an earlier result.

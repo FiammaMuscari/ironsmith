@@ -391,6 +391,9 @@ pub fn parse_look_at_hand_sentence(
         return Ok(None);
     };
     let target = match shape.player {
+        replacement_grammar::LookHandPlayerShape::DefendingPlayer => {
+            TargetAst::Player(PlayerFilter::Defending, None)
+        }
         replacement_grammar::LookHandPlayerShape::TargetPlayer => {
             TargetAst::Player(PlayerFilter::target_player(), Some(TextSpan::synthetic()))
         }

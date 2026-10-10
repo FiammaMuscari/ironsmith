@@ -1456,6 +1456,41 @@ fn try_merge_otherwise_into_previous_conditional(
     let Some(previous) = effects.last_mut() else {
         return false;
     };
+    if let EffectAst::ControlFlow(control) = previous {
+        use crate::model::{ControlFlowNodeAst, ControlPredicateAst, NestedProgramAst, NestedProgramKindAst};
+        let ControlFlowNodeAst::Condition {
+            condition,
+            consequence_program,
+            alternative_program: None,
+            reflexive: false,
+        } = &control.node else {
+            return false;
+        };
+        let mut fallback = otherwise_effects.clone();
+        if let ControlPredicateAst::State(predicate) = &condition.predicate {
+            ironsmith_compiler_semantic::condition_antecedent::bind_fallback_it_to_condition_tag(
+                &mut fallback, predicate,
+            );
+        }
+        let mut programs = control.programs.clone();
+        let alternative_program = programs.len();
+        programs.push(NestedProgramAst::new(NestedProgramKindAst::Alternative, fallback));
+        let Ok(joined) = crate::model::CompilerControlFlowAst::new(
+            control.semantic,
+            ControlFlowNodeAst::Condition {
+                condition: condition.clone(),
+                consequence_program: *consequence_program,
+                alternative_program: Some(alternative_program),
+                reflexive: false,
+            },
+            programs,
+            control.provenance.clone(),
+        ) else {
+            return false;
+        };
+        *previous = EffectAst::ControlFlow(Box::new(joined));
+        return true;
+    }
     let conditional = match previous {
         conditional @ EffectAst::Conditionals(ConditionalEffectAst::Conditional { .. }) => {
             conditional
@@ -2949,6 +2984,18 @@ pub(super) fn parse_effect_sentences_from_sentence_inputs(
             sentence_idx += 1;
             continue;
         }
+        // A repeated keep-and-rest procedure must retain its first sentence
+        // as the antecedent of "the same way" before the single-statement
+        // choice reader consumes it.
+        if let Some(mut repeated) = super::pair_procedure::same_way_balance::read(
+            &sentences,
+            sentence_idx,
+        )? {
+            effects.append(&mut repeated);
+            carried_context = None;
+            sentence_idx += 2;
+            continue;
+        }
         // A choice-complement owns its comma-separated keep slots and the
         // sacrifice of the unchosen remainder even when it is the first
         // statement in a larger program. Preserve that typed statement here
@@ -4001,6 +4048,12 @@ fn parse_complete_simple_draw_sentence(
     }) {
         return Ok(None);
     }
+    // The subject parser recognizes participant prefixes. A prior action
+    // must not be swallowed as part of that prefix merely because this
+    // sentence later contains the word "draw".
+    if super::find_verb(&tokens[..draw_idx]).is_some() {
+        return Ok(None);
+    }
     let subject = if draw_idx == 0 {
         None
     } else {
@@ -4155,7 +4208,15 @@ pub(crate) fn parse_complete_simple_subject_verb_sentence(
         }
         Some(subject)
     };
+    let random_subject = if gain_idx > 0 {
+        crate::util::parse_target_phrase(&tokens[..gain_idx]).ok().filter(|target| {
+            matches!(target, TargetAst::WithCount(_, count) if count.random)
+        })
+    } else {
+        None
+    };
     if gain_idx > 3
+        && random_subject.is_none()
         && !matches!(
             subject,
             Some(SubjectAst::Player(
@@ -4165,17 +4226,55 @@ pub(crate) fn parse_complete_simple_subject_verb_sentence(
     {
         return Ok(None);
     }
+    // The declaration owns the random target selection. The action consumes
+    // that selected player instead of announcing a second ordinary target.
+    let subject = if random_subject.is_some() {
+        Some(SubjectAst::Player(PlayerAst::That))
+    } else {
+        subject
+    };
     let gain_tokens = &tokens[gain_idx + 1..];
     if gain_tokens
         .first()
         .is_some_and(|token| token.is_word("control"))
     {
-        return super::verb_handlers::parse_gain_control(gain_tokens, subject).map(Some);
+        let effect = super::verb_handlers::parse_gain_control(gain_tokens, subject)?;
+        return Ok(Some(if let Some(target) = random_subject {
+            EffectAst::Sequence { effects: vec![EffectAst::subject_verb_target_only(target), effect] }
+        } else { effect }));
     }
     if gain_tokens.iter().any(|token| token.is_word("life")) {
-        return super::verb_handlers::parse_gain_life(gain_tokens, subject).map(Some);
+        let effect = super::verb_handlers::parse_gain_life(gain_tokens, subject)?;
+        return Ok(Some(if let Some(target) = random_subject {
+            EffectAst::Sequence { effects: vec![EffectAst::subject_verb_target_only(target), effect] }
+        } else { effect }));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod random_player_subject_tests {
+    use super::*;
+
+    #[test]
+    fn random_player_subject_keeps_its_announcement_policy() {
+        for text in [
+            "Target opponent chosen at random gains control of this permanent.",
+            "Target player chosen at random gains 3 life.",
+        ] {
+            let tokens = crate::lexer::lex_line(text, 0).unwrap();
+            let parsed = parse_complete_simple_subject_verb_sentence(&tokens).unwrap().unwrap();
+            let EffectAst::Sequence { effects } = parsed else { panic!("expected a declared random target") };
+            assert_eq!(effects.len(), 2);
+            let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::TargetOnly { target: TargetAst::WithCount(_, count), .. },
+                ..
+            }) = &effects[0] else { panic!("random target declaration missing") };
+            assert!(count.random);
+            assert_eq!(count.min, 1);
+            assert_eq!(count.max, Some(1));
+        }
+    }
 }
 
 pub(super) fn parse_complete_simple_mill_sentence(
@@ -6067,6 +6166,13 @@ pub(crate) fn parse_complete_composable_fight_program(
 fn parse_direct_typed_coordination(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    // The random selection and its value reader are one instruction group;
+    // splitting at "then" would lose both the card choice and the player.
+    if let Some(effects) = super::subject_verb_primitives::parse_sentence_random_hand_reveal_then_loses_mana_value_life(
+        super::SubjectVerbPrimitiveClause::new(tokens),
+    )? {
+        return Ok(Some(effects));
+    }
     if effect_grammar::for_each_shapes::parse_participant_clause_shape(tokens).is_some() {
         return Ok(None);
     }
@@ -6243,6 +6349,13 @@ pub(crate) fn bind_single_outer_where_x(
 pub fn parse_effect_sentences_lexed(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // The outside-game origin and chosen card belong to one instruction.
+    // Claim it before generic imperative "put" parsing defaults to battlefield.
+    if split_lexed_sentences(tokens).len() == 1
+        && let Some(effects) = super::bundle_rules::parse_put_from_outside_game(tokens)?
+    {
+        return Ok(effects);
+    }
     if let Some(split) = super::shared_object_verb_pairs::split_shared_object_verb_pairs(tokens) {
         return parse_effect_sentences_lexed(&split);
     }
@@ -6523,6 +6636,11 @@ fn bind_where_x_threshold_conditions(tokens: &[OwnedLexToken], effects: &mut [Ef
 fn parse_effect_sentences_lexed_unfinalized(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // The modal envelope owns its `or` and any coordination within a mode.
+    // Generic coordination would otherwise execute both alternatives.
+    if let Some(effects) = super::dispatch_inner::parse_player_villainous_choice_statement(tokens)? {
+        return Ok(effects);
+    }
     // The complete restriction plus affirmative stat change owns its sentence.
     // Whole-document readers must not recover only the base-stat suffix.
     let statements = split_lexed_sentences(tokens);
@@ -6574,11 +6692,6 @@ fn parse_effect_sentences_lexed_unfinalized(
         && words.starts_with(&["you", "may", "reveal"])
         && words.ends_with(&["and", "put", "it", "into", "your", "hand"])
         && let Some(effects) = super::bundle_rules::parse_reveal_from_outside_game_to_hand(tokens)?
-    {
-        return Ok(effects);
-    }
-    if split_lexed_sentences(tokens).len() == 1
-        && let Some(effects) = super::bundle_rules::parse_put_from_outside_game(tokens)?
     {
         return Ok(effects);
     }
@@ -8525,6 +8638,15 @@ fn dispatch_effect_sentences_lexed_inner_remaining(
     // Keep the comparative choice next to the search while its dynamic
     // count is bound. Splitting these sentences first loses the operands.
     let comparison_search_sentences = split_lexed_sentences(tokens);
+    // The searched library supplies the omitted destination in "Shuffle and
+    // put that card on top." Keep both sentences in the search program.
+    if let [search, placement] = comparison_search_sentences.as_slice()
+        && search.first().is_some_and(|token| token.is_word("search"))
+        && crate::lexer::token_word_refs(placement).starts_with(&["shuffle", "and", "put"])
+        && let Some(effects) = super::search_library::parse_search_library_sentence(tokens)?
+    {
+        return Ok(effects);
+    }
     if let [choice, search] = comparison_search_sentences.as_slice()
         && search.first().is_some_and(|token| token.is_word("search"))
         && let Ok(Some((_, PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }, _, _))) =
@@ -8602,7 +8724,7 @@ fn parse_turn_scoped_entry_counter_replacement(
 /// Parse a resolving rule such as "Permanents enter tapped this turn."
 /// The subject remains a normal object filter so the capability also covers
 /// narrower turn-scoped entry rules without tying the effect to one card.
-fn parse_turn_scoped_enter_tapped_replacement(
+pub(crate) fn parse_turn_scoped_enter_tapped_replacement(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let view = crate::lexer::TokenWordView::new(tokens);
@@ -12505,6 +12627,7 @@ pub fn replace_unbound_x_in_effect_anywhere(
             replace_in_filter(filter, replacement, clause)?;
         }
         EffectAst::SubjectVerb(subject_verb) => match &mut subject_verb.action {
+            SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. }) => {}
             SubjectVerbActionAst::Characteristics(
                 CharacteristicActionAst::BecomeBasePtCreature {
                     base_power_toughness: None,
@@ -13385,7 +13508,11 @@ pub fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
                 target: damage_target,
                 ..
             }) = &mut subject_verb.action
-                && target_references_it(damage_target)
+                && (target_references_it(damage_target)
+                    || (matches!(target, TargetAst::PlayerOrPlaneswalker(_, _))
+                        && matches!(damage_target, TargetAst::PlayerOrPlaneswalker(
+                            PlayerFilter::TargetPlayerOrControllerOfTarget, _
+                        ))))
             {
                 *damage_target = target.clone();
             }
@@ -14359,6 +14486,23 @@ pub fn try_apply_token_copy_followup(
     // to the most recent structurally reachable token action instead of
     // requiring that action to be the wrapper's literal final child.
     for effect in effects.iter_mut().rev() {
+        if matches!(followup, TokenCopyFollowup::SacrificeAtEndOfCombat)
+            && matches!(effect, EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::Tokens(TokenActionAst::CreateTokenCopy { .. }
+                    | TokenActionAst::CreateTokenCopyFromSource { .. }), ..
+            }))
+        {
+            // Schedule inside the creation's loop so every iteration retains
+            // its own complete created-token collection until end of combat.
+            let created = effect.clone();
+            *effect = EffectAst::Sequence { effects: vec![created, EffectAst::Delayed(
+                DelayedEffectAst::DelayedUntilEndOfCombat {
+                    effects: vec![EffectAst::subject_verb_sacrifice_all(PlayerAst::You,
+                        ObjectFilter::tagged(crate::tag::CompilerReferenceTag::It.bind()))],
+                },
+            )] };
+            return Ok(true);
+        }
         let applied = match effect {
             EffectAst::SubjectVerb(subject_verb) => match &mut subject_verb.action {
                 SubjectVerbActionAst::KeywordActions(KeywordActionAst::Populate {

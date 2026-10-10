@@ -1126,6 +1126,19 @@ fn resolve_it_tag_inner(
             })
             .collect();
     }
+    // A later source action may replace the ordinary object antecedent.
+    // "Milled this way" still names the milling instruction's exact set.
+    if filter.prior_effect_action_surface() == Some(ironsmith_core::PriorEffectAction::Milled)
+        && let Some((_, milled)) = refs.snapshot_tag_aliases.iter().find(|(alias, _)| {
+            alias == &crate::tag::CompilerReferenceTag::MilledThisWay.key()
+        })
+    {
+        for constraint in &mut resolved.tagged_constraints {
+            if constraint.tag == crate::tag::CompilerReferenceTag::It.key() {
+                constraint.tag = milled.clone();
+            }
+        }
+    }
     let revealed_collection_tag = (filter.prior_effect_action_surface()
         == Some(ironsmith_core::PriorEffectAction::Revealed))
     .then(|| {
@@ -1147,8 +1160,16 @@ fn resolve_it_tag_inner(
             }
         }
     }
+    // An explicit "exiled with this source" reference denotes the persistent
+    // link set, even when this resolution has just exiled another card.
+    let explicitly_source_linked = filter.source_surface.is_some();
     if !refs.snapshot_tag_aliases.is_empty() {
         for constraint in &mut resolved.tagged_constraints {
+            if explicitly_source_linked
+                && constraint.tag.as_str() == crate::tag::CompilerReferenceTag::SourceExiled.as_str()
+            {
+                continue;
+            }
             if let Some((_, concrete)) = refs
                 .snapshot_tag_aliases
                 .iter()
@@ -1182,7 +1203,9 @@ fn resolve_it_tag_inner(
     {
         for constraint in &mut resolved.tagged_constraints {
             if constraint.tag.as_str() == crate::tag::CompilerReferenceTag::SourceExiled.as_str()
-                && is_exiled_collection_reference_tag(tag.as_str())
+                && (is_exiled_collection_reference_tag(tag.as_str())
+                    || is_cost_exiled_reference_tag(tag))
+                && !explicitly_source_linked
             {
                 constraint.tag = tag.clone();
             }
@@ -1225,7 +1248,7 @@ fn resolve_it_tag_inner(
             }
         }
     }
-    if !filter
+    if !resolved
         .tagged_constraints
         .iter()
         .any(|constraint| constraint.tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str())
@@ -3224,6 +3247,11 @@ mod tests {
 
         let ordinary = ObjectFilter::tagged(crate::tag::CompilerReferenceTag::SourceExiled.bind())
             .in_zone(Zone::Exile);
+        let mut linked = ordinary.clone();
+        linked.source_surface = Some(SourceReferenceSurface::ThisPermanentType("artifact".into()));
+        let linked = resolve_it_tag(&linked, &refs).unwrap();
+        assert_eq!(linked.tagged_constraints[0].tag.as_str(),
+            crate::tag::CompilerReferenceTag::SourceExiled.as_str());
         let ordinary = resolve_it_tag(&ordinary, &refs)
             .expect("an ordinary latest-exile collection should still rebind");
         assert!(ordinary.tagged_constraints.iter().any(|constraint| {

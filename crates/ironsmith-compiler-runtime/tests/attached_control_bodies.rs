@@ -151,6 +151,7 @@ fn complete_control_auras_cast_attach_and_follow_live_aura_control_and_attachmen
             game.phase_out(aura);
             assert_eq!(game.current_controller(first), Some(B));
             game.phase_in(aura);
+            game.refresh_continuous_state().unwrap();
             assert_eq!(game.current_controller(first), Some(A));
             game.move_object_by_effect(aura, Zone::Graveyard).unwrap();
             assert_eq!(game.current_controller(first), Some(B));

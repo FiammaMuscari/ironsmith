@@ -44,10 +44,10 @@ fn expected_rules(name: &str) -> &'static str {
 }
 
 // Presentation-only tolerance: case, commas, terminal periods, and captured
-// source-name aliases. Every rules word, number, modal and printed-name
+// source-name aliases and the nonfunctional Raid ability word. Every rules word, number, modal and printed-name
 // exception remains; model assertions below independently check literal names.
 fn rules_surface(text: &str, name: &str) -> String {
-    let mut text = text.to_ascii_lowercase();
+    let mut text = text.to_ascii_lowercase().replace("raid — ", "");
     let short = match name { CHAMELEON => "chameleon", MORITTE => "moritte", SAKASHIMA => "sakashima", _ => "" };
     if !short.is_empty() {
         text = text.replace(&format!("have {short} enter"), "have this creature enter")

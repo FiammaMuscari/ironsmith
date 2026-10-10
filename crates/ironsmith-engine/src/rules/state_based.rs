@@ -3622,7 +3622,7 @@ mod tests {
     }
 
     #[test]
-    fn legend_rule_batch_reuses_precomputed_characteristics_for_lki() {
+    fn legend_rule_batch_keeps_characteristic_recomputation_linear() {
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let alice = PlayerId::from_index(0);
         let legend = legendary_creature_definition(403, "Many Memorials");
@@ -3637,9 +3637,10 @@ mod tests {
         apply_legend_rule_choice_from_group(&mut game, legends[0], &legends);
 
         let after = game.work_counters();
-        assert_eq!(
-            after.characteristics_full_recomputes, before.characteristics_full_recomputes,
-            "all legend-rule LKI snapshots should reuse the pre-mutation characteristic batch"
+        assert!(
+            after.characteristics_full_recomputes - before.characteristics_full_recomputes
+                <= legends.len() as u64,
+            "departure LKI reuses the batch; exact arrival receipts and the survivor need at most one recomputation per object"
         );
         assert_eq!(
             game.battlefield
@@ -3880,8 +3881,8 @@ mod tests {
         assert!(game.object(moved_saga).is_some_and(|object| {
             object.zone == Zone::Graveyard && object.name == "Final Chapter Probe"
         }));
-        assert!(game.take_pending_trigger_events().iter().any(|event| {
-            event
+        assert!(game.turn_store.turn_history.event_records.iter().any(|record| {
+            record.event
                 .downcast::<crate::events::permanents::SacrificeEvent>()
                 .is_some_and(|sacrifice| sacrifice.permanent == saga_id)
         }));
@@ -3920,8 +3921,8 @@ mod tests {
                 .zone,
             Zone::Exile
         );
-        assert!(game.take_pending_trigger_events().iter().any(|event| {
-            event
+        assert!(game.turn_store.turn_history.event_records.iter().any(|record| {
+            record.event
                 .downcast::<crate::events::permanents::SacrificeEvent>()
                 .is_some_and(|sacrifice| sacrifice.permanent == saga_id)
         }));
@@ -3960,12 +3961,11 @@ mod tests {
                 .expect("replacement operation must finish without execution error")
         );
 
-        let pending = game.take_pending_trigger_events();
-        let bear_death = pending
+        let bear_death = game.turn_store.turn_history.event_records
             .iter()
-            .filter_map(|event| event.downcast::<crate::events::zones::ZoneChangeEvent>())
+            .filter_map(|record| record.event.downcast::<crate::events::zones::ZoneChangeEvent>())
             .find(|event| event.objects.first().copied() == Some(bear_id))
-            .expect("bear death should queue a zone-change event");
+            .expect("bear death should retain a committed zone-change event");
         let snapshot = bear_death
             .snapshot
             .as_ref()

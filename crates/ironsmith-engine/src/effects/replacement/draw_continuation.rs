@@ -141,7 +141,7 @@ fn contains_draw(effect: &Effect) -> bool {
     let mut found = false;
     effect
         .0
-        .visit_child_effects(&mut |child| found |= contains_draw(child));
+        .visit_resolution_child_effects(&mut |child| found |= contains_draw(child));
     found
 }
 pub(crate) fn replacement_effect_supported(effect: &Effect) -> bool {

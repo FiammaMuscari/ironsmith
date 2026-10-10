@@ -116,7 +116,14 @@ fn u040_short_library_and_cant_lose_life_still_remove_rad_per_nonland() {
     let (mut game, alice, _) = game();
     add_rad(&mut game, alice, 3);
     add_library_card(&mut game, alice, "Only Card", CardType::Sorcery);
-    game.effect_store.cant_effects.cant_lose_life.insert(alice);
+    let prohibition = ironsmith::cards::builders::CardDefinitionBuilder::new(CardId::new(), "Life loss prohibition")
+        .card_types(vec![CardType::Artifact])
+        .with_ability(ironsmith::Ability::static_ability(ironsmith::StaticAbility::restriction(
+            ironsmith::effect::Restriction::LoseLife(ironsmith::PlayerFilter::You),
+            "You can't lose life".into(),
+        )))
+        .build();
+    game.create_object_from_definition(&prohibition, alice, Zone::Battlefield);
     let source = game.new_object_id();
     let mut ctx = EffectContext::new_default(source, alice);
 

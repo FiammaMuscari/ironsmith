@@ -4274,14 +4274,20 @@ impl GameState {
         effects: &[ContinuousEffect],
     ) -> Result<ObjectSnapshot, crate::effects::ExecutionError> {
         let mutation_revision = self.mutation_revision;
+        // Global invalidation (including source designations such as saddled)
+        // need not mutate an object or add a continuous effect. Its snapshots
+        // must nevertheless reflect the new state before a zone transition.
+        let context_revision = self.continuous_context_revision();
         let effect_revision = self.effect_store.continuous_effects.revision();
         {
             let mut cache = self.runtime_cache.object_snapshot_cache.borrow_mut();
             if cache.mutation_revision != mutation_revision
+                || cache.context_revision != context_revision
                 || cache.effect_revision != effect_revision
             {
                 cache.entries.clear();
                 cache.mutation_revision = mutation_revision;
+                cache.context_revision = context_revision;
                 cache.effect_revision = effect_revision;
             }
             if let Some(snapshot) = cache.entries.get(&object.id) {
@@ -4294,7 +4300,9 @@ impl GameState {
             )?,
         );
         let mut cache = self.runtime_cache.object_snapshot_cache.borrow_mut();
-        if cache.mutation_revision == mutation_revision && cache.effect_revision == effect_revision
+        if cache.mutation_revision == mutation_revision
+            && cache.context_revision == context_revision
+            && cache.effect_revision == effect_revision
         {
             cache.entries.insert(object.id, Arc::clone(&snapshot));
         }

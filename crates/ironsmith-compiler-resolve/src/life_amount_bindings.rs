@@ -54,6 +54,8 @@ fn direct_life_producer(effect: &EffectAst) -> Option<(EffectMetric, PlayerFilte
         PlayerAst::That => PlayerFilter::IteratedPlayer,
         PlayerAst::Opponent => PlayerFilter::Opponent,
         PlayerAst::Any => PlayerFilter::Any,
+        PlayerAst::Target => PlayerFilter::target_player(),
+        PlayerAst::TargetOpponent => PlayerFilter::target_opponent(),
         // A target/choice needs its own resolved identity, not an invented
         // equivalence with the event participant.
         _ => return None,
@@ -128,7 +130,7 @@ pub(super) fn rebound_producer_id(
             Value::PriorEffectMetric { effect_id, query }
                 if is_life_query(query)
                     && query.metric == role.0
-                    && query.player.as_ref() == Some(&role.1) =>
+                    && (query.player.is_none() || query.player.as_ref() == Some(&role.1)) =>
             {
                 if !ids.contains(effect_id) {
                     ids.push(*effect_id);
@@ -182,7 +184,10 @@ pub(super) fn bind_life_query(
     let any_player = PlayerFilter::Any;
     let participant = query.player.as_ref().unwrap_or(&any_player);
     let same_player = |producer: &PlayerFilter| {
-        producer == participant
+        // An unqualified "life lost this way" reads the producing instruction's
+        // whole result. Explicit participant queries still require identity.
+        query.player.is_none()
+            || producer == participant
             || (participant == &PlayerFilter::IteratedPlayer
                 && producer == &PlayerFilter::You
                 && state
@@ -254,6 +259,29 @@ mod tests {
         assert_eq!(restored.life_event_binding, env.life_event_binding);
         assert_eq!(restored.life_amount_producers, env.life_amount_producers);
     }
+    #[test]
+    fn unqualified_life_result_keeps_its_targeted_producer() {
+        let mut env = ReferenceEnv::default();
+        env.life_amount_producers = std::sync::Arc::new(vec![LifeAmountProducer {
+            effect_id: EffectId(19),
+            metric: EffectMetric::LifeLost,
+            player: PlayerFilter::target_opponent(),
+        }]);
+        let query = ironsmith_core::PriorEffectMetricQuery::new(
+            EffectMetricSource::Outcome, EffectMetric::LifeLost,
+        );
+        assert!(matches!(
+            bind_life_query(&query, effect_reference_resolution_state(&env)).unwrap(),
+            Value::PriorEffectMetric { effect_id: EffectId(19), .. }
+        ));
+        let mut wrong_player = query.clone();
+        wrong_player.player = Some(PlayerFilter::You);
+        assert!(bind_life_query(&wrong_player, effect_reference_resolution_state(&env)).is_err());
+        let mut wrong_direction = query;
+        wrong_direction.metric = EffectMetric::LifeGained;
+        assert!(bind_life_query(&wrong_direction, effect_reference_resolution_state(&env)).is_err());
+    }
+
     #[test]
     fn life_direction_participant_and_alternative_branches_must_all_be_proven() {
         let mut env = ReferenceEnv::default();

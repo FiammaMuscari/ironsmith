@@ -4989,6 +4989,7 @@ pub(crate) fn describe_prior_effect_action(
         crate::effect::PriorEffectAction::Died => "died",
         crate::effect::PriorEffectAction::Destroyed => "destroyed",
         crate::effect::PriorEffectAction::Discarded => "discarded",
+        crate::effect::PriorEffectAction::Copied => "copied",
         crate::effect::PriorEffectAction::Drawn => "drawn",
         crate::effect::PriorEffectAction::Exiled => "exiled",
         crate::effect::PriorEffectAction::Goaded => "goaded",

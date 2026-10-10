@@ -813,8 +813,7 @@ fn supplied_same_id_and_price_cast_views_do_not_share_root_payment_memo() {
         .card_types(vec![CardType::Creature]).mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Blue])).build();
     let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
     let card = game.create_object_from_definition(&definition, alice, Zone::Hand);
-    game.player_mut(alice).unwrap().mana_pool.add(ManaSymbol::Blue, 1);
-    game.player_mut(alice).unwrap().restricted_mana.push(RestrictedManaUnit {
+    game.player_mut(alice).unwrap().add_restricted_mana(RestrictedManaUnit {
         symbol: ManaSymbol::Blue, source, source_controller: Some(alice), source_chosen_creature_type: None,
         restrictions: vec![ManaUsageRestriction::PaymentTransaction {
             restriction: Some(P::All(vec![P::Purpose(ManaPaymentPurpose::CastSpell),

@@ -877,7 +877,9 @@ mod incubate {
         put(&mut game, &card("Parallel Lives"), alice());
         let mut dm = Dm::default();
         run(&mut game, Effect::incubate(3, 1), alice(), &mut dm);
-        let incubators = named_on_battlefield(&game, "Incubator");
+        let incubators: Vec<_> = game.battlefield.iter().copied().filter(|id| {
+            game.object(*id).is_some_and(|object| object.has_subtype(Subtype::Incubator))
+        }).collect();
         assert_eq!(incubators.len(), 2);
         for incubator in incubators {
             assert_eq!(game.counter_count(incubator, CounterType::PlusOnePlusOne), 3);

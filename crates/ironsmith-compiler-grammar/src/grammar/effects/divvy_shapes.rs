@@ -784,12 +784,15 @@ mod fixed_pile_tests {
             let sentences = crate::lexer::split_lexed_sentences(&lexed);
             assert_eq!(
                 parse_divvy_sequence_shape(&sentences),
-                Some(DivvySequenceShape::FixedExilePiles {
-                    first_count,
-                    second_count,
-                    first_face_down: true,
-                    second_face_down: false
-                }),
+                Some(DivvySequenceShape::BinaryCards(BinaryPileProgramShape {
+                    producer: BinaryPileProducer::FaceDownThenFaceUpExile {
+                        first: first_count, second: second_count,
+                    },
+                    partitioner: BinaryPilePartitioner::You,
+                    reveal_pool: false,
+                    destination: BinaryPileDestination::ChosenToGraveyardCastFromOtherRestToHand,
+                    consumed_sentences: 6,
+                })),
                 "{sentences:?}"
             );
         }

@@ -20,7 +20,8 @@ fn aetherplasm_puts_the_creature_onto_the_battlefield_blocking_the_attacker() {
         assert!(entry.enters_blocking.is_some(), "{entry:#?}");
         assert!(!entry.enters_attacking);
         assert!(
-            moves.iter().any(|effect| effect.zone == Zone::Hand),
+            support::find_all::<ironsmith::effects::ReturnToHandEffect>(&definition)
+                .iter().any(|effect| matches!(effect.spec, ironsmith::target::ChooseSpec::Source)),
             "this creature returns to hand first: {moves:#?}"
         );
     }

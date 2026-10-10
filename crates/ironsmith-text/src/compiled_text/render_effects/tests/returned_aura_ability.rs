@@ -135,7 +135,7 @@ fn returned_aura_ability_belongs_to_aura_and_protects_attachment() {
                         _ => None,
                     })
                     .collect();
-                assert_eq!(activated.len(), 1, "{abilities:#?}");
+                assert_eq!(activated.len(), 1, "{abilities:#?}; continuous={:#?}", game.effect_store.continuous_effects);
                 assert!(
                     !abilities
                         .iter()

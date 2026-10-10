@@ -51,8 +51,19 @@ fn an_object_target_in_the_condition_is_declared_and_tested() {
     for definition in definitions("Blood Lust") {
         let debug = format!("{definition:?}");
         // One target slot, a resolution-time test of it, and the otherwise arm.
-        assert!(debug.contains("TargetMatches") || debug.contains("TargetObjectMatches"), "{debug}");
-        assert!(debug.contains("toughness"), "{debug}");
+        let effects = definition.spell_effect.as_ref().unwrap().all_effects();
+        let target = effects.iter().find_map(|effect|
+            effect.downcast_ref::<ironsmith::effects::TaggedEffect>()
+        ).expect("the announced target is retained");
+        let conditional = effects.iter().find_map(|effect|
+            effect.downcast_ref::<ironsmith::effects::ConditionalEffect>()
+        ).expect("resolution-time condition");
+        let ironsmith_core::Condition::TaggedObjectMatches(tag, filter) = &conditional.condition else {
+            panic!("condition must inspect the announced target: {:?}", conditional.condition);
+        };
+        assert_eq!(tag, &target.tag);
+        assert!(filter.toughness.is_some());
+        assert!(!conditional.if_true.is_empty() && !conditional.if_false.is_empty());
         assert_eq!(debug.matches("TargetOnlyEffect").count(), 1, "{debug}");
     }
 }

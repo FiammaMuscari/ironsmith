@@ -1715,8 +1715,11 @@ impl GameState {
                 event
             };
             let mut event = event;
+            // Every committed move has an exact destination incarnation.
+            // Entry predicates retain this identity after that object leaves;
+            // the origin snapshot cannot establish it on its own.
+            event.result_objects = vec![new_id];
             if old_zone == Zone::Battlefield {
-                event.result_objects = vec![new_id];
                 if let Some(snapshot) = pre_move_snapshot.as_ref() {
                     for attachment_id in &snapshot.attachments {
                         if let Some(attachment) = self.object(*attachment_id) {

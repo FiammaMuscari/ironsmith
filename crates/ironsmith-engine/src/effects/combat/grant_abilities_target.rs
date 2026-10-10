@@ -13,6 +13,9 @@ use crate::target::ChooseSpec;
 pub type GrantAbilitiesTargetEffect = ironsmith_core::GrantAbilitiesTargetEffect<StaticAbility>;
 
 impl EffectExecutor for GrantAbilitiesTargetEffect {
+    fn own_preflight_object_specs(&self) -> Vec<ChooseSpec> {
+        std::iter::once(self.target.clone()).chain(self.activated_from.iter().cloned()).collect()
+    }
     fn visit_child_effects(&self, visitor: &mut dyn FnMut(&crate::effect::Effect)) {
         for ability in &self.abilities {
             crate::ability::visit_static_owned_effects(ability, visitor);
@@ -28,12 +31,27 @@ impl EffectExecutor for GrantAbilitiesTargetEffect {
             return grant_player_protections(self, game, ctx);
         }
         let target_id = resolve_single_object_for_effect(game, ctx, &self.target)?;
-        if self.abilities.is_empty() {
+        if self.abilities.is_empty() && self.activated_from.is_none() {
             return Ok(EffectOutcome::resolved());
         }
 
         let abilities = expand_sacrificed_land_type_landwalks(&self.abilities, ctx);
         let mut outcomes = Vec::new();
+        if let Some(source) = &self.activated_from {
+            let source_id = resolve_single_object_for_effect(game, ctx, source)?;
+            game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
+            // Freeze the abilities now. Losing the donor or changing its
+            // abilities later does not change this resolving grant.
+            let copied = game.current_abilities(source_id).unwrap_or_default()
+                .into_iter().filter(|ability| matches!(ability.kind, crate::ability::AbilityKind::Activated(_)))
+                .collect::<Vec<_>>();
+            for ability in copied {
+                let apply = ApplyContinuousEffect::new(
+                    EffectTarget::Specific(target_id), Modification::AddAbilityGeneric(ability), self.duration.clone(),
+                );
+                outcomes.push(execute_effect(game, &Effect::new(apply), ctx)?);
+            }
+        }
         for ability in &abilities {
             let apply = ApplyContinuousEffect::new(
                 EffectTarget::Specific(target_id),

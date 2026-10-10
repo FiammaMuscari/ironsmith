@@ -243,8 +243,13 @@ fn gain_suspend_if_missing_follow_up() -> crate::effect::Effect {
     let (Some(upkeep), Some(last_counter)) = (abilities.next(), abilities.next()) else {
         unreachable!("suspend grants exactly two triggered abilities");
     };
-    let grant = crate::effects::ApplyContinuousEffect::with_spec(
-        ChooseSpec::Tagged(tag.clone()),
+    let grant = crate::effects::ApplyContinuousEffect::new(
+        crate::continuous::EffectTarget::Filter(
+            ObjectFilter::default().in_zone(Zone::Exile).match_tagged(
+                tag.clone(),
+                crate::filter::TaggedOpbjectRelation::IsTaggedObject,
+            ),
+        ),
         crate::continuous::Modification::AddAbilityGeneric(upkeep),
         crate::effect::Until::Forever,
     )

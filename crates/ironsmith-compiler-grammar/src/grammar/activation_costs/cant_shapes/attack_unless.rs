@@ -224,10 +224,32 @@ fn parse_requirement_lexed(
     }
 }
 
-/// The fallback: the whole remaining clause read by the shared static
-/// condition grammar, held as the source's own condition.
+fn has_coordinated_payment(tokens: &[OwnedLexToken]) -> bool {
+    primitives::find_prefix(tokens, || {
+        (
+            alt((primitives::kw("and"), primitives::kw("or"))),
+            opt(primitives::kw("you")),
+            alt((
+                primitives::kw("pay"),
+                primitives::kw("sacrifice"),
+                primitives::kw("discard"),
+                primitives::kw("tap"),
+                primitives::kw("untap"),
+                primitives::kw("return"),
+                primitives::kw("exile"),
+            )),
+        )
+            .void()
+    })
+    .is_some()
+}
+
+/// The fallback owns the complete static condition, never a payment action.
 fn parse_general_condition_requirement(input: &mut LexStream<'_>) -> WResult<ParsedRequirement> {
     let tokens = take_remaining_tokens(input)?;
+    if has_coordinated_payment(tokens) {
+        return Err(primitives::backtrack_err("general requirement", "separate payment action"));
+    }
     let condition = crate::keyword_static::parse_static_condition_clause(tokens).map_err(|_| {
         primitives::backtrack_err("general requirement", "a complete static condition")
     })?;
@@ -809,28 +831,8 @@ fn parse_controller_control_requirement_inner(
     let control_tokens = take_remaining_tokens(input)?;
     // A coordinated payment is a second requirement, not a property of an
     // object the player controls. Leave it to a compound requirement parser.
-    if primitives::find_prefix(control_tokens, || {
-        (
-            alt((primitives::kw("and"), primitives::kw("or"))),
-            opt(primitives::kw("you")),
-            alt((
-                primitives::kw("pay"),
-                primitives::kw("sacrifice"),
-                primitives::kw("discard"),
-                primitives::kw("tap"),
-                primitives::kw("untap"),
-                primitives::kw("return"),
-                primitives::kw("exile"),
-            )),
-        )
-            .void()
-    })
-    .is_some()
-    {
-        return Err(primitives::backtrack_err(
-            "controller condition",
-            "separate payment action",
-        ));
+    if has_coordinated_payment(control_tokens) {
+        return Err(primitives::backtrack_err("controller condition", "separate payment action"));
     }
     let parsed = conditions::parse_control_condition(
         control_tokens,
@@ -1194,6 +1196,7 @@ mod tests {
             };
             assert_eq!(left, expected);
         }
-        assert!(parse("This creature can't attack unless its power is 6 or greater and you control a Forest.").is_none());
+        let compound = parse("This creature can't attack unless its power is 6 or greater and you control a Forest.").expect("complete compound condition");
+        assert!(matches!(compound.condition, CantAttackUnlessConditionSpec::SourceCondition(PredicateAst::And(_, _))), "{compound:?}");
     }
 }

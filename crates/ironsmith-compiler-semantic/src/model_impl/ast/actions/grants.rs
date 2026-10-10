@@ -94,6 +94,11 @@ pub enum GrantActionAst {
         abilities: Vec<GrantedAbilityAst>,
         duration: Until,
     },
+    GrantActivatedAbilitiesFrom {
+        target: TargetAst,
+        source: TargetAst,
+        duration: Until,
+    },
     GrantAbilitiesToTarget {
         target: TargetAst,
         abilities: Vec<GrantedAbilityAst>,

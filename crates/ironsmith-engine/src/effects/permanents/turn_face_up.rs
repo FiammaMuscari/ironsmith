@@ -589,7 +589,12 @@ mod replacement_program_boundary_tests {
                     && game.object(target).unwrap().face_down_cast_state.is_none()
                     && game.player(alice).unwrap().life == 28
                     && game.effect_store.replacement_effects.get_effect(shield).is_none()
-                    && game.effect_store.pending_trigger_events.len() == 4));
+                    && {
+                        let mut observed = std::collections::HashSet::new();
+                        result.events.iter()
+                            .chain(game.turn_store.turn_history.projected_records().map(|record| &record.event))
+                            .filter(|event| observed.insert(event.occurrence_key())).count() == 4
+                    }));
             }
         }
         assert!(observations.iter().all(|(_, _, _, correct)| *correct), "{observations:#?}");

@@ -220,7 +220,9 @@ pub fn parse_any_color_among_span(tokens: &[OwnedLexToken]) -> Option<AnyColorAm
 pub fn parse_any_of_source_colors_surface(
     tokens: &[OwnedLexToken],
 ) -> Option<crate::target::SourceReferenceSurface> {
-    let words = TokenWordView::new(tokens).word_refs();
+    // Keep the possessive suffix: normalized parser words turn "creature's"
+    // into "creatures", which is not the singular source reference.
+    let words = crate::lexer::token_word_refs(tokens);
     let body = if tokens.last().is_some_and(|token| token.kind == TokenKind::Period) {
         &tokens[..tokens.len() - 1]
     } else { tokens };

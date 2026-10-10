@@ -83,7 +83,7 @@ pub fn token_subtype_rules_word(subtype: Subtype) -> Option<&'static str> {
         Merfolk=>"Merfolk", Minion=>"Minion", Minotaur=>"Minotaur", Mole=>"Mole", Monk=>"Monk",
         Monkey=>"Monkey", Moonfolk=>"Moonfolk", Mount=>"Mount", Mouse=>"Mouse", Mutant=>"Mutant", Myr=>"Myr",
         Naga=>"Naga", Necron=>"Necron", Nightmare=>"Nightmare", Ninja=>"Ninja", Noble=>"Noble",
-        Octopus=>"Octopus", Ogre=>"Ogre", Ooze=>"Ooze", Orc=>"Orc", Otter=>"Otter", Ouphe=>"Ouphe",
+        Octopus=>"Octopus", Ogre=>"Ogre", Ooze=>"Ooze", Orb=>"Orb", Orc=>"Orc", Otter=>"Otter", Ouphe=>"Ouphe",
         Ox=>"Ox", Oyster=>"Oyster", Peasant=>"Peasant", Performer=>"Performer", Pest=>"Pest",
         Pegasus=>"Pegasus", Phyrexian=>"Phyrexian", Phoenix=>"Phoenix", Pincher=>"Pincher", Pilot=>"Pilot",
         Pirate=>"Pirate", Plant=>"Plant", Praetor=>"Praetor", Prism=>"Prism", Raccoon=>"Raccoon",

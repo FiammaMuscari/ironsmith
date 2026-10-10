@@ -114,8 +114,9 @@ pub fn parse_owned_cards_from_source_exiled_tokens(
 pub fn parse_play_lands_and_spells_from_source_exiled_tokens(
     tokens: &[OwnedLexToken],
 ) -> Option<SourceExiledReference> {
-    let (_, rest) = primitives::parse_prefix(tokens, primitives::phrase(&[
-        "you", "may", "play", "lands", "and", "cast", "spells", "from", "among", "cards",
+    let (_, rest) = primitives::parse_prefix(tokens, primitives::any_phrase(&[
+        &["you", "may", "play", "lands", "and", "cast", "spells", "from", "among", "cards"],
+        &["you", "may", "play", "cards"],
     ]))?;
     let ((owned_by_you, reference), tail) =
         primitives::parse_prefix(rest, parse_source_exiled_tail_lexed)?;

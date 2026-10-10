@@ -56,6 +56,7 @@ impl DecisionMaker for TargetIt {
 
 fn activate(game: &mut GameState, source: ObjectId, target: Option<ObjectId>) {
     let alice = PlayerId::from_index(0);
+    game.turn.priority_player = Some(alice);
     let action = compute_legal_actions(game, alice).expect("fixture has complete replacement state")
         .into_iter()
         .find(|a| matches!(a, LegalAction::ActivateAbility { source: s, .. } if *s == source))
@@ -83,6 +84,9 @@ fn activate(game: &mut GameState, source: ObjectId, target: Option<ObjectId>) {
     }
     assert_eq!(game.stack.len(), 1, "{result:?}");
     ironsmith::game_loop::resolve_stack_entry_with(game, &mut dm).unwrap();
+    // Growth-Chamber Guardian can trigger from the counters just placed.
+    // Finish that priority window before the next activation in the scenario.
+    ironsmith::game_loop::run_priority_loop_with(game, &mut queue, &mut dm).unwrap();
 }
 
 /// Alice controls Biomancer's Familiar and a Growth-Chamber Guardian ({2}{G}:

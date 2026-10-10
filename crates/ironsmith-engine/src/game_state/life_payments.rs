@@ -170,11 +170,9 @@ impl crate::effects::SimultaneousEffectCompletion for PaymentOriginalCompletion 
     }
 }
 
-/// A simultaneous replacement may substitute one prepared life action. The
-/// replacement's bindings are retained while its actual recipient/amount is
-/// evaluated before any other original. Compound action schedules need their
-/// own shared iterator; reject them during preparation rather than executing
-/// a prefix while another payer's original is still pending.
+/// Prepare scalar replacement life actions before simultaneous originals.
+/// Compound replacements retain their native program for commit, where its
+/// original actions and draw continuations have their own scheduler owner.
 fn prepare_simultaneous_payment_original(
     game: &mut GameState,
     ctx: &mut crate::effects::ExecutionContext,
@@ -196,36 +194,23 @@ fn prepare_simultaneous_payment_original(
         ..
     } = &original
     {
-        let [effect] = effects.as_slice() else {
-            return Err(ExecutionError::UnresolvableValue("simultaneous life-payment replacement requires a prepared single action; compound Instead program is not represented".into()));
-        };
-        crate::effects::replacement::with_replacement_child(
-            game,
-            ctx,
-            *source,
-            *controller,
-            context,
-            None,
-            None,
-            vec![],
-            |game, child| {
-                let event = effect
-                    .0
-                    .replacement_original_event(game, child)?
-                    .ok_or_else(|| ExecutionError::UnresolvableValue(
-                        "simultaneous life-payment Instead action has no prepared original boundary".into(),
-                    ))?;
-                let next =
-                    crate::effects::life::life_change::prepare_life_change(game, child, event)?;
-                let (next, scope) = prepare_simultaneous_payment_original(game, child, next)?;
-                Ok((
-                    next,
-                    scope.or_else(|| {
+        if let [effect] = effects.as_slice() {
+            crate::effects::replacement::with_replacement_child(
+                game, ctx, *source, *controller, context, None, None, vec![],
+                |game, child| {
+                    let Some(event) = effect.0.replacement_original_event(game, child)? else {
+                        return Ok(None);
+                    };
+                    let next = crate::effects::life::life_change::prepare_life_change(game, child, event)?;
+                    let (next, scope) = prepare_simultaneous_payment_original(game, child, next)?;
+                    Ok(Some((next, scope.or_else(|| {
                         Some(crate::effects::ExecutionContextCheckpoint::capture(child))
-                    }),
-                ))
-            },
-        )?
+                    }))))
+                },
+            )?.unwrap_or((original, None))
+        } else {
+            (original, None)
+        }
     } else {
         (original, None)
     };

@@ -82,7 +82,8 @@ impl Choices {
 
 impl DecisionMaker for Choices {
     fn decide_options(&mut self, game: &GameState, context: &SelectOptionsContext) -> Vec<usize> {
-        if context.options.iter().any(|option| option.description.to_ascii_lowercase().contains("discard")) {
+        if !context.description.starts_with("Choose the next cost to pay")
+            && context.options.iter().any(|option| option.description.to_ascii_lowercase().contains("discard")) {
             assert_eq!(context.player, A, "only the cast/ward payer announces a branch");
             self.branch_prompts += 1;
             if self.invalid_multiple { return vec![0, 1]; }

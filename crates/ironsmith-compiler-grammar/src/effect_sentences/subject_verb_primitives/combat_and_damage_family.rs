@@ -599,7 +599,14 @@ pub fn parse_distribute_counters_sentence(
             clause.text()
         )));
     }
-    let target = parse_target_phrase(target_phrase.tokens())?;
+    let target = if target_phrase.tokens().iter().any(|token| token.is_word("target")) {
+        parse_target_phrase(target_phrase.tokens())?
+    } else {
+        // "Among any number of creatures" chooses recipients at resolution;
+        // it does not declare targets while casting the spell.
+        TargetAst::Object(parse_object_filter(target_phrase.tokens(), false)?, None,
+            span_from_tokens(target_phrase.tokens()))
+    };
 
     Ok(Some(EffectAst::subject_verb_put_counters(
         counter_type,

@@ -484,11 +484,8 @@ pub(super) fn partition_shape(
 /// library": one card to hand, the rest to a second destination.
 pub(super) fn singleton_hand_disposition(
     sentence: &SentenceInput,
-    revealed: bool,
+    _revealed: bool,
 ) -> Option<LookedCardDisposition> {
-    if revealed {
-        return None;
-    }
     parse_looked_card_disposition(crate::lexer::trim_lexed_commas(sentence.lowered()))
 }
 

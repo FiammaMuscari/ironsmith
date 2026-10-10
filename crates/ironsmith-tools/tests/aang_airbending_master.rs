@@ -24,7 +24,7 @@ fn definition() -> CardDefinition {
     );
     assert!(!snapshot.parse_lossy && !snapshot.has_unimplemented);
     let text = snapshot.compiled_text.as_deref().unwrap();
-    assert!(text.contains("alternative casting cost of {2}"), "{text}");
+    assert!(text.contains("airbend another target creature"), "{text}");
     assert!(!text.contains("gains Airbend"), "{text}");
     assert!(!text.contains(",."), "{text}");
     let definition = compile_definition_from_payload(&payloads[0]).unwrap();
@@ -348,11 +348,7 @@ fn one_or_more_departures_include_source_and_form_one_trigger_per_batch() {
     )
     .unwrap();
     let mut queue = TriggerQueue::new();
-    for event in game.take_pending_trigger_events() {
-        for entry in check_triggers(&game, &event) {
-            queue.add(entry);
-        }
-    }
+    ironsmith::game_loop::drain_pending_trigger_events(&mut game, &mut queue);
     assert_eq!(
         queue.entries.len(),
         1,

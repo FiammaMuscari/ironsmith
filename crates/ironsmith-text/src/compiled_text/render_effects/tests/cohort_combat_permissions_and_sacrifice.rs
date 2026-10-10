@@ -204,7 +204,7 @@ fn cohort_landfall_damage_reuses_two_recipients_and_their_controller_relation() 
             assert!(crate::targeting::validate_flat_target_assignment(
                 &contexts,
                 &[first, Target::Object(recipient)]
-            ));
+            ), "walker={walker}, land={land_owner:?}, first={first:?}, creature={recipient:?}, contexts={contexts:#?}");
             assert!(!crate::targeting::validate_flat_target_assignment(
                 &contexts,
                 &[first, Target::Object(wrong)]

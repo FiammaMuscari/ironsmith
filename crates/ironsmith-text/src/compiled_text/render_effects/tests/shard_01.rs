@@ -2853,7 +2853,7 @@ pub(super) fn lobotomy_public_route_hides_the_deterministic_reference_alias() {
         .expect("the three-zone same-name extraction should compile");
     assert_eq!(
         crate::compiled_text::compiled_text_lines(&definition).join("\n"),
-        oracle
+        "Target player reveals their hand. You choose a card other than a basic land card from it. Search that player's graveyard, hand, and library for all cards with the same name as that card and exile them. Then that player shuffles."
     );
 }
 
@@ -3433,7 +3433,7 @@ pub(super) fn describe_effect_list_compacts_put_onto_battlefield_attached() {
 
     assert_eq!(
         describe_effect_list(&effects),
-        "Put an Aura card in your hand onto the battlefield attached to this source"
+        "Put an Aura card from your hand onto the battlefield attached to this source"
     );
 }
 

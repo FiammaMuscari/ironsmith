@@ -671,8 +671,14 @@ pub(super) fn compile_subject_verb_late(
             let mut effects = Vec::new();
             let mut choices = Vec::new();
             for source in sources {
-                let (mut spec, mut source_choices) =
-                    resolve_target_spec_with_choices(source, &refs)?;
+                let (mut spec, mut source_choices) = match source {
+                    // A nontargeted source filter in this plural-source
+                    // instruction names every matching live source.
+                    TargetAst::Object(filter, None, _) => {
+                        (ChooseSpec::All(resolve_it_tag(filter, &refs)?), Vec::new())
+                    }
+                    _ => resolve_target_spec_with_choices(source, &refs)?,
+                };
                 for group in &groups {
                     bind_other_damage_target_to_tagged_source(&mut spec, group);
                     for choice in &mut source_choices {
@@ -686,7 +692,7 @@ pub(super) fn compile_subject_verb_late(
                             .tag(tag.clone()),
                     );
                     groups.push(ChooseSpec::Tagged(tag));
-                } else if matches!(spec.base(), ChooseSpec::Tagged(_)) {
+                } else if matches!(spec.base(), ChooseSpec::Tagged(_) | ChooseSpec::All(_)) {
                     groups.push(spec.clone());
                 } else {
                     return Err(CardTextError::ParseError("multi-source damage needs target declarations or a previously bound object set".into()));
@@ -2046,7 +2052,7 @@ pub(super) fn compile_subject_verb_late(
             {
                 spec = ChooseSpec::All(resolve_it_tag(filter, &current_reference_env(ctx))?);
             }
-            let effect = if *put_only
+            let mut effect = if *put_only
                 && *choose_target_per_kind
                 && let Some(counter_source_spec) = counter_source_spec
             {
@@ -2065,6 +2071,7 @@ pub(super) fn compile_subject_verb_late(
             } else {
                 crate::effects::ForEachCounterKindPutOrRemoveEffect::one_kind(spec)
             };
+            effect.put_only = *put_only;
             Ok((vec![Effect::new(effect)], choices))
         }
         SubjectVerbActionAst::Counters(CounterActionAst::NextAdaptIgnoresCounters { target }) => {

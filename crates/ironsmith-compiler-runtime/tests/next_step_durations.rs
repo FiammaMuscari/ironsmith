@@ -632,7 +632,6 @@ fn new_next_step_durations_reject_unsupported_effect_owners_in_complete_bodies()
         "Type: Sorcery\nTarget creature doesn't untap until its controller's next untap step.",
         "Type: Sorcery\nTarget creature can't attack until its controller's next untap step.",
         "Type: Sorcery\nCreatures target player controls don't untap until its controller's next untap step.",
-        "Type: Sorcery\nIf you control an Island, creatures target player controls don't untap during that player's next untap step.",
     ] {
         let (direct, direct_loss) = ironsmith_compiler::parse_loss::capture(||
             compile_to_runtime_definition("Unsupported next-step owner", text, false));
@@ -664,5 +663,28 @@ fn prevention_permissions_and_carried_actions_reject_unowned_next_step_lifetimes
                 compile_to_artifact("Unowned carried duration", &text, false));
             assert!(artifact.is_err() || loss.is_lossy(), "artifact route accepted: {text}");
         }
+    }
+}
+
+#[test]
+fn conditional_untap_restriction_keeps_its_selected_player_and_next_step_duration() {
+    for definition in definitions_text("Conditional untap restriction",
+        "Type: Sorcery\nIf you control an Island, creatures target player controls don't untap during that player's next untap step.")
+    {
+        let effects = definition.spell_effect.as_ref().unwrap().flattened_default_effects();
+        let conditional = effects.iter().map(untagged)
+            .find_map(|effect| effect.downcast_ref::<ironsmith::effects::ConditionalEffect>()).unwrap();
+        assert!(conditional.if_false.is_empty());
+        let cant = conditional.if_true.iter().map(untagged)
+            .find_map(|effect| effect.downcast_ref::<CantEffect>()).unwrap();
+        let Until::PlayersNextUntapStep { player } = &cant.duration else {
+            panic!("conditional restriction lost its next-step duration: {:?}", cant.duration);
+        };
+        assert_eq!(player, &PlayerFilter::Target(Box::new(PlayerFilter::Any)));
+        let Restriction::Untap(filter) = &cant.restriction else {
+            panic!("conditional restriction changed its action");
+        };
+        assert_eq!(filter.controller.as_ref(), Some(player));
+        assert_eq!(filter.card_types, vec![CardType::Creature]);
     }
 }

@@ -29,8 +29,17 @@ pub(super) fn parse_exile_hand_draw_play_bundle(
     if tag.as_str() != crate::tag::CompilerReferenceTag::It.as_str() { return Ok(None); }
     fn flatten(effect: EffectAst, into: &mut Vec<EffectAst>) {
         match effect {
-            EffectAst::Sequence { effects } | EffectAst::Coordinated { effects, .. } => {
+            EffectAst::Sequence { effects } | EffectAst::Coordinated { effects, .. }
+            | EffectAst::SourceSentence { effects, .. } => {
                 for effect in effects { flatten(effect, into); }
+            }
+            EffectAst::Coordination(coordination)
+                if coordination.boundaries.iter().all(|boundary|
+                    boundary.ordering == crate::model::EffectOrderingAst::Ordered) =>
+            {
+                for member in coordination.members {
+                    for effect in member.effects { flatten(effect, into); }
+                }
             }
             effect => into.push(effect),
         }
@@ -46,7 +55,9 @@ pub(super) fn parse_exile_hand_draw_play_bundle(
     if filter.zone != Some(Zone::Hand) || filter.owner.is_none() { return Ok(None); }
     let EffectAst::SubjectVerb(SubjectVerbEffectAst { subject, action: SubjectVerbActionAst::LifeResources(
         LifeResourceActionAst::Draw { count }), .. }) = draw else { return Ok(None); };
-    if subject.player != PlayerAst::That
+    let same_player = subject.player == PlayerAst::That
+        || (subject.player == PlayerAst::Defending && filter.owner == Some(PlayerFilter::Defending));
+    if !same_player
         || (!count.has_surface_hint(ironsmith_core::ValueSurfaceHint::ThatManyCards)
             && !matches!(count.unhinted(), Value::PendingPriorEffectMetric(query)
                 if query.action == Some(ironsmith_core::PriorEffectAction::Exiled)))
@@ -60,7 +71,11 @@ pub(super) fn parse_exile_hand_draw_play_bundle(
     *tag = crate::tag::TagRef::of(exact.clone());
     *permission_bound_mana = true;
     let exile = EffectAst::TagReferenced { effect: Box::new(exile.clone()), tag: crate::tag::TagRef::of(exact) };
-    Ok(Some(vec![exile, draw.clone(), permission]))
+    Ok(Some(vec![exile, draw.clone(), permission].into_iter().map(|effect|
+        EffectAst::SourceSentence {
+            effects: vec![effect], leading_then: false, starting_with_controller: false,
+        }
+    ).collect()))
 }
 
 #[cfg(test)]
@@ -79,7 +94,8 @@ mod tests {
         ] {
             let effects = parse(text).expect("complete hand-exile/draw/play composition");
             assert_eq!(effects.len(), 3);
-            assert!(matches!(&effects[2], EffectAst::SubjectVerb(SubjectVerbEffectAst { action: SubjectVerbActionAst::Grants(
+            let EffectAst::SourceSentence { effects: permission, .. } = &effects[2] else { panic!("permission sentence") };
+            assert!(matches!(&permission[0], EffectAst::SubjectVerb(SubjectVerbEffectAst { action: SubjectVerbActionAst::Grants(
                 GrantActionAst::GrantPlayTaggedForAsLongAsExiled { permission_bound_mana: true, .. }), .. })));
         }
     }

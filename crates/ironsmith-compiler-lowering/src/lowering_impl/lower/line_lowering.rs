@@ -714,6 +714,7 @@ fn preserve_single_statement_self_replacement_surface(
     if !facts.instead_followup.leading_instead_surface
         && facts.presentation_label.is_none()
         && facts.trailing_instead_if_predicate.is_none()
+        && !facts.replacement_starts_new_source_line
     {
         return;
     }
@@ -730,6 +731,7 @@ fn preserve_single_statement_self_replacement_surface(
         .iter_mut()
         .find_map(|segment| segment.self_replacements.first_mut())
         .expect("one replacement branch was counted");
+    branch.starts_new_source_line |= facts.replacement_starts_new_source_line;
     branch.leading_instead_surface |= facts.instead_followup.leading_instead_surface;
     branch.condition_after_replacement |= facts.trailing_instead_if_predicate.is_some();
     if branch.presentation_label.is_none() {
@@ -1313,14 +1315,19 @@ fn attach_cross_line_self_replacement(
     if !followup_segment.self_replacements.is_empty() {
         return false;
     }
+    fn unwrap_conditional(effect: &crate::effect::Effect) -> Option<&crate::effects::ConditionalEffect> {
+        let effect = effect.downcast_ref::<crate::effects::WithIdEffect>()
+            .map_or(effect, |with_id| with_id.effect.as_ref());
+        effect.downcast_ref::<crate::effects::ConditionalEffect>()
+    }
     let conditional = match followup_segment.default_effects.as_slice() {
-        [conditional] => conditional.downcast_ref::<crate::effects::ConditionalEffect>(),
+        [conditional] => unwrap_conditional(conditional),
         [target_only, conditional]
             if target_only
                 .downcast_ref::<crate::effects::TargetOnlyEffect>()
                 .is_some() =>
         {
-            conditional.downcast_ref::<crate::effects::ConditionalEffect>()
+            unwrap_conditional(conditional)
         }
         _ => None,
     };

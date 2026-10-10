@@ -33,7 +33,6 @@ const MANA_VALUE_GT_WORDS: &[&str] = &["greater", "than"];
 const MANA_VALUE_GTE_WORDS: &[&str] = &["greater", "than", "or", "equal", "to"];
 const NUMBER_OF_WORDS: &[&str] = &["number", "of"];
 const COUNTER_OR_COUNTERS_WORDS: &[&str] = &["counter", "counters"];
-const ON_THIS_ARTIFACT_TAIL: &[&str] = &["on", "this", "artifact"];
 const ON_IT_TAIL: &[&str] = &["on", "it"];
 const OTHER_THAN_PREFIX: &[&str] = &["other", "than"];
 const ONE_OF_PREFIX: &[&str] = &["one", "of"];
@@ -854,22 +853,30 @@ pub(super) fn try_apply_color_count_phrase(
     filter: &mut ObjectFilter,
     all_words: &mut Vec<&str>,
 ) -> Result<bool, CardTextError> {
-    let Some((color_count_idx, (count, consumed))) =
-        all_words.iter().enumerate().find_map(|(idx, _)| {
-            parse_color_count_phrase_words(&all_words[idx..]).map(|matched| (idx, matched))
+    let Some((color_count_idx, (count, consumed), exact)) =
+        all_words.iter().enumerate().find_map(|(idx, word)| {
+            if *word == "exactly" {
+                let (count, used) = parse_color_count_number_words(&all_words[idx + 1..])?;
+                if all_words.get(idx + 1 + used).is_some_and(|word| word_is_any(word, COLOR_OR_COLORS_WORDS)) {
+                    return Some((idx, (count, used + 2), true));
+                }
+            }
+            parse_color_count_phrase_words(&all_words[idx..]).map(|matched| (idx, matched, false))
         })
     else {
         return Ok(false);
     };
 
-    if count >= 3 {
+    if count > i32::MAX as u32 {
         return Err(CardTextError::ParseError(format!(
-            "unsupported color-count object filter '{}'",
+            "out-of-range color-count object filter '{}'",
             all_words[color_count_idx..color_count_idx + consumed].join(" ")
         )));
     }
 
-    if count == 1 {
+    if exact {
+        filter.color_count = Some(crate::filter::Comparison::Equal(count as i32));
+    } else if count == 1 {
         let any_color: ColorSet = Color::ALL.into_iter().collect();
         filter.colors = Some(any_color);
     } else {
@@ -983,8 +990,10 @@ pub(super) fn try_apply_exactly_two_colors_clause(
 }
 
 fn source_counter_tail_consumed(words: &[&str]) -> Option<usize> {
-    if words_start_with_phrase(words, ON_THIS_ARTIFACT_TAIL) {
-        Some(ON_THIS_ARTIFACT_TAIL.len())
+    if words.first() == Some(&"on")
+        && words.get(1..3).is_some_and(|reference| this_source_surface_for_words(reference).is_some())
+    {
+        Some(3)
     } else if words_start_with_phrase(words, ON_IT_TAIL) {
         Some(ON_IT_TAIL.len())
     } else {
@@ -1381,7 +1390,7 @@ pub(super) fn build_spell_filter_power_or_toughness_disjunction(
     None
 }
 
-pub(super) fn parse_spell_filter_from_words(words: &[&str]) -> ObjectFilter {
+pub(crate) fn parse_source_number_spell_axes(words: &[&str]) -> Option<ObjectFilter> {
     let mut filter = ObjectFilter::default();
     if let Some(start) = words.windows(3).position(|window| window == ["with", "mana", "value"]) {
         let suffix = words[start..].iter().copied().filter(|word| !matches!(*word, "," | "the")).collect::<Vec<_>>();
@@ -1394,10 +1403,18 @@ pub(super) fn parse_spell_filter_from_words(words: &[&str]) -> ObjectFilter {
             let mut power = ObjectFilter::default(); power.power = Some(comparison.clone());
             let mut toughness = ObjectFilter::default(); toughness.toughness = Some(comparison);
             filter.any_of = vec![mana_value, power, toughness];
-            return filter;
+            return Some(filter);
         }
     }
+    None
+}
 
+pub(super) fn parse_spell_filter_from_words(words: &[&str]) -> ObjectFilter {
+    if let Some(filter) = parse_source_number_spell_axes(words) { return filter; }
+    let mut filter = ObjectFilter::default();
+    // "Other Dragon spells" excludes the ability's source. A later
+    // "other than your hand" instead belongs to the cast-origin qualifier.
+    filter.other = matches!(words.first(), Some(&"other" | &"another"));
 
     apply_spell_filter_word_atoms(&mut filter, words);
     apply_spell_filter_chosen_type_reference(&mut filter, words);
@@ -1409,6 +1426,15 @@ pub(super) fn parse_spell_filter_from_words(words: &[&str]) -> ObjectFilter {
     apply_spell_filter_cast_origin_tail(&mut filter, words);
 
     build_spell_filter_power_or_toughness_disjunction(&filter, words, words).unwrap_or(filter)
+}
+
+#[cfg(test)]
+#[test]
+fn spell_filter_retains_leading_other_without_confusing_origin_exclusions() {
+    assert!(parse_spell_filter_from_words(&["other", "dragon"]).other);
+    assert!(!parse_spell_filter_from_words(&[
+        "creature", "spells", "cast", "from", "anywhere", "other", "than", "your", "hand",
+    ]).other);
 }
 
 /// "creature spell with toughness greater than its power" (Doran, Besieged

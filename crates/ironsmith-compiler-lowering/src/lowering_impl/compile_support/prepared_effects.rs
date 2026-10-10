@@ -1629,14 +1629,8 @@ fn materialize_source_sentence_segments(
         // duration still scopes every same-target continuous member.
         super::effect_dispatch::preserve_shared_trailing_coordinated_duration(&mut compiled);
         previous_sentence_was_only_you_draw = compiled_sentence_is_only_you_draw(&compiled);
-        if source_segment.starting_with_controller
-            && let [effect] = compiled.as_mut_slice()
-            && let Some(mut for_players) = effect
-                .downcast_ref::<crate::effects::ForPlayersEffect<Effect>>()
-                .cloned()
-        {
-            for_players.starting_with_controller = true;
-            *effect = Effect::new(for_players);
+        if source_segment.starting_with_controller {
+            preserve_starting_player_order(&mut compiled);
         }
         let compiled = if source_segment.leading_then && !compiled.is_empty() {
             vec![Effect::new(
@@ -3493,5 +3487,24 @@ mod counter_rewrite_mode_tests {
             counter_then_replacement(crate::effects::ReplacementApplyMode::UntilEndOfTurn);
         fold_cross_segment_counter_rewrites(&mut segments);
         assert_eq!(segments.len(), 2);
+    }
+}
+
+/// The authored starting player survives transparent runtime wrappers and
+/// later instructions in the same sentence.
+pub(super) fn preserve_starting_player_order(effects: &mut [Effect]) {
+    let Some(effect) = effects.first_mut() else { return; };
+    if let Some(players) = effect.downcast_ref::<crate::effects::ForPlayersEffect<Effect>>() {
+        let mut players = players.clone();
+        players.starting_with_controller = true;
+        *effect = Effect::new(players);
+    } else if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+        let mut sequence = sequence.clone();
+        preserve_starting_player_order(&mut sequence.effects);
+        *effect = Effect::new(sequence);
+    } else if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+        let mut with_id = with_id.clone();
+        preserve_starting_player_order(std::slice::from_mut(with_id.effect.as_mut()));
+        *effect = Effect::new(with_id);
     }
 }

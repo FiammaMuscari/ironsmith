@@ -1060,7 +1060,7 @@ pub fn parse_must_be_blocked_if_able_clause(
     // symbols, or drop an unsupported qualification on `this creature`.
     if subject_clause.tokens().first().is_some_and(|token| token.is_word("this"))
         && (subject_clause.tokens().iter().any(|token| token.as_word().is_none())
-            || source_reference_surface_for_words(&crate::lexer::token_word_refs(
+            || source_reference_surface_for_words(&crate::lexer::parser_token_word_refs(
                 subject_clause.tokens(),
             )).is_none())
     {

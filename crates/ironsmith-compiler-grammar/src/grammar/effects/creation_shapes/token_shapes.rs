@@ -247,15 +247,21 @@ pub fn parse_copy_source_clause_tokens(tokens: &[OwnedLexToken]) -> Option<CopyS
             source_words[source_words.len() - 3..],
             ["attacking", "that", "opponent" | "player"]
         );
+    let mut trailing_tapped = false;
     if attacks_that_player_only {
-        let cut = CreationTokens::new(source).boundary(source_words.len() - 3)?;
+        let mut cut_word = source_words.len() - 3;
+        if cut_word >= 2 && source_words[cut_word - 2..cut_word] == ["tapped", "and"] {
+            trailing_tapped = true;
+            cut_word -= 2;
+        }
+        let cut = CreationTokens::new(source).boundary(cut_word)?;
         source = trim_lexed_commas(&source[..cut]);
     }
     let tail = parse_copy_source_tail_tokens(source);
     let inline = parse_inline_combat_tokens(&tail.source_tokens);
     Some(CopySourceClauseSpec {
         source_tokens: inline.source_tokens,
-        enters_tapped: tail.enters_tapped || inline.enters_tapped,
+        enters_tapped: trailing_tapped || tail.enters_tapped || inline.enters_tapped,
         enters_attacking: tail.enters_attacking
             || inline.enters_attacking
             || attacks_that_player_only,

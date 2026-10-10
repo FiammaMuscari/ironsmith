@@ -244,6 +244,7 @@ pub enum CompilerReferenceTag {
     ThisWaySacrificed,
     PriorExiledCard,
     ExiledThisWay,
+    MilledThisWay,
     RevealedThisWay,
     LookedAtHand,
     SourceObject,
@@ -422,6 +423,7 @@ impl CompilerReferenceTag {
             Self::ThisWaySacrificed => "__this_way_sacrificed__",
             Self::PriorExiledCard => "__prior_exiled_card__",
             Self::ExiledThisWay => "__exiled_this_way__",
+            Self::MilledThisWay => "__milled_this_way__",
             Self::RevealedThisWay => "__revealed_this_way__",
             Self::LookedAtHand => "__looked_at_hand__",
             Self::SourceObject => "__source_object__",
@@ -663,6 +665,7 @@ impl CompilerReferenceTag {
             | Self::SourceEmergeSacrifice
             | Self::BeheldCost0 => (R::CostPaid, D::Object),
             Self::SourceObject => (R::Source, D::Object),
+            Self::MilledThisWay => (R::Affected, D::Card),
             _ => (R::Affected, D::Object),
         }
     }

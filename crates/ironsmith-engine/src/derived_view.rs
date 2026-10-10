@@ -730,19 +730,12 @@ impl<'a> DerivedGameView<'a> {
             // the calculated characteristics `GameState::current_ability`
             // dispatches against: legal actions advertise indexes into this
             // vector and priority dispatch resolves them against that one.
-            // Mirror the no-effect ability-layer input: intrinsic basic-land
-            // mana precedes level grants, then inactive static abilities are
-            // dropped, so advertised and dispatch index spaces agree.
-            let mut abilities = crate::continuous::unmodified_ability_occurrences(
+            // Inactive static rules remain in the ability list; only the
+            // active-static cache filters them. Removing them here shifts
+            // the indexes used to dispatch subsequent activated abilities.
+            crate::continuous::unmodified_ability_occurrences(
                 object, self.game.turn.turn_number,
-            );
-            abilities.retain(|ability| match &ability.kind {
-                AbilityKind::Static(static_ability) => {
-                    static_ability.is_active(self.game, object_id)
-                }
-                _ => true,
-            });
-            abilities.shared()
+            ).shared()
         } else {
             // The calculated abilities already live behind an `Arc`; sharing it
             // avoids deep-cloning every `Ability` (each carrying filters and
@@ -2154,6 +2147,29 @@ mod tests {
     use crate::target::ObjectFilter;
     use crate::types::{CardType, Subtype};
     use crate::zone::Zone;
+
+    #[test]
+    fn inactive_static_rules_preserve_action_ability_indexes() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let player = PlayerId::from_index(0);
+        let card = CardBuilder::new(CardId::new(), "Conditional rule and mana")
+            .card_types(vec![CardType::Artifact]).build();
+        let source = game.create_object_from_card(&card, player, Zone::Battlefield);
+        let conditional = ironsmith_core::StaticAbility::haste()
+            .with_condition(crate::ConditionExpr::SourceIsTapped);
+        game.object_mut(source).unwrap().abilities_mut().extend([
+            Ability::static_ability(crate::static_abilities::StaticAbility::from_model(conditional)),
+            Ability::mana(crate::cost::TotalCost::from_cost(crate::costs::Cost::tap()),
+                vec![crate::mana::ManaSymbol::Green]),
+        ]);
+        let view = DerivedGameView::new(&game);
+        let summary = view.ability_index_summary(source).unwrap();
+        assert_eq!(summary.mana_ability_indices(), &[1]);
+        assert_eq!(view.abilities_rc(source).unwrap().len(),
+            game.current_abilities(source).unwrap().len());
+        assert!(matches!(game.current_ability(source, 1).unwrap().kind,
+            AbilityKind::Activated(_)));
+    }
 
     #[test]
     fn battlefield_characteristic_scope_uses_locked_targets_for_resolution_effects() {

@@ -19,5 +19,6 @@ fn loyal_inventor_rejoins_search_and_correlated_destinations() {
     assert!(debug.contains("ShuffleLibraryEffect"), "{debug}");
     assert!(!debug.contains("SearchedLibrary"), "{debug}");
     assert!(debug.contains("PlayerControls"), "{debug}");
-    assert!(debug.contains("DidNotHappen"), "{debug}");
+    assert!(debug.contains("ConditionalEffect"), "{debug}");
+    assert!(debug.contains("zone: Library"), "the false branch must retain the library destination: {debug}");
 }

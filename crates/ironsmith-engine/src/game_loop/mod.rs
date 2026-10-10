@@ -132,6 +132,7 @@ pub use self::priority_state::*;
 pub use self::saga::*;
 pub use self::sba_triggers::*;
 pub use self::stack_resolution::*;
+pub(crate) use self::targeting::DeclaredTarget;
 pub use self::targeting::{
     ExtractedTarget, compute_legal_targets, compute_legal_targets_with_tagged_objects,
     extract_target_spec, player_matches_filter_with_combat, requires_target_selection,

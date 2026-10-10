@@ -183,9 +183,10 @@ fn each_physical_shuffle_keeps_a_distinct_history_occurrence() {
     assert_eq!(shuffles.len(), 2);
     assert_ne!(shuffles[0].provenance(), shuffles[1].provenance());
     for event in &shuffles { game.stage_turn_history_event(event); }
-    let staged = game.turn_store.turn_history.staged_event_records.iter()
+    let recorded = game.turn_store.turn_history.event_records.iter()
+        .chain(game.turn_store.turn_history.staged_event_records.iter())
         .filter_map(|record| record.event.downcast::<ShuffleLibraryEvent>()).count();
-    assert_eq!(staged, 2);
+    assert_eq!(recorded, 2, "staging an already committed receipt must not duplicate it");
 }
 
 struct ObserveDrawBoundary {
@@ -226,8 +227,8 @@ fn replaced_shuffle_draw_keeps_prefix_scope_and_waits_for_all_original_libraries
             let replaced = card(&mut game, alice, Zone::Graveyard, "Replaced grave");
             let original = card(&mut game, bob, Zone::Graveyard, "Other original");
             for player in [alice, bob] { for _ in 0..3 { card(&mut game, player, Zone::Library, "Library"); } }
-            let payload = vec![Effect::may(vec![Effect::gain_life(2)]), Effect::draw(1),
-                Effect::may(vec![Effect::gain_life(3)])];
+            let payload = vec![Effect::new(crate::effects::MayEffect::new_for_player(vec![Effect::gain_life(2)], PlayerFilter::You)), Effect::draw(1),
+                Effect::new(crate::effects::MayEffect::new_for_player(vec![Effect::gain_life(3)], PlayerFilter::You))];
             let outer = if mode == 7 { ReplacementAction::ChangeDestination(Zone::Battlefield) }
                 else if mode == 8 { ReplacementAction::Instead(vec![Effect::move_to_zone(
                     ChooseSpec::tagged("it"), Zone::Battlefield, false)]) }
@@ -352,7 +353,7 @@ fn generic_movement_without_a_draw_keeps_the_remaining_prefix_before_shuffle() {
         game.effect_store.replacement_effects.add_one_shot_effect(ReplacementEffect::with_matcher(
             source, bob, crate::events::zones::matchers::WouldChangeZoneMatcher::new(
                 ObjectFilter::specific(replaced), Some(Zone::Graveyard), Some(Zone::Library)),
-            ReplacementAction::Instead(vec![movement, Effect::may(vec![Effect::gain_life(2)])]),
+            ReplacementAction::Instead(vec![movement, Effect::new(crate::effects::MayEffect::new_for_player(vec![Effect::gain_life(2)], PlayerFilter::You))]),
         ));
         let before_random = game.irreversible_random_count();
         let mut dm = ObserveDrawBoundary { random_before: before_random, original: other, controller: bob,

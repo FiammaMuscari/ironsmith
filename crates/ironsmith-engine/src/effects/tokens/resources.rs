@@ -492,9 +492,11 @@ mod tests {
         assert_eq!(game.player(alice()).unwrap().life, 23);
         assert_eq!(
             game.effect_store.delayed_triggers.len(),
-            2,
-            "only outer instruction owns cleanup"
+            1,
+            "the outer instruction owns one batch cleanup"
         );
+        assert_eq!(game.effect_store.delayed_triggers[0].target_objects.len(), 2,
+            "the nested replacement's token must not inherit outer cleanup");
     }
 
     #[test]

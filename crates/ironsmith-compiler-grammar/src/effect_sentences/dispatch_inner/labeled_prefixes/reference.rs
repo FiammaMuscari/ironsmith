@@ -117,6 +117,13 @@ pub fn parse_subject_verb_extension_sentence(
 pub(super) fn parse_earthbend_subject_verb_sentence(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let tokens = if token_slice_first_is(tokens, "you")
+        && crate::lexer::token_slice_at_is(tokens, 1, "earthbend")
+    {
+        &tokens[1..]
+    } else {
+        tokens
+    };
     let Some(earthbend) = super::super::search_library::parse_earthbend_sentence(tokens)? else {
         return Ok(None);
     };

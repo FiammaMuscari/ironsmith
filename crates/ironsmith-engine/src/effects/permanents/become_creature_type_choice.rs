@@ -130,6 +130,7 @@ pub(crate) fn all_creature_types() -> &'static [Subtype] {
         Subtype::Octopus,
         Subtype::Ogre,
         Subtype::Ooze,
+        Subtype::Orb,
         Subtype::Orc,
         Subtype::Otter,
         Subtype::Ox,

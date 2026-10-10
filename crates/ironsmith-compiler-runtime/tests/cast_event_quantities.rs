@@ -97,6 +97,13 @@ impl DecisionMaker for Choices {
             }) {
                 return vec![option.index];
             }
+            // The hybrid pip is paid with the available red mana; choosing
+            // its first (blue) branch would leave the requested plan unfunded.
+            if let Some(option) = ctx.options.iter().find(|option| {
+                option.legal && option.description.to_ascii_lowercase().contains("red")
+            }) {
+                return vec![option.index];
+            }
         }
         SelectFirstDecisionMaker.decide_options(game, ctx)
     }

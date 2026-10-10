@@ -45,7 +45,7 @@ fn face_up_programs_compile_on_both_routes() {
     for (name, text, effect) in [
         ("Bubble Smuggler", BUBBLE_SMUGGLER, "PutCountersEffect"),
         ("Hooded Hydra", HOODED_HYDRA, "PutCountersEffect"),
-        ("Gift of Doom", GIFT_OF_DOOM, "AttachToEffect"),
+        ("Gift of Doom", GIFT_OF_DOOM, "AttachObjectsEffect"),
     ] {
         for definition in compile::compile_both(name, text) {
             let program = face_up_only_program(&definition);

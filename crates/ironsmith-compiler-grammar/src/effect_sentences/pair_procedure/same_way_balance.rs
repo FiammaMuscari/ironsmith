@@ -145,7 +145,7 @@ fn step_tag(tokens: &[OwnedLexToken], step: usize) -> crate::tag::TagRef {
     crate::util::helper_tag_for_tokens(tokens, prefix)
 }
 
-pub(super) fn read(
+pub(in crate::effect_sentences) fn read(
     sentences: &[SentenceInput],
     index: usize,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {

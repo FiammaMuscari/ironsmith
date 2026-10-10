@@ -1404,9 +1404,10 @@ impl CompletedDamageBatch {
             shared,
         };
         if let Some(original) = original {
-            // Coverage and annotation propagation follow the existing owned
-            // child contract; prefix views do not manufacture final bindings.
-            outputs.retain_owned_child(original);
+            // This completed batch supplies the final participant bindings.
+            // The earlier prefix intentionally had incomplete projections;
+            // retaining that historical view must not erase final coverage.
+            outputs.retain_batch_children([original]);
         }
         Ok(outputs)
     }
@@ -2636,12 +2637,19 @@ mod captured_incarnation_tests {
                     "live-member mode cannot use a missing or phased target"
                 );
                 game.turn_store.turn_history.clear_for_new_turn();
+                execute_effect(&mut game, &Effect::new(effect.clone()), &mut ctx).unwrap();
+                assert_eq!(game.damage_on(recipient), 14,
+                    "turn rollover retains exact departure evidence in action history");
+                // An older capture with no current object or departure receipt
+                // cannot supply source power by itself.
+                let missing_source = game.new_object_id();
+                ctx.tagged_objects.get_mut("captured").unwrap()[0].object_id = missing_source;
                 let missing = execute_effect(&mut game, &Effect::new(effect), &mut ctx);
                 assert!(
                     matches!(missing, Err(ExecutionError::UnresolvableValue(_))),
                     "missing LKI must not fall back to the earlier capture"
                 );
-                assert_eq!(game.damage_on(recipient), 7);
+                assert_eq!(game.damage_on(recipient), 14);
             }
         }
     }

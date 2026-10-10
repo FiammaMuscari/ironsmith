@@ -314,7 +314,7 @@ pub fn parse_prior_effect_aggregate_metric_value(
                 // "creature cards put into your graveyard this way": the
                 // remembered objects left their zone; the noun's default
                 // battlefield zone does not describe them.
-                if action == ironsmith_core::PriorEffectAction::PutIntoGraveyard
+                if matches!(action, ironsmith_core::PriorEffectAction::PutIntoGraveyard | ironsmith_core::PriorEffectAction::Milled)
                     && filter.zone == Some(Zone::Battlefield)
                 {
                     filter.zone = None;

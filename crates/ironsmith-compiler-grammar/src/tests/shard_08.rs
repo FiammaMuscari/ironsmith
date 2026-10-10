@@ -216,7 +216,7 @@ pub(super) fn compound_token_creation_keeps_generic_ward_on_its_own_blueprint()
         panic!("expected two token blueprints, got {creates:#?}");
     };
 
-    assert_eq!(human.token.card.name, "Human");
+    assert_eq!(human.token.card.name, "Human Token");
     let ward = human
         .token
         .abilities
@@ -232,7 +232,7 @@ pub(super) fn compound_token_creation_keeps_generic_ward_on_its_own_blueprint()
             crate::mana::ManaCost::from_symbols(vec![ManaSymbol::Generic(2)])
         ))
     );
-    assert_eq!(alien_rhino.token.card.name, "Alien Rhino");
+    assert_eq!(alien_rhino.token.card.name, "Alien Rhino Token");
     assert!(
         alien_rhino.token.abilities.iter().all(|ability| {
             !matches!(

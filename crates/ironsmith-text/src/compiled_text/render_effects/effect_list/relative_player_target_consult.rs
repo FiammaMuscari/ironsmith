@@ -199,14 +199,20 @@ pub(in crate::compiled_text) fn describe_relative_player_target_then_optional_se
     {
         return None;
     }
-    let for_each = for_each_effect.downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
-    let [put_effect] = for_each.effects.as_slice() else {
-        return None;
+    let (put, matches_selection) = if let Some(for_each) =
+        for_each_effect.downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        let [put_effect] = for_each.effects.as_slice() else { return None; };
+        let put = put_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
+        (put, for_each.tag == choose.tag
+            && for_each.controller_at_last_blocked_by.is_none()
+            && matches!(put.target.base(), ChooseSpec::Iterated))
+    } else {
+        let put = for_each_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
+        (put, matches!(put.target.base(), ChooseSpec::Tagged(tag) if tag == &choose.tag))
     };
-    let put = put_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()?;
     let shuffle = shuffle_effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
-    if for_each.tag != choose.tag
-        || !matches!(put.target.base(), ChooseSpec::Iterated)
+    if !matches_selection
         || put.tapped
         || put.controller != PlayerFilter::Active
         || shuffle.player != PlayerFilter::Active

@@ -288,6 +288,7 @@ pub fn parse_activate_only_timing_lexed(tokens: &[OwnedLexToken]) -> Option<Acti
 pub fn is_activate_only_restriction_sentence_lexed(tokens: &[OwnedLexToken]) -> bool {
     matches_any_prefix_tokens(tokens, ACTIVATE_ONLY_RESTRICTION_PREFIXES)
         || matches_exact_tokens(tokens, ANY_PLAYER_DURING_THEIR_TURN_BEFORE_END_STEP)
+        || parse_counted_activation_cap(tokens).is_some()
 }
 
 pub fn is_any_player_may_activate_sentence_lexed(tokens: &[OwnedLexToken]) -> bool {
@@ -592,17 +593,25 @@ fn parse_graveyard_condition(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
             crate::slice_primitives::push_unique(&mut subtypes, subtype);
         }
     }
-    // "N or more [<type>] cards in your graveyard": a counted threshold, not
+    // "N or more" and "at least N" cards in your graveyard: a counted threshold, not
     // a single-card presence check (Gate to the Afterlife: "six or more
     // creature cards").
-    if let Some((count, used)) = leaf::parse_leaf_number_prefix_words(&descriptor_words)
-        .and_then(|parsed| parsed.into_fixed())
-        && descriptor_words.get(used..used + 2) == Some(&["or", "more"][..])
+    let threshold = if descriptor_words.starts_with(&["at", "least"]) {
+        leaf::parse_leaf_number_prefix_words(&descriptor_words[2..])
+            .and_then(|parsed| parsed.into_fixed())
+            .map(|(count, used)| (count, used + 2))
+    } else {
+        leaf::parse_leaf_number_prefix_words(&descriptor_words)
+            .and_then(|parsed| parsed.into_fixed())
+            .filter(|(_, used)| descriptor_words.get(*used..*used + 2) == Some(&["or", "more"][..]))
+            .map(|(count, used)| (count, used + 2))
+    };
+    if let Some((count, type_start)) = threshold
         && descriptor_words
             .last()
             .is_some_and(|word| *word == "cards" || *word == "card")
         && descriptor_words
-            .get(used + 2..descriptor_words.len() - 1)
+            .get(type_start..descriptor_words.len() - 1)
             .is_some_and(|type_words| {
                 type_words.iter().all(|word| {
                     leaf::parse_leaf_card_type_complete(word).is_ok()

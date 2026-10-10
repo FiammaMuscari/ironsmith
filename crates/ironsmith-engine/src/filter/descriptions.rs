@@ -1055,7 +1055,9 @@ pub(super) fn ability_is_structural_cycling(ability: &crate::ability::Ability) -
     {
         return false;
     }
-    let costs = activated.mana_cost.costs();
+    let Some(costs) = activated.mana_cost.as_all() else {
+        return false;
+    };
     costs.iter().any(cost_is_discard_this_card) && costs.iter().any(cost_is_cycle_keyword_action)
 }
 
@@ -1071,7 +1073,9 @@ pub(super) fn ability_is_structural_craft(ability: &crate::ability::Ability) -> 
     {
         return false;
     }
-    let costs = activated.mana_cost.costs();
+    let Some(costs) = activated.mana_cost.as_all() else {
+        return false;
+    };
     costs.iter().any(cost_is_exile_this_source) && costs.iter().any(cost_is_craft_keyword_action)
 }
 

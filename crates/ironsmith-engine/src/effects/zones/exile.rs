@@ -329,10 +329,18 @@ impl ZoneMovementInstruction for ExileEffect {
                 )?;
                 let mut affected = Vec::new();
                 let mut memories = Vec::new();
+                let mut original_arrivals = Vec::new();
                 let mut moved_source = None;
                 for (id, change, snapshot) in &originals {
                     affected.extend(change.new_object_ids.iter().copied());
                     memories.push(snapshot.clone());
+                    for &arrival in &change.new_object_ids {
+                        if let Some(object) = game.object(arrival) {
+                            original_arrivals.push(
+                                ObjectSnapshot::try_from_object_with_calculated_characteristics(object, game)?,
+                            );
+                        }
+                    }
                     // Explicit self-exile exports its exact successor to later
                     // instructions; unrelated same-card incarnations do not qualify.
                     if matches!(effect.spec.base(), ChooseSpec::Source) && *id == ctx.source {
@@ -364,6 +372,21 @@ impl ZoneMovementInstruction for ExileEffect {
                     }
                 }
                 if let Some(before) = retained_self.as_ref() {
+                    if ctx.cause.cause_type == crate::events::cause::CauseType::Cost {
+                        // Freeze the payment's exact public arrival before any
+                        // replacement additions can move that incarnation again.
+                        // Prevention and hidden arrivals produce a known empty set.
+                        let arrivals = receipts.iter()
+                            .find(|(id, _)| *id == before.object_id)
+                            .map(|(id, receipt)| super::movement_arrivals(game, *id, receipt))
+                            .unwrap_or_default();
+                        let public_arrivals = arrivals.into_iter()
+                            .filter_map(|id| game.object(id))
+                            .filter(|object| object.stable_id == before.stable_id && object.zone.is_public())
+                            .map(|object| ObjectSnapshot::try_from_object_with_calculated_characteristics(object, game))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        ctx.set_tagged_objects(crate::tag::SOURCE_COST_PUBLIC_ARRIVAL_TAG, public_arrivals);
+                    }
                     // A legally started cost remains paid when its original is
                     // replaced/prevented. This binding follows only the receipt's
                     // successors; it is independent of the parent Exiled result.
@@ -401,6 +424,7 @@ impl ZoneMovementInstruction for ExileEffect {
                     EffectOutcome::count(originals.len() as i32)
                 };
                 Ok(outcome
+                    .with_execution_fact(crate::effect::ExecutionFact::OriginalZoneMoveCards(original_arrivals))
                     .with_result_objects(affected.clone())
                     .with_affected_objects(affected)
                     .with_affected_object_memory(memories))

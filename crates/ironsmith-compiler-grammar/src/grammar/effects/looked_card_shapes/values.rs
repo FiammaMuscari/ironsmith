@@ -114,6 +114,19 @@ pub fn parse_where_x_value(tokens: &[OwnedLexToken]) -> Option<Value> {
 
 pub fn parse_top_cards_view_shape(tokens: &[OwnedLexToken]) -> Option<TopCardsViewShape> {
     let tokens = trim_lexed_commas(tokens);
+    if let Some((_, value_tokens)) = primitives::parse_prefix(
+        tokens,
+        primitives::phrase(&[
+            "reveal", "a", "number", "of", "cards", "from", "the", "top", "of", "your",
+            "library", "equal", "to",
+        ]),
+    ) {
+        let (count, used) = parse_value_prefix_lexed(value_tokens)?;
+        if trim_lexed_commas(value_tokens.get(used..)?).is_empty() {
+            return Some(TopCardsViewShape { revealed: true, count });
+        }
+        return None;
+    }
     if let Some((revealed, remainder)) =
         primitives::parse_prefix(tokens, that_many_cards_from_top_head)
         && trim_lexed_commas(remainder).is_empty()

@@ -398,7 +398,10 @@ fn put_from_shown_hand(sentence: &SentenceInput, owner: PlayerFilter) -> Option<
                 if filter.owner.is_some() || filter.controller.is_some() {
                     return None;
                 }
-                if filter.zone.is_some_and(|zone| zone != Zone::Hand) {
+                // The standalone put reader defaults a creature phrase to
+                // the battlefield after "from it" is removed. This procedure
+                // owns that explicit source and restores the looked-at hand.
+                if filter.zone.is_some_and(|zone| !matches!(zone, Zone::Hand | Zone::Battlefield)) {
                     return None;
                 }
                 filter.zone = Some(Zone::Hand);

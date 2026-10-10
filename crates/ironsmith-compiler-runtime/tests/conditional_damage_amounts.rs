@@ -73,10 +73,10 @@ fn expected_rules(name: &str) -> &'static str {
         "Burst Lightning" => "Kicker {4}\nBurst Lightning deals 2 damage to any target. If this spell was kicked, it deals 4 damage instead.",
         "Roil Eruption" => "Kicker {5}\nRoil Eruption deals 3 damage to any target. If this spell was kicked, it deals 5 damage instead.",
         "Shivan Fire" => "Kicker {4}\nShivan Fire deals 2 damage to target creature. If this spell was kicked, it deals 4 damage instead.",
-        "Frost Bite" => "Frost Bite deals 2 damage to target creature or planeswalker. If you control three or more snow permanents, it deals 3 damage instead.",
+        "Frost Bite" => "Frost Bite deals 2 damage to target creature or planeswalker. If you control three or more snow permanents, Frost Bite deals 3 damage instead.",
         "Burning Hands" => "Burning Hands deals 2 damage to target creature or planeswalker. If that permanent is green, Burning Hands deals 6 damage instead.",
-        "Voltage Surge" => "As an additional cost to cast this spell, you may sacrifice an artifact.\nVoltage Surge deals 2 damage to target creature or planeswalker. If this spell's additional cost was paid, Voltage Surge deals 4 damage instead.",
-        "Akoum Hellkite" => "Flying\nLandfall — Whenever a land you control enters, this creature deals 1 damage to any target. If that land is a Mountain, this creature deals 2 damage instead.",
+        "Voltage Surge" => "As an additional cost to cast this spell, you may sacrifice an artifact.\nVoltage Surge deals 2 damage to target creature or planeswalker. If this spell's additional cost was paid, it deals 4 damage instead.",
+        "Akoum Hellkite" => "Flying\nLandfall — Whenever a land you control enters, this creature deals 1 damage to any target. If that land is a Mountain, it deals 2 damage instead.",
         _ => panic!("missing independent full-card expectation: {name}"),
     }
 }
@@ -372,8 +372,13 @@ fn x_binding_and_partial_target_legality_remain_owned_by_the_original_declaratio
 }
 
 #[test]
-fn distinct_unimplemented_condition_owners_remain_held() {
-    for name in ["Flame Discharge", "Surtland Flinger", "Slaying Fire", "Summary Judgment"] {
+fn distinct_condition_owners_keep_their_current_support_boundary() {
+    // These conditions now have dedicated lowering and gameplay regressions
+    // in damage_amount_ownership and separate_line_instead_restatement.
+    for name in ["Surtland Flinger", "Slaying Fire", "Summary Judgment"] {
+        definitions(name);
+    }
+    for name in ["Flame Discharge"] {
         let text = card_text(name);
         assert!(compile_to_runtime_definition(name, &text, false).is_err(), "held direct route: {name}");
         assert!(compile_to_artifact(name, &text, false).is_err(), "held artifact route: {name}");

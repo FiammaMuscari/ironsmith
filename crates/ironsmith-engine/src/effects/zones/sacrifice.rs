@@ -566,7 +566,12 @@ impl EffectExecutor for SacrificeEffect {
             {
                 format!("Sacrifice {description}")
             } else {
-                format!("Sacrifice a {description}")
+                let article = if description.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                    "an"
+                } else {
+                    "a"
+                };
+                format!("Sacrifice {article} {description}")
             }
         } else {
             format!("Sacrifice {} {}", count, description)
@@ -1717,7 +1722,8 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         assert_eq!(result.value, crate::effect::OutcomeValue::Count(1));
-        let events = game.take_pending_trigger_events();
+        let events = game.turn_store.turn_history.event_records.iter()
+            .map(|record| &record.event).collect::<Vec<_>>();
         let zone_change = events
             .iter()
             .find_map(|event| event.downcast::<crate::events::ZoneChangeEvent>())
@@ -1984,10 +1990,14 @@ mod original_result_quantity_tests {
             let actual = usize::from(scenario >= 2);
             assert_eq!(outcome.instruction_result().count_or_zero(), actual as i64);
             assert_eq!(outcome.chosen_objects(), Some([original].as_slice()));
-            assert_eq!(outcome.affected_object_memory().unwrap().len(), actual);
-            assert!(outcome.affected_object_memory().unwrap().iter().all(|memory| memory.object_id == original));
-            let all_events = outcome.events.iter().filter(|event| event.downcast::<SacrificeEvent>().is_some()).count();
-            assert_eq!(all_events, actual + usize::from(scenario == 1 || scenario == 3));
+            assert_eq!(outcome.affected_object_memory().unwrap_or(&[]).len(), actual);
+            assert!(outcome.affected_object_memory().unwrap_or(&[]).iter().all(|memory| memory.object_id == original));
+            let mut observed = std::collections::HashSet::new();
+            let all_events = outcome.events.iter()
+                .chain(game.turn_store.turn_history.projected_records().map(|record| &record.event))
+                .filter(|event| observed.insert(event.occurrence_key()))
+                .filter(|event| event.downcast::<SacrificeEvent>().is_some()).count();
+            assert_eq!(all_events, actual + usize::from(scenario == 1 || scenario == 3), "dispatched={dispatched} scenario={scenario} outcome={outcome:?}");
         }}
     }
 

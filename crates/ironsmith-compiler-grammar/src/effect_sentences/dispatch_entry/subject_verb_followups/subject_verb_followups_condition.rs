@@ -2,6 +2,24 @@ use super::*;
 use crate::cards::builders::ForEachEffectAst;
 use crate::cards::builders::SourcePredicateAst;
 
+// An object pronoun in a mixed player/object instruction names its unique
+// announced object, even when the player recipient was written first.
+fn unique_announced_object_target(effect: &EffectAst) -> Option<TargetAst> {
+    fn collect(effect: &EffectAst, targets: &mut Vec<TargetAst>) {
+        if let Some(target @ TargetAst::Object(_, Some(_), _)) = primary_target_from_effect(effect)
+            && !targets.contains(&target)
+        {
+            targets.push(target);
+        }
+        for_each_nested_effects(effect, true, |nested| {
+            for effect in nested { collect(effect, targets); }
+        });
+    }
+    let mut targets = Vec::new();
+    collect(effect, &mut targets);
+    (targets.len() == 1).then(|| targets.remove(0))
+}
+
 /// Binds the replacement's pronouns to the default action's object up to and
 /// including the first action that moves that object to another zone
 /// ("instead exile it, then return that card to its owner's hand"). After
@@ -135,6 +153,15 @@ pub(super) fn pre_rule_conditional_optional_result_followup(
             if_false,
             ..
         })) if if_false.is_empty() => if_true,
+        Some(EffectAst::ControlFlow(flow)) => {
+            let crate::model::ControlFlowNodeAst::Condition {
+                consequence_program, alternative_program, reflexive: false, ..
+            } = &flow.node else { return Ok(None); };
+            // The last authored branch owns its own optional payment and the
+            // immediately following acceptance/refusal continuation.
+            let branch = alternative_program.unwrap_or(*consequence_program);
+            &mut flow.programs[branch].effects
+        }
         _ => return Ok(None),
     };
     // Both acceptance and refusal continuations belong to the optional action's
@@ -662,7 +689,10 @@ pub(in super::super) fn post_rule_future_zone_and_self_replacement(
                 "expected previous effect for 'instead' conditional rewrite".to_string(),
             ));
         };
-        let previous_target = primary_target_from_effect(&previous);
+        let mut previous_target = primary_target_from_effect(&previous);
+        if matches!(previous_target.as_ref(), Some(TargetAst::Player(_, _) | TargetAst::PlayerOrPlaneswalker(_, _))) {
+            previous_target = unique_announced_object_target(&previous).or(previous_target);
+        }
         let mut predicate = predicate;
         if gate_compares_against_unbound_antecedent(&predicate)
             && let Some(target) = previous_target

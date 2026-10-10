@@ -362,13 +362,16 @@ fn visage_front_discards_only_the_selected_artifact_or_creature_from_the_opponen
     for route in 0..2 { for selected_type in ["Artifact", "Creature — Bear\nPower/Toughness: 2/2"] {
         let mut game = game(); let definition = linked(&mut game, &row, route);
         let selected = printed(&mut game, B, Zone::Hand, "Chosen hand card", &format!("Type: {selected_type}")); let stable = game.object(selected).unwrap().stable_id;
+        // Two legal cards force a real choice; a sole legal card may be selected automatically.
+        let alternative = printed(&mut game, B, Zone::Hand, "Other eligible card", "Type: Artifact");
         let other = printed(&mut game, B, Zone::Hand, "Unchosen spell", "Type: Instant");
         let mine = printed(&mut game, A, Zone::Hand, "My artifact", "Type: Artifact");
         let mut choices = Choices { objects: Some(vec![selected]), ..Default::default() };
         enter(&mut game, &definition, &mut choices);
         assert_eq!(game.object(game.find_object_by_stable_id(stable).unwrap()).unwrap().zone, Zone::Graveyard);
         assert_eq!(game.object(other).unwrap().zone, Zone::Hand); assert_eq!(game.object(mine).unwrap().zone, Zone::Hand);
-        assert!(choices.offered.iter().any(|ids| ids.contains(&selected) && !ids.contains(&other) && !ids.contains(&mine)));
+        assert_eq!(game.object(alternative).unwrap().zone, Zone::Hand);
+        assert!(choices.offered.iter().any(|ids| ids.contains(&selected) && ids.contains(&alternative) && !ids.contains(&other) && !ids.contains(&mine)));
     }}
 }
 #[test]

@@ -39,8 +39,12 @@ fn them_removals_bind_the_threshold_counter_kind() {
         assert_eq!(row["oracle_id"], oracle_id);
         for definition in support::definitions(row) {
             let removals = support::find::<RemoveCountersEffect>(&all_effects(&definition));
-            assert_eq!(removals.len(), 1, "{name}: {removals:?}");
-            let removal = &removals[0];
+            // Stadium also has an independent trigger removing exactly one point.
+            let variable_removals: Vec<_> = removals.iter()
+                .filter(|removal| !matches!(removal.count.unhinted(), Value::Fixed(_)))
+                .collect();
+            assert_eq!(variable_removals.len(), 1, "{name}: {removals:?}");
+            let removal = variable_removals[0];
             assert_eq!(removal.counter_type.description(), kind, "{name}");
             // Every counter of that kind on the same holder, not a fixed count.
             match removal.count.unhinted() {

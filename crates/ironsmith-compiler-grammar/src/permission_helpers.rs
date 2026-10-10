@@ -1789,44 +1789,16 @@ pub fn parse_until_end_of_turn_may_play_tagged_clause(
 pub fn parse_until_your_next_turn_may_play_tagged_clause(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
-    let trimmed = trim_commas(tokens);
-    let mana_spend_mode = strip_allow_any_color_for_cast_suffix_tokens(&trimmed)
-        .map(|fact| fact.mana_spend_mode)
-        .unwrap_or_default();
     match parse_permission_clause_spec(tokens)? {
         Some(PermissionClauseSpec::Tagged {
-            tag,
-            player,
-            allow_land: true,
-            as_copy: false,
-            max_plays,
-            without_paying_mana_cost: false,
-            lifetime,
-            ..
-        }) if matches!(
-            lifetime,
+            player, allow_land: true, as_copy: false,
+            without_paying_mana_cost: false, lifetime, ..
+        }) if matches!(lifetime,
             PermissionLifetime::UntilYourNextTurn | PermissionLifetime::UntilYourNextEndStep
-        ) && matches!(player, PlayerAst::You | PlayerAst::Implicit) =>
-        {
-            Ok(Some(
-                if lifetime == PermissionLifetime::UntilYourNextEndStep {
-                    EffectAst::subject_verb_grant_play_tagged_until_your_next_end_step(
-                        crate::tag::TagRef::of(tag),
-                        PlayerAst::You,
-                        true,
-                        mana_spend_mode,
-                    )
-                    .with_tagged_play_max_plays(max_plays)
-                } else {
-                    EffectAst::subject_verb_grant_play_tagged_until_your_next_turn(
-                        crate::tag::TagRef::of(tag),
-                        PlayerAst::You,
-                        true,
-                        mana_spend_mode,
-                    )
-                    .with_tagged_play_max_plays(max_plays)
-                },
-            ))
+        ) && matches!(player, PlayerAst::You | PlayerAst::Implicit) => {
+            // Use the same lifetime and surface lowering for a linked sentence
+            // sequence as for an independently parsed permission clause.
+            parse_cast_or_play_tagged_clause(tokens)
         }
         _ => Ok(None),
     }
@@ -1874,13 +1846,14 @@ fn next_turn_permission_grant_duration(
     // "until the beginning of your next upkeep": nothing can be played during
     // the untap step (CR 502.4), so the permission ends with your next
     // turn's start.
-    if crate::grammar::primitives::parse_prefix(
-        trim_lexed_commas(tokens),
-        crate::grammar::primitives::phrase(&[
-            "until", "the", "beginning", "of", "your", "next", "upkeep",
-        ]),
-    )
-    .is_some()
+    if tokens.iter().enumerate().any(|(index, token)| {
+        token.is_word("until") && crate::grammar::primitives::parse_prefix(
+            &tokens[index..],
+            crate::grammar::primitives::phrase(&[
+                "until", "the", "beginning", "of", "your", "next", "upkeep",
+            ]),
+        ).is_some()
+    })
     {
         return Ok(crate::grant::GrantDuration::UntilYourNextTurn);
     }

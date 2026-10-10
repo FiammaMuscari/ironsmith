@@ -531,10 +531,9 @@ pub fn parse_put_counters(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTex
             predicate = None;
         }
         return Ok(if let Some(predicate) = predicate {
-            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            EffectAst::Conditionals(ConditionalEffectAst::TrailingIf {
                 predicate,
-                if_true: vec![effect],
-                if_false: Vec::new(),
+                effects: vec![effect],
             })
         } else {
             effect
@@ -564,10 +563,9 @@ pub fn parse_put_counters(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTex
             false,
         );
         return Ok(if let Some(predicate) = predicate {
-            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            EffectAst::Conditionals(ConditionalEffectAst::TrailingIf {
                 predicate,
-                if_true: vec![effect],
-                if_false: Vec::new(),
+                effects: vec![effect],
             })
         } else {
             effect
@@ -644,10 +642,9 @@ pub fn parse_put_counters(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTex
         count = count.with_surface_hint(ValueSurfaceHint::ForEach);
         let effect = EffectAst::subject_verb_put_counters(counter_type, count, target, None, false);
         return Ok(if let Some(predicate) = predicate {
-            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            EffectAst::Conditionals(ConditionalEffectAst::TrailingIf {
                 predicate,
-                if_true: vec![effect],
-                if_false: Vec::new(),
+                effects: vec![effect],
             })
         } else {
             effect
@@ -675,10 +672,9 @@ pub fn parse_put_counters(tokens: &[OwnedLexToken]) -> Result<EffectAst, CardTex
     let effect =
         EffectAst::subject_verb_put_counters(counter_type, count_value, target, None, false);
     Ok(if let Some(predicate) = predicate {
-        EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+        EffectAst::Conditionals(ConditionalEffectAst::TrailingIf {
             predicate,
-            if_true: vec![effect],
-            if_false: Vec::new(),
+            effects: vec![effect],
         })
     } else {
         effect
@@ -830,6 +826,23 @@ fn parse_transform_like(
     tokens: &[OwnedLexToken],
     action: fn(TargetAst) -> EffectAst,
 ) -> Result<EffectAst, CardTextError> {
+    if let Some((_, filter_tokens)) = crate::grammar::primitives::parse_prefix(
+        tokens, crate::grammar::primitives::phrase(&["any", "number", "of"]),
+    ) {
+        let filter = parse_object_filter(filter_tokens, false)?;
+        let tag = crate::util::helper_tag_for_tokens(tokens, "transform_chosen");
+        return Ok(EffectAst::Sequence { effects: vec![
+            EffectAst::ObjectChoices(crate::cards::builders::ObjectChoiceEffectAst::ChooseObjects {
+                filter, count: ChoiceCount::any_number(), count_value: None,
+                player: PlayerAst::You, tag: tag.clone(),
+            }),
+            EffectAst::ForEach(ForEachEffectAst::ForEachTagged {
+                tag, effects: vec![action(TargetAst::Tagged(
+                    crate::tag::CompilerReferenceTag::It.bind(), span_from_tokens(tokens),
+                ))],
+            }),
+        ] });
+    }
     match shapes::parse_transform_target_shape(tokens) {
         shapes::TransformTargetShape::ImplicitSource => Ok(action(TargetAst::Source(None))),
         shapes::TransformTargetShape::EachObject { filter_tokens } => {

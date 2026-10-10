@@ -1114,6 +1114,22 @@
             format!("{} manifests dread", capitalize_first(&describe_player_filter(&manifest.player)))
         };
     }
+    if let Some(manifest) = effect.downcast_ref::<crate::effects::ManifestObjectsEffect>() {
+        let action = if manifest.cloak { "cloak" } else { "manifest" };
+        let target = describe_choose_spec(&manifest.target);
+        let mut text = if manifest.controller == PlayerFilter::You {
+            format!("{} {target}", capitalize_first(action))
+        } else {
+            format!("{} {action}s {target}", capitalize_first(&describe_player_filter(&manifest.controller)))
+        };
+        if manifest.tapped {
+            text.push_str(" tapped");
+        }
+        if manifest.shuffle {
+            text = format!("Shuffle {target}, then {}", lowercase_first(&text));
+        }
+        return text;
+    }
     if let Some(manifest) = effect.downcast_ref::<crate::effects::ManifestTopCardOfLibraryEffect>()
     {
         let owner = match manifest.player {
@@ -4012,6 +4028,10 @@
                 lowercase_first(&trigger_text)
             );
         }
+        if schedule.duration == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd {
+            return format!("Until the end of your next turn, {}, {delayed_text}",
+                lowercase_first(&trigger_text));
+        }
         if schedule.duration
             == ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurn
         {
@@ -4837,6 +4857,31 @@
         return format!(
             "{prefix}you would put one or more {counters} on {subject}, put that many plus {bonus} {counters} on it instead"
         );
+    }
+    if let Some(register) =
+        effect.downcast_ref::<crate::effects::RegisterEnterUnderControlReplacementEffect>()
+    {
+        let mut filter = register.filter.clone();
+        filter.zone = None;
+        let controller = filter.controller.take();
+        let subject = filter.description();
+        let subject = if subject.starts_with("a ") || subject.starts_with("an ") {
+            subject
+        } else {
+            format!("a {subject}")
+        };
+        let control = controller.map(|player| {
+            format!(" under {} control", describe_possessive_player_filter(&player))
+        }).unwrap_or_default();
+        let duration = match register.mode {
+            crate::effects::ReplacementApplyMode::UntilEndOfTurn => " this turn",
+            crate::effects::ReplacementApplyMode::UntilYourNextTurn => " until your next turn",
+            _ => "",
+        };
+        let prefix = if matches!(register.mode, crate::effects::ReplacementApplyMode::OneShot) {
+            "The next time"
+        } else { "If" };
+        return format!("{prefix} {subject} would enter{control}{duration}, it enters under your control instead");
     }
     if let Some(register) =
         effect.downcast_ref::<crate::effects::RegisterEnterTappedReplacementEffect>()

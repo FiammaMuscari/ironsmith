@@ -238,7 +238,7 @@ pub fn parse_become_creature_descriptor_words(words: &[&str]) -> Option<BecomeCr
     })
 }
 
-pub fn strip_become_addition_tail_words<'a>(words: &'a [&'a str]) -> (&'a [&'a str], bool) {
+pub fn strip_become_addition_tail_words<'a, 'b>(words: &'b [&'a str]) -> (&'b [&'a str], bool) {
     for tail in ADDITION_TAILS {
         if permission_shapes::suffix_words(words, tail) {
             return (&words[..words.len().saturating_sub(tail.len())], true);

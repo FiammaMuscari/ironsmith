@@ -1911,6 +1911,16 @@ fn parse_heterogeneous_granted_tail_remaining(
             continue;
         }
 
+        if let Some(blocking) = anthem_grant_grammar::parse_can_block_additional_creature_clause(&segment)
+            && blocking.subject_tokens.is_empty()
+            && let Some(count) = anthem_grant_grammar::parse_additional_creature_count(blocking.additional_count_tokens)
+        {
+            parsed.granted_static.push(
+                StaticAbility::can_block_additional_creature_each_combat(count).into(),
+            );
+            continue;
+        }
+
         if crate::grammar::primitives::parse_all(
             trim_edge_punctuation_tokens(&segment),
             winnow::combinator::alt((
@@ -3840,6 +3850,11 @@ pub fn parse_isnt_creature_line(
 pub fn parse_has_base_power_toughness_and_granted_keywords_static_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    // An unquoted blocking restriction belongs to the source rule, not to
+    // the recipient's granted abilities. Let its complete reader own it.
+    if anthem_grant_grammar::parse_base_pt_and_blocker_restriction_tokens(tokens).is_some() {
+        return Ok(None);
+    }
     let clause_words = crate::lexer::token_word_refs(tokens);
     let Some(shape) = anthem_grant_grammar::parse_base_power_toughness_grant_shape(tokens) else {
         return Ok(None);
@@ -4368,6 +4383,11 @@ pub fn parse_filter_has_granted_ability_line(
                 }
             }
         }
+        if let Some(abilities) = parse_fixed_flashback_static_grant(
+            &subject_tokens, &ability_tokens, condition.clone(),
+        )? {
+            return Ok(Some(abilities));
+        }
         let granted_tail = match parse_heterogeneous_granted_tail(
             &ability_tokens,
             &clause_words,
@@ -4826,7 +4846,7 @@ fn keyword_and_attack_requirements_before_anthem_share_the_clean_subject_filter(
         0,
     )
     .expect("lex shared-subject keyword, attack, and anthem line");
-    let abilities = parse_anthem_and_keyword_line(&tokens)
+    let abilities = parse_static_ability_ast_line_lexed(&tokens)
         .expect("parse shared-subject static line")
         .expect("shared-subject line should be recognized");
     assert!(
@@ -4881,7 +4901,7 @@ fn player_counter_conditions_lower_for_conditional_anthems() {
         .expect("conditional anthem should be recognized");
     assert_eq!(abilities.len(), 2);
     let debug = format!("{abilities:#?}");
-    assert!(debug.contains("PlayerCounters"), "{debug}");
+    assert!(debug.contains("PlayerHasPoisonCountersOrMore"), "{debug}");
     assert!(debug.contains("Poison"), "{debug}");
 
     let routed = crate::clause_support::parse_static_ability_ast_line_lexed(&tokens)

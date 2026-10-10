@@ -61,8 +61,9 @@ fn put_from_outside_the_game_moves_only_an_owned_sideboard_card() {
         let theirs = game.create_object_from_card(&card("Theirs"), B, Zone::OutsideGame);
         let mine = game.create_object_from_card(&card("Mine"), A, Zone::OutsideGame);
         let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = EffectContext::new(source, A, &mut dm);
         for effect in definition.spell_effect.as_ref().unwrap().flattened_default_effects() {
-            execute_effect(&mut game, effect, &mut EffectContext::new(source, A, &mut dm)).unwrap();
+            execute_effect(&mut game, effect, &mut ctx).unwrap();
         }
         assert_eq!(game.player(A).unwrap().hand.len(), 1);
         let in_hand = game.player(A).unwrap().hand.iter().next().copied().unwrap();

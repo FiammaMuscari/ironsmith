@@ -111,30 +111,48 @@ mod exact_permission_adapter_tests {
     }
 
     #[test]
-    fn complete_menu_matching_keeps_the_selected_native_identity_and_ignores_a_stale_action_index() {
+    fn complete_menu_matching_rechecks_live_permissions_and_ignores_a_stale_action_index() {
         let _ids = crate::test_id_counter_guard();
-        let game = GameState::new(vec!["A".into(), "B".into()], 20);
-        let source = ObjectId::from_raw(11);
-        let spell = ObjectId::from_raw(12);
-        let first = exact_action(spell, source, 0, 71);
-        let second = exact_action(spell, source, 1, 72);
+        let mut game = GameState::new(vec!["A".into(), "B".into()], 20);
+        let player = PlayerId(0);
+        game.turn.active_player = player;
+        game.turn.priority_player = Some(player);
+        game.turn.phase = ironsmith::Phase::FirstMain;
+        game.turn.step = None;
+        let source_card = ironsmith::CardBuilder::new(CardId::new(), "Permission source")
+            .card_types(vec![CardType::Enchantment]).build();
+        let source = game.create_object_from_card(&source_card, player, Zone::Battlefield);
+        let spell_card = ironsmith::CardBuilder::new(CardId::new(), "Exiled spell")
+            .card_types(vec![CardType::Sorcery]).mana_cost(ironsmith::mana::ManaCost::new()).build();
+        let spell = game.create_object_from_card(&spell_card, player, Zone::Exile);
+        for _ in 0..2 {
+            game.effect_store.grant_registry.grant_play_from_to_card(spell, Zone::Exile, player,
+                PlayFromConstraints::default(),
+                GrantSource::Effect { source_id: source, expires_end_of_turn: u32::MAX });
+        }
+        let actions = ironsmith::decision::compute_actions_assuming_mana_for_presentation(&game, player, Some(spell)).unwrap();
+        let casts = actions.into_iter().filter(|action| matches!(action,
+            LegalAction::CastSpell { casting_method: CastingMethod::ExactPermission { .. }, .. })).collect::<Vec<_>>();
+        assert_eq!(casts.len(), 2, "each stored grant has its own identity");
+        let first = casts[0].clone();
+        let second = casts[1].clone();
         let priority = ironsmith::decisions::context::PriorityContext::new(
-            &game, PlayerId(0), vec![second.clone(), first.clone()],
+            &game, player, vec![second.clone(), first.clone()],
         ).unwrap();
         let reference = priority_action_ref(&first);
         assert_eq!(resolve_priority_action(&game, &priority, Some(0), Some(&reference)).unwrap(), Some(first.clone()));
         let other_menu = ironsmith::decisions::context::PriorityContext::new(
-            &game, PlayerId(0), vec![second],
+            &game, player, vec![second],
         ).unwrap();
-        assert!(resolve_priority_action(&game, &other_menu, Some(0), Some(&reference)).unwrap().is_none());
+        assert_eq!(resolve_priority_action(&game, &other_menu, Some(0), Some(&reference)).unwrap(), Some(first));
         let mut forged = reference.clone();
         if let PriorityActionRef::CastSpell { casting_method: CastingMethodRef::ExactPermission { permission, .. }, .. } = &mut forged {
             permission.source = 99;
         }
         assert!(resolve_priority_action(&game, &priority, Some(1), Some(&forged)).unwrap().is_none());
-        // No ordinal-to-identity conversion takes place here. A stale cached
-        // identity must still be rejected by the engine before announcement.
-        assert_eq!(resolve_priority_action(&game, &priority, None, Some(&reference)).unwrap(), Some(first));
+        game.effect_store.grant_registry.remove_grants_from_source(source);
+        assert!(resolve_priority_action(&game, &priority, None, Some(&reference)).unwrap().is_none(),
+            "a cached menu cannot revive a revoked permission");
     }
 
     #[test]

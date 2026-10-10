@@ -246,13 +246,16 @@ mod additional_move_owner_contract_tests {
                     assert!(outcome.execution_facts.iter().filter_map(|fact| match fact { crate::effect::ExecutionFact::AffectedObjectMemory(memory) => Some(memory.as_slice()), _ => None }).flatten().any(|m| m.object_id == arrived && m.zone == to), "added counter facts reach the owner");
                     let original_arrival_memory = outcome.affected_object_memory().unwrap_or(&[]).iter()
                         .filter(|memory| memory.object_id == arrived && memory.zone == to).count();
-                    assert_eq!(original_arrival_memory, usize::from(owner == 2),
-                        "the return-to-hand owner records its own arrival once; auxiliary counter memory does not duplicate it");
+                    assert_eq!(original_arrival_memory, usize::from((2..=4).contains(&owner)),
+                        "owners returning moved objects retain their arrival once");
                     if owner == 2 {
                         let complete_arrival_memory = outcome.execution_facts.iter().filter_map(|fact| match fact {
                             crate::effect::ExecutionFact::AffectedObjectMemory(memory) => Some(memory.as_slice()), _ => None,
                         }).flatten().filter(|memory| memory.object_id == arrived && memory.zone == to).count();
-                        assert_eq!(complete_arrival_memory, 2, "both original arrival and auxiliary counter observations are retained");
+                        assert_eq!(complete_arrival_memory, 1, "object-memory sets deduplicate the shared arrival");
+                        assert_eq!(outcome.events_of_type::<crate::events::MarkersChangedEvent>()
+                            .filter(|event| event.is_added() && event.amount == 1).count(), 1,
+                            "the added counter action retains its separate event");
                     }
                 } else {
                     assert_eq!(game.player(bob).unwrap().life, 27);

@@ -3698,7 +3698,7 @@ pub(super) fn compile_subject_verb_middle(
                         player_filter.clone()
                     };
                     let put = crate::effects::PutOntoBattlefieldEffect::new(
-                        ChooseSpec::Iterated,
+                        ChooseSpec::Tagged(tag.clone()),
                         *tapped,
                         entry_controller,
                     );
@@ -3711,7 +3711,14 @@ pub(super) fn compile_subject_verb_middle(
                     Effect::move_to_zone(ChooseSpec::Iterated, *destination, to_top)
                 };
                 let mut sequence_effects = vec![Effect::new(choose)];
-                if *shuffle && *destination == Zone::Library {
+                if *destination == Zone::Battlefield {
+                    // "Put them onto the battlefield" is one entry action
+                    // over the selected set, not one instruction per card.
+                    sequence_effects.push(move_effect);
+                    if *shuffle {
+                        sequence_effects.push(Effect::shuffle_library_player(player_filter));
+                    }
+                } else if *shuffle && *destination == Zone::Library {
                     sequence_effects.push(Effect::shuffle_library_player(player_filter.clone()));
                     sequence_effects.push(Effect::for_each_tagged(tag, vec![move_effect]));
                 } else {

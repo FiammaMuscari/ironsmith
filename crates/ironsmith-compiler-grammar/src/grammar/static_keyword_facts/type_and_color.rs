@@ -463,11 +463,17 @@ fn parse_land_animation<'a>(input: &mut LexStream<'a>) -> WResult<LandAnimationF
     let subject_tokens = take_until(input, 1, is_or_are)?;
     is_or_are().parse_next(input)?;
     let (power, toughness) = fixed_power_toughness(input)?;
-    let descriptor_tokens = take_until(input, 1, || semantic_kw("that"))?;
-    semantic_kw("that").parse_next(input)?;
-    is_or_are().parse_next(input)?;
-    semantic_kw("still").parse_next(input)?;
-    alt((semantic_kw("land"), semantic_kw("lands"))).parse_next(input)?;
+    let descriptor_tokens = take_until(input, 1, || alt((
+        semantic_kw("that"),
+        semantic_phrase(&["in", "addition", "to"]),
+    )))?;
+    alt((
+        (
+            semantic_kw("that"), is_or_are(), semantic_kw("still"),
+            alt((semantic_kw("land"), semantic_kw("lands"))),
+        ).void(),
+        other_type_addition_tail,
+    )).parse_next(input)?;
     semantic_finish(input)?;
     Ok(LandAnimationFact {
         subject_tokens: trim_sentence_edges(subject_tokens),

@@ -353,7 +353,7 @@ fn f32_reconfigure_exposes_two_distinct_restricted_activations() {
     let def = reconfigure();
     let (attach, unattach) = branches(&def);
     let text = ironsmith::compiled_text::compiled_text_lines(&def).join("\n");
-    assert!(text.contains("attached to a creature"), "{text}");
+    assert!(text.contains("Reconfigure {0}"), "{text}");
 
     let mut g = game();
     let id = g.create_object_from_definition(&def, A, Zone::Battlefield);

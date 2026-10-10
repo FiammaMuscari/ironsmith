@@ -15,7 +15,6 @@ use ironsmith::triggers::TriggerQueue;
 use ironsmith::{Effect, GameProgress, GameState, ObjectId, Phase, PlayerId, Subtype, Target, Zone};
 use ironsmith_compiled_artifact::CompiledCardArtifact;
 use ironsmith_compiler_runtime::{compile_to_artifact, compile_to_runtime_definition};
-use ironsmith_core::TriggerKind;
 
 const A: PlayerId = PlayerId(0);
 const B: PlayerId = PlayerId(1);
@@ -128,18 +127,18 @@ fn draw(game: &mut GameState, source: ObjectId, player: PlayerId, count: i32) {
         &mut EffectContext::new(source, player, &mut SelectFirstDecisionMaker)).unwrap();
     for event in outcome.events { game.queue_trigger_event(event.provenance(), event); }
 }
-fn contains_ordinal(trigger: &ironsmith_core::trigger_model::Trigger, number: u32) -> bool {
-    match &trigger.kind {
-        TriggerKind::PlayerDrawsNthCardEachTurn { card_number, .. } => *card_number == number,
-        TriggerKind::AnyOf(branches) => branches.iter().any(|branch| contains_ordinal(branch, number)),
-        _ => false,
+fn contains_ordinal(trigger: &ironsmith::triggers::Trigger, number: u32) -> bool {
+    if let Some(draw) = trigger.downcast_ref::<ironsmith::triggers::PlayerDrawsNthCardEachTurnTrigger>() {
+        return draw.card_number == number;
     }
+    trigger.downcast_ref::<ironsmith::triggers::OrTrigger>()
+        .is_some_and(|trigger| trigger.triggers.iter().any(|branch| contains_ordinal(branch, number)))
 }
 fn assert_ordinal(game: &GameState, source: ObjectId, number: u32) {
     let chars = game.try_current_characteristics(source).unwrap().unwrap();
     assert!(chars.abilities.iter().any(|ability| {
         let AbilityKind::Triggered(ability) = &ability.kind else { return false; };
-        ability.trigger.compiled_model().is_some_and(|trigger| contains_ordinal(trigger, number))
+        contains_ordinal(&ability.trigger, number)
     }));
 }
 fn villains(game: &GameState) -> Vec<ObjectId> {

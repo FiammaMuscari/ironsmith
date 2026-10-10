@@ -382,6 +382,15 @@ pub fn can_target_object(
     source_id: ObjectId,
     caster: PlayerId,
 ) -> TargetingResult {
+    if !game.continuous_state_is_clean() {
+        let mut refreshed = game.clone();
+        if let Err(error) = refreshed.refresh_continuous_state() {
+            game.record_token_resource_failure(&crate::effects::ExecutionError::ContinuousDiscovery(error));
+            return TargetingResult::Invalid(TargetingInvalidReason::CantBeTargeted);
+        }
+        let view = crate::derived_view::DerivedGameView::new(&refreshed);
+        return can_target_object_with_view(&refreshed, target_id, source_id, caster, &view);
+    }
     let view = crate::derived_view::DerivedGameView::new(game);
     can_target_object_with_view(game, target_id, source_id, caster, &view)
 }
@@ -1845,6 +1854,23 @@ fn compute_object_targets_with_filter_context(
         }
     }
 
+    if let Some(entry_filter) = stack_entry_filter.as_ref() {
+        // A stacked ability survives its source's departure. Its retained
+        // source characteristics still qualify it, while stack identity,
+        // controller and announced targets come from the live stack entry.
+        for entry in game.stack.iter().filter(|entry| entry.is_ability && game.object(entry.object_id).is_none()) {
+            let Some(snapshot) = entry.source_snapshot.as_ref() else { continue; };
+            let ability_id = entry.target_id();
+            if game.grand_melee().is_some() && !game.object_is_on_current_stack(ability_id) {
+                continue;
+            }
+            let mut entry_ctx = filter_ctx.clone();
+            entry_ctx.stack_entry = Some(ability_id);
+            if entry_filter.matches_snapshot(snapshot, &entry_ctx, game) {
+                targets.push(Target::Object(ability_id));
+            }
+        }
+    }
     targets
 }
 

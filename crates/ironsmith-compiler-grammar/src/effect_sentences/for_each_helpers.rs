@@ -755,6 +755,11 @@ fn parse_maybe_effects(
 fn parse_quantified_participant_actor_program(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    // Expand the shared terminal quantity before coordination separates
+    // the otherwise incomplete "loses life" member from its amount.
+    if let Some(expanded) = super::chain_carry::expand_shared_life_equal_to_amount(tokens) {
+        return parse_quantified_participant_actor_program(&expanded);
+    }
     if tokens.iter().any(|token| token.is_word("rest")) {
         let normalized = prepend_that_player_subject(tokens);
         if let Some(effects) = crate::activation_and_restrictions::choice_object_clauses::parse_hand_choice_then_shuffle_remainder(&normalized)? {

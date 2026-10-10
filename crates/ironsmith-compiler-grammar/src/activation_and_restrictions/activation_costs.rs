@@ -793,6 +793,20 @@ mod cant_clause_readings;
 pub fn parse_cant_clauses(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    // The restriction in a repeated choice belongs to the procedure, not
+    // to a static ability on its leading "repeat this process" words.
+    if crate::grammar::effects::clause_primitive_shapes::parse_repeat_process_shape(tokens).is_some() {
+        return Ok(None);
+    }
+    // Source untap-step rules have their own typed owner, including its
+    // conditional tail. A generic restriction would be a different AST for
+    // the same rule and make the static registry reject both readings.
+    if matches!(
+        crate::grammar::abilities::parse_doesnt_untap_during_untap_step_spec_lexed(tokens),
+        Some(crate::grammar::abilities::DoesntUntapDuringUntapStepSpec::Source { .. })
+    ) {
+        return Ok(None);
+    }
     // A mixed serial predicate owns the entire subject and every member.
     // A later "can't" must not make this reader reinterpret its first verb
     // as part of a target filter. The compound reader guards its recursion.
@@ -1315,6 +1329,8 @@ pub fn parse_cant_clause(tokens: &[OwnedLexToken]) -> Result<Option<StaticAbilit
                 | crate::effect::Restriction::ActivateTapAbilitiesOf(_)
                 | crate::effect::Restriction::ActivateNonManaAbilitiesOf(_)
                 | crate::effect::Restriction::CastMoreThanOneSpellEachTurn(_, _)
+                | crate::effect::Restriction::BlockWithMoreThan { .. }
+                | crate::effect::Restriction::VentureMoreThanOnceEachTurn(_)
                 | crate::effect::Restriction::DrawCards(_)
                 | crate::effect::Restriction::DrawExtraCards(_)
                 | crate::effect::Restriction::LoseLife(_)

@@ -97,7 +97,7 @@ struct Choices {
 }
 impl DecisionMaker for Choices {
     fn decide_options(&mut self, game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
-        if ctx.description.starts_with("Choose mode") && !self.modes.is_empty() {
+        if (ctx.description.starts_with("Choose ") && ctx.description.contains("mode")) && !self.modes.is_empty() {
             return self.modes.clone();
         }
         if ctx.description == "Choose a basic land type" {
@@ -892,7 +892,7 @@ fn kiora_other_loyalty_modes_draw_allow_a_land_and_create_the_end_step_kraken_em
         assert!(
             game.battlefield
                 .iter()
-                .any(|id| game.object(*id).is_some_and(|o| o.name == "Kraken")
+                .any(|id| game.object(*id).is_some_and(|o| o.kind == ironsmith::object::ObjectKind::Token && o.subtypes.contains(&ironsmith::types::Subtype::Kraken))
                     && pt(&game, *id) == (9, 9))
         );
     }

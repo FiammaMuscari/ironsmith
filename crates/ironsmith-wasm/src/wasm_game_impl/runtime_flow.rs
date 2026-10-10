@@ -1402,12 +1402,12 @@ impl WasmGame {
                 let choice = option_indices
                     .first()
                     .copied()
-                    .ok_or_else(|| JsValue::from_str("boolean choice requires one option"))?;
+                    .ok_or_else(|| runtime_execution_error("boolean choice requires one option"))?;
                 Ok(ReplayDecisionAnswer::Boolean(choice == 1))
             }
             (DecisionContext::Number(number), UiCommand::NumberChoice { value }) => {
                 if value < number.min || value > number.max {
-                    return Err(JsValue::from_str(&format!(
+                    return Err(runtime_execution_error(&format!(
                         "number out of range: expected {}..={}, got {}",
                         number.min, number.max, value
                     )));
@@ -1417,10 +1417,10 @@ impl WasmGame {
             (DecisionContext::TextInput(text), UiCommand::TextChoice { value }) => {
                 let value = value.trim();
                 if value.is_empty() {
-                    return Err(JsValue::from_str("text choice cannot be empty"));
+                    return Err(runtime_execution_error("text choice cannot be empty"));
                 }
                 if text.require_known_value && !self.is_known_card_name_query(value) {
-                    return Err(JsValue::from_str(&format!("unknown card name: {value}")));
+                    return Err(runtime_execution_error(&format!("unknown card name: {value}")));
                 }
                 Ok(ReplayDecisionAnswer::Text(value.to_string()))
             }
@@ -1429,7 +1429,7 @@ impl WasmGame {
                 UiCommand::SelectOptions { option_indices },
             ) => {
                 validate_replay_option_selection(options, &option_indices)
-                    .map_err(|err| JsValue::from_str(&err))?;
+                    .map_err(|err| runtime_execution_error(&err))?;
                 Ok(ReplayDecisionAnswer::Options(option_indices))
             }
             (
@@ -1440,14 +1440,14 @@ impl WasmGame {
                 },
             ) => {
                 let action = resolve_priority_action(&self.game, priority, action_index, action_ref.as_ref())
-                    .map_err(|error| JsValue::from_str(&format!("priority action analysis failed: {error}")))?
+                    .map_err(|error| runtime_execution_error(&format!("priority action analysis failed: {error}")))?
                     .ok_or_else(|| {
                     if let Some(action_ref) = action_ref.as_ref() {
-                        JsValue::from_str(&format!("invalid priority action ref: {action_ref:?}"))
+                        runtime_execution_error(&format!("invalid priority action ref: {action_ref:?}"))
                     } else if let Some(action_index) = action_index {
-                        JsValue::from_str(&format!("invalid priority action index: {action_index}"))
+                        runtime_execution_error(&format!("invalid priority action index: {action_index}"))
                     } else {
-                        JsValue::from_str("missing priority action selector")
+                        runtime_execution_error("missing priority action selector")
                     }
                 })?;
                 Ok(ReplayDecisionAnswer::Priority(action))
@@ -1496,7 +1496,7 @@ impl WasmGame {
                     &legal,
                 )?;
                 if unique_indices(&option_indices).len() != order.items.len() {
-                    return Err(JsValue::from_str(
+                    return Err(runtime_execution_error(
                         "ordering requires each option index exactly once",
                     ));
                 }
@@ -1530,7 +1530,7 @@ impl WasmGame {
 
                 let total_assigned: u32 = counts.values().sum();
                 if total_assigned != distribute.total {
-                    return Err(JsValue::from_str(&format!(
+                    return Err(runtime_execution_error(&format!(
                         "distribution must assign exactly {} total (got {})",
                         distribute.total, total_assigned
                     )));
@@ -1541,7 +1541,7 @@ impl WasmGame {
                         .values()
                         .any(|amount| *amount > 0 && *amount < distribute.min_per_target)
                 {
-                    return Err(JsValue::from_str(&format!(
+                    return Err(runtime_execution_error(&format!(
                         "each selected target must receive at least {}",
                         distribute.min_per_target
                     )));
@@ -1567,7 +1567,7 @@ impl WasmGame {
 
                 let choices = colors_for_context(colors);
                 if choices.is_empty() {
-                    return Err(JsValue::from_str("no legal colors in colors decision"));
+                    return Err(runtime_execution_error("no legal colors in colors decision"));
                 }
                 let legal: Vec<usize> = (0..choices.len()).collect();
                 let max = if colors.same_color {
@@ -1579,10 +1579,10 @@ impl WasmGame {
 
                 if colors.same_color {
                     let choice = option_indices.first().copied().ok_or_else(|| {
-                        JsValue::from_str("color choice requires selecting one option")
+                        runtime_execution_error("color choice requires selecting one option")
                     })?;
                     let color = choices.get(choice).copied().ok_or_else(|| {
-                        JsValue::from_str("selected color option is out of range")
+                        runtime_execution_error("selected color option is out of range")
                     })?;
                     return Ok(ReplayDecisionAnswer::Colors(vec![
                         color;
@@ -1596,7 +1596,7 @@ impl WasmGame {
                     .filter_map(|index| choices.get(index).copied())
                     .collect();
                 if selected.is_empty() {
-                    return Err(JsValue::from_str("choose at least one color"));
+                    return Err(runtime_execution_error("choose at least one color"));
                 }
                 let desired = colors.count as usize;
                 if selected.len() > desired {
@@ -1611,7 +1611,7 @@ impl WasmGame {
             (DecisionContext::Counters(counters), UiCommand::SelectCounters { allocations }) => {
                 validate_counter_allocations(counters, &allocations)
                     .map(ReplayDecisionAnswer::Counters)
-                    .map_err(|error| JsValue::from_str(&error))
+                    .map_err(|error| runtime_execution_error(&error))
             }
             (DecisionContext::Counters(counters), UiCommand::SelectOptions { option_indices }) => {
                 let mut allocations: Vec<CounterAllocation> = Vec::new();
@@ -1619,7 +1619,7 @@ impl WasmGame {
                 for index in option_indices {
                     if let Some(position) = positions.get(&index).copied() {
                         allocations[position].count = allocations[position].count.checked_add(1)
-                            .ok_or_else(|| JsValue::from_str("counter allocation exceeds per-kind range"))?;
+                            .ok_or_else(|| runtime_execution_error("counter allocation exceeds per-kind range"))?;
                     } else {
                         positions.insert(index, allocations.len());
                         allocations.push(CounterAllocation { index, count: 1 });
@@ -1627,7 +1627,7 @@ impl WasmGame {
                 }
                 validate_counter_allocations(counters, &allocations)
                     .map(ReplayDecisionAnswer::Counters)
-                    .map_err(|error| JsValue::from_str(&error))
+                    .map_err(|error| runtime_execution_error(&error))
             }
             (
                 DecisionContext::Partition(partition),
@@ -1674,7 +1674,7 @@ impl WasmGame {
             }
             (DecisionContext::Targets(targets_ctx), UiCommand::SelectTargets { targets }) => {
                 let converted = convert_and_validate_targets(targets_ctx, targets)
-                    .map_err(|err| JsValue::from_str(&err))?;
+                    .map_err(|err| runtime_execution_error(&err))?;
                 Ok(ReplayDecisionAnswer::Targets(converted))
             }
             (
@@ -1712,7 +1712,7 @@ impl WasmGame {
                     unreachable!("mode specifications build option choices");
                 };
                 validate_replay_option_selection(&options, &option_indices)
-                    .map_err(|err| JsValue::from_str(&err))?;
+                    .map_err(|err| runtime_execution_error(&err))?;
                 Ok(ReplayDecisionAnswer::Options(option_indices))
             }
             (
@@ -1723,7 +1723,7 @@ impl WasmGame {
                 validate_option_selection(1, Some(1), &option_indices, &legal)?;
                 Ok(ReplayDecisionAnswer::Options(option_indices))
             }
-            (ctx, _) => Err(JsValue::from_str(&format!(
+            (ctx, _) => Err(runtime_execution_error(&format!(
                 "command type does not match pending replay decision: {}",
                 decision_context_kind(ctx)
             ))),

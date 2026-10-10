@@ -1871,9 +1871,7 @@ pub(crate) fn describe_apply_continuous_clauses_with_self_subject(
             }
         }
         crate::continuous::Modification::RemoveAllSubtypesOfFamily(family) => {
-            if *family == crate::types::SubtypeFamily::Creature {
-                clauses.push(format!("{loses} all creature types"));
-            }
+            clauses.push(format!("{loses} all {}s", family.type_phrase()));
         }
         crate::continuous::Modification::RemoveSupertypes(supertypes) => {
             let names = supertypes
@@ -6333,7 +6331,7 @@ pub(crate) fn describe_comparison(cmp: &Comparison) -> String {
 }
 
 pub(crate) fn basic_land_types_multiplier(value: &Value) -> Option<(&ObjectFilter, i32)> {
-    match value {
+    match value.unhinted() {
         Value::BasicLandTypesAmong(filter) => Some((filter, 1)),
         Value::Scaled(value, factor) => {
             let (filter, mult) = basic_land_types_multiplier(value)?;
@@ -6426,6 +6424,7 @@ fn describe_prior_result_active_action(action: crate::effect::PriorEffectAction)
         crate::effect::PriorEffectAction::Died => "die",
         crate::effect::PriorEffectAction::Destroyed => "destroy",
         crate::effect::PriorEffectAction::Discarded => "discard",
+        crate::effect::PriorEffectAction::Copied => "copy",
         crate::effect::PriorEffectAction::Drawn => "draw",
         crate::effect::PriorEffectAction::Exiled => "exile",
         crate::effect::PriorEffectAction::Goaded => "goad",
@@ -6448,6 +6447,16 @@ fn describe_prior_result_active_action(action: crate::effect::PriorEffectAction)
 fn describe_prior_effect_result_surface(
     surface: &crate::effect::PriorEffectResultSurface,
 ) -> String {
+    if surface.action == crate::effect::PriorEffectAction::Copied
+        && surface.actor == crate::effect::PriorEffectResultActor::You
+        && surface.filter == ObjectFilter::default()
+        && surface.quantifier == crate::effect::PriorEffectResultQuantifier::One
+        && surface.required_count.is_none()
+        && surface.shared_characteristic.is_none()
+    {
+        return if surface.negated { "you don't copy a spell this way" }
+            else { "you copy a spell this way" }.to_string();
+    }
     if surface.action == crate::effect::PriorEffectAction::PutIntoHand
         && surface.actor == crate::effect::PriorEffectResultActor::You
         && surface.filter == ObjectFilter::default()
@@ -6747,6 +6756,10 @@ pub(crate) fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
                 card_type.name().to_ascii_lowercase()
             )
         }
+        EffectPredicate::PlayerActionObjectHasGreatestManaValue { player, action } => format!(
+            "{} {} an object tied for greatest mana value among those objects",
+            describe_player_filter(player), describe_prior_effect_action(*action)
+        ),
         EffectPredicate::PlayerAffectedObjectHasGreatestManaValue { player } => format!(
             "{} affected an object tied for greatest mana value",
             describe_player_filter(player)

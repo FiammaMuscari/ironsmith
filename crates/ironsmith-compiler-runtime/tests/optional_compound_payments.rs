@@ -96,6 +96,8 @@ fn setup(definition: &CardDefinition, mana: u32, matches: usize) -> (GameState, 
     game.player_mut(A).unwrap().mana_pool.colorless = mana;
     let source = game.create_object_from_definition(definition, A, Zone::Battlefield);
     let chosen = land(&mut game, Zone::Battlefield, "Chosen land", false);
+    // Keep the battlefield choice nontrivial so the scripted choice is actually requested.
+    land(&mut game, Zone::Battlefield, "Other land", false);
     let found = (0..matches).map(|_| land(&mut game, Zone::Library, "Chosen land", true)).collect();
     land(&mut game, Zone::Library, "Chosen land", false);
     land(&mut game, Zone::Library, "Different basic", true);
@@ -174,7 +176,21 @@ fn full_payment_is_required_before_choice_search_and_shuffle() {
             choices.decline = scenario == 2;
             choices.cancel_mana = scenario == 3;
             queue_combat_trigger(&mut game, source, &mut choices);
-            resolve_stack_entry_with(&mut game, &mut choices).unwrap();
+            let resolution = resolve_stack_entry_with(&mut game, &mut choices);
+            if scenario == 3 {
+                // Cancelling an already accepted payment leaves the resolution retryable.
+                assert!(matches!(resolution, Err(ironsmith::game_loop::GameLoopError::ExecutionFailed(
+                    ExecutionError::Impossible(_)
+                ))));
+                assert_eq!(game.stack.len(), 1);
+                assert_no_reward(&game, &choices);
+                assert_eq!(game.player(A).unwrap().mana_pool.total(), 3);
+                choices.decline = true;
+                choices.cancel_mana = false;
+                resolve_stack_entry_with(&mut game, &mut choices).unwrap();
+            } else {
+                resolution.unwrap();
+            }
             assert!(game.stack_is_empty());
             let paid = scenario == 0;
             assert_eq!(game.player(A).unwrap().mana_pool.total(), if funded && !paid { 3 } else { 0 });

@@ -2,6 +2,25 @@ use super::*;
 use crate::lexer::lex_line;
 
 #[test]
+fn revealed_group_count_preserves_sacrificed_power() {
+    let tokens = lex_line(
+        "Reveal a number of cards from the top of your library equal to the sacrificed creature's power",
+        0,
+    ).unwrap();
+    let shape = parse_top_cards_view_shape(&tokens).unwrap();
+    let value_tokens = lex_line("the sacrificed creature's power", 0).unwrap();
+    let (expected, used) = parse_value_prefix_lexed(&value_tokens).unwrap();
+    assert_eq!(used, value_tokens.len());
+    assert!(shape.revealed);
+    assert_eq!(shape.count, expected);
+    let incomplete = lex_line(
+        "Reveal a number of cards from the top of your library equal to the sacrificed creature's power plus nonsense",
+        0,
+    ).unwrap();
+    assert!(parse_top_cards_view_shape(&incomplete).is_none());
+}
+
+#[test]
 fn parses_typed_top_card_view_counts() {
     let tokens = lex_line("Look at the top three cards of your library", 0).unwrap();
     let shape = parse_top_cards_view_shape(&tokens).unwrap();

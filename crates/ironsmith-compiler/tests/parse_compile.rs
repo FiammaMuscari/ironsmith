@@ -62,6 +62,17 @@ use ironsmith_compiler::types::{CardType, Subtype};
 use ironsmith_compiler::{CardDefinitionBuilder, CardId, CardTextError, TagKey};
 use std::path::Path;
 
+fn find_damage(effect: &Effect) -> Option<ironsmith_compiler::effects::DealDamageEffect> {
+    if let Some(damage) = effect.downcast_ref::<ironsmith_compiler::effects::DealDamageEffect>() {
+        return Some(damage.clone());
+    }
+    let mut found = None;
+    effect.visit_child_effects(&mut |child| {
+        if found.is_none() { found = find_damage(child); }
+    });
+    found
+}
+
 #[test]
 fn quantified_damage_binds_that_players_life_total_to_each_recipient() {
     let definition = CardDefinitionBuilder::new(CardId::new(), "Quantified Life Damage Probe")
@@ -82,8 +93,7 @@ fn quantified_damage_binds_that_players_life_total_to_each_recipient() {
     let for_players = effects[0]
         .downcast_ref::<ironsmith_compiler::effects::ForPlayersEffect<Effect>>()
         .expect("quantified player effect");
-    let damage = for_players.effects[0]
-        .downcast_ref::<ironsmith_compiler::effects::DealDamageEffect>()
+    let damage = find_damage(&for_players.effects[0])
         .expect("damage action");
     assert_eq!(
         damage.target.unhinted(),
@@ -886,7 +896,7 @@ fn compile_damage_equal_to_power_over_each_object_fans_out_per_object() {
     assert_eq!(effects.len(), 1);
 
     let debug = format!("{effects:?}");
-    assert!(debug.contains("ForEachObject"), "fan-out wrapper: {debug}");
+    assert!(matches!(find_damage(&effects[0]).unwrap().target.base(), ChooseSpec::All(_)), "fan-out recipient set: {debug}");
     assert!(
         debug.contains("Creature"),
         "fan-out creature filter: {debug}"
@@ -902,8 +912,8 @@ fn compile_damage_equal_to_power_over_each_object_fans_out_per_object() {
         "the source-scoped damage must read the tagged source's power: {debug}"
     );
     assert!(
-        debug.contains("target: Iterated"),
-        "fan-out iterated target: {debug}"
+        matches!(find_damage(&effects[0]).unwrap().target.base(), ChooseSpec::All(_)),
+        "fan-out all recipients: {debug}"
     );
 }
 
@@ -2040,12 +2050,12 @@ fn builtin_food_blood_and_powerstone_tokens_keep_their_intrinsic_abilities() {
             expected_costs,
             "{name} intrinsic cost was incomplete: {activated:#?}"
         );
-        assert!(
-            format!("{:#?}", activated.effects).contains(effect_marker),
-            "{name} should retain {effect_marker}: {activated:#?}"
-        );
         if name == "Powerstone" {
+            assert_eq!(activated.mana_output, Some(vec![ironsmith_compiler::mana::ManaSymbol::Colorless]));
             assert_eq!(activated.mana_usage_restrictions.len(), 1);
+        } else {
+            assert!(format!("{:#?}", activated.effects).contains(effect_marker),
+                "{name} should retain {effect_marker}: {activated:#?}");
         }
     }
 }
@@ -2808,11 +2818,7 @@ fn praetors_grasp_search_exile_uses_source_exiled_permission_provenance() {
             effect.downcast_ref::<ironsmith_compiler::effects::GrantPlayTaggedEffect>()
         })
         .expect("searched exiled card should receive a play permission");
-    assert_eq!(
-        grant.tag.as_str(),
-        ironsmith_compiler::tag::CompilerReferenceTag::SourceExiled.as_str()
-    );
-    assert_ne!(grant.tag, searched_tag);
+    assert_eq!(grant.tag, searched_tag, "permission must retain the exact searched exile set");
 }
 
 #[test]
@@ -2890,8 +2896,13 @@ fn plural_untargeted_causative_damage_still_fans_out() {
     let (compiled, _) = compile_effect(&ast, &mut EffectLoweringContext::new())
         .expect("plural causative damage should lower");
     let debug = format!("{compiled:#?}");
-    assert!(debug.contains("ForEachObject"), "{debug}");
-    assert!(debug.contains("DealDamageEffect"), "{debug}");
+    let damage = find_damage(&compiled[0]).expect("typed damage action");
+    assert_eq!(damage.amount, Value::Fixed(2));
+    let ChooseSpec::All(recipients) = damage.target.base() else {
+        panic!("expected all matching recipients: {debug}");
+    };
+    assert!(recipients.card_types.contains(&CardType::Creature));
+    assert_eq!(recipients.controller, Some(PlayerFilter::You));
 }
 
 #[test]
@@ -3574,33 +3585,17 @@ fn serial_keyword_filters_survive_trigger_and_effect_comma_boundaries() {
         )
         .expect("serial keyword filters should remain one parsed clause");
 
-    let damage_fanout = definition
-        .abilities
-        .iter()
-        .filter_map(|ability| match &ability.kind {
-            AbilityKind::Triggered(triggered) => Some(triggered),
-            _ => None,
-        })
-        .flat_map(|triggered| triggered.effects.flattened_default_effects())
-        .find_map(|effect| effect.downcast_ref::<ironsmith_compiler::effects::ForEachObject>())
-        .expect("entry damage should iterate over its complete filtered object domain");
-    assert_eq!(
-        damage_fanout.filter.excluded_static_abilities,
-        vec![FirstStrike, DoubleStrike, Vigilance, Haste]
-    );
-    assert!(damage_fanout.filter.any_of.is_empty());
-    let [damage] = damage_fanout.effects.as_slice() else {
-        panic!("mass damage must have one per-object action: {damage_fanout:#?}");
+    let damage = definition.abilities.iter().filter_map(|ability| match &ability.kind {
+        AbilityKind::Triggered(triggered) => Some(triggered),
+        _ => None,
+    }).flat_map(|triggered| triggered.effects.flattened_default_effects())
+        .find_map(|effect| find_damage(&effect))
+        .expect("entry trigger must execute typed damage");
+    let ChooseSpec::All(filter) = damage.target.base() else {
+        panic!("damage must cover its complete filtered object domain: {damage:#?}");
     };
-    let damage = damage
-        .downcast_ref::<ironsmith_compiler::effects::TaggedEffect>()
-        .map_or(damage, |tagged| &tagged.effect);
-    let damage = damage
-        .downcast_ref::<ironsmith_compiler::effects::ExecuteWithSourceEffect>()
-        .map_or(damage, |sourced| &sourced.effect)
-        .downcast_ref::<ironsmith_compiler::effects::DealDamageEffect>()
-        .expect("mass damage iteration must execute typed damage");
-    assert!(matches!(damage.target.base(), ChooseSpec::Iterated));
+    assert_eq!(filter.excluded_static_abilities, vec![FirstStrike, DoubleStrike, Vigilance, Haste]);
+    assert!(filter.any_of.is_empty());
 
     let attacks = definition
         .abilities

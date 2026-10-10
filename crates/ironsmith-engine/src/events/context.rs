@@ -42,6 +42,7 @@ pub struct EventContext<'a> {
 pub struct PreparedEventContext<'a> {
     context: EventContext<'a>,
     entry_worlds: &'a std::collections::HashMap<ObjectId, GameState>,
+    failure: std::cell::RefCell<Option<crate::static_ability_processor::StaticEffectDiscoveryError>>,
 }
 
 impl<'a> std::ops::Deref for PreparedEventContext<'a> {
@@ -50,6 +51,9 @@ impl<'a> std::ops::Deref for PreparedEventContext<'a> {
 }
 
 impl PreparedEventContext<'_> {
+    pub(crate) fn record_match_failure(&self, error: crate::static_ability_processor::StaticEffectDiscoveryError) {
+        self.failure.borrow_mut().get_or_insert(error);
+    }
     pub(crate) fn prospective_entry_world(&self, object: ObjectId) -> Option<&GameState> {
         self.context.prospective_etb_game.or_else(|| self.entry_worlds.get(&object))
     }
@@ -148,7 +152,12 @@ impl<'a> EventContext<'a> {
             prospective_etb_game: supplied.as_ref().or_else(|| entry.and_then(|entry| worlds.get(&entry.object))),
             event_source_snapshot: self.event_source_snapshot,
         };
-        Ok(evaluate(&PreparedEventContext { context, entry_worlds: &worlds }))
+        let prepared = PreparedEventContext { context, entry_worlds: &worlds, failure: Default::default() };
+        let result = evaluate(&prepared);
+        match prepared.failure.into_inner() {
+            Some(error) => Err(error),
+            None => Ok(result),
+        }
     }
 
     /// Create an event context for a replacement effect source.

@@ -134,6 +134,7 @@ pub(crate) struct WitnessDecisionMaker<'a> {
     production_records: Option<&'a [ManaProductionWitness]>,
     production_cursor: usize,
     recording_production: bool,
+    pool_only_payment: bool,
     recording_payer: Option<PlayerId>,
     production_recording_supported: bool,
     recorded_production: Vec<ManaProductionWitness>,
@@ -151,6 +152,7 @@ impl<'a> WitnessDecisionMaker<'a> {
             production_records: None,
             production_cursor: 0,
             recording_production: false,
+            pool_only_payment: false,
             recording_payer: None,
             production_recording_supported: true,
             recorded_production: Vec::new(),
@@ -180,6 +182,10 @@ impl<'a> WitnessDecisionMaker<'a> {
         recorder.recording_production = true;
         recorder.recording_payer = Some(payer);
         recorder
+    }
+    pub fn with_pool_only_payment(mut self) -> Self {
+        self.pool_only_payment = true;
+        self
     }
     pub fn with_stored_colors(mut self, colors: Vec<crate::color::Color>) -> Self {
         self.stored_colors = colors.into();
@@ -332,6 +338,12 @@ impl crate::decision::DecisionMaker for WitnessDecisionMaker<'_> {
         game: &crate::game_state::GameState,
         ctx: &crate::decisions::context::ManaPaymentContext,
     ) -> crate::mana_payment::ManaPaymentResponse {
+        // Candidate search records one explicit activation at a time. A filter
+        // must use already produced mana; auto-funding here would silently tap
+        // dependencies that are absent from the resulting plan.
+        if self.pool_only_payment && !ctx.plan.mana_ability_steps.is_empty() {
+            return crate::mana_payment::ManaPaymentResponse::Cancel;
+        }
         self.fallback.decide_mana_payment(game, ctx)
     }
     fn decide_order(

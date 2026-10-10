@@ -49,8 +49,9 @@ fn cohort_optional_return_then_attach_is_one_choice_and_keeps_entering_creature(
                 .build();
         let entered = game.create_object_from_definition(&creature, alice, Zone::Battlefield);
         let event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::zones::ZoneChangeEvent::with_cause(
+            crate::events::zones::ZoneChangeEvent::with_results(
                 entered,
+                vec![entered],
                 Zone::Hand,
                 Zone::Battlefield,
                 crate::events::cause::EventCause::effect(),
@@ -340,8 +341,9 @@ fn cohort_name_sticker_reflexive_targets_use_the_chosen_stickers_unique_vowels()
             .build();
         let target = game.create_object_from_definition(&creature, alice, Zone::Battlefield);
         let event = crate::triggers::TriggerEvent::new_with_provenance(
-            crate::events::zones::ZoneChangeEvent::with_cause(
+            crate::events::zones::ZoneChangeEvent::with_results(
                 source,
+                vec![source],
                 Zone::Hand,
                 Zone::Battlefield,
                 crate::events::cause::EventCause::effect(),

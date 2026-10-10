@@ -202,6 +202,7 @@ fn ninjutsu_counter() {
     let one = g.create_object_from_definition(&d, A, Zone::Battlefield);
     let two = g.create_object_from_definition(&d, A, Zone::Battlefield);
     g.combat = Some(CombatState {
+        block_declaration_complete: true,
         attackers: vec![
             AttackerInfo {
                 creature: one,
@@ -355,6 +356,7 @@ fn ninjutsu_unearth() {
         let attacker = out.first_output_object().unwrap();
         let stable = g.object(attacker).unwrap().stable_id;
         g.combat = Some(CombatState {
+        block_declaration_complete: true,
             attackers: vec![AttackerInfo {
                 creature: attacker,
                 target: AttackTarget::Player(PlayerId(1)),
@@ -554,6 +556,7 @@ fn copied_ninjutsu_keeps_the_defender_selected_for_its_activation() {
         Zone::Battlefield,
     );
     g.combat = Some(CombatState {
+        block_declaration_complete: true,
         attackers: vec![AttackerInfo {
             creature: attacker,
             target: AttackTarget::Player(PlayerId(2)),
@@ -838,9 +841,9 @@ fn discard_waits_for_the_replacement_destination_without_moving_the_card() {
         false,
         Default::default(),
         &mut dm,
-    ).expect("root discard should execute").expect("root discard should finish without a pending choice");
+    ).expect("root discard should execute");
     assert!(dm.waiting);
-    assert!(out.new_id.is_none());
+    assert!(out.is_none(), "a pending destination choice has no committed receipt");
     assert_eq!(g.object(card).unwrap().zone, Zone::Hand);
     assert!(g.effect_store.pending_trigger_entries.is_empty());
 }

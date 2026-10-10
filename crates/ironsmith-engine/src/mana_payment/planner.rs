@@ -1044,11 +1044,14 @@ fn remaining_mana_is_unpayable(game: &GameState, request: &ManaPaymentRequest) -
     {
         return false;
     }
-    // Constrained costs use this complete planner in the public affordability
-    // query. Calling that query here would re-enter the same payment search.
+    // Constrained costs and sources with nontrivial activation costs use this
+    // complete planner in the public affordability query. Calling that query here would re-enter the same payment search.
     // Keep the preceding conservative bounds, then let the current search
     // validate producer provenance and the X allocation itself.
-    if !request.cost.spending_restrictions().is_empty() || request.cost.has_waterbend_obligation() {
+    if !request.cost.spending_restrictions().is_empty()
+        || request.cost.has_waterbend_obligation()
+        || crate::decision::payment_requires_stateful_sources(game, request.payer, &view)
+    {
         return false;
     }
     !crate::decision::can_pay_mana_cost_with_available_sources(
@@ -1636,7 +1639,11 @@ impl ManaPaymentPlanner {
                     &payment_request,
                     depth_limit,
                     stop_after_first,
-                    self.lazy_candidates,
+                    // Ranking still visits alternatives, but must not retain
+                    // a breadth-first frontier of full game/event histories.
+                    // Resume sibling iterators after each depth-first branch,
+                    // just as existence checks do, keeping the ranking budget.
+                    true,
                 );
                 if stop_after_first && self.preview_assignment {
                     search.preview_root = Some(game.clone());
@@ -2482,7 +2489,8 @@ pub(super) fn prepare_owned_activation(
         request.payer,
         &mut fallback_decision_maker,
     )
-    .with_stored_colors(choice.stored_color_choices.clone());
+    .with_stored_colors(choice.stored_color_choices.clone())
+    .with_pool_only_payment();
     if let Err(error) = activate_with_mana_witnesses(
         &mut staged,
         request,
@@ -4461,6 +4469,83 @@ mod tests {
     ) -> ManaPaymentRequest {
         ManaPaymentRequest::new(payer, source, crate::costs::PaymentReason::Effect, cost)
             .with_spend_policy(game.mana_spend_policy(payer, Some(source)))
+    }
+
+    #[test]
+    fn affordability_gate_does_not_reenter_planner_for_exert_mana_source() {
+        let (mut game, alice) = game();
+        let source = mana_land(&mut game, alice, "Exert mana source", &[vec![ManaSymbol::Red]], false, None);
+        let object = game.object_mut(source).unwrap();
+        let AbilityKind::Activated(ability) = &mut object.abilities_mut()[0].kind else {
+            panic!("mana ability");
+        };
+        ability.mana_cost = crate::TotalCost::from_costs(vec![
+            crate::costs::Cost::mana(ManaCost::from_symbols(vec![ManaSymbol::Red])),
+            crate::costs::Cost::tap(),
+            crate::costs::Cost::effect(crate::effects::ExertCostEffect::new("Exert this land")),
+        ]);
+        game.player_mut(alice).unwrap().mana_pool.add(ManaSymbol::Red, 1);
+        let request = request(&game, alice, source, ManaCost::from_symbols(vec![ManaSymbol::Red]));
+        assert!(!remaining_mana_is_unpayable(&game, &request));
+        assert!(ManaPaymentPlanner::default().first_plan(&game, &request).is_ok());
+        assert!(!game.is_tapped(source));
+        assert_eq!(game.player(alice).unwrap().mana_pool.total(), 1);
+    }
+
+    #[test]
+    fn ranked_damage_mana_search_retains_only_a_branch_and_best_plans() {
+        let (mut game, alice) = game();
+        let mut lands = Vec::new();
+        for _ in 0..8 {
+            let land = mana_land(&mut game, alice, "Damage mana source", &[], false, None);
+            game.object_mut(land).unwrap().abilities_mut().push(
+                crate::Ability::mana_with_effects(
+                    crate::TotalCost::free(),
+                    vec![
+                        crate::effect::Effect::add_mana(vec![
+                            ManaSymbol::Colorless,
+                            ManaSymbol::Colorless,
+                        ]),
+                        crate::effect::Effect::deal_damage(
+                            2,
+                            crate::target::ChooseSpec::Player(crate::target::PlayerFilter::You),
+                        ),
+                    ],
+                ),
+            );
+            lands.push(land);
+        }
+        let request = request(
+            &game,
+            alice,
+            lands[0],
+            ManaCost::new().add_generic(9),
+        );
+        let mut analysis = ManaPaymentAnalysis::ranked(&game, request);
+        for _ in 0..1_000 {
+            if let Some(result) = analysis.step(64) {
+                let plan = result.expect("five damage sources can pay nine generic mana");
+                assert_eq!(plan.mana_ability_steps.len(), 5);
+                assert_eq!(plan.expected_pool_after_payment.total(), 1);
+                assert!(analysis.planner.searched_selections > 0);
+                assert_eq!(game.player(alice).unwrap().life, 20);
+                assert!(lands.iter().all(|land| !game.is_tapped(*land)));
+                return;
+            }
+            if let Some(active) = analysis.planner.outer.as_ref().and_then(|outer| outer.active.as_ref()) {
+                let search = &active.search;
+                let retained = search.queue.len()
+                    + search.depth_frontier.len()
+                    + search.deferred_expansions.len()
+                    + search.expansion.as_ref().map_or(0, |expansion| 1 + expansion.prepared.len())
+                    + search.out.len();
+                assert!(
+                    retained <= lands.len() + MAX_PLANS_PER_SELECTION + 1,
+                    "ranking retained {retained} full states for eight sources"
+                );
+            }
+        }
+        panic!("ranking did not finish within its work budget");
     }
 
     #[test]

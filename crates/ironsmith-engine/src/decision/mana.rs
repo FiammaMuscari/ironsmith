@@ -2587,7 +2587,7 @@ fn casting_method_grants_special_timing(
     }
     offering_grants_timing(ctx.game, ctx.player, spell)
         || casting_method_grants_flash_timing(ctx.game, ctx.player, spell, casting_method)
-        || casting_method_grants_sneak_timing(ctx.game, spell, casting_method)
+        || casting_method_grants_sneak_timing(ctx.game, ctx.player, spell, casting_method)
         || (ctx.allow_library_search_cast_timing
             && casting_method_grants_library_search_timing(
                 ctx.game,
@@ -2599,13 +2599,13 @@ fn casting_method_grants_special_timing(
 
 fn casting_method_grants_sneak_timing(
     game: &GameState,
+    player: PlayerId,
     spell: &crate::object::Object,
     casting_method: &CastingMethod,
 ) -> bool {
-    let method = match casting_method.without_exact_permission() {
-        CastingMethod::Alternative(idx) => spell.alternative_casts.get(*idx),
-        _ => None,
-    };
+    // Granted and exact zone permissions carry the same keyword timing as
+    // a printed alternative cost. Resolve the selected method on all routes.
+    let method = alternative_method_for_casting_method(game, player, spell, casting_method);
     let Some(method) = method else {
         return false;
     };
@@ -2689,6 +2689,12 @@ pub fn spell_mana_cost_for_cast(
         game.record_token_resource_failure(&error);
         return None;
     }
+    // CR 708: the face-down spell has no printed additional costs. Callers
+    // may still supply the private origin card while previewing its price.
+    let face_down_view = matches!(casting_method.origin_method(),
+        CastingMethod::FaceDown | CastingMethod::FaceDownPlayFrom { .. })
+        .then(|| spell_view_for_face_down_cast(game, spell));
+    let spell = face_down_view.as_ref().unwrap_or(spell);
     let base_cost = match casting_method.without_exact_permission() {
         CastingMethod::ExactPermission { .. } => {
             game.record_token_resource_failure(&crate::effects::ExecutionError::IncompleteEvidence("nested exact permission is not a casting method".into()));
@@ -3362,6 +3368,29 @@ fn spell_has_legal_targets_for_cast_or_payable_optional_cost_hypothesis_with_vie
     )
 }
 
+// A color-only source inventory spends each permanent at most once and does
+// not execute activation costs. Converters and other nontrivial sources must
+// use the stateful planner, including during the initial affordability gate.
+pub(crate) fn payment_requires_stateful_sources(game: &GameState, player: PlayerId, view: &DerivedGameView<'_>) -> bool {
+    // A color-only pool erases spending restrictions. They remain binding
+    // even after the permanent that produced the mana has left play.
+    if game.player(player).is_some_and(|player| !player.restricted_mana.is_empty()) {
+        return true;
+    }
+    let analysis = view.simple_battlefield_mana_analysis(player);
+    analysis.mana_source_ids().iter().any(|source| {
+        view.abilities_rc(*source).is_some_and(|abilities| {
+            analysis.mana_ability_indices_for(*source).iter().any(|index| {
+                matches!(abilities.get(*index).map(|ability| &ability.kind),
+                    Some(crate::ability::AbilityKind::Activated(ability))
+                    if !ability.mana_usage_restrictions.is_empty()
+                        || !ability.has_tap_cost()
+                        || ability.mana_cost.as_all().is_none_or(|costs| costs.iter().any(|cost| !cost.requires_tap())))
+            })
+        })
+    })
+}
+
 fn mana_cost_can_be_paid_with_view_at_x(
     game: &GameState,
     player: PlayerId,
@@ -3387,6 +3416,7 @@ fn mana_cost_can_be_paid_with_view_at_x(
         });
     if !cost.spending_restrictions().is_empty() || cost.has_waterbend_obligation()
         || has_restricted_mana
+        || payment_requires_stateful_sources(game, player, view)
         || crate::mana_payment::has_potential_mana_triggers(game, view)
         || crate::mana_payment::has_mana_modifying_replacements(game)
         || game.object(spell_id).is_some_and(|spell| {
@@ -7614,6 +7644,7 @@ pub(crate) fn can_pay_mana_cost_with_available_sources(
     // constrained costs through the same full request used at payment, before
     // projecting to pips or entering that solver's symbol-only memo cache.
     if !cost.spending_restrictions().is_empty() || cost.has_waterbend_obligation()
+        || payment_requires_stateful_sources(game, player, view)
         || crate::mana_payment::has_mana_modifying_replacements(game)
         || crate::mana_payment::has_potential_mana_triggers(game, view)
     {
@@ -8528,9 +8559,9 @@ pub(crate) fn simple_battlefield_mana_ability_output(
     if mana_ability.has_tap_cost() && !game.can_activate_tap_abilities_of(permanent_id) {
         return None;
     }
-    if !mana_ability
-        .mana_cost
-        .costs()
+    // Alternative prices need the full planner to choose and price a branch.
+    let costs = mana_ability.mana_cost.as_all()?;
+    if !costs
         .iter()
         .all(|cost| cost.requires_tap() || cost.requires_untap())
     {

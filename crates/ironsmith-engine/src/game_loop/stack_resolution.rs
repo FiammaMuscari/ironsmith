@@ -3,7 +3,7 @@ use crate::effects::rebase_target_scope;
 use crate::game_loop::targeting::DeclaredTarget;
 use crate::triggers::Trigger;
 
-pub(super) fn active_target_assignments_for_effect(
+pub(crate) fn active_target_assignments_for_effect(
     effect: &Effect,
     chosen_modes: Option<&[usize]>,
     consumed_modal_selection: &mut bool,
@@ -67,6 +67,37 @@ pub(super) fn active_target_assignments_for_effect(
         // requirement. Rebind execution to the same earlier assignment even
         // when an intervening effect declared a different target.
         return vec![reused.clone()];
+    }
+    if count == 0 && target_profile.is_none() {
+        // Composite programs can reuse several declarations (for example,
+        // separate win/loss targets in a repeated coin-flip process). They
+        // have no single profile and must not inherit only the last target.
+        fn mark_reused(
+            effect: &Effect,
+            prior: &[crate::game_state::TargetAssignment],
+            selected: &mut [bool],
+        ) {
+            if let Some(profile) = effect.target_selection_profile() {
+                if targeting::requires_target_selection(profile.spec)
+                    && let Some(index) = prior.iter().position(|assignment| {
+                        targeting::target_spec_reuses_declared_target(profile.spec, &assignment.spec)
+                    })
+                {
+                    selected[index] = true;
+                }
+            } else {
+                effect.visit_child_effects(&mut |child| mark_reused(child, prior, selected));
+            }
+        }
+        let prior = &assignments[..(*cursor).min(assignments.len())];
+        let mut reused = vec![false; prior.len()];
+        mark_reused(effect, prior, &mut reused);
+        let selected = prior.iter().zip(reused).filter_map(|(assignment, reused)| {
+            reused.then(|| assignment.clone())
+        }).collect::<Vec<_>>();
+        if !selected.is_empty() {
+            return selected;
+        }
     }
     let start = *cursor;
     let end = start.saturating_add(count).min(assignments.len());
@@ -539,9 +570,19 @@ fn evaluate_self_replacement_branch(
     segment_effects: &[Effect],
     representative_effect: Option<&Effect>,
     representative_assignments: Vec<crate::game_state::TargetAssignment>,
+    chosen_modes: Option<&[usize]>,
+    valid_target_assignments: &[crate::game_state::TargetAssignment],
+    assignment_cursor: usize,
 ) -> Result<bool, crate::effects::ExecutionError> {
     ctx.with_query_scope(|ctx| {
         apply_self_replacement_tag_prelude(game, ctx, segment_effects)?;
+        // The replacement gate may refer to the original announced target
+        // ("its controller") before the default instruction runs. Bind only
+        // those declarations inside this temporary query scope.
+        apply_self_replacement_declared_target_tags(
+            game, ctx, segment_effects, chosen_modes,
+            valid_target_assignments, assignment_cursor,
+        );
         let Some(effect) = representative_effect else {
             let result =
                 crate::condition_eval::evaluate_condition_resolution(game, &branch.condition, ctx);
@@ -924,6 +965,9 @@ fn execute_resolution_program_inner(
                     &segment.default_effects,
                     representative_effect,
                     representative_assignments.clone(),
+                    chosen_modes,
+                    valid_target_assignments,
+                    assignment_cursor,
                 )? {
                     applicable.push(branch);
                 }
@@ -2327,6 +2371,7 @@ fn resolve_stack_entry_full_inner(
                             not_before_turn: None,
                             expires_at_turn: None,
                             expires_before_controller_turn_after: None,
+                            expires_after_controller_turn_after: None,
                             expires_at_end_of_combat: false,
                             bound_extra_turn_index: None,
                             while_any_tagged_object_in_zone: None,
@@ -3320,7 +3365,7 @@ mod tests {
                 &view,
             );
         assert!(legal_targets.contains(&crate::game_state::Target::Object(charlie_creature)));
-        assert!(legal_targets.contains(&crate::game_state::Target::Object(diana_creature)));
+        assert!(!legal_targets.contains(&crate::game_state::Target::Object(diana_creature)));
 
         let attacking_program =
             crate::resolution::ResolutionProgram::from_effects(vec![Effect::gain_life_player(
@@ -4134,6 +4179,28 @@ mod counter_transfer_role_assignment_tests {
             assignments,
             cursor,
         )
+    }
+    #[test]
+    fn repeated_program_reuses_both_prior_target_declarations() {
+        let enemy = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature().opponent_controls()));
+        let own = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature().you_control()));
+        let assignments = vec![
+            TargetAssignment { spec: enemy.clone(), range: 0..1 },
+            TargetAssignment { spec: own.clone(), range: 1..2 },
+        ];
+        let mut declared = Vec::new();
+        let mut cursor = 0;
+        for spec in [&enemy, &own] {
+            bind(&Effect::new(TargetOnlyEffect::new(spec.clone())), &mut declared, &assignments, &mut cursor);
+        }
+        let repeated = Effect::new(crate::effects::RepeatProcessEffect::new(
+            vec![Effect::destroy(enemy), Effect::destroy(own)],
+            crate::effect::EffectId(0),
+            crate::effect::EffectPredicate::Happened,
+        ));
+        let selected = bind(&repeated, &mut declared, &assignments, &mut cursor);
+        assert_eq!(selected, assignments);
+        assert_eq!(cursor, 2, "reused targets must not consume new assignments");
     }
     #[test]
     fn independent_equal_filters_keep_two_roles_through_wrappers() {

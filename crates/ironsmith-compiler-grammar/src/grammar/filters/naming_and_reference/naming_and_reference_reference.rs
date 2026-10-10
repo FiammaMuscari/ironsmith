@@ -438,9 +438,11 @@ pub(in super::super) fn apply_reference_and_tag_stage(
         && (words_contain_any_word(all_words, IT_OR_THEM_WORDS)
             || shares_card_type_with_that_permanent
             || references_additional_cost_object);
+    let shares_color_with_that_card = find_phrase_start(all_words, &["with", "that", "card"]);
     let has_share_color = (words_contain_any_word(all_words, SHARE_WORDS)
         && words_contain_any_word(all_words, COLOR_OR_COLORS_WORDS)
-        && words_contain_any_word(all_words, IT_OR_THEM_WORDS))
+        && (words_contain_any_word(all_words, IT_OR_THEM_WORDS)
+            || shares_color_with_that_card.is_some()))
         || (references_additional_cost_object
             && words_contain_any_word(all_words, SHARE_WORDS)
             && words_contain_any_word(all_words, COLOR_OR_COLORS_WORDS));
@@ -504,6 +506,12 @@ pub(in super::super) fn apply_reference_and_tag_stage(
         }
     }
     if has_share_color {
+        if let Some(reference_start) = shares_color_with_that_card {
+            // The referenced card is the comparison operand, not the noun
+            // of the creatures/permanents selected by this filter.
+            filter.set_explicit_card_noun(all_words[..reference_start].iter()
+                .any(|word| matches!(*word, "card" | "cards")));
+        }
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: if references_additional_cost_object {
                 (crate::tag::CompilerReferenceTag::AdditionalCostObject.bind()).into()

@@ -2457,7 +2457,7 @@ mod tests {
     }
 
     #[test]
-    fn combat_toxic_uses_damage_time_and_actual_departure_snapshots() {
+    fn combat_toxic_uses_shared_damage_time_snapshot_before_replacement_payloads() {
         for blocked in [false, true] {
             for redirect in [false, true] {
                 for remove_abilities in [false, true] {
@@ -2539,7 +2539,10 @@ mod tests {
                             .unwrap();
                     assert!(game.object(source).is_none());
                     assert_eq!(game.player(bob).unwrap().life, 18);
-                    let poison = if remove_abilities { 0 } else { 2 };
+                    // All simultaneous damage observes the same source state.
+                    // Another assignment's replacement payload can remove the
+                    // source afterward, but cannot rewrite that observation.
+                    let poison = 2;
                     assert_eq!(
                         game.player(alice).unwrap().poison_counters,
                         if redirect { poison } else { 0 }
@@ -2568,7 +2571,7 @@ mod tests {
                         .sum::<u32>();
                     assert_eq!(
                         toxic, poison,
-                        "LKI must use the departure state, not stale planning text"
+                        "the damage receipt retains its original simultaneous observation"
                     );
                     let mut notifications = game.take_pending_trigger_events();
                     notifications.extend(
@@ -2586,8 +2589,8 @@ mod tests {
                         })
                         .filter(|(_, marker)| marker.is_added())
                         .collect::<Vec<_>>();
-                    assert_eq!(markers.len(), usize::from(!remove_abilities));
-                    if !remove_abilities {
+                    assert_eq!(markers.len(), 1);
+                    {
                         let (event, marker) = markers[0];
                         assert_eq!(
                             marker.location,
@@ -2608,7 +2611,7 @@ mod tests {
                                 .replacement_effects
                                 .get_effect(replacement)
                                 .is_some(),
-                            remove_abilities
+                            false
                         );
                     }
                 }
