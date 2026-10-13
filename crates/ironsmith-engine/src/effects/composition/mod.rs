@@ -26,7 +26,10 @@ mod aura_swap;
 mod behold;
 mod bid_life;
 mod branch_program;
+pub(crate) mod temporary_card;
+pub(crate) mod resolved_program;
 mod captured_program;
+pub(crate) mod scoped_choice;
 pub(crate) use captured_program::CapturedProgramFrame;
 mod choose_mode;
 mod choose_mode_runtime;
@@ -43,7 +46,7 @@ mod conditional;
 mod cumulative_upkeep;
 mod emit_gift_given;
 mod emit_keyword_action;
-mod execute_with_source;
+pub(crate) mod execute_with_source;
 mod for_each_correlated_result;
 mod for_each_object;
 mod for_each_tagged;
@@ -67,9 +70,11 @@ pub(crate) use repeat_effects::{
 pub(crate) mod original_observations;
 mod repeat_process;
 mod repeat_process_prompt;
+pub(crate) mod player_order;
 mod player_option_choice;
 mod secret_choice;
 mod sequence;
+mod coordinated_damage;
 mod simultaneous;
 pub(crate) use prepared_iteration::{
     scope_prepared_iteration, with_iteration_tags, with_object_iteration,
@@ -215,6 +220,14 @@ pub(crate) use keyword_action::{
 };
 
 mod keyword_programs;
+mod keyword_completion_program;
+mod outcome_branch_program;
+mod scoped_outcome_program;
+mod scoped_program;
+pub(crate) use scoped_program::{ScopedProgram, ExactTaggedObjects};
+pub(crate) use scoped_outcome_program::ScopedOutcomeProgram;
+pub(crate) use outcome_branch_program::{OutcomeBranchProgram, OutcomeBranchTest};
+pub(crate) use keyword_completion_program::KeywordCompletionProgram;
 
 pub(crate) use simultaneous::{
     complete_authored_original_subtree_with_outputs, complete_committed_original_with_outputs,
@@ -234,3 +247,21 @@ mod prepared_port_regressions;
 
 mod held_original;
 pub(crate) use held_original::defer_authored_original_additions_with_outputs;
+
+mod ensure_chosen_object;
+pub(crate) use ensure_chosen_object::{ensure_chosen_object, aggregate_children};
+
+mod resolved_player_actions;
+pub(crate) use resolved_player_actions::{ResolvedLifeLoss, ResolvedPlayerCounterRemoval};
+
+pub(crate) mod captured_selection;
+
+#[cfg(test)]
+mod decomposition_regression_tests;
+
+pub(crate) mod receipt_binding;
+
+pub(crate) mod payable_choice;
+
+#[cfg(test)]
+mod remaining_contract_tests;

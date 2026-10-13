@@ -362,9 +362,20 @@ fn source_ability_presence_changed(
         return false;
     };
 
-    let has_before = source_chars_before
-        .static_abilities
-        .contains(originating_static_ability);
+    if !effect_applies_with_chars(b, source_obj, source_chars_before, game) {
+        return false;
+    }
+    // Definitions already in the frame are normally Arc clones. Probe identity
+    // before semantic equality, which may render large nested grant payloads.
+    let has_before = source_chars_before.static_abilities.iter().any(|ability|
+        std::sync::Arc::ptr_eq(&ability.0, &originating_static_ability.0))
+        || source_chars_before.static_abilities.contains(originating_static_ability);
+    // An additive grant cannot remove an ability that is already present.
+    // Avoid cloning/simulating the entire frame for every pair of such grants.
+    if has_before && matches!(b.modification,
+        Modification::AddAbility(_) | Modification::AddAbilityGeneric(_)) {
+        return false;
+    }
 
     let mut source_chars_after = source_chars_before.clone();
     if effect_applies_with_chars(b, source_obj, source_chars_before, game) {
@@ -1033,7 +1044,7 @@ fn object_matches_filter_with_chars(
             | PlayerFilter::HasMoreLifeThanYou { .. }
             | PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
             | PlayerFilter::ControlsMost { .. }
-            | PlayerFilter::ControlsFewestTied { .. }
+            | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }
             | PlayerFilter::OpponentOf(_)
             | PlayerFilter::PlayerToLeftOf(_)
             | PlayerFilter::MaxSpeed { .. }
@@ -1554,6 +1565,8 @@ fn evaluate_value_simple(value: &Value, chars: &CalculatedCharacteristics) -> Va
 /// power, it depends on effects that modify that creature's power.
 fn value_references_pt(value: &Value) -> bool {
     match value {
+        // Retained snapshots are fixed at capture time.
+        Value::TaggedSnapshotCount { .. } => false,
         Value::AnnouncedTargetTotal(metric) => matches!(
             metric,
             ironsmith_core::ChoiceAggregateMetric::Power
@@ -1690,7 +1703,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::SpellsCastBeforeThisTurn(_)
         | Value::CommanderCastCount(_)
         | Value::CommanderColorIdentityColors(_)
-        | Value::ThisAbilityResolvedThisTurnCount
+        | Value::ThisAbilityResolvedThisTurnCount | Value::ThisAbilityManaProductionCountThisTurn
         | Value::SourceRegeneratedThisTurnCount
         | Value::SourceMutationCount
         | Value::SourceDevouredCreatureCount
@@ -2313,6 +2326,7 @@ fn anthem_count_could_be_affected_by(
 fn value_could_be_affected_by(value: &Value, modification: &Modification) -> bool {
     let pt_affected = modification.layer() == Layer::PowerToughness;
     match value {
+        Value::TaggedSnapshotCount { .. } => false,
         Value::AnnouncedTargetTotal(_) => true,
         Value::SurfaceHinted { value, .. } => value_could_be_affected_by(value, modification),
         Value::Fixed(_)
@@ -2351,7 +2365,7 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
         | Value::SpellsCastThisTurn(_)
         | Value::SpellsCastBeforeThisTurn(_)
         | Value::CommanderCastCount(_)
-        | Value::ThisAbilityResolvedThisTurnCount
+        | Value::ThisAbilityResolvedThisTurnCount | Value::ThisAbilityManaProductionCountThisTurn
         | Value::SourceRegeneratedThisTurnCount
         | Value::SourceMutationCount
         | Value::SourceDevouredCreatureCount
@@ -3469,6 +3483,7 @@ mod tests {
         let baseline = HashMap::from([(
             object.id,
             CalculatedCharacteristics {
+                copy_values: None,
                 alternate_name: object.split_other_half_name().map(str::to_string),
                 name: object.name.clone(),
                 mana_cost: object.mana_cost_owned(),
@@ -3536,6 +3551,7 @@ mod tests {
         let baseline = HashMap::from([(
             land.id,
             CalculatedCharacteristics {
+                copy_values: None,
                 alternate_name: land.split_other_half_name().map(str::to_string),
                 name: land.name.clone(),
                 mana_cost: land.mana_cost_owned(),
@@ -3669,6 +3685,7 @@ mod tests {
         let baseline = HashMap::from([(
             land.id,
             CalculatedCharacteristics {
+                copy_values: None,
                 alternate_name: land.split_other_half_name().map(str::to_string),
                 name: land.name.clone(),
                 mana_cost: land.mana_cost_owned(),
@@ -3855,6 +3872,7 @@ mod tests {
         let baseline = HashMap::from([(
             object.id,
             CalculatedCharacteristics {
+                copy_values: None,
                 alternate_name: object.split_other_half_name().map(str::to_string),
                 name: object.name.clone(),
                 mana_cost: object.mana_cost_owned(),
@@ -4094,6 +4112,7 @@ mod tests {
 
     fn chars_for(object: &crate::object::Object) -> CalculatedCharacteristics {
         CalculatedCharacteristics {
+            copy_values: None,
             alternate_name: object.split_other_half_name().map(str::to_string),
             name: object.name.clone(),
             mana_cost: object.mana_cost_owned(),

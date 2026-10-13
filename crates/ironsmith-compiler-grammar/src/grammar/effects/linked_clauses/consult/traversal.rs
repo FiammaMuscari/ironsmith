@@ -85,9 +85,27 @@ fn comma_starts_explicit_card_filter_union_arm(tokens: &[OwnedLexToken]) -> bool
 fn first_consult_trailing_comma(tokens: &[OwnedLexToken]) -> Option<usize> {
     tokens.iter().enumerate().find_map(|(idx, token)| {
         (token.kind == TokenKind::Comma
-            && !comma_starts_explicit_card_filter_union_arm(&tokens[idx + 1..]))
+            && !comma_starts_explicit_card_filter_union_arm(&tokens[idx + 1..])
+            && !comma_continues_card_descriptor(&tokens[idx + 1..]))
         .then_some(idx)
     })
+}
+
+/// A comma can join card qualifiers ("nonlegendary, nonland card ...").
+/// Only an actual following instruction ends the stop filter. Reuse the
+/// object grammar to distinguish another descriptor from an action clause.
+fn comma_continues_card_descriptor(tokens: &[OwnedLexToken]) -> bool {
+    let arm_end = first_comma(tokens).unwrap_or(tokens.len());
+    let arm = trim_commas(&tokens[..arm_end]);
+    // An instruction can carry its own subject ("this spell deals ...",
+    // "then you put ..."). Its verb need not be the first word. The filter
+    // parser accepts partial noun descriptions, so it cannot decide whether
+    // such an instruction belongs to the stop condition.
+    if crate::effect_sentences::find_verb(arm).is_some() {
+        return false;
+    }
+    TokenWordView::new(arm).word_refs().iter().any(|word| matches!(*word, "card" | "cards"))
+        && crate::grammar::filters::parse_object_filter_with_grammar_entrypoint_lexed(arm, false).is_ok()
 }
 
 fn parse_where_x_value(tokens: &[OwnedLexToken]) -> Option<Value> {

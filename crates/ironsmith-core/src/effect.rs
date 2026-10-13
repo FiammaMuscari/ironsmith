@@ -3731,6 +3731,9 @@ pub struct ChooseObjectsEffect {
     /// Persist an exact singular choice on the source for authored references
     /// from a later ability ("the chosen creature", for example).
     pub remember_as_chosen_object: bool,
+    /// Open selected hidden identities before replay without a rules reveal action.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub public_selection: bool,
 }
 
 impl ChooseObjectsEffect {
@@ -3761,6 +3764,7 @@ impl ChooseObjectsEffect {
             bottom_only: false,
             replace_tagged_objects: false,
             remember_as_chosen_object: false,
+            public_selection: false,
         }
     }
 
@@ -5138,6 +5142,9 @@ pub struct CreateTokenEffect<D> {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub text_roles: Option<crate::TokenTextRoles>,
+    /// Evaluated once at creation; these become the token's copiable base values.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dynamic_power_toughness: Option<(Value, Value)>,
     pub count: Value,
     pub controller: PlayerFilter,
     pub controller_target: Option<ChooseSpec>,
@@ -5183,6 +5190,9 @@ impl<D: std::fmt::Debug> std::fmt::Debug for CreateTokenEffect<D> {
         // absent historical evidence byte-identical to the old field order.
         if self.text_roles.is_some() {
             debug.field("text_roles", &self.text_roles);
+        }
+        if self.dynamic_power_toughness.is_some() {
+            debug.field("dynamic_power_toughness", &self.dynamic_power_toughness);
         }
         debug
             .field("count", &self.count)
@@ -5234,6 +5244,7 @@ impl<D> CreateTokenEffect<D> {
         Self {
             token,
             text_roles: None,
+            dynamic_power_toughness: None,
             count,
             controller,
             controller_target,
@@ -5433,9 +5444,16 @@ impl TokenCopyReferenceSurface {
     }
 }
 
+/// The keyword action that created a token. This is history, not a copiable characteristic.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
+pub enum TokenCreationMethod { Embalm, Eternalize }
+
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct CreateTokenCopyEffect<A> {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub creation_method: Option<TokenCreationMethod>,
     pub target: ChooseSpec,
     pub count: Value,
     pub controller: PlayerFilter,
@@ -5491,8 +5509,14 @@ pub struct CreateTokenCopyEffect<A> {
 }
 
 impl<A> CreateTokenCopyEffect<A> {
+    pub fn created_by(mut self, method: TokenCreationMethod) -> Self {
+        self.creation_method = Some(method);
+        self
+    }
+
     pub fn new(target: ChooseSpec, count: impl Into<Value>, controller: PlayerFilter) -> Self {
         Self {
+            creation_method: None,
             target,
             count: count.into(),
             controller,
@@ -5840,6 +5864,9 @@ pub struct ExileEffect {
     /// face up as it is exiled. Exile's rules semantics already expose the
     /// card; this flag retains only the explicit action surface.
     pub turn_face_up: bool,
+    /// Retain exact original exile arrivals on the source before added actions.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub remember_on_source: bool,
 }
 
 #[cfg(feature = "serde")]
@@ -5855,6 +5882,7 @@ impl ExileEffect {
             exclude_prior_zone_viewers: false,
             source_controller_may_look: false,
             turn_face_up: false,
+            remember_on_source: false,
         }
     }
 
@@ -6120,6 +6148,9 @@ pub struct CopySpellEffect {
     pub added_subtypes: Vec<Subtype>,
     /// Base power/toughness set as part of the copy effect's copiable values.
     pub set_base_power_toughness: Option<(i32, i32)>,
+    /// Starting loyalty is part of the copy's copiable values, not a counter action.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub set_base_loyalty: Option<Value>,
 }
 
 impl CopySpellEffect {
@@ -6166,6 +6197,7 @@ impl CopySpellEffect {
             added_card_types: Vec::new(),
             added_subtypes: Vec::new(),
             set_base_power_toughness: None,
+            set_base_loyalty: None,
         }
     }
 
@@ -6215,11 +6247,17 @@ impl CopySpellEffect {
         self
     }
 
+    pub fn with_set_base_loyalty(mut self, loyalty: impl Into<Value>) -> Self {
+        self.set_base_loyalty = Some(loyalty.into());
+        self
+    }
+
     pub fn has_characteristic_modifiers(&self) -> bool {
         self.set_colors.is_some()
             || !self.added_card_types.is_empty()
             || !self.added_subtypes.is_empty()
             || self.set_base_power_toughness.is_some()
+            || self.set_base_loyalty.is_some()
     }
 
     pub fn with_count_surface(mut self, surface: CopyCountSurface) -> Self {
@@ -6304,12 +6342,40 @@ impl CopySpellForEachTargetEffect {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "VariableCasualtyCopyPayload"))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
-pub struct VariableCasualtyPlaneswalkerCopyEffect;
+pub struct VariableCasualtyPlaneswalkerCopyEffect {
+    pub cost_ref: crate::OptionalCostRef,
+}
+
+// The old compatibility payload was a unit value. Fresh builders bind the
+// exact printed optional-cost instance; old unit payloads keep the generic ref.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum VariableCasualtyCopyPayload {
+    Bound { cost_ref: crate::OptionalCostRef },
+    Legacy(()),
+}
+
+#[cfg(feature = "serde")]
+impl From<VariableCasualtyCopyPayload> for VariableCasualtyPlaneswalkerCopyEffect {
+    fn from(payload: VariableCasualtyCopyPayload) -> Self {
+        match payload {
+            VariableCasualtyCopyPayload::Bound { cost_ref } => Self { cost_ref },
+            VariableCasualtyCopyPayload::Legacy(()) => Self::new(),
+        }
+    }
+}
 
 impl VariableCasualtyPlaneswalkerCopyEffect {
     pub fn new() -> Self {
-        Self
+        Self { cost_ref: crate::OptionalCostRef::from("Casualty") }
+    }
+
+    pub fn with_cost_ref(mut self, cost_ref: crate::OptionalCostRef) -> Self {
+        self.cost_ref = cost_ref;
+        self
     }
 }
 

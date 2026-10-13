@@ -336,7 +336,7 @@ pub(super) fn describe_possessive_player_filter(filter: &PlayerFilter) -> String
         PlayerFilter::OpponentWithMoreControlledObjectsThan { .. } => {
             format!("{}'s", describe_player_filter(filter))
         }
-        PlayerFilter::ControlsMost { .. } | PlayerFilter::ControlsFewestTied { .. } => {
+        PlayerFilter::ControlsMost { .. } | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } => {
             format!("{}'s", describe_player_filter(filter))
         }
         PlayerFilter::OpponentOf(_)
@@ -446,7 +446,7 @@ pub fn describe_player_filter(filter: &PlayerFilter) -> String {
             )
         }
         PlayerFilter::OpponentWithMoreControlledObjectsThan { .. } => filter.description(),
-        PlayerFilter::ControlsMost { .. } | PlayerFilter::ControlsFewestTied { .. } => {
+        PlayerFilter::ControlsMost { .. } | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } => {
             filter.description()
         }
         PlayerFilter::OpponentOf(base) => {
@@ -870,7 +870,7 @@ fn abilities_have_vanishing(abilities: &[crate::ability::Ability]) -> bool {
         })
 }
 
-pub(super) fn abilities_have_marker(abilities: &[crate::ability::Ability], marker: &str) -> bool {
+pub(crate) fn abilities_have_marker(abilities: &[crate::ability::Ability], marker: &str) -> bool {
     use crate::ability::AbilityKind;
 
     let normalized_marker = marker.trim().to_ascii_lowercase();

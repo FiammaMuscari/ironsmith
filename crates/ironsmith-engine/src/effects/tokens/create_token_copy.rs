@@ -3,7 +3,7 @@
 use crate::ability::Ability;
 use crate::card::PtValue;
 use crate::combat_state::AttackTarget;
-use crate::decisions::context::{SelectOptionsContext, SelectableOption};
+use crate::effects::composition::scoped_choice::{select_typed_option, SingleChoicePolicy};
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter, resolve_value};
@@ -93,10 +93,9 @@ pub(super) fn choose_attack_target(
         .player(player_id)
         .map(|player| player.name.to_string())
         .unwrap_or_else(|| "that player".to_string());
-    let options: Vec<SelectableOption> = targets
+    let options: Vec<_> = targets
         .iter()
-        .enumerate()
-        .map(|(index, target)| {
+        .map(|target| {
             let description = match target {
                 AttackTarget::Player(_) => format!("Attack {player_name}"),
                 AttackTarget::Planeswalker(planeswalker_id) => {
@@ -115,27 +114,18 @@ pub(super) fn choose_attack_target(
                 }
                 AttackTarget::Nothing { .. } => "Attack nothing".to_string(),
             };
-            SelectableOption::new(index, description)
+            (target.clone(), description)
         })
         .collect();
-    let choice_ctx = SelectOptionsContext::new(
+    select_typed_option(
+        game,
+        ctx,
         ctx.controller,
-        Some(ctx.source),
-        format!("Choose attack target for token copy attacking {player_name}"),
-        options,
-        1,
-        1,
-    );
-    let chosen = ctx.decision_maker.decide_options(game, &choice_ctx);
-    if ctx.decision_maker.awaiting_choice() {
-        return None;
-    }
-    chosen
-        .first()
-        .copied()
-        .filter(|selected| *selected < targets.len())
-        .and_then(|index| targets.get(index))
-        .cloned()
+        &format!("Choose attack target for token copy attacking {player_name}"),
+        &options,
+        SingleChoicePolicy::First,
+    )
+    .expect("first-option policy cannot fail")
 }
 
 fn ability_is_soulbond_pairing(ability: &Ability) -> bool {
@@ -168,6 +158,19 @@ fn build_token_copy_object(
         Object::token_copy_of(target, id, controller_id)
     };
 
+    if effect.pt_adjustment.is_some() || resolved_base_power_toughness.is_some() {
+        crate::static_abilities::exclude_pt_cdas_from_copy(
+            &mut token.abilities,
+            &mut token.ability_labels,
+        );
+    }
+    crate::static_abilities::exclude_cdas_from_copy(
+        &mut token.abilities,
+        &mut token.ability_labels,
+        false,
+        effect.set_colors.is_some(),
+        effect.set_card_types.is_some() || effect.set_subtypes.is_some(),
+    );
     if let Some(CopyPtAdjustment::HalfRoundUp) = effect.pt_adjustment {
         token.base_power = Some(PtValue::Fixed(half_power));
         token.base_toughness = Some(PtValue::Fixed(half_toughness));
@@ -242,6 +245,24 @@ fn build_token_copy_object(
         ));
     }
 
+    // Copy exceptions apply to each copiable face, not just the face initially
+    // displayed by the token (CR 707.9b, 709.5b, 710.2).
+    if let Some(other) = token.copied_face_values.as_ref()
+        .and_then(|values| values.other_copy_face.as_deref()).cloned()
+    {
+        let mut other_object = token.clone();
+        other_object.copy_copiable_values_from_values(&other);
+        let other_token = build_token_copy_object(
+            effect, id, controller_id, Some(&other_object), None,
+            resolved_target_id, half_power, half_toughness,
+            resolved_base_power_toughness, static_abilities_to_grant,
+        )?;
+        let mut values = crate::snapshot::CopiableValues::from_object(&token);
+        values.other_copy_face = Some(Box::new(crate::snapshot::CopiableValues::from_object(&other_token)));
+        token.copied_face_values = Some(Box::new(values));
+    } else if token.copied_face_values.is_some() {
+        token.copied_face_values = Some(Box::new(crate::snapshot::CopiableValues::from_object(&token)));
+    }
     Ok(token)
 }
 
@@ -726,6 +747,7 @@ fn commit_token_copy_original(
         let id = game.new_object_id();
         let mut token = Object::token_copy_of(&token_preview, id, controller_id);
         token.zone = Zone::Command;
+        token.token_creation_method = effect.creation_method;
         let token_is_creature = token.is_creature();
         game.commit_token_resource_slot()?;
         game.add_object(token);
@@ -942,6 +964,51 @@ mod tests {
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn copy_pt_exception_removes_cda_but_mutate_preserves_it() {
+        for mutate in [false, true] {
+            let mut game = setup_game();
+            let alice = PlayerId::from_index(0);
+            let definition = CardDefinitionBuilder::new(CardId::new(), "Counting creature")
+                .card_types(vec![CardType::Creature])
+                .power_toughness(PowerToughness::fixed(0, 0))
+                .with_ability(Ability::static_ability(StaticAbility::characteristic_defining_pt(
+                    Value::Count(ObjectFilter::creature().you_control()),
+                    Value::Count(ObjectFilter::creature().you_control()),
+                )))
+                .with_ability(Ability::static_ability(StaticAbility::flying()))
+                .build();
+            let original = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
+            create_creature(&mut game, "Other creature", alice);
+            if mutate {
+                let card = make_creature_card(900, "Mutating top");
+                let spell = game.create_object_from_card(&card, alice, Zone::Stack);
+                assert_eq!(game.merge_mutating_creature_spell(spell, original, true), Some(original));
+                assert_eq!(game.object(original).unwrap().base_power, Some(PtValue::Fixed(3)));
+            }
+            assert_eq!(game.calculated_power(original), Some(2));
+            let copy = |game: &mut GameState, source, exception| {
+                let mut effect = CreateTokenCopyEffect::one(ChooseSpec::SpecificObject(source));
+                if exception {
+                    effect = effect.set_base_power_toughness(1, 1);
+                }
+                let mut ctx = ExecutionContext::new_default(source, alice);
+                let outcome = effect.execute(game, &mut ctx).unwrap();
+                let crate::effect::OutcomeValue::Objects(ids) = outcome.value else { panic!("copy token"); };
+                ids[0]
+            };
+            let token = copy(&mut game, original, true);
+            assert_eq!(game.calculated_power(token), Some(1), "mutated source: {mutate}");
+            assert_eq!(game.calculated_toughness(token), Some(1));
+            assert_eq!(game.object(token).unwrap().abilities.len(), 1, "flying survives, CDA does not");
+            let second = copy(&mut game, token, false);
+            assert_eq!(game.calculated_power(second), Some(1));
+            let ordinary = copy(&mut game, original, false);
+            assert_eq!(game.calculated_power(ordinary), Some(5), "ordinary copies retain the dynamic CDA");
+            assert_eq!(game.calculated_power(original), Some(5), "copy exceptions do not change the donor");
+        }
     }
 
     fn make_creature_card(card_id: u32, name: &str) -> crate::card::Card {
@@ -1329,7 +1396,7 @@ mod tests {
             .iter()
             .filter(|id| {
                 game.object(**id)
-                    .is_some_and(|token| token.name == "Treasure")
+                    .is_some_and(|token| token.name == "Treasure Token")
             })
             .count();
         assert_eq!(
@@ -1406,7 +1473,7 @@ mod tests {
             "Xorn should only affect its controller's Treasure token copies"
         );
         let token = game.object(ids[0]).expect("token should exist");
-        assert_eq!(token.name, "Treasure");
+        assert_eq!(token.name, "Treasure Token");
         assert_eq!(game.controller_of(token), bob);
     }
 

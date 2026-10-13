@@ -3335,6 +3335,8 @@ pub enum ConditionEvaluationMode {
 pub struct ExternalEvaluationOptions {
     /// Recheck the current exact event object when a triggered ability resolves.
     pub triggering_object_current: bool,
+    /// The ability already triggered; registration limits do not gate resolution.
+    pub ignore_trigger_limits: bool,
     /// If true, treat timing restrictions as satisfied.
     pub ignore_timing: bool,
     /// If true, treat per-turn activation limits as satisfied.
@@ -3784,7 +3786,7 @@ fn resolve_condition_player_simple(
         | PlayerFilter::HasMoreLifeThanYou { .. }
         | PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. }
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }
         | PlayerFilter::OpponentOf(_)
         | PlayerFilter::PlayerToLeftOf(_)
         | PlayerFilter::MaxSpeed { .. } => {
@@ -4623,6 +4625,9 @@ fn evaluate_condition_in_context(
         }
         Condition::ThisSpellEscaped => Ok(source_escaped(game, shared.source)),
         Condition::ThisSpellWasForetold => {
+            if ctx.is_cast_time() && game.object(shared.source).is_some_and(|object| object.zone != crate::zone::Zone::Stack) {
+                return Ok(game.is_foretold(shared.source));
+            }
             // Retained evidence, including an unknown value, is authoritative.
             // Never substitute a paid label, live exile flag or new incarnation.
             let paid = if let Some(exec) = ctx.execution() {
@@ -5338,6 +5343,9 @@ fn evaluate_condition_in_context(
             let Some(ctx) = ctx.external() else {
                 return Ok(true);
             };
+            if ctx.options.ignore_trigger_limits {
+                return Ok(true);
+            }
             Ok(ctx
                 .trigger_identity
                 .map(|id| game.do_this_action_count_this_turn(ctx.source, id) < *limit)
@@ -5347,6 +5355,9 @@ fn evaluate_condition_in_context(
             let Some(ctx) = ctx.external() else {
                 return Ok(true);
             };
+            if ctx.options.ignore_trigger_limits {
+                return Ok(true);
+            }
             Ok(ctx
                 .trigger_identity
                 .map(|id| game.trigger_fire_count_this_turn(ctx.source, id) < *limit)

@@ -896,19 +896,19 @@ impl WasmGame {
                 self.pending_action_checkpoint = None;
             }
             self.priority_state.pending_continuation = None;
-            if self.decision_uses_live_priority_response(&next_ctx) {
-                self.pending_live_continuation = None;
-            } else {
-                self.pending_live_continuation = Some(LivePriorityContinuation {
-                    checkpoint: step_checkpoint,
-                    root: PendingPriorityContinuation::ApplyResponse(response),
-                    answers: Vec::new(),
-                    speculative_progress: match (&next_ctx, &result) {
-                        (DecisionContext::Boolean(_), Ok(progress)) => Some(progress.clone()),
-                        _ => None,
-                    },
-                });
-            }
+            // This prompt was captured inside the decision maker, so its
+            // answer must replay that operation. A pending card-cost stage can
+            // also contain a nested public reveal; treating that reveal as a
+            // fresh CardCostChoice repeats the same cost indefinitely.
+            self.pending_live_continuation = Some(LivePriorityContinuation {
+                checkpoint: step_checkpoint,
+                root: PendingPriorityContinuation::ApplyResponse(response),
+                answers: Vec::new(),
+                speculative_progress: match (&next_ctx, &result) {
+                    (DecisionContext::Boolean(_), Ok(progress)) => Some(progress.clone()),
+                    _ => None,
+                },
+            });
             self.pending_decision = Some(next_ctx);
             dispatch_perf.outcome_kind = "pending_context".to_string();
             return self.finish_dispatch_with_snapshot(dispatch_started_at, dispatch_perf);
@@ -957,7 +957,7 @@ impl WasmGame {
         let mut continuation = self
             .pending_live_continuation
             .take()
-            .ok_or_else(|| JsValue::from_str("no live continuation checkpoint to resume"))?;
+            .ok_or_else(|| runtime_execution_error("no live continuation checkpoint to resume"))?;
         let answer = match self.command_to_replay_answer(&pending_ctx, command) {
             Ok(answer) => answer,
             Err(err) => {
@@ -1076,7 +1076,7 @@ impl WasmGame {
                 self.priority_state.pending_continuation = None;
                 self.pending_live_continuation = Some(continuation);
                 self.pending_decision = Some(pending_ctx);
-                Err(JsValue::from_str(&format!(
+                Err(runtime_execution_error(&format!(
                     "dispatch failed: {err} [diag: tag={checkpoint_diag_tag}, checkpoint_has_pa={checkpoint_has_pa}, \
                      checkpoint_pa={checkpoint_pa_debug:?}, \
                      live_pa_before={live_pa_before}, live_pa_after={live_pa_after}]"
@@ -2274,7 +2274,8 @@ mod live_action_rollback_tests {
                 .filter(|id| wasm
                     .game
                     .object(**id)
-                    .is_some_and(|object| object.name == "Food"))
+                    .is_some_and(|object| object.kind == ironsmith::object::ObjectKind::Token
+                        && object.subtypes.contains(&ironsmith::Subtype::Food)))
                 .count(),
             1
         );
@@ -3602,7 +3603,18 @@ mod live_action_rollback_tests {
     }
 
     #[test]
-    fn post_resolution_hidden_reveals_do_not_advance_priority_after_mana_ability() {
+    fn post_resolution_hidden_reveals_do_not_advance_priority_after_selvala() {
+        // The native debug session/stack-resolution fixture exceeds the
+        // default test-thread stack. This does not change WASM stack sizing.
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(selvala_stack_resolution_preserves_priority)
+            .expect("spawn Selvala fixture")
+            .join()
+            .expect("Selvala fixture should pass");
+    }
+
+    fn selvala_stack_resolution_preserves_priority() {
         let _id_counter_guard = crate::test_id_counter_guard();
         let alice = PlayerId::from_index(0);
         let bob = PlayerId::from_index(1);
@@ -3621,8 +3633,9 @@ mod live_action_rollback_tests {
 
         let selvala = CardDefinitionBuilder::new(CardId::new(), "Selvala, Explorer Returned")
             .card_types(vec![CardType::Creature])
+            .power_toughness(ironsmith::card::PowerToughness::fixed(2, 4))
             .parse_text(
-                "{T}: Each player reveals the top card of their library. For each nonland permanent revealed this way, add {G} and you gain 1 life. Then each player draws a card.",
+                "{T}: Each player reveals the top card of their library. For each nonland card revealed this way, add {G} and you gain 1 life. Then each player draws a card.",
             )
             .expect("Selvala parley ability should parse");
         let selvala_id =
@@ -3644,10 +3657,31 @@ mod live_action_rollback_tests {
         dispatch_priority_action_matching(&mut wasm, |action| {
             matches!(
                 action,
-                LegalAction::ActivateManaAbility { source, .. } if *source == selvala_id
+                LegalAction::ActivateAbility { source, .. } if *source == selvala_id
             )
         });
 
+        // CR 605.1a: drawing makes this an ordinary activated ability. No
+        // cards are consulted and no mana is added until both players pass.
+        assert_eq!(wasm.game.stack.len(), 1);
+        assert_eq!(wasm.game.player(alice).unwrap().mana_pool.green, 0);
+        dispatch_pass_priority(&mut wasm);
+        dispatch_pass_priority(&mut wasm);
+
+        // Hidden libraries suspend resolution until each public opening is supplied.
+        for (owner, card_name, commitment) in [(0, "Black Lotus", "alice-slot-0"), (1, "Selvala, Explorer Returned", "bob-slot-0")] {
+            let Some(DecisionContext::SelectObjects(objects)) = wasm.pending_decision.as_ref() else {
+                panic!("expected library reveal: {:?}", wasm.pending_decision);
+            };
+            let id = objects.candidates[0].id;
+            wasm.reveal_hidden_slot_input(RevealHiddenSlotInput {
+                owner, slot: 0, card_name: card_name.into(), commitment: Some(commitment.into()), recompute_decision: false,
+            }).expect("open consulted card");
+            dispatch_manual_payment_command(&mut wasm, UiCommand::SelectObjects {
+                object_ids: vec![id.0], object_stable_ids: Vec::new(), object_hidden_refs: Vec::new(),
+            });
+        }
+        assert_eq!(wasm.game.player(alice).unwrap().mana_pool.green, 2);
         let green_before_reveals = wasm
             .game
             .player(alice)
@@ -3662,7 +3696,7 @@ mod live_action_rollback_tests {
         }
         assert!(
             wasm.pending_live_continuation.is_none(),
-            "ordinary priority after a completed mana ability should not keep a replay continuation"
+            "ordinary priority after a completed ability should not keep a replay continuation"
         );
 
         wasm.reveal_hidden_slot_input(RevealHiddenSlotInput {

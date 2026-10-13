@@ -972,6 +972,16 @@ pub(crate) fn resolve_wide(
                     .sum::<i64>(),
             ))
         }
+        Value::ThisAbilityManaProductionCountThisTurn => {
+            let ctx = context.require_execution(value, RESOLUTION_ONLY);
+            if ctx.ability_index.is_none() && ctx.trigger_identity.is_none() {
+                return Err(ExecutionError::UnresolvableValue(
+                    "this ability mana history requires an ability context".into()));
+            }
+            Ok(i64::from(game.ability_mana_production_count_this_turn(
+                ctx.source, ctx.controller, ctx.ability_index, ctx.trigger_identity,
+            )))
+        }
         Value::ThisAbilityResolvedThisTurnCount => {
             let ctx = context.require_execution(value, RESOLUTION_ONLY);
             {
@@ -1566,6 +1576,15 @@ pub(crate) fn resolve_wide(
             } else {
                 context.layer().counters_on(value, spec, counter_type)
             }
+        }
+        Value::TaggedSnapshotCount { tag, filter } => {
+            let Some(ctx) = context.execution() else {
+                return Err(ExecutionError::UnresolvableValue("snapshot count requires a resolution context".into()));
+            };
+            let filter_ctx = ctx.filter_context(game);
+            let count = ctx.get_tagged_all(tag).into_iter().flatten()
+                .filter(|snapshot| filter.matches_snapshot(snapshot, &filter_ctx, game)).count();
+            i64::try_from(count).map_err(|_| ExecutionError::UnresolvableValue("snapshot count exceeds the wide value range".into()))
         }
         Value::TaggedCount => {
             let ctx = context.require_execution(value, RESOLUTION_ONLY);

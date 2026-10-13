@@ -1307,6 +1307,13 @@ fn freeze_snapshot_subtree(value: &JsValue) {
 }
 
 fn battlefield_lane_for_card_types(card_types: &[CardType]) -> BattlefieldLane {
+    // Presentation only: land Sagas belong with the other resource permanents.
+    if card_types.contains(&CardType::Land)
+        && card_types.contains(&CardType::Enchantment)
+        && !card_types.contains(&CardType::Creature)
+    {
+        return BattlefieldLane::Lands;
+    }
     if card_types.contains(&CardType::Enchantment) {
         return BattlefieldLane::Enchantments;
     }
@@ -1362,8 +1369,8 @@ fn format_power_toughness_without_pt_counters(
 ) -> Option<String> {
     let (power_delta, toughness_delta) = obj.pt_counter_deltas();
     format_power_toughness(
-        power.map(|value| value - power_delta),
-        toughness.map(|value| value - toughness_delta),
+        power.and_then(|value| i32::try_from(i128::from(value) - power_delta).ok()),
+        toughness.and_then(|value| i32::try_from(i128::from(value) - toughness_delta).ok()),
     )
 }
 
@@ -3580,6 +3587,18 @@ mod tests {
     use ironsmith::zone::Zone;
     use ironsmith_registry_test::cards::builders::CardDefinitionBuilder;
 
+    #[test]
+    fn land_sagas_use_the_land_presentation_lane() {
+        assert_eq!(
+            battlefield_lane_for_card_types(&[CardType::Enchantment, CardType::Land]),
+            BattlefieldLane::Lands
+        );
+        assert_eq!(
+            battlefield_lane_for_card_types(&[CardType::Enchantment]),
+            BattlefieldLane::Enchantments
+        );
+    }
+
     fn test_bears_card() -> Card {
         CardBuilder::new(CardId::from_raw(90_001), "Grizzly Bears")
             .card_types(vec![CardType::Creature])
@@ -3751,7 +3770,7 @@ mod tests {
                 id,
                 alice,
                 EffectTarget::Specific(id),
-                Modification::CopyOf {
+                Modification::CopyOf { retain_original_name: false,
                     target_id: donor,
                     copiable_values: Box::new(values),
                     preserve_source_abilities: false,

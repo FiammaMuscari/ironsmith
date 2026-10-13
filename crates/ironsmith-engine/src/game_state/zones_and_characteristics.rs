@@ -15,7 +15,7 @@ pub(crate) struct PreparedEtbChoices {
     pub(crate) chosen_named_option: Option<String>,
     pub(crate) noted_life_total: Option<i32>,
     pub(crate) power_toughness_choices:
-        Vec<(i32, i32, Vec<crate::static_abilities::StaticAbility>)>,
+        Vec<crate::static_abilities::PowerToughnessChoiceOption>,
     pub(crate) battle_protector: Option<PlayerId>,
     pub(crate) discard_hand: bool,
     pub(crate) as_enters_counters: Vec<(crate::object::CounterType, u32)>,
@@ -182,6 +182,12 @@ fn merge_retained_tagged_objects(
 }
 
 impl GameState {
+    /// Frozen layer-1 rules, including casting abilities and copiable other halves.
+    pub fn calculated_copiable_values(&self, id: ObjectId) -> Option<crate::snapshot::CopiableValues> {
+        crate::continuous::copiable_values_with_effects(id, self.objects_map(),
+            &self.all_continuous_effects(), &self.battlefield, self.commander_objects(), self)
+    }
+
     /// A spell reads its current layer-derived program. Captured activated and
     /// triggered abilities are owned by their StackEntry instead (CR 113.7a).
     pub fn current_spell_program(
@@ -269,7 +275,7 @@ impl GameState {
                     );
                 }
                 // Applied with the copiable values as the object entered.
-                ironsmith_core::EnterAsCopyFollowup::RetainOwnColors => {}
+                ironsmith_core::EnterAsCopyFollowup::RetainOwnColors | ironsmith_core::EnterAsCopyFollowup::RetainEmbalmCharacteristics => {}
                 ironsmith_core::EnterAsCopyFollowup::TapCopiedObjectFrozenWhileYouControlSource => {
                     // "When you do, tap the copied creature and it doesn't
                     // untap during its controller's untap step for as long as
@@ -1442,8 +1448,13 @@ impl GameState {
             && new_object.prototype_cast_state.is_some();
         let preserve_temporary_static_ability_grants =
             old_zone == Zone::Stack && new_zone == Zone::Battlefield;
-        let preserve_cast_tags =
-            new_zone == Zone::Stack || (old_zone == Zone::Stack && new_zone == Zone::Battlefield);
+        if !(old_zone == Zone::Command && new_zone == Zone::Battlefield) {
+            new_object.token_creation_method = None;
+        }
+        let preserve_cast_tags = new_zone == Zone::Stack
+            || (old_zone == Zone::Stack && new_zone == Zone::Battlefield)
+            || (old_zone == Zone::Command && new_zone == Zone::Battlefield
+                && matches!(new_object.kind, crate::object::ObjectKind::Token));
         let preserve_optional_costs_paid = old_zone == Zone::Stack && new_zone == Zone::Battlefield;
         let preserve_x_value = old_zone == Zone::Stack && new_zone == Zone::Battlefield;
         // Restore enters-as characteristics first, so the printed values saved
@@ -2893,11 +2904,7 @@ impl GameState {
                     .filter(|idx| *idx < spec.options.len())
                     .map(|idx| spec.options[idx].clone())
                 {
-                    choices.power_toughness_choices.push((
-                        option.power,
-                        option.toughness,
-                        option.abilities,
-                    ));
+                    choices.power_toughness_choices.push(option);
                 }
             }
         }
@@ -3522,11 +3529,16 @@ impl GameState {
                 || !result.removed_supertypes.is_empty()
                 || !result.added_subtypes.is_empty()
                 || !result.added_abilities.is_empty()
-                || result.set_base_power_toughness.is_some())
+                || result.set_base_power_toughness.is_some()
+                || !choices.power_toughness_choices.is_empty())
             && let Some(new_obj) = self.object_mut(new_id)
         {
             new_obj.capture_enters_as_copy_restore_state();
         }
+        let retained_colors = result.copy_followups
+            .contains(&ironsmith_core::EnterAsCopyFollowup::RetainOwnColors)
+            .then(|| self.object(new_id).map(|object| object.colors()))
+            .flatten();
         if let Some(copy_source_id) = result.enters_as_copy_of {
             if let Some(duration) = temporary_copy_duration.clone() {
                 let effects = self.all_continuous_effects();
@@ -3539,6 +3551,13 @@ impl GameState {
                     self,
                 );
                 if let Some(mut copiable_values) = copiable_values {
+                    crate::static_abilities::exclude_cdas_from_copy(
+                        &mut copiable_values.abilities, &mut copiable_values.ability_labels,
+                        false, retained_colors.is_some(), result.removes_other_card_types,
+                    );
+                    if let Some(colors) = retained_colors {
+                        copiable_values.colors = colors;
+                    }
                     let controller = self
                         .current_controller(new_id)
                         .ok_or(crate::effects::ExecutionError::ObjectNotFound(new_id))?;
@@ -3577,6 +3596,12 @@ impl GameState {
                             copiable_values.subtypes.push(*subtype);
                         }
                     }
+                    if result.set_base_power_toughness.is_some() {
+                        crate::static_abilities::exclude_pt_cdas_from_copy(
+                            &mut copiable_values.abilities,
+                            &mut copiable_values.ability_labels,
+                        );
+                    }
                     std::sync::Arc::make_mut(&mut copiable_values.abilities)
                         .extend(result.added_abilities.iter().cloned());
                     if let Some((power, toughness)) = result.set_base_power_toughness {
@@ -3584,7 +3609,7 @@ impl GameState {
                         copiable_values.toughness = Some(toughness);
                     }
 
-                    let modification = crate::continuous::Modification::CopyOf {
+                    let modification = crate::continuous::Modification::CopyOf { retain_original_name: false,
                         target_id: copy_source_id,
                         copiable_values: Box::new(copiable_values),
                         preserve_source_abilities: false,
@@ -3628,11 +3653,6 @@ impl GameState {
             } else {
                 // CR 707.9b: "it doesn't copy that creature's color" keeps the
                 // entering object's own colors as its copiable color.
-                let retained_colors = result
-                    .copy_followups
-                    .contains(&ironsmith_core::EnterAsCopyFollowup::RetainOwnColors)
-                    .then(|| self.object(new_id).map(|object| object.colors()))
-                    .flatten();
                 let copy_source = self.object(copy_source_id).cloned();
                 let effects = self.all_continuous_effects();
                 let copiable_values = crate::continuous::copiable_values_with_effects(
@@ -3648,6 +3668,16 @@ impl GameState {
                     if let Some(values) = copiable_values.as_ref() {
                         new_obj.copy_copiable_values_from_values(values);
                     }
+                    if result.set_base_power_toughness.is_some() {
+                        crate::static_abilities::exclude_pt_cdas_from_copy(
+                            &mut new_obj.abilities,
+                            &mut new_obj.ability_labels,
+                        );
+                    }
+                    crate::static_abilities::exclude_cdas_from_copy(
+                        &mut new_obj.abilities, &mut new_obj.ability_labels,
+                        false, retained_colors.is_some(), result.removes_other_card_types,
+                    );
                     if let Some(colors) = retained_colors {
                         new_obj.color_override = Some(colors);
                     }
@@ -3753,11 +3783,18 @@ impl GameState {
         if let Some(life_total) = choices.noted_life_total {
             self.set_noted_life_total_for_source(new_id, life_total);
         }
-        for (power, toughness, abilities) in &choices.power_toughness_choices {
+        if result.copy_followups.contains(&ironsmith_core::EnterAsCopyFollowup::RetainEmbalmCharacteristics)
+            && let Some(object) = self.object_mut(new_id)
+        {
+            object.apply_embalm_copy_exception();
+        }
+        for option in &choices.power_toughness_choices {
             if let Some(object) = self.object_mut(new_id) {
-                object.base_power = Some(crate::card::PtValue::Fixed(*power));
-                object.base_toughness = Some(crate::card::PtValue::Fixed(*toughness));
-                for granted in abilities {
+                object.base_power = Some(crate::card::PtValue::Fixed(option.power));
+                object.base_toughness = Some(crate::card::PtValue::Fixed(option.toughness));
+                if let Some(types) = &option.card_types { object.card_types = types.clone().into(); }
+                for subtype in &option.added_subtypes { if !object.subtypes.contains(subtype) { object.subtypes.push(*subtype); } }
+                for granted in &option.abilities {
                     let ability = crate::ability::Ability::static_ability(granted.clone());
                     self.install_authored_object_ability(
                         new_id,
@@ -4850,7 +4887,7 @@ impl GameState {
         {
             return Ok(self.cached_continuous_effects_snapshot_arc());
         }
-        crate::static_ability_processor::try_get_all_continuous_effects(self, Default::default())
+        crate::static_ability_processor::try_get_all_continuous_effects(self, self.static_effect_discovery_limits())
             .map(Arc::new)
     }
 
@@ -4926,6 +4963,7 @@ impl GameState {
         }
         let owner = self.object(object)?.owner;
         Some(crate::continuous::CalculatedCharacteristics {
+            copy_values: None,
             alternate_name: None,
             name: "".into(),
             mana_cost: None,
@@ -5172,6 +5210,7 @@ impl GameState {
         let mut chars =
             self.calculated_characteristics(id)
                 .unwrap_or_else(|| CalculatedCharacteristics {
+                    copy_values: None,
                     alternate_name: object.split_other_half_name().map(str::to_string),
                     name: object.name.clone(),
                     mana_cost: object.mana_cost_owned(),
@@ -5424,6 +5463,15 @@ impl GameState {
             return Some(controller);
         }
 
+        // Most dirty queries have no control-changing effects. Inspect borrowed
+        // effects before allocating and cloning the complete registered set.
+        if !self.continuous_state_is_clean()
+            && !self.effect_store.continuous_effects.effects().iter().any(|effect|
+                skipped_effect != Some(effect.id) && matches!(effect.modification,
+                    Modification::ChangeController(_) | Modification::ChangeControllerToEffectController))
+        {
+            return Some(object.initial_controller);
+        }
         let effects = self.effects_for_controller_query();
         self.controller_from_known_effects(id, object, &effects, skipped_effect)
     }

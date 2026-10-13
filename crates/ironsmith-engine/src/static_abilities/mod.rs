@@ -1454,6 +1454,8 @@ pub struct ChooseNamedOptionAsEntersSpec {
 pub struct PowerToughnessChoiceOption {
     pub power: i32,
     pub toughness: i32,
+    pub card_types: Option<Vec<crate::types::CardType>>,
+    pub added_subtypes: Vec<crate::types::Subtype>,
     pub abilities: Vec<StaticAbility>,
 }
 
@@ -1462,6 +1464,8 @@ impl PowerToughnessChoiceOption {
         Self {
             power,
             toughness,
+            card_types: None,
+            added_subtypes: Vec::new(),
             abilities: Vec::new(),
         }
     }
@@ -1470,6 +1474,8 @@ impl PowerToughnessChoiceOption {
         Self {
             power,
             toughness,
+            card_types: None,
+            added_subtypes: Vec::new(),
             abilities,
         }
     }
@@ -1633,6 +1639,8 @@ impl ironsmith_core::functional_zones::StaticAbilityFunctionalZones for StaticAb
 
 impl PartialEq for StaticAbility {
     fn eq(&self, other: &Self) -> bool {
+        // Cloned immutable definitions are equal without rendering their nested payload.
+        if Arc::ptr_eq(&self.0, &other.0) { return true; }
         if self.0.id() != other.0.id() {
             return false;
         }

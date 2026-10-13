@@ -1873,6 +1873,19 @@ pub(crate) fn describe_apply_continuous_clauses_with_self_subject(
         crate::continuous::Modification::RemoveAllSubtypesOfFamily(family) => {
             clauses.push(format!("{loses} all {}s", family.type_phrase()));
         }
+        crate::continuous::Modification::AddSupertypes(supertypes) => {
+            let names = supertypes
+                .iter()
+                .map(|kind| kind.name().to_lowercase())
+                .collect::<Vec<_>>();
+            if !names.is_empty() {
+                clauses.push(format!(
+                    "{} {}",
+                    if plural_target { "become" } else { "becomes" },
+                    join_with_and(&names)
+                ));
+            }
+        }
         crate::continuous::Modification::RemoveSupertypes(supertypes) => {
             let names = supertypes
                 .iter()
@@ -2231,6 +2244,9 @@ pub(crate) fn describe_apply_continuous_clauses_with_self_subject(
             crate::effects::continuous::RuntimeModification::RemoveThisAbility => {
                 clauses.push("loses this ability".to_string());
             }
+            crate::effects::continuous::RuntimeModification::CopyAbilityAbsent(marker) => { clauses.push(format!("if it doesn’t have {marker}")); }
+            crate::effects::continuous::RuntimeModification::RetainSourceName => { clauses.push("it retains its name".into()); }
+            crate::effects::continuous::RuntimeModification::ClearCopyManaCost => { clauses.push("has no mana cost".into()); }
             crate::effects::continuous::RuntimeModification::RetainSourceColors => {
                 clauses.push("keeps its color".to_string());
             }

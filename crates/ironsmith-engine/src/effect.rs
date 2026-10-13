@@ -6286,3 +6286,48 @@ mod retained_effect_model_tests {
         );
     }
 }
+
+impl ironsmith_core::library_movement::LibraryMovement for Effect {
+    fn inspect_library_movement(
+        &self,
+        context: &mut ironsmith_core::library_movement::LibraryMovementContext,
+    ) -> bool {
+        use ironsmith_core::library_movement::payload_library_movement;
+        use ironsmith_core::effect_capabilities::LibraryMovementPolicy;
+        match self.0.library_movement_policy() {
+            LibraryMovementPolicy::Leaf | LibraryMovementPolicy::Deferred => return false,
+            LibraryMovementPolicy::Moves | LibraryMovementPolicy::Unknown => return true,
+            LibraryMovementPolicy::Inspect => {}
+        }
+        if let Some(result) = self.0.inspect_library_movement_override(context) { return result; }
+        if let Some(e) = self.downcast_ref::<crate::effects::ExileThenGrantPlayEffect>() {
+            return context.selects_library(&e.target);
+        }
+        if let Some(e) = self.downcast_ref::<crate::effects::MayEffect>() {
+            return context.inspect_branches([e.effects.as_slice(), &[]]);
+        }
+        if let Some(e) = self.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+            let mut payment = context.clone();
+            if e.cost.inspect_library_movement(&mut payment) { return true; }
+            let mut failure = context.clone();
+            if failure.inspect_sequence(&e.effects) { return true; }
+            context.merge_alternatives(&[payment, failure]);
+            return false;
+        }
+        if let Some(e) = self.downcast_ref::<crate::effects::ForEachTaggedEffect>() {
+            return context.inspect_iteration_origin(context.tag_library_origin(&e.tag), &e.effects);
+        }
+        if let Some(e) = self.downcast_ref::<crate::effects::ExchangeZonesEffect>() {
+            return e.zone1 != e.zone2 && (e.zone1 == Zone::Library || e.zone2 == Zone::Library);
+        }
+
+        if let Some(moves) =
+            payload_library_movement::<Effect, crate::costs::Cost>(self.0.as_ref(), context)
+        {
+            return moves;
+        }
+        let mut found = false;
+        self.0.visit_resolution_child_effects(&mut |child| found |= child.inspect_library_movement(context));
+        found
+    }
+}

@@ -1,10 +1,9 @@
 //! Exchange control effect implementation.
 
-use crate::continuous::{EffectTarget, Modification};
-use crate::effect::{Effect, EffectOutcome, Until};
+use crate::effect::EffectOutcome;
+use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_for_effect, resolve_single_object_for_effect};
-use crate::effects::{ApplyContinuousEffect, EffectExecutor};
-use crate::effects::{ExecutionContext, ExecutionError, execute_effect};
+use crate::effects::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::snapshot::ObjectSnapshot;
 use crate::target::ChooseSpec;
@@ -60,33 +59,23 @@ impl EffectExecutor for ExchangeControlEffect {
                 Err(err) => return Err(err),
             };
 
-            let original_it = ctx.get_tagged_all(TEMP_IT_TAG).cloned();
-            let original_reference = self
-                .permanent1_reference_tag
-                .as_ref()
-                .and_then(|tag| ctx.get_tagged_all(tag).cloned());
-            if let Some(obj) = game.object(perm1_id) {
+            let perm2_result = if let Some(obj) = game.object(perm1_id) {
                 let snapshot = ObjectSnapshot::from_object(obj, game);
-                ctx.set_tagged_objects(TEMP_IT_TAG, vec![snapshot.clone()]);
+                let mut tags = vec![crate::tag::TagKey::from(TEMP_IT_TAG)];
                 if let Some(tag) = &self.permanent1_reference_tag {
-                    ctx.set_tagged_objects(tag.clone(), vec![snapshot]);
+                    if !tags.contains(tag) {
+                        tags.push(tag.clone());
+                    }
                 }
-            }
-
-            let perm2_result = resolve_single_object_for_effect(game, ctx, &self.permanent2);
-
-            if let Some(snapshots) = original_it {
-                ctx.set_tagged_objects(TEMP_IT_TAG, snapshots);
+                ctx.with_object_tags(tags.clone(), |ctx| {
+                    for tag in tags {
+                        ctx.set_tagged_objects(tag, vec![snapshot.clone()]);
+                    }
+                    resolve_single_object_for_effect(game, ctx, &self.permanent2)
+                })
             } else {
-                ctx.clear_object_tag(TEMP_IT_TAG);
-            }
-            if let Some(tag) = &self.permanent1_reference_tag {
-                if let Some(snapshots) = original_reference {
-                    ctx.set_tagged_objects(tag.clone(), snapshots);
-                } else {
-                    ctx.clear_object_tag(tag.as_str());
-                }
-            }
+                resolve_single_object_for_effect(game, ctx, &self.permanent2)
+            };
 
             let perm2_id = match perm2_result {
                 Ok(object_id) if object_id != perm1_id => object_id,
@@ -153,22 +142,12 @@ impl EffectExecutor for ExchangeControlEffect {
                 return Ok(EffectOutcome::resolved());
             }
 
-            let effect1 = ApplyContinuousEffect::new(
-                EffectTarget::Specific(perm1_id),
-                Modification::ChangeController(c2),
-                Until::Forever,
-            );
-
-            let effect2 = ApplyContinuousEffect::new(
-                EffectTarget::Specific(perm2_id),
-                Modification::ChangeController(c1),
-                Until::Forever,
-            );
-
-            let outcomes = vec![
-                execute_effect(game, &Effect::new(effect1), ctx)?,
-                execute_effect(game, &Effect::new(effect2), ctx)?,
-            ];
+            let outcomes = crate::effects::continuous::commit_control_assignments(
+                game,
+                ctx,
+                &[(perm1_id, c2), (perm2_id, c1)],
+                crate::effects::continuous::ControlAssignmentPolicy::AllOrNothing,
+            )?;
 
             Ok(EffectOutcome::aggregate(outcomes))
         } else {
@@ -195,7 +174,9 @@ impl EffectExecutor for ExchangeControlEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::effect::Effect;
     use crate::effects::ResolvedTarget;
+    use crate::effects::execute_effect;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

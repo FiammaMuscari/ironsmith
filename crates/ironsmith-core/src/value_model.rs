@@ -937,6 +937,12 @@ pub enum Value {
     /// gain 1 life for each of the chosen colors it is", Tablet of the
     /// Guilds). Appended to preserve existing serialized variant ordinals.
     ChosenColorsOf(Box<ChooseSpec>),
+    /// Completed, nonempty mana productions received by you from this exact
+    /// source ability during the current turn. Appended for stable ordinals.
+    ThisAbilityManaProductionCountThisTurn,
+    /// Count retained snapshots exactly as captured, without substituting the
+    /// object's current incarnation or projecting its current zone.
+    TaggedSnapshotCount { tag: TagKey, filter: ObjectFilter },
 }
 
 impl Value {

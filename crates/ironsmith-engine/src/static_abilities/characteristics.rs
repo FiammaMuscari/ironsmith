@@ -13,6 +13,46 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::runtime_display::describe_value;
 use crate::target::ChooseSpec;
 
+/// CR 707.9d: a copy exception supplying both P/T values excludes the donor's
+/// P/T-defining ability. Call before adding abilities granted by the exception.
+/// This is deliberately not part of ordinary P/T setting or mutate merging.
+pub(crate) fn exclude_pt_cdas_from_copy(
+    abilities: &mut std::sync::Arc<Vec<crate::ability::Ability>>,
+    labels: &mut Vec<String>,
+) {
+    exclude_cdas_from_copy(abilities, labels, true, false, false);
+}
+
+/// CR 707.9d: replacement/retention exceptions exclude the corresponding
+/// defining abilities. Additive type exceptions do not invoke this exclusion.
+pub(crate) fn exclude_cdas_from_copy(
+    abilities: &mut std::sync::Arc<Vec<crate::ability::Ability>>,
+    labels: &mut Vec<String>,
+    pt: bool,
+    colors: bool,
+    types: bool,
+) {
+    let excluded = |ability: &crate::ability::Ability| {
+        matches!(&ability.kind, crate::ability::AbilityKind::Static(ability)
+            if (pt && ability.id() == StaticAbilityId::CharacteristicDefiningPT)
+                || (colors && ability.characteristic_defining_colors().is_some())
+                || (types && (ability.is_changeling()
+                    || ability.characteristic_defining_subtypes().is_some()
+                    || ability.is_characteristic_defining_subtype_family())))
+    };
+    if !abilities.iter().any(excluded) {
+        return;
+    }
+    // Labels are indexed by ability occurrence; preserve that alignment.
+    let mut index = 0;
+    labels.retain(|_| {
+        let keep = abilities.get(index).is_some_and(|ability| !excluded(ability));
+        index += 1;
+        keep
+    });
+    std::sync::Arc::make_mut(abilities).retain(|ability| !excluded(ability));
+}
+
 /// Characteristic-defining ability for power/toughness.
 ///
 /// These are applied in layer 7a before other P/T modifications.

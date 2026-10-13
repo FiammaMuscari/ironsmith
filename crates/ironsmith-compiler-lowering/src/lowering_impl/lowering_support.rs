@@ -1076,10 +1076,18 @@ fn default_trigger_last_object_prelude(
     }
     match trigger {
         TriggerSpec::WithIntro { trigger, .. } => default_trigger_last_object_prelude(trigger, tag),
-        TriggerSpec::ThisDealsCombatDamageToPlayer { .. }
+        TriggerSpec::ThisBecomesTargetedBySpell(_)
+        | TriggerSpec::ThisBecomesTargetedByStackObject(_)
+        | TriggerSpec::ThisDealsCombatDamageToPlayer { .. }
         | TriggerSpec::DealsCombatDamageToPlayer { .. }
         | TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. } =>
             Some(EffectPreludeTag::TriggeringSource(tag.clone())),
+        // In an object-subject targeting trigger, "it" / "that creature"
+        // names the targeted permanent. Explicit references to "that spell
+        // or ability" have their own TriggeringSource binding.
+        TriggerSpec::BecomesTargetedByStackObject { .. }
+        | TriggerSpec::BecomesTargetedByAbilitySource { .. } =>
+            Some(EffectPreludeTag::TriggeringObject(tag.clone())),
         TriggerSpec::BlocksOrBecomesBlockedByObject { subject, other } => {
             Some(EffectPreludeTag::OtherBlockParticipantMatchingSubject {
                 tag: tag.clone(),
@@ -5741,6 +5749,10 @@ pub(crate) fn lower_compiler_static_ability_core(
             exile_with_counters,
             follow_up_effects,
         } => {
+            let mut follow_up_effects = follow_up_effects;
+            crate::effect_ast_normalization::normalize_effects_ast_in_place(
+                &mut follow_up_effects,
+            );
             let mut ctx = crate::model::facts::EffectLoweringContext::new();
             ctx.last_effect_id = Some(crate::effect::EffectId::REPLACED_EVENT);
             ctx.last_object_tag = Some(ironsmith_core::tag::ZONE_REPLACEMENT_OBJECT_TAG.into());

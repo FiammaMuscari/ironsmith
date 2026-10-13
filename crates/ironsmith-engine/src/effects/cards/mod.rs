@@ -103,3 +103,9 @@ pub(crate) use shuffle_library::{
 pub(crate) use draw_cards::{
     PreparedDrawInstruction, execute_prepared_draw_instruction, prepare_draw_instruction,
 };
+
+mod search_result_program;
+
+pub(crate) use library_arrangement::{capture_retained_library_set, normalize_order_response};
+
+pub(crate) use library_arrangement::choose_library_bottom_partition;

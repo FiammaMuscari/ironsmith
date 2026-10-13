@@ -1013,7 +1013,7 @@ impl CardDefinitionBuilder {
             )
             .set_colors(crate::color::ColorSet::WHITE)
             .added_subtype(crate::types::Subtype::Zombie)
-            .without_mana_cost(),
+            .without_mana_cost().created_by(ironsmith_core::effect::TokenCreationMethod::Embalm),
         );
 
         self.with_ability(crate::ability::Ability {
@@ -1653,7 +1653,7 @@ impl CardDefinitionBuilder {
                 trigger: crate::triggers::Trigger::you_cast_this_spell(),
                 effects: crate::resolution::ResolutionProgram::from_effects(vec![
                     crate::effect::Effect::new(
-                        crate::effects::VariableCasualtyPlaneswalkerCopyEffect::new(),
+                        crate::effects::VariableCasualtyPlaneswalkerCopyEffect::new().with_cost_ref(cost_ref.clone()),
                     ),
                 ]),
                 choices: vec![],

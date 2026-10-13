@@ -2,9 +2,9 @@
 //! exact uncast remainder. Pending input or typed execution failure restores
 //! the whole instruction, including queued cast triggers and library order.
 use super::runtime_helpers::{
-    complete_native_cast_with_outputs, effect_driven_cast_options_for_card,
+    effect_driven_cast_options_for_card,
 };
-use crate::decisions::context::{BooleanContext, SelectOptionsContext, SelectableOption};
+use crate::decisions::context::{BooleanContext};
 use crate::effect::{Effect, EffectOutcome};
 use crate::effects::CompletedEffectOutputs;
 use crate::effects::consult_helpers::{
@@ -18,6 +18,12 @@ use crate::zone::Zone;
 pub use ironsmith_core::RippleEffect;
 
 impl EffectExecutor for RippleEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        super::runtime_helpers::visit_library_cast_program(visitor, PlayerFilter::You, LibraryConsultMode::Reveal,
+            ObjectFilter::nonland(), crate::effects::ConsultTopOfLibraryStopRule::MatchCount(self.amount.into()),
+            "__ripple_revealed", "__ripple_cast", false, ironsmith_core::LibraryBottomOrder::ChooserChooses);
+    }
+
     fn execute(
         &self,
         game: &mut GameState,
@@ -32,6 +38,7 @@ impl EffectExecutor for RippleEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<CompletedEffectOutputs, ExecutionError> {
+        ctx.with_object_tags(["__ripple_revealed", "__ripple_cast"].map(TagKey::from), |ctx| {
         crate::effects::tokens::execute_resource_transaction_with_pending_value(
             game,
             ctx,
@@ -86,10 +93,8 @@ impl EffectExecutor for RippleEffect {
                     return Ok(reveal_outcome);
                 }
                 let mut outcomes = vec![reveal_outcome];
-                let mut failed_methods = Vec::new();
-                let mut kept_snapshots = Vec::new();
-                let mut cast_ids = Vec::new();
-                loop {
+                let Some((casts, kept_snapshots, cast_ids)) = super::library_cast_program::offer_refreshed_casts(
+                    game, ctx, ctx.controller, "Cast a revealed card with ripple, or stop", |game, ctx| {
                     let checked = game
                         .continuous_query_snapshot()
                         .map_err(ExecutionError::ContinuousDiscovery)?;
@@ -135,117 +140,12 @@ impl EffectExecutor for RippleEffect {
                             ));
                         }
                     }
-                    options.retain(|option| {
-                        !failed_methods.iter().any(|(id, method)| {
-                            *id == option.object_id && *method == option.casting_method
-                        })
-                    });
-                    if options.is_empty() {
-                        break;
-                    }
-                    let menu = options
-                        .iter()
-                        .enumerate()
-                        .map(|(i, o)| SelectableOption::new(i, o.label.clone()))
-                        .collect();
-                    let prompt = SelectOptionsContext::new(
-                        ctx.controller,
-                        Some(ctx.source),
-                        "Cast a revealed card with ripple, or stop",
-                        menu,
-                        0,
-                        1,
-                    );
-                    let selected = ctx.decision_maker.decide_options(game, &prompt);
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::count(0),
-                        ));
-                    }
-                    let index = match selected.as_slice() {
-                        [] => break,
-                        [index] if *index < options.len() => *index,
-                        _ => {
-                            return Err(ExecutionError::Impossible(
-                                "invalid ripple cast selection".into(),
-                            ));
-                        }
-                    };
-                    let option = &options[index];
-                    failed_methods.push((option.object_id, option.casting_method.clone()));
-                    let snapshot = game
-                        .object(option.object_id)
-                        .map(|object| crate::snapshot::ObjectSnapshot::from_object(object, game))
-                        .ok_or(ExecutionError::ObjectNotFound(option.object_id))?;
-                    let result =
-                        match crate::game_loop::cast_spell_from_resolving_effect_with_outputs(
-                            game,
-                            option.object_id,
-                            option.from_zone,
-                            ctx.controller,
-                            &option.casting_method,
-                            true,
-                            None,
-                            ctx.provenance,
-                            &mut ctx.decision_maker,
-                        ) {
-                            Ok(result) => result,
-                            Err(crate::game_loop::GameLoopError::ActionCancelled(_)) => None,
-                            // In particular, an ExecutionFailed(Impossible) raised by
-                            // a real payment/replacement program is NOT an unavailable
-                            // cast. Preserve that failure instead of suppressing it.
-                            Err(error) => {
-                                return Err(super::runtime_helpers::effect_driven_cast_error(
-                                    error,
-                                ));
-                            }
-                        };
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::count(0),
-                        ));
-                    }
-                    if let Some(cast) = result {
-                        let new_id = cast.new_id;
-                        // A failed face does not exhaust another face's permission.
-                        // A successful cast may also change the state via its costs,
-                        // so previously unavailable proposals can be reconsidered.
-                        failed_methods.clear();
-                        kept_snapshots.push(snapshot);
-                        cast_ids.push(new_id);
-                        let provenance = game.alloc_child_event_provenance(
-                            ctx.provenance,
-                            crate::events::EventKind::SpellCast,
-                        );
-                        let mut outputs = complete_native_cast_with_outputs(
-                            EffectOutcome::with_objects(vec![new_id]),
-                            game,
-                            cast,
-                            ctx.controller,
-                            option.from_zone,
-                            provenance,
-                        )?;
-                        // Later cast costs can remove a watcher or alter the spell.
-                        // Retain this completed cast's matches and history now.
-                        crate::effects::capture_triggers_before_added_program(
-                            game,
-                            ctx,
-                            None,
-                            outputs.outcome.events.iter_mut(),
-                        )?;
-                        outcomes.push(outputs);
-                    }
-                }
+                    Ok(options)
+                })? else { return Ok(CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0))); };
+                outcomes.extend(casts);
                 ctx.set_tagged_objects(kept.clone(), kept_snapshots);
-                outcomes.push(crate::effects::execute_effect_with_outputs(
-                    game,
-                    &Effect::put_tagged_remainder_on_library_bottom(
-                        all,
-                        Some(kept),
-                        ironsmith_core::LibraryBottomOrder::ChooserChooses,
-                        PlayerFilter::You,
-                    ),
-                    ctx,
+                outcomes.push(super::library_cast_program::cleanup_consultation(
+                    game, ctx, ctx.controller, all, Some(kept), ironsmith_core::LibraryBottomOrder::ChooserChooses,
                 )?);
                 if ctx.decision_maker.awaiting_choice() {
                     return Ok(CompletedEffectOutputs::aggregate_only(
@@ -263,5 +163,7 @@ impl EffectExecutor for RippleEffect {
                 Ok(outputs)
             },
         )
+
+        })
     }
 }

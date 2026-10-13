@@ -371,45 +371,72 @@ pub(crate) fn create_stack_copy(
     )
 }
 
-/// A copy that targets a player or object makes it become the target of the
-/// copy (ward, "becomes the target" triggers). Each distinct target becomes a
-/// target once (CR 115.3).
-fn queue_copy_becomes_targeted_events(
+/// The existing adapters expose these observations in different orders.
+#[derive(Clone, Copy)]
+pub(crate) enum CopyCompletionOrder { TargetsThenCopy, CopyThenTargets }
+
+/// Derive completion from the created entry's captured controller, spell/ability
+/// identity and final target assignments. Delivery is owned by the caller.
+pub(crate) fn stack_copy_events(
+    game: &GameState,
+    ctx: &ExecutionContext,
+    copy_id: crate::ids::ObjectId,
+    order: CopyCompletionOrder,
+) -> Vec<TriggerEvent> {
+    let Some(entry) = game.stack.iter().find(|entry| entry.object_id == copy_id) else {
+        return Vec::new();
+    };
+    let mut events = Vec::new();
+    let spell = (!entry.is_ability).then(|| {
+        TriggerEvent::new_with_provenance(
+            SpellCopiedEvent::new(copy_id, entry.controller),
+            ctx.provenance,
+        )
+    });
+    if matches!(order, CopyCompletionOrder::CopyThenTargets) {
+        events.extend(spell.clone());
+    }
+    let mut seen = Vec::new();
+    for target in &entry.targets {
+        if seen.contains(target) {
+            continue;
+        }
+        seen.push(*target);
+        events.push(TriggerEvent::new_with_provenance(
+            crate::events::BecomesTargetedEvent::from_stack_entry(*target, entry)
+                .with_participant_snapshots(game),
+            ctx.provenance,
+        ));
+    }
+    if matches!(order, CopyCompletionOrder::TargetsThenCopy) {
+        events.extend(spell);
+    }
+    events
+}
+pub(crate) fn queue_stack_copy_completion(
     game: &mut GameState,
     ctx: &ExecutionContext,
     copy_id: crate::ids::ObjectId,
 ) {
-    let Some(entry) = game
-        .stack
-        .iter()
-        .find(|entry| entry.object_id == copy_id)
-        .cloned()
-    else {
-        return;
-    };
-    let mut targeted_seen = Vec::new();
-    for target in &entry.targets {
-        if targeted_seen.contains(target) {
-            continue;
-        }
-        targeted_seen.push(*target);
-        game.queue_trigger_event(
-            ctx.provenance,
-            TriggerEvent::new_with_provenance(
-                crate::events::BecomesTargetedEvent::from_stack_entry(*target, &entry),
-                ctx.provenance,
-            ),
-        );
+    for event in stack_copy_events(game, ctx, copy_id, CopyCompletionOrder::TargetsThenCopy) {
+        game.queue_trigger_event(ctx.provenance, event);
     }
 }
 
 trait CopyCharacteristicModifiers {
-    fn apply_copy_characteristic_modifiers(&self, copy: &mut Object);
+    fn apply_copy_characteristic_modifiers(&self, copy: &mut Object, loyalty: Option<u32>);
 }
 
 impl CopyCharacteristicModifiers for CopySpellEffect {
-    fn apply_copy_characteristic_modifiers(&self, copy: &mut Object) {
+    fn apply_copy_characteristic_modifiers(&self, copy: &mut Object, loyalty: Option<u32>) {
+        if let Some(loyalty) = loyalty {
+            copy.base_loyalty = Some(loyalty);
+            copy.counters.remove(&crate::object::CounterType::Loyalty);
+        }
         if let Some(colors) = self.set_colors {
+            crate::static_abilities::exclude_cdas_from_copy(
+                &mut copy.abilities, &mut copy.ability_labels, false, true, false,
+            );
             copy.color_override = Some(colors);
         }
         for card_type in &self.added_card_types {
@@ -423,6 +450,10 @@ impl CopyCharacteristicModifiers for CopySpellEffect {
             }
         }
         if let Some((power, toughness)) = self.set_base_power_toughness {
+            crate::static_abilities::exclude_pt_cdas_from_copy(
+                &mut copy.abilities,
+                &mut copy.ability_labels,
+            );
             copy.base_power = Some(crate::card::PtValue::Fixed(power));
             copy.base_toughness = Some(crate::card::PtValue::Fixed(toughness));
         }
@@ -483,6 +514,8 @@ impl EffectExecutor for CopySpellEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let copy_count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
+        let loyalty = self.set_base_loyalty.as_ref().map(|value|
+            crate::effects::helpers::resolve_nonnegative_u32(game, value, ctx)).transpose()?;
 
         // Resolve the stack object(s) to copy. `ChooseSpec::All` is a real
         // fanout instruction (for example, "copy all spells you control"),
@@ -550,7 +583,7 @@ impl EffectExecutor for CopySpellEffect {
                         &original_entry,
                         copier,
                         &self.removed_supertypes,
-                        |copy| self.apply_copy_characteristic_modifiers(copy),
+                        |copy| self.apply_copy_characteristic_modifiers(copy, loyalty),
                         None,
                     )?
                     else {
@@ -558,14 +591,7 @@ impl EffectExecutor for CopySpellEffect {
                         continue;
                     };
                     created_ids.push(copy_id);
-                    queue_copy_becomes_targeted_events(game, ctx, copy_id);
-                    game.queue_trigger_event(
-                        ctx.provenance,
-                        TriggerEvent::new_with_provenance(
-                            SpellCopiedEvent::new(copy_id, copier),
-                            ctx.provenance,
-                        ),
-                    );
+                    queue_stack_copy_completion(game,ctx,copy_id);
                 }
                 continue;
             }
@@ -616,7 +642,7 @@ impl EffectExecutor for CopySpellEffect {
                     &original_entry,
                     copier,
                     &self.removed_supertypes,
-                    |copy| self.apply_copy_characteristic_modifiers(copy),
+                    |copy| self.apply_copy_characteristic_modifiers(copy, loyalty),
                     None,
                 )?
                 else {
@@ -628,20 +654,7 @@ impl EffectExecutor for CopySpellEffect {
                     additional_copies.push(copy_id);
                 }
 
-                queue_copy_becomes_targeted_events(game, ctx, copy_id);
-
-                // Only copying a spell emits the spell-copied event. The same
-                // effect type also represents activated/triggered ability
-                // copies, which must not trigger magecraft-like abilities.
-                if !original_entry.is_ability {
-                    game.queue_trigger_event(
-                        ctx.provenance,
-                        TriggerEvent::new_with_provenance(
-                            SpellCopiedEvent::new(copy_id, copier),
-                            ctx.provenance,
-                        ),
-                    );
-                }
+                queue_stack_copy_completion(game,ctx,copy_id);
             }
         }
 
@@ -911,6 +924,11 @@ mod tests {
             .power_toughness(PowerToughness::fixed(3, 3))
             .build();
         let spell_id = game.create_object_from_card(&card, alice, Zone::Stack);
+        game.object_mut(spell_id).unwrap().abilities_mut().push(crate::ability::Ability::static_ability(
+            crate::static_abilities::StaticAbility::characteristic_defining_pt(
+                crate::effect::Value::Fixed(8), crate::effect::Value::Fixed(8),
+            ),
+        ));
         game.stack.push(StackEntry::new(spell_id, alice));
 
         let mut ctx = ExecutionContext::new_default(source, alice);
@@ -930,9 +948,13 @@ mod tests {
         assert_eq!(copy.subtypes, [Subtype::Wizard, Subtype::Spirit]);
         assert_eq!(copy.base_power, Some(crate::card::PtValue::Fixed(1)));
         assert_eq!(copy.base_toughness, Some(crate::card::PtValue::Fixed(1)));
+        assert!(copy.abilities.is_empty(), "P/T exception excludes the donor CDA");
+        assert_eq!(game.calculated_power(copy.id), Some(1));
+        assert_eq!(game.object(spell_id).unwrap().abilities.len(), 1);
 
         let second_copy_id = game.new_object_id();
         let second_copy = Object::spell_copy_of(&copy, second_copy_id, alice);
+        assert!(second_copy.abilities.is_empty());
         assert_eq!(second_copy.subtypes, [Subtype::Wizard, Subtype::Spirit]);
         assert_eq!(second_copy.base_power, Some(crate::card::PtValue::Fixed(1)));
         assert_eq!(

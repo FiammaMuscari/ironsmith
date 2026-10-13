@@ -26,7 +26,7 @@ pub(crate) mod movement_instruction;
 mod prepared_move;
 pub use entry_observation::battlefield_entry_observation;
 pub(crate) use prepared_move::{
-    PreparedZoneMove, commit_zone_moves, commit_zone_moves_with_completion,
+    PreparedZoneMove, commit_exact_zone_moves_before_completion, commit_zone_moves, commit_zone_moves_with_completion,
     complete_movement_batch, execute_battlefield_entries, execute_battlefield_entries_with_outputs,
     execute_zone_moves, execute_zone_moves_with_outputs, group_zone_move_observations,
     observe_zone_move_originals, observe_zone_move_originals_with_cause, prepare_zone_moves,
@@ -40,6 +40,7 @@ pub(crate) use continuation::{
 mod become_plotted;
 pub use become_plotted::BecomePlottedEffect;
 mod destroy;
+pub(crate) use destroy::execute_resolved_destroy_with_outputs;
 mod destroy_no_regen;
 mod exchange_zones;
 mod exile;
@@ -1162,3 +1163,5 @@ pub use shuffle_objects_into_library::ShuffleObjectsIntoLibraryEffect;
 mod zone_entry_carrier_tests;
 
 pub(crate) use sacrifice::sacrifice_selected_objects_with_original_outputs;
+
+mod positioned_move;

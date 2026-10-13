@@ -220,9 +220,11 @@ const SHAPES: &[Shape] = &[
     permanent_put_into_graveyard_this_turn,
     controlled_source_continuously,
     exact_hand_sizes,
+    counters_among_objects,
     permanent_types_among_graveyard,
     graveyard_size_threshold,
     mana_values_among_your_graveyard,
+    distinct_mana_values_exiled_with_source,
     cards_exiled_with_source,
     you_have_less_life_than_opponent,
     you_committed_crime_this_turn,
@@ -297,6 +299,31 @@ fn at_least(left: Value, count: u32) -> PredicateAst {
         operator: crate::effect::ValueComparisonOperator::GreaterThanOrEqual,
         right: Value::Fixed(count as i32),
     }
+}
+
+/// A counter threshold "among" a set counts counters across that entire set,
+/// rather than requiring each permanent to carry the threshold individually.
+fn counters_among_objects(words: &[&str]) -> Option<PredicateAst> {
+    let ["there", "are", tail @ ..] = words else { return None; };
+    let (count, used) = crate::grammar::leaf::parse_leaf_number_prefix_words(tail)?.into_fixed()?;
+    let ["or", comparison, counted @ ..] = &tail[used..] else { return None; };
+    let operator = match *comparison {
+        "more" => crate::effect::ValueComparisonOperator::GreaterThanOrEqual,
+        "less" | "fewer" => crate::effect::ValueComparisonOperator::LessThanOrEqual,
+        _ => return None,
+    };
+    let among = counted.iter().position(|word| *word == "among")?;
+    if !matches!(counted.get(among.checked_sub(1)?), Some(&"counter" | &"counters")) {
+        return None;
+    }
+    let counter = crate::grammar::filters::parse_counter_type_words(&counted[..among])?;
+    let filter = filter_from_words(&counted[among + 1..])?;
+    Some(PredicateAst::ValueComparison {
+        left: Value::CountersOn(Box::new(crate::target::ChooseSpec::All(filter)), Some(counter))
+            .with_surface_hint(ironsmith_core::ValueSurfaceHint::CountersAmong),
+        operator,
+        right: Value::Fixed(count as i32),
+    })
 }
 
 fn history_at_least(query: ironsmith_core::TurnHistoryCount, count: u32) -> PredicateAst {
@@ -847,6 +874,23 @@ fn mana_values_among_your_graveyard(words: &[&str]) -> Option<PredicateAst> {
         .in_zone(Zone::Graveyard)
         .owned_by(PlayerFilter::You);
     Some(at_least(Value::DistinctManaValues(cards), count))
+}
+
+/// Distinct mana values among the source's linked exiled cards.
+fn distinct_mana_values_exiled_with_source(words: &[&str]) -> Option<PredicateAst> {
+    let ["cards", "with", count, "or", "more", "different", "mana", "values", "are", "exiled", "with", "this", source @ ..] = words else {
+        return None;
+    };
+    match source {
+        [] => {},
+        [noun] if SOURCE_NOUNS.contains(noun) => {},
+        _ => return None,
+    }
+    let filter = ObjectFilter::default()
+        .in_zone(Zone::Exile)
+        .match_tagged(crate::tag::CompilerReferenceTag::SourceExiled.bind(),
+            crate::filter::TaggedOpbjectRelation::IsTaggedObject);
+    Some(at_least(Value::DistinctManaValues(filter), number(count)?))
 }
 
 /// "there are four or more creature cards exiled with this artifact" (Negative

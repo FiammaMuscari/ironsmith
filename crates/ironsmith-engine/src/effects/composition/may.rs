@@ -96,19 +96,17 @@ fn execute_optional_effects_with_outputs(
             if ctx.decision_maker.awaiting_choice() {
                 return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
             }
-            let aggregate = EffectOutcome::aggregate_with_primary_result(
-                EffectOutcome::count(1).with_execution_fact(ExecutionFact::Accepted),
-                [outputs.outcome.clone()],
-            );
+            let aggregate = outputs.outcome.clone().with_execution_fact(ExecutionFact::Accepted);
             return Ok(outputs.project_aggregate(aggregate));
         }
-        return match crate::special_actions::pay_total_cost_with_choice_in_context(
+        return match crate::special_actions::pay_total_cost_with_choice_in_context_with_outputs(
             game, payer, ctx.source, &cost, crate::costs::PaymentReason::Effect, ctx,
         ) {
-            Ok(()) if !ctx.decision_maker.awaiting_choice() => Ok(
-                crate::effects::CompletedEffectOutputs::aggregate_only(
-                    EffectOutcome::count(1).with_execution_fact(ExecutionFact::Accepted))),
-            Ok(()) => Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0))),
+            Ok(children) if !ctx.decision_maker.awaiting_choice() => Ok(
+                crate::effects::CompletedEffectOutputs::from_children(children, |outcomes| {
+                    EffectOutcome::aggregate(outcomes).with_execution_fact(ExecutionFact::Accepted)
+                })),
+            Ok(_) => Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0))),
             Err(crate::cost::CostPaymentError::ExecutionFailed(error)) => Err(error),
             Err(_) => Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::impossible())),
         };
@@ -299,22 +297,13 @@ impl MayEffect {
             ctx.iteration.iterated_player.unwrap_or(ctx.controller)
         };
 
-        let should_do = crate::decisions::make_decision_with_fallback(
-            game,
-            &mut ctx.decision_maker,
-            deciding_player,
-            Some(ctx.source),
+        let should_do = super::resolved_program::optional_decision(
+            game, ctx, deciding_player,
             crate::decisions::MaySpec::new(ctx.source, description)
                 .with_can_accept(identity_guard.as_ref().is_none_or(|guard| guard.can_accept)),
             self.fallback,
         );
-
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(None);
-        }
-        if !should_do {
-            return Ok(None);
-        }
+        if should_do != Some(true) { return Ok(None); }
         if identity_guard
             .as_ref()
             .is_some_and(|guard| !guard.can_accept)
@@ -574,8 +563,7 @@ struct OptionalPaymentOutcome;
 impl super::OriginalOutcomeAdapter for OptionalPaymentOutcome {
     fn finish(self: Box<Self>, _game: &mut GameState, _ctx: &mut ExecutionContext,
         result: Result<EffectOutcome, ExecutionError>) -> Result<EffectOutcome, ExecutionError> {
-        result.map(|outcome| EffectOutcome::aggregate_with_primary_result(
-            EffectOutcome::count(1).with_execution_fact(ExecutionFact::Accepted), [outcome]))
+        result.map(|outcome| outcome.with_execution_fact(ExecutionFact::Accepted))
     }
 }
 
@@ -1009,7 +997,7 @@ mod tests {
             .filter(|&&id| {
                 game.object(id).is_some_and(|obj| {
                     matches!(obj.kind, crate::object::ObjectKind::Token)
-                        && obj.name == "Lander"
+                        && obj.name == "Lander Token"
                         && game.controller_of(obj) == controller
                 })
             })

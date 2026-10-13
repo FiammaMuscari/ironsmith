@@ -36,6 +36,7 @@ pub use granted_spell_keyword_model::{
 pub mod ids;
 pub mod interned;
 pub mod mana;
+pub mod library_movement;
 pub mod ordinal;
 pub mod resolution_model;
 pub mod spell_cost_condition_model;
@@ -300,3 +301,5 @@ pub use effect::DealDamageBySourcesEffect;
 pub use effect::DealDamageEachEffect;
 
 pub use effect::{DamageRecipientSetBinding, DamageSourceSetBinding};
+
+pub mod effect_capabilities;

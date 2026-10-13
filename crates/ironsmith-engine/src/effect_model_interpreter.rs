@@ -348,13 +348,7 @@ where
     if let Some(payload) =
         M::downcast_ref::<ironsmith_core::DrawForEachTaggedMatchingEffect>(&effect)
     {
-        return Ok(Effect::new(
-            crate::effects::DrawForEachTaggedMatchingEffect::new(
-                payload.player.clone(),
-                payload.tag.clone(),
-                payload.filter.clone(),
-            ),
-        ));
+        return Ok(Effect::new(payload.draw_effect()));
     }
     if let Some(payload) =
         M::downcast_ref::<ironsmith_core::CreateTokenEffect<M::CardDefinition>>(&effect)
@@ -365,6 +359,7 @@ where
             payload.controller.clone(),
         );
         converted.text_roles = payload.text_roles.clone();
+        converted.dynamic_power_toughness = payload.dynamic_power_toughness.clone();
         converted.controller_target = payload.controller_target.clone();
         if payload.use_source_chosen_color {
             converted = converted.with_source_chosen_color();
@@ -550,6 +545,7 @@ where
         M::downcast_ref::<ironsmith_core::CreateTokenCopyEffect<M::StaticAbility>>(&effect)
     {
         return Ok(Effect::new(crate::effects::CreateTokenCopyEffect {
+            creation_method: payload.creation_method,
             target: payload.target.clone(),
             count: payload.count.clone(),
             controller: payload.controller.clone(),
@@ -1590,6 +1586,7 @@ where
         }
         grant.spell_filter = payload.spell_filter.clone();
         grant.permission_bound_mana = payload.permission_bound_mana;
+        grant.exact_tagged_objects = payload.exact_tagged_objects;
         grant.alternative_cost = payload
             .alternative_cost
             .clone()

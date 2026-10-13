@@ -305,11 +305,9 @@ impl SacrificeEffect {
 
 impl EffectExecutor for SacrificePlayerEffect {
     fn cost_choice_bindings(&self) -> crate::effects::CostChoiceBindings {
-        if self.player == PlayerFilter::You {
-            crate::effects::CostChoiceBindings::from_filter(&self.filter)
-        } else {
-            crate::effects::CostChoiceBindings::default()
-        }
+        // Binding metadata describes consumed selections independently of the
+        // actor spelling. Payment validation checks the resolved payer.
+        crate::effects::CostChoiceBindings::from_filter(&self.filter)
     }
 
     fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
@@ -428,11 +426,9 @@ impl CostExecutableEffect for SacrificePlayerEffect {
 
 impl EffectExecutor for SacrificeEffect {
     fn cost_choice_bindings(&self) -> crate::effects::CostChoiceBindings {
-        if self.player == PlayerFilter::You {
-            crate::effects::CostChoiceBindings::from_filter(&self.filter)
-        } else {
-            crate::effects::CostChoiceBindings::default()
-        }
+        // Binding metadata describes consumed selections independently of the
+        // actor spelling. Payment validation checks the resolved payer.
+        crate::effects::CostChoiceBindings::from_filter(&self.filter)
     }
 
     fn result_action(&self) -> Option<crate::effect::PriorEffectAction> {
@@ -1083,8 +1079,12 @@ fn sacrifice_cost_choice_candidate_is_eligible(
     tag: &crate::tag::TagKey,
     object: ObjectId,
 ) -> Option<bool> {
-    if player != &PlayerFilter::You || !crate::game_loop::tagged_filter_matches(filter, tag) {
+    if !crate::game_loop::tagged_filter_matches(filter, tag) {
         return None;
+    }
+    if crate::effects::helpers::resolve_player_filter(game, player, execution)
+        .ok() != Some(execution.controller) {
+        return Some(false);
     }
     let mut filter = filter.clone();
     filter.tagged_constraints.retain(|constraint| {
@@ -2154,6 +2154,7 @@ mod original_result_quantity_tests {
             for dispatched in [false, true] {
                 let a = PlayerId::from_index(0);
                 let mut game = GameState::new(vec!["A".into(), "B".into()], 20);
+                game.set_static_effect_discovery_limits(crate::static_ability_processor::StaticEffectDiscoveryLimits { max_rounds: 2, ..Default::default() });
                 let source = game.create_object_from_card(&CardBuilder::new(crate::CardId::new(), "Incomplete sacrifice source")
                     .card_types(vec![crate::CardType::Creature]).power_toughness(PowerToughness::fixed(1, 3)).build(), a, Zone::Battlefield);
                 game.object_mut(source).unwrap().abilities_mut().push(crate::ability::Ability::static_ability(

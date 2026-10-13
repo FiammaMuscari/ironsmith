@@ -9357,7 +9357,14 @@ pub(crate) fn describe_inline_ability_with_self_subject(
             if !pre.is_empty() {
                 line.push_str(&pre.join(", "));
             }
-            if !activated.effects.is_empty() {
+            if activated.effects.all_effects().is_empty() && !activated.mana_symbols().is_empty() {
+                if !line.is_empty() {
+                    line.push_str(": ");
+                }
+                line.push_str("Add ");
+                line.push_str(&activated.mana_symbols().iter().copied()
+                    .map(describe_mana_symbol).collect::<Vec<_>>().join(""));
+            } else if !activated.effects.is_empty() {
                 if !line.is_empty() {
                     line.push_str(": ");
                 }
@@ -10713,11 +10720,37 @@ pub(crate) fn describe_static_ability_with_subject(
                         } else {
                             "."
                         };
-                        return format!(
+                        let grant_text = format!(
                             "{}{}\"{body}{terminal}\"",
                             capitalize_first(grant_subject),
                             delimiter
                         );
+                        if let Some(ironsmith_core::StaticAbilityPayload::AttachedAbilityGrant(model)) =
+                            static_ability.compiled_model().map(|model| &model.payload)
+                            && let Some(condition) = &model.condition
+                        {
+                            let condition_text =
+                                if let Condition::AttachedToSourceMatches(filter) = condition {
+                                    let tag = if grant_subject.to_ascii_lowercase().starts_with("enchanted") {
+                                        Some(crate::TagKey::from("enchanted"))
+                                    } else if grant_subject.to_ascii_lowercase().starts_with("equipped") {
+                                        Some(crate::TagKey::from("equipped"))
+                                    } else {
+                                        None
+                                    };
+                                    tag.as_ref()
+                                        .and_then(|tag| super::normalize_common::describe_attached_object_type_condition(tag, filter))
+                                        .unwrap_or_else(|| describe_condition(condition))
+                                } else {
+                                    describe_condition(condition)
+                                };
+                            return format!(
+                                "As long as {}, {}",
+                                lowercase_first(&condition_text),
+                                lowercase_first(&grant_text)
+                            );
+                        }
+                        return grant_text;
                     }
                 }
             }

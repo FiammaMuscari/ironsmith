@@ -7132,6 +7132,7 @@ pub(crate) fn describe_value(value: &Value) -> String {
                 describe_player_filter(filter)
             ),
         },
+        Value::ThisAbilityManaProductionCountThisTurn => "the number of times you have added mana with this ability this turn".to_string(),
         Value::ThisAbilityResolvedThisTurnCount => {
             "the number of times this ability has resolved this turn".to_string()
         }
@@ -7391,6 +7392,7 @@ pub(crate) fn describe_value(value: &Value) -> String {
         Value::CountersOnFilterCandidate(None) => "the number of counters on it".to_string(),
         Value::PendingComparisonLeft | Value::PendingComparisonRight | Value::PendingComparisonDifference =>
             "<unresolved comparison reference>".to_string(),
+        Value::TaggedSnapshotCount { filter, .. } => format!("the number of {}", describe_for_each_count_filter(filter)),
         Value::TaggedCount => "the tagged object count".to_string(),
     }
 }

@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import './card-frame-stage.css';
+import FrameRendererTransition from './FrameRendererTransition';
 
 // Rendering history follows the cached asset bundle without retaining evicted
 // frames. Live DOM/layout and game actions are still recomputed for each view.
 const renderedFrames = new WeakSet();
 
-export default function CardFrameStage({ preparation, assets = preparation, showLoadingFrame = false, onReadyChange, children, style, ...props }) {
+export default function CardFrameStage({ preparation, assets = preparation, showLoadingFrame = false, showLiveFrame = false, onReadyChange, transitionIdentity, transitionRenderer, animateRenderer = false, children, style, ...props }) {
   const ref = useRef(null);
   const [finished, setFinished] = useState(null);
   const [presentation, setPresentation] = useState(() => ({ assets, reuse: Boolean(assets && renderedFrames.has(assets)) }));
@@ -18,15 +19,16 @@ export default function CardFrameStage({ preparation, assets = preparation, show
   // never shown on its own. Once the placeholder has been up, the stage stays
   // visible while the prepared frame settles: hiding it would leave nothing.
   const loadingFrameVisible = showLoadingFrame;
-  const [placeholderShown, setPlaceholderShown] = useState(loadingFrameVisible);
-  if (loadingFrameVisible && !placeholderShown) setPlaceholderShown(true);
-  const frameVisible = ready || loadingFrameVisible || placeholderShown;
+  const [placeholderShown, setPlaceholderShown] = useState(loadingFrameVisible || showLiveFrame);
+  if ((loadingFrameVisible || showLiveFrame) && !placeholderShown) setPlaceholderShown(true);
+  const frameVisible = ready || showLiveFrame || loadingFrameVisible || placeholderShown;
 
   useLayoutEffect(() => {
     if (!preparation) return undefined;
     let active = true;
     let frame = 0;
-    Promise.allSettled([...ref.current.querySelectorAll('img')].map(image => image.decode())).then(() => {
+    const images = preparation.defaultFrame ? [] : [...ref.current.querySelectorAll('img')];
+    Promise.allSettled(images.map(image => image.decode())).then(() => {
       if (!active) return;
       // The hidden frame still participates in layout. Let rules fitting and
       // its ResizeObserver finish with the final fonts, textures, and flavor.
@@ -43,7 +45,8 @@ export default function CardFrameStage({ preparation, assets = preparation, show
   }, [preparation]);
 
   useLayoutEffect(() => { onReadyChange?.(frameVisible); }, [onReadyChange, frameVisible]);
-  return <div className="card-frame-preview-shell">
+  return <FrameRendererTransition enabled={animateRenderer} identity={transitionIdentity}
+    renderer={transitionRenderer} ready={ready} visible={frameVisible}>
     <div {...props} ref={ref} data-render-ready={ready ? 'true' : 'false'} data-frame-reused={presentation.reuse ? 'true' : 'false'}
     data-printing-profile={preparation?.typography?.profile?.id}
     data-printing-branches={preparation?.typography?.profile?.chartBranches?.join(' ')}
@@ -51,5 +54,5 @@ export default function CardFrameStage({ preparation, assets = preparation, show
     aria-hidden={!frameVisible} inert={!frameVisible}
     style={{...style, opacity: frameVisible ? 1 : 0, ...(presentation.reuse ? {transition: 'none'} : {}), ...(!frameVisible ? {pointerEvents: 'none'} : {})}}>
     {children}
-  </div></div>;
+  </div></FrameRendererTransition>;
 }

@@ -709,6 +709,24 @@ impl GameState {
             return false;
         }
 
+        if let Some(values) = self.object(id).and_then(|object| object.copied_face_values.clone()) {
+            if values.copy_face_layout == crate::card::LinkedFaceLayout::Flip {
+                if let Some(other) = &values.other_copy_face {
+                    self.object_mut(id).unwrap().copy_copiable_values_from_values(other);
+                    self.object_mut(id).unwrap().copied_face_values = Some(values);
+                    self.flip(id);
+                    return true;
+                }
+            }
+        }
+        // An ongoing copy effect carries its own frozen flip half.
+        if self.object(id).is_some_and(|object| object.linked_face_layout != crate::card::LinkedFaceLayout::Flip)
+            && self.calculated_copiable_values(id).is_some_and(|values|
+            values.copy_face_layout == crate::card::LinkedFaceLayout::Flip && values.other_copy_face.is_some()) {
+            self.flip(id);
+            return true;
+        }
+
         let merged_stable_id = self.object(id).and_then(|object| {
             self.commander_tracking
                 .merged_permanents
@@ -809,6 +827,11 @@ impl GameState {
     /// down. CR 730.2j forbids the action if the face-up merged permanent
     /// contains a double-faced card.
     pub fn set_face_down(&mut self, id: ObjectId) -> bool {
+        // CR 708.2b: a second face-down instruction does not change the
+        // existing overlay or the status of any underlying merged component.
+        if self.is_face_down(id) {
+            return false;
+        }
         let merged_stable_id = self.object(id).and_then(|object| {
             self.commander_tracking
                 .merged_permanents
@@ -837,6 +860,7 @@ impl GameState {
             {
                 for component in &mut merged.components {
                     component.face_down = true;
+                    component.object.apply_face_down_cast_overlay();
                 }
             }
         }
@@ -1093,12 +1117,16 @@ impl GameState {
         {
             for component in &mut merged.components {
                 component.face_down = false;
+                component.object.end_face_down_cast_overlay();
             }
         }
         let _ = self
             .object_store
             .object_mut(id)
             .is_some_and(|object| object.end_face_down_cast_overlay());
+        if merged_stable_id.is_some() {
+            self.refresh_merged_permanent_characteristics(id);
+        }
         let (face_down_changed, origin_changed) = {
             let flags = self.battlefield_flags_mut();
             (
@@ -2657,6 +2685,8 @@ impl GameState {
                 if let Some(object) = self.object_mut(permanent_id) {
                     object.base_power = Some(crate::card::PtValue::Fixed(option.power));
                     object.base_toughness = Some(crate::card::PtValue::Fixed(option.toughness));
+                    if let Some(types) = &option.card_types { object.card_types = types.clone().into(); }
+                    for subtype in &option.added_subtypes { if !object.subtypes.contains(subtype) { object.subtypes.push(*subtype); } }
                     for granted in &option.abilities {
                         let ability = crate::ability::Ability::static_ability(granted.clone());
                         self.install_authored_object_ability(
@@ -3336,6 +3366,11 @@ impl GameState {
         let mut merged_labels = Vec::new();
         let mut labels_aligned = true;
         for component in &state.components {
+            // Merge in layer 1a only acquires component text. Ward supplied
+            // by a face-down overlay belongs to layer 1b of the whole permanent.
+            if component.face_down {
+                continue;
+            }
             all_abilities.extend(component.object.abilities.iter().cloned());
             labels_aligned &=
                 component.object.ability_labels.len() == component.object.abilities.len();

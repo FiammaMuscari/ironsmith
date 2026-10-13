@@ -1,4 +1,34 @@
 {
+
+fn describe_retained_snapshot_count(tag: &TagKey, filter: &ObjectFilter) -> String {
+if filter.zone == Some(Zone::Hand)
+            && filter.controller.is_none()
+            && (tag.as_str().starts_with("searched")
+                || tag.as_str().starts_with("exiled")
+                || crate::cards::is_sentence_helper_tag(tag.as_str(), "exiled"))
+        {
+            match &filter.owner {
+                Some(PlayerFilter::You) => "card exiled from your hand this way".to_string(),
+                Some(PlayerFilter::NotYou) => {
+                    "card exiled from your opponent's hand this way".to_string()
+                }
+                Some(PlayerFilter::Specific(_))
+                | Some(PlayerFilter::Target(_))
+                | Some(PlayerFilter::IteratedPlayer)
+                | Some(PlayerFilter::ControllerOf(_)) => {
+                    "card exiled from their hand this way".to_string()
+                }
+                Some(owner) => format!(
+                    "card exiled from {} hand this way",
+                    describe_possessive_player_filter(owner)
+                ),
+                None => "card exiled from hand this way".to_string(),
+            }
+        } else {
+            describe_for_each_count_filter(&filter)
+        }
+}
+
     if let Some(change) = effect.downcast_ref::<crate::effects::ChangeTextEffect>() {
         use ironsmith_core::TextChangeSelection;
         let replacement = match &change.selection {
@@ -1593,27 +1623,26 @@
             let (zone_phrase, zone_keyword) = choose_primary_zone(choose)
                 .map(zone_location)
                 .unwrap_or(("in an unspecified zone", ""));
-            // For graveyard chooses, check the actual selection text —
-            // describe_choose_selection may have stripped the zone that
-            // filter_text still mentions, and oracle spells it out. Hand and
-            // library chooses keep the filter-based check: their downstream
-            // reveal-compaction gates ("You choose ... from it") key on the
-            // suffix-free surface.
-            let includes_zone_already = if choose_primary_zone(choose) == Some(Zone::Graveyard) {
-                let choice_lower = choice_text.to_ascii_lowercase();
-                zone_keyword.is_empty()
-                    || choice_lower.contains(zone_keyword)
-                    || choice_lower.contains("from it")
-                    || choice_lower.contains("from among")
-                    || choice_lower.contains("of them")
-                    || choice_lower.contains("in it")
-            } else {
-                zone_keyword.is_empty() || filter_lower.contains(zone_keyword)
-            };
+            // Selection rendering may remove zone/owner scaffolding. Inspect
+            // the emitted selection, not the unrendered filter description.
+            let choice_lower = choice_text.to_ascii_lowercase();
+            let includes_zone_already = zone_keyword.is_empty()
+                || choice_lower.contains(zone_keyword)
+                || choice_lower.contains("from it")
+                || choice_lower.contains("from among")
+                || choice_lower.contains("revealed this way")
+                || choice_lower.contains("of them")
+                || choice_lower.contains("in it");
             if includes_zone_already {
                 String::new()
             } else {
-                format!(" {zone_phrase}")
+                let location = match choose_primary_zone(choose) {
+                    Some(Zone::Hand) => describe_choose_zone_origin(choose, "hand"),
+                    Some(Zone::Graveyard) => describe_choose_zone_location(choose, "graveyard"),
+                    Some(Zone::Library) => describe_choose_zone_origin(choose, "library"),
+                    _ => zone_phrase.to_string(),
+                };
+                format!(" {location}")
             }
         };
         return capitalize_first(&format!(
@@ -4519,6 +4548,11 @@
         return describe_return_all_to_battlefield_effect(return_all_to_battlefield);
     }
     if let Some(draw) = effect.downcast_ref::<crate::effects::DrawCardsEffect>() {
+        if let Value::TaggedSnapshotCount { tag, filter } = draw.count.unhinted() {
+            let player = describe_player_filter(&draw.player);
+            return format!("{player} {} a card for each {}",
+                player_verb(&player, "draw", "draws"), describe_retained_snapshot_count(tag, filter));
+        }
         if draw.player == PlayerFilter::You
             && draw
                 .count
@@ -4555,32 +4589,7 @@
     }
     if let Some(draw) = effect.downcast_ref::<crate::effects::DrawForEachTaggedMatchingEffect>() {
         let player = describe_player_filter(&draw.player);
-        let counted = if draw.filter.zone == Some(Zone::Hand)
-            && draw.filter.controller.is_none()
-            && (draw.tag.as_str().starts_with("searched")
-                || draw.tag.as_str().starts_with("exiled")
-                || crate::cards::is_sentence_helper_tag(draw.tag.as_str(), "exiled"))
-        {
-            match &draw.filter.owner {
-                Some(PlayerFilter::You) => "card exiled from your hand this way".to_string(),
-                Some(PlayerFilter::NotYou) => {
-                    "card exiled from your opponent's hand this way".to_string()
-                }
-                Some(PlayerFilter::Specific(_))
-                | Some(PlayerFilter::Target(_))
-                | Some(PlayerFilter::IteratedPlayer)
-                | Some(PlayerFilter::ControllerOf(_)) => {
-                    "card exiled from their hand this way".to_string()
-                }
-                Some(owner) => format!(
-                    "card exiled from {} hand this way",
-                    describe_possessive_player_filter(owner)
-                ),
-                None => "card exiled from hand this way".to_string(),
-            }
-        } else {
-            describe_for_each_count_filter(&draw.filter)
-        };
+        let counted = describe_retained_snapshot_count(&draw.tag, &draw.filter);
         return format!(
             "{player} {} a card for each {}",
             player_verb(&player, "draw", "draws"),
@@ -7828,7 +7837,9 @@
             || crate::cards::is_sentence_helper_tag(tag, "searched")
             || crate::cards::is_sentence_helper_tag(tag, "consult_match");
         let spec = crate::target::ChooseSpec::Tagged(cast_tagged.tag.clone());
-        let target = if cast_tagged.as_copy {
+        let target = if cast_tagged.copy_named_definition {
+            "a copy of the card with the noted name".to_string()
+        } else if cast_tagged.as_copy {
             let tag_is_numbered = tag.rsplit_once('_').is_some_and(|(_, suffix)| {
                 !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
             });

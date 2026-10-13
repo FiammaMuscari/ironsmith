@@ -77,31 +77,7 @@ impl ForPlayersEffect {
     }
 }
 
-fn rotate_players_to_start(players: &mut Vec<PlayerId>, start: PlayerId) {
-    if let Some(start_pos) = players.iter().position(|&player_id| player_id == start) {
-        players.rotate_left(start_pos);
-    }
-}
-
-fn order_selected_players_from(
-    game: &GameState,
-    selected_players: Vec<PlayerId>,
-    start: PlayerId,
-) -> Vec<PlayerId> {
-    let mut turn_order = game.turn_store.turn_order.clone();
-    rotate_players_to_start(&mut turn_order, start);
-
-    let mut ordered_players = turn_order
-        .into_iter()
-        .filter(|player_id| selected_players.contains(player_id))
-        .collect::<Vec<_>>();
-    for player_id in selected_players {
-        if !ordered_players.contains(&player_id) {
-            ordered_players.push(player_id);
-        }
-    }
-    ordered_players
-}
+use super::player_order::selected_players_from as order_selected_players_from;
 
 /// In Two-Headed Giant, a shared-life action like a "set life total" effect
 /// applies once per team: the team's primary player picks which head performs
@@ -393,9 +369,24 @@ impl OptionalActionProgram {
                     }
                 }
                 let optional = unwrapped.downcast_ref::<crate::effects::MayEffect>();
-                // A compound payment is one action owner. Splitting its
-                // children would bypass the TotalCost transaction.
-                if optional.is_some_and(|optional| optional.pay_as_cost) {
+                // Keep compound payments with TotalCost. A selection prelude
+                // followed by one simultaneous action is still one instruction:
+                // retain the payment offer (including its affordability check),
+                // but collect every participant's choices before that action.
+                let single_selected_action = optional.is_some_and(|optional| {
+                    let Some((action, selections)) = optional.effects.split_last() else {
+                        return false;
+                    };
+                    !selections.is_empty()
+                        && selections.iter().all(|selection| {
+                            super::may::is_object_selection(selection)
+                                && selection.0.is_read_only_simultaneous_player_action()
+                        })
+                        && action.0.supports_simultaneous_player_action()
+                });
+                if optional.is_some_and(|optional| optional.pay_as_cost)
+                    && !single_selected_action
+                {
                     program.effects.push(effect);
                     program.markers.push(None);
                     program.paths.push(path.to_vec());
@@ -2261,7 +2252,9 @@ impl ForPlayersActionState {
                             }
                             let effect = &simultaneous_effects[effect_index];
                             if matches!(purpose, crate::effects::EffectExecutionPurpose::Action)
-                                && !crate::effects::runtime::prepare_reached_effect_inputs(game, effect, ctx)?
+                                && !crate::effects::runtime::prepare_reached_effect_inputs(
+                                    game, effect, ctx,
+                                )?
                             {
                                 return Ok(());
                             }
@@ -4862,9 +4855,19 @@ mod tests {
         assert_eq!(ctx.source, source);
         assert!(ctx.source_snapshot.is_none());
         assert!(ctx.additional_replacement_effects().is_empty());
-        let events = game.turn_store.turn_history.projected_records()
-            .filter_map(|record| record.event.downcast::<crate::events::ZoneChangeEvent>().cloned())
-            .filter(|event| event.from == crate::zone::Zone::Battlefield && event.to == crate::zone::Zone::Exile)
+        let events = game
+            .turn_store
+            .turn_history
+            .projected_records()
+            .filter_map(|record| {
+                record
+                    .event
+                    .downcast::<crate::events::ZoneChangeEvent>()
+                    .cloned()
+            })
+            .filter(|event| {
+                event.from == crate::zone::Zone::Battlefield && event.to == crate::zone::Zone::Exile
+            })
             .collect::<Vec<_>>();
         assert_eq!(events.len(), 2);
         assert!(

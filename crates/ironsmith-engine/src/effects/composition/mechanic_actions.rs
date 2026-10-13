@@ -71,10 +71,22 @@ impl BackupEffect {
     }
 }
 
+fn backup_grant_program(effect: &BackupEffect, target: ChooseSpec) -> Vec<Effect> {
+    effect.granted_abilities.iter().map(|ability| Effect::new(
+        crate::effects::ApplyContinuousEffect::with_spec(target.clone(),
+            crate::continuous::Modification::AddAbilityGeneric(ability.clone()), Until::EndOfTurn)
+    )).collect()
+}
+
 impl EffectExecutor for BackupEffect {
     fn visit_child_effects(&self, visitor: &mut dyn FnMut(&crate::effect::Effect)) {
-        for ability in &self.granted_abilities {
-            crate::ability::visit_owned_effects(ability, visitor);
+        visitor(&Effect::new(crate::effects::PutCountersEffect::new(
+            CounterType::PlusOnePlusOne,
+            self.amount,
+            ChooseSpec::target_creature(),
+        )));
+        for child in backup_grant_program(self, ChooseSpec::target_creature()) {
+            visitor(&child);
         }
     }
 
@@ -107,48 +119,25 @@ impl EffectExecutor for BackupEffect {
                     ctx,
                 )?;
 
-                let mut outcomes = vec![
-                    crate::effects::PutCountersEffect::new(
+                super::ScopedOutcomeProgram {
+                    id: crate::effect::EffectId(0),
+                    producer: Effect::new(crate::effects::PutCountersEffect::new(
                         CounterType::PlusOnePlusOne,
                         self.amount,
                         ChooseSpec::SpecificObject(target),
-                    )
-                    .execute_child_with_outputs(game, ctx)?,
-                ];
-
-                if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
+                    )),
+                    continuation: if target == ctx.source {
+                        vec![]
+                    } else {
+                        vec![Effect::new(super::resolved_program::IfPresentProgram {
+                            object: target,
+                            zone: Zone::Battlefield,
+                            effects: backup_grant_program(self, ChooseSpec::SpecificObject(target)),
+                        })]
+                    },
+                    preserve_producer_result: true,
                 }
-                let primary = outcomes[0].outcome.summary_projection();
-                if target != ctx.source
-                    && game
-                        .object(target)
-                        .is_some_and(|object| object.zone == Zone::Battlefield)
-                    && !game.is_phased_out(target)
-                {
-                    for ability in &self.granted_abilities {
-                        outcomes.push(
-                            crate::effects::ApplyContinuousEffect::new(
-                                crate::continuous::EffectTarget::Specific(target),
-                                crate::continuous::Modification::AddAbilityGeneric(ability.clone()),
-                                Until::EndOfTurn,
-                            )
-                            .execute_child_with_outputs(game, ctx)?,
-                        );
-                        if ctx.decision_maker.awaiting_choice() {
-                            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                                EffectOutcome::count(0),
-                            ));
-                        }
-                    }
-                }
-
-                Ok(crate::effects::CompletedEffectOutputs::from_children(
-                    outcomes,
-                    |children| EffectOutcome::aggregate_with_primary_result(primary, children),
-                ))
+                .execute_child_with_outputs(game, ctx)
             },
         )
     }
@@ -223,23 +212,29 @@ pub(crate) fn execute_keyword_action_replacement_effects_with_outputs(
     )
 }
 
-/// Put the explore +1/+1 counter through the normal counter-placement
-/// pipeline so replacements such as Hardened Scales and "can't have counters"
-/// effects apply (CR 614.1, 122.6, 701.44a).
-fn put_explore_counter_with_outputs(
-    game: &mut GameState,
-    ctx: &mut ExecutionContext,
-    object_id: crate::ids::ObjectId,
-) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-    crate::effects::PutCountersEffect::new(
-        CounterType::PlusOnePlusOne,
-        1,
-        ChooseSpec::SpecificObject(object_id),
-    )
-    .execute_child_with_outputs(game, ctx)
+/// The reveal and keyword owners freeze identities; the dependent actions are
+/// an ordinary movement/counter/optional-movement program.
+fn explore_followup_program(target: Option<ChooseSpec>, card: Option<(ChooseSpec, bool)>, player: PlayerFilter) -> Vec<Effect> {
+    let counter = || target.clone().map(|target| Effect::new(crate::effects::PutCountersEffect::new(
+        CounterType::PlusOnePlusOne, 1, target)));
+    match card {
+        Some((card, true)) => vec![Effect::new(crate::effects::MoveToZoneEffect::new(card, Zone::Hand, false))],
+        Some((card, false)) => counter().into_iter().chain([Effect::new(crate::effects::MayEffect::new_for_player(
+            vec![Effect::new(crate::effects::MoveToZoneEffect::new(card, Zone::Graveyard, false))], player,
+        ))]).collect(),
+        None => counter().into_iter().collect(),
+    }
 }
 
 impl EffectExecutor for ExploreEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        visitor(&Effect::new(crate::effects::RevealTopEffect::tagged(PlayerFilter::You, "__explore_top")));
+        for is_land in [true, false] {
+            for effect in explore_followup_program(Some(self.target.clone()),
+                Some((ChooseSpec::tagged("__explore_top"), is_land)), PlayerFilter::You) { visitor(&effect); }
+        }
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -450,69 +445,15 @@ impl EffectExecutor for ExploreEffect {
                                             object.has_card_type(crate::types::CardType::Land)
                                         });
 
-                                    if let Some(card_id) = revealed_card_id {
-                                        if revealed_is_land {
-                                            let movement = crate::effects::MoveToZoneEffect::new(
-                                                ChooseSpec::SpecificObject(card_id),
-                                                Zone::Hand,
-                                                false,
-                                            )
-                                            .execute_child_with_outputs(game, ctx)?;
-                                            if ctx.decision_maker.awaiting_choice() {
-                                                return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                            }
-                                            children.push(movement);
-                                            if ctx.decision_maker.awaiting_choice() {
-                                                return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                            }
-                                        } else {
-                                            if game.object(target_id).is_some() {
-                                                let placement = put_explore_counter_with_outputs(
-                                                    game, ctx, target_id,
-                                                )?;
-                                                if ctx.decision_maker.awaiting_choice() {
-                                                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                                }
-                                                children.push(placement);
-                                            }
-
-                                            let choice_ctx =
-                                                crate::decisions::context::BooleanContext::new(
-                                                    controller,
-                                                    Some(ctx.source),
-                                                    "Put the explored card into your graveyard?"
-                                                        .to_string(),
-                                                );
-                                            let put_into_graveyard = ctx
-                                                .decision_maker
-                                                .decide_boolean(game, &choice_ctx);
-                                            if ctx.decision_maker.awaiting_choice() {
-                                                return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                            }
-                                            if put_into_graveyard {
-                                                let movement =
-                                                    crate::effects::MoveToZoneEffect::new(
-                                                        ChooseSpec::SpecificObject(card_id),
-                                                        Zone::Graveyard,
-                                                        false,
-                                                    )
-                                                    .execute_child_with_outputs(game, ctx)?;
-                                                if ctx.decision_maker.awaiting_choice() {
-                                                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                                }
-                                                children.push(movement);
-                                                if ctx.decision_maker.awaiting_choice() {
-                                                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
-                                                }
-                                            }
-                                        }
-                                    } else if game.object(target_id).is_some() {
-                                        let placement =
-                                            put_explore_counter_with_outputs(game, ctx, target_id)?;
+                                    let target = game.object(target_id).is_some()
+                                        .then_some(ChooseSpec::SpecificObject(target_id));
+                                    for effect in explore_followup_program(target,
+                                        revealed_card_id.map(|id| (ChooseSpec::SpecificObject(id), revealed_is_land)),
+                                        PlayerFilter::Specific(controller)) {
+                                        children.push(effect.0.execute_child_with_outputs(game, ctx)?);
                                         if ctx.decision_maker.awaiting_choice() {
                                             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
                                         }
-                                        children.push(placement);
                                     }
 
                                     let action_snapshot = game
@@ -1044,7 +985,23 @@ impl EffectExecutor for ManifestObjectsEffect {
     }
 }
 
+const DREAD_LOOKED: &str = "__manifest_dread_look";
+const DREAD_CHOSEN: &str = "__manifest_dread_chosen";
+fn manifest_dread_choice(player: PlayerFilter) -> crate::effects::ChooseObjectsEffect {
+    crate::effects::ChooseObjectsEffect::new(
+        crate::target::ObjectFilter::tagged(DREAD_LOOKED).in_zone(Zone::Library),
+        1, player, DREAD_CHOSEN,
+    ).with_description("Choose one of the top two cards of your library to manifest")
+}
+
 impl EffectExecutor for ManifestDreadEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        visitor(&Effect::new(crate::effects::LookAtTopCardsEffect::new(self.player.clone(), 2, DREAD_LOOKED).viewed_by(self.player.clone())));
+        visitor(&Effect::new(manifest_dread_choice(self.player.clone())));
+        visitor(&Effect::new(ManifestObjectsEffect::new(ChooseSpec::tagged(DREAD_CHOSEN), self.player.clone())));
+        visitor(&Effect::new(crate::effects::MoveToZoneEffect::new(ChooseSpec::tagged(DREAD_LOOKED), Zone::Graveyard, false)));
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -1124,37 +1081,17 @@ impl EffectExecutor for ManifestDreadEffect {
                     )?);
                 }
 
-                let card_to_manifest = if top_cards.len() == 1 {
-                    top_cards[0]
-                } else {
-                    let selection = make_decision(
-                game,
-                ctx.decision_maker,
-                player,
-                Some(ctx.source),
-                ChooseObjectsSpec::new(
-                    ctx.source,
-                    "Choose one of the top two cards of your library to manifest",
-                    top_cards.clone(),
-                    1,
-                    Some(1),
-                )
-                .require_explicit_choice()
-                .with_hidden_card_visibility(
-                    crate::decisions::context::DecisionHiddenCardVisibility::PrivateToDecisionPlayer,
-                ),
-            );
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::count(0),
-                        ));
-                    }
-
-                    normalize_object_selection(selection, &top_cards, 1)
-                        .first()
-                        .copied()
-                        .unwrap_or(top_cards[0])
-                };
+                let selected = ctx.with_object_tag(DREAD_LOOKED,
+                    observed_outcome.affected_object_memory().unwrap_or_default().to_vec(), |ctx| {
+                    ctx.with_object_tag(DREAD_CHOSEN, Vec::new(), |ctx| {
+                        manifest_dread_choice(PlayerFilter::Specific(player)).execute_child_with_outputs(game, ctx)
+                    })
+                })?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
+                }
+                let card_to_manifest = selected.outcome.instruction_result().objects()
+                    .and_then(|objects| objects.first()).copied().ok_or(ExecutionError::InvalidTarget)?;
 
                 let (mut outcome, entry_receipt) =
                     prepare_manifest_entry(game, ctx, card_to_manifest, player, false)?;
@@ -1175,54 +1112,20 @@ impl EffectExecutor for ManifestDreadEffect {
                         receipt
                     })
                     .collect::<Vec<_>>();
-                let mut graveyard_snapshots = Vec::new();
-                // CR 701.62a: every looked-at card that wasn't manifested goes to
-                // the graveyard, including the selected card if entry was prohibited.
-                // A card moved elsewhere by a replacement is no longer in this group.
-                for card_id in top_cards {
-                    if !game
-                        .object(card_id)
-                        .is_some_and(|card| card.zone == Zone::Library)
-                    {
-                        continue;
-                    }
-                    let committed = {
-                        let zone_additional_effects = ctx.additional_replacement_effects_snapshot();
-                        apply_zone_change_with_context_and_additional_effects_with_outputs(
-                            game,
-                            card_id,
-                            Zone::Library,
-                            Zone::Graveyard,
-                            ctx.cause.clone(),
-                            ctx,
-                            &zone_additional_effects,
-                        )
-                    }?;
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::count(0),
-                        ));
-                    }
-                    crate::effects::PublishedEffectOutputs::append_distinct(
-                        &mut entry_outputs,
-                        committed.published_outputs,
-                    );
-                    let receipt = committed.receipt;
-                    if let EventOutcome::Proceed(result) = &receipt.original
-                        && result.final_zone == Zone::Graveyard
-                    {
-                        graveyard_snapshots.extend(
-                            result.new_object_ids.iter().copied().filter_map(|id| {
-                                game.object(id).map(|object| {
-                                    ObjectSnapshot::from_object_with_calculated_characteristics(
-                                        object, game,
-                                    )
-                                })
-                            }),
-                        );
-                    }
-                    receipts.push((card_id, receipt));
+                // Finish the exact remaining library incarnations, retaining additions
+                // until the manifest-dread keyword itself has completed.
+                let (remaining, published) = crate::effects::zones::commit_exact_zone_moves_before_completion(
+                    game, ctx, top_cards, Zone::Library, Zone::Graveyard)?;
+                if ctx.decision_maker.awaiting_choice() {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
                 }
+                crate::effects::PublishedEffectOutputs::append_distinct(&mut entry_outputs, published);
+                let graveyard_snapshots = remaining.iter().flat_map(|(_, receipt)| match &receipt.original {
+                    EventOutcome::Proceed(change) if change.final_zone == Zone::Graveyard => change.new_object_ids.as_slice(),
+                    _ => &[],
+                }).filter_map(|id| game.object(*id).map(|object|
+                    ObjectSnapshot::from_object_with_calculated_characteristics(object, game))).collect();
+                receipts.extend(remaining);
 
                 let primary = outcome.summary_projection();
                 outcome = EffectOutcome::aggregate_with_primary_result(
@@ -1233,8 +1136,10 @@ impl EffectExecutor for ManifestDreadEffect {
                     TagKey::from(crate::tag::MANIFEST_DREAD_GRAVEYARD_TAG),
                     graveyard_snapshots,
                 )]);
-                let mut body_outputs =
-                    crate::effects::CompletedEffectOutputs::from_children([observed], |_| outcome);
+                let mut body_outputs = crate::effects::CompletedEffectOutputs::from_children([observed, selected], |children| {
+                    EffectOutcome::aggregate_with_primary_result(outcome.summary_projection(),
+                        std::iter::once(outcome.clone()).chain(children.into_iter().skip(1)))
+                });
                 body_outputs.retain_published_references(entry_outputs);
                 let body_outputs = super::complete_keyword_action_with_outputs(
                     game,
@@ -1266,6 +1171,43 @@ impl EffectExecutor for ManifestDreadEffect {
     }
 }
 
+/// Select privately or from a captured zone, then enter through the same
+/// face-down entry owner in a single replayable transaction.
+fn manifest_selected_card(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    cloak: bool,
+    select: impl FnOnce(
+        &mut GameState,
+        &mut ExecutionContext,
+    ) -> Result<Option<ObjectId>, ExecutionError>,
+) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
+    super::execute_transaction(
+        game,
+        ctx,
+        || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
+        |game, ctx| {
+            let Some(card) = select(game, ctx)? else {
+                return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                    EffectOutcome::count(0),
+                ));
+            };
+            manifest_card_with_outputs(
+                game,
+                ctx,
+                card,
+                ctx.controller,
+                cloak,
+                if cloak {
+                    KeywordActionKind::Cloak
+                } else {
+                    KeywordActionKind::Manifest
+                },
+            )
+        },
+    )
+}
+
 impl EffectExecutor for ManifestTopCardOfLibraryEffect {
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
@@ -1285,36 +1227,18 @@ impl EffectExecutor for ManifestTopCardOfLibraryEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-        super::execute_transaction(
-            game,
-            ctx,
-            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
-            |game, ctx| {
-                let library_owner =
-                    crate::effects::helpers::resolve_player_filter(game, &self.player, ctx)?;
-                let Some(&card_id) = game
-                    .player(library_owner)
-                    .and_then(|player| player.library.last())
-                else {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                };
+        manifest_selected_card(game, ctx, self.cloak, |game, ctx| {
+            let library_owner =
+                crate::effects::helpers::resolve_player_filter(game, &self.player, ctx)?;
+            let Some(&card_id) = game
+                .player(library_owner)
+                .and_then(|player| player.library.last())
+            else {
+                return Ok(None);
+            };
 
-                manifest_card_with_outputs(
-                    game,
-                    ctx,
-                    card_id,
-                    ctx.controller,
-                    self.cloak,
-                    if self.cloak {
-                        KeywordActionKind::Cloak
-                    } else {
-                        KeywordActionKind::Manifest
-                    },
-                )
-            },
-        )
+            Ok(Some(card_id))
+        })
     }
 }
 
@@ -1337,22 +1261,16 @@ impl EffectExecutor for ManifestCardFromHandEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-        super::execute_transaction(
-            game,
-            ctx,
-            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
-            |game, ctx| {
-                let hand = game
-                    .player(ctx.controller)
-                    .map(|player| player.hand.to_vec())
-                    .unwrap_or_default();
-                if hand.is_empty() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                }
+        manifest_selected_card(game, ctx, false, |game, ctx| {
+            let hand = game
+                .player(ctx.controller)
+                .map(|player| player.hand.to_vec())
+                .unwrap_or_default();
+            if hand.is_empty() {
+                return Ok(None);
+            }
 
-                let chosen = make_decision(
+            let chosen = make_decision(
             game,
             ctx.decision_maker,
             ctx.controller,
@@ -1369,37 +1287,52 @@ impl EffectExecutor for ManifestCardFromHandEffect {
                 crate::decisions::context::DecisionHiddenCardVisibility::PrivateToDecisionPlayer,
             ),
         );
-                if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                }
-                let Some(card_id) = chosen.into_iter().find(|id| {
-                    game.object(*id).is_some_and(|object| {
-                        object.zone == Zone::Hand && object.owner == ctx.controller
-                    })
-                }) else {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                };
+            if ctx.decision_maker.awaiting_choice() {
+                return Ok(None);
+            }
+            let Some(card_id) = chosen.into_iter().find(|id| {
+                game.object(*id).is_some_and(|object| {
+                    object.zone == Zone::Hand && object.owner == ctx.controller
+                })
+            }) else {
+                return Ok(None);
+            };
 
-                manifest_card_with_outputs(
-                    game,
-                    ctx,
-                    card_id,
-                    ctx.controller,
-                    false,
-                    KeywordActionKind::Manifest,
-                )
-            },
-        )
+            Ok(Some(card_id))
+        })
     }
 }
 
 pub type PopulateEffect = ironsmith_core::PopulateEffect;
 
+fn populate_body(effect: &PopulateEffect, target: ChooseSpec) -> super::KeywordCompletionProgram {
+    super::KeywordCompletionProgram {
+        action: KeywordActionKind::Populate,
+        amount: 1.into(),
+        player: PlayerFilter::You,
+        body: Effect::new(crate::effects::CreateTokenCopyEffect::one(target)
+            .enters_tapped(effect.enters_tapped)
+            .attacking(effect.enters_attacking)
+            .haste(effect.has_haste)
+            .sacrifice_at_next_end_step(effect.sacrifice_at_next_end_step)
+            .exile_at_next_end_step(effect.exile_at_next_end_step)
+            .next_end_step_player(effect.next_end_step_player.clone())
+            .exile_at_eoc(effect.exile_at_end_of_combat)),
+    }
+}
+
 impl EffectExecutor for PopulateEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        visitor(&Effect::new(populate_body(
+            self,
+            ChooseSpec::Object(
+                crate::target::ObjectFilter::creature()
+                    .you_control()
+                    .token(),
+            ),
+        )));
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -1435,10 +1368,7 @@ impl EffectExecutor for PopulateEffect {
                 }
 
                 game.reserve_token_repetition_work(count)?;
-                let mut created_ids = Vec::new();
-                let mut outcomes = Vec::new();
-
-                for _ in 0..count {
+                super::captured_selection::repeat_collect_objects(game, ctx, count, |game, ctx| {
                     let candidates = game
                         .battlefield
                         .iter()
@@ -1456,7 +1386,7 @@ impl EffectExecutor for PopulateEffect {
                         .collect::<Vec<_>>();
 
                     if candidates.is_empty() {
-                        outcomes.push(super::publish_keyword_action_completion_receipt(
+                        return super::publish_keyword_action_completion_receipt(
                             game,
                             ctx,
                             crate::triggers::TriggerEvent::new_with_provenance(
@@ -1468,84 +1398,54 @@ impl EffectExecutor for PopulateEffect {
                                 ),
                                 ctx.provenance,
                             ),
-                        )?);
-                        continue;
+                        );
                     }
 
-                    let chosen = if candidates.len() == 1 {
-                        candidates[0]
-                    } else {
-                        let spec = ChooseObjectsSpec::new(
-                            ctx.source,
-                            "Choose a creature token you control to populate",
-                            candidates.clone(),
-                            1,
-                            Some(1),
-                        );
-                        let selection: Vec<ObjectId> = make_decision(
-                            game,
-                            ctx.decision_maker,
-                            ctx.controller,
-                            Some(ctx.source),
-                            spec,
-                        );
-                        if ctx.decision_maker.awaiting_choice() {
-                            return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                                EffectOutcome::with_objects(Vec::new()),
-                            ));
-                        }
-                        let normalized = normalize_object_selection(selection, &candidates, 1);
-                        normalized.first().copied().unwrap_or(candidates[0])
-                    };
-
-                    let outcome = crate::effects::CreateTokenCopyEffect::one(
-                        ChooseSpec::SpecificObject(chosen),
-                    )
-                    .enters_tapped(self.enters_tapped)
-                    .attacking(self.enters_attacking)
-                    .haste(self.has_haste)
-                    .sacrifice_at_next_end_step(self.sacrifice_at_next_end_step)
-                    .exile_at_next_end_step(self.exile_at_next_end_step)
-                    .next_end_step_player(self.next_end_step_player.clone())
-                    .exile_at_eoc(self.exile_at_end_of_combat)
-                    .execute_child_with_outputs(game, ctx)?;
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::resolved(),
-                        ));
-                    }
-                    created_ids.extend(outcome.outcome.instruction_result().output_objects());
-                    outcomes.push(outcome);
-                    outcomes.push(super::publish_keyword_action_completion_receipt(
+                    let Some(chosen) = super::captured_selection::choose_one(
                         game,
                         ctx,
-                        crate::triggers::TriggerEvent::new_with_provenance(
-                            KeywordActionEvent::new(
-                                KeywordActionKind::Populate,
-                                ctx.controller,
-                                ctx.source,
-                                1,
-                            ),
-                            ctx.provenance,
-                        ),
-                    )?);
-                }
-
-                Ok(crate::effects::CompletedEffectOutputs::from_children(
-                    outcomes,
-                    |children| {
-                        EffectOutcome::aggregate_with_primary_result(
-                            EffectOutcome::with_objects(created_ids),
-                            children,
-                        )
-                    },
-                ))
+                        &candidates,
+                        "Choose a creature token you control to populate",
+                        false,
+                    )?
+                    else {
+                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                            EffectOutcome::count(0),
+                        ));
+                    };
+                    populate_body(self, ChooseSpec::SpecificObject(chosen))
+                        .execute_child_with_outputs(game, ctx)
+                })
             },
         )
     }
 }
 
+fn bolster_body(target: ChooseSpec, amount: crate::effect::Value) -> super::KeywordCompletionProgram {
+    super::KeywordCompletionProgram {
+        action: KeywordActionKind::Bolster,
+        amount: 1.into(),
+        player: PlayerFilter::You,
+        body: Effect::new(crate::effects::PutCountersEffect::new(
+            CounterType::PlusOnePlusOne, amount, target,
+        )),
+    }
+}
+
 impl EffectExecutor for BolsterEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        let mut filter = crate::target::ObjectFilter::creature().you_control();
+        filter.toughness = Some(crate::filter::Comparison::EqualExpr(Box::new(
+            crate::effect::Value::LeastToughness(filter.clone()),
+        )));
+        visitor(&Effect::new(bolster_body(
+            ChooseSpec::Object(filter),
+            self.amount_value
+                .clone()
+                .unwrap_or_else(|| self.amount.into()),
+        )));
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -1587,98 +1487,73 @@ impl EffectExecutor for BolsterEffect {
                     .copied()
                     .filter(|id| !game.is_phased_out(*id))
                     .collect::<Vec<_>>();
-                let frame = game
-                    .try_current_characteristics_batch(&ids)
-                    .map_err(ExecutionError::ContinuousDiscovery)?;
-                let mut candidates = Vec::new();
-                for id in ids {
-                    let chars = frame.get(&id).ok_or_else(|| {
-                        ExecutionError::IncompleteEvidence(format!(
-                            "bolster has no current characteristics for battlefield object {id:?}"
-                        ))
-                    })?;
-                    if chars.controller == ctx.controller
-                        && chars.card_types.contains(&crate::types::CardType::Creature)
-                    {
-                        let toughness = chars.toughness.ok_or_else(|| {
+                let candidates = super::captured_selection::least_characteristic_candidates(
+                    game,
+                    &ids,
+                    |chars| {
+                        if chars.controller != ctx.controller
+                            || !chars.card_types.contains(&crate::types::CardType::Creature)
+                        {
+                            return Ok(None);
+                        }
+                        chars.toughness.map(Some).ok_or_else(|| {
                             ExecutionError::UnresolvableValue(
                                 "bolster creature has no calculated toughness".into(),
                             )
-                        })?;
-                        candidates.push((id, toughness));
-                    }
-                }
-                let Some(least) = candidates.iter().map(|(_, toughness)| *toughness).min() else {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                };
-                let candidates = candidates
-                    .into_iter()
-                    .filter_map(|(id, toughness)| (toughness == least).then_some(id))
-                    .collect::<Vec<_>>();
-                let chosen = if candidates.len() == 1 {
-                    candidates[0]
-                } else {
-                    let spec = ChooseObjectsSpec::new(
-                        ctx.source,
-                        "Choose a creature with the least toughness you control for bolster",
-                        candidates.clone(),
-                        1,
-                        Some(1),
-                    );
-                    let selection: Vec<ObjectId> = make_decision(
-                        game,
-                        ctx.decision_maker,
-                        ctx.controller,
-                        Some(ctx.source),
-                        spec,
-                    );
-                    if ctx.decision_maker.awaiting_choice() {
-                        return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                            EffectOutcome::count(0),
-                        ));
-                    }
-                    if selection.len() != 1 || !candidates.contains(&selection[0]) {
-                        return Err(ExecutionError::InvalidTarget);
-                    }
-                    selection[0]
-                };
-
-                let outcome = crate::effects::PutCountersEffect::new(
-                    CounterType::PlusOnePlusOne,
-                    amount,
-                    ChooseSpec::SpecificObject(chosen),
-                )
-                .execute_child_with_outputs(game, ctx)?;
-
-                if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                }
-                let primary = outcome.outcome.summary_projection();
-                let original =
-                    crate::effects::CompletedEffectOutputs::from_children([outcome], |children| {
-                        EffectOutcome::aggregate_with_primary_result(primary, children)
-                    });
-                super::complete_keyword_action_with_outputs(
+                        })
+                    },
+                )?;
+                let Some(chosen) = super::captured_selection::choose_one(
                     game,
                     ctx,
-                    original,
-                    KeywordActionEvent::new(
-                        KeywordActionKind::Bolster,
-                        ctx.controller,
-                        ctx.source,
-                        1,
-                    ),
-                )
+                    &candidates,
+                    "Choose a creature with the least toughness you control for bolster",
+                    true,
+                )?
+                else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
+                        EffectOutcome::count(0),
+                    ));
+                };
+
+                bolster_body(ChooseSpec::SpecificObject(chosen), amount.into())
+                    .execute_child_with_outputs(game, ctx)
             },
         )
     }
 }
 
+fn cipher_choice() -> crate::effects::ChooseObjectsEffect {
+    crate::effects::ChooseObjectsEffect::new(crate::target::ObjectFilter::creature().you_control(),
+        1, PlayerFilter::You, "__cipher_recipient").with_description("Choose a creature you control to encode")
+}
+
+/// The granted ability expires when either exact object leaves its required zone.
+fn linked_exile_ability_program(target: ChooseSpec, linked: ironsmith_core::ContinuousDurationObject,
+    ability: crate::ability::Ability) -> crate::effects::ApplyContinuousEffect {
+    use ironsmith_core::{ContinuousDurationObject as Object, ContinuousDurationPredicate as Predicate};
+    let mut grant = crate::effects::ApplyContinuousEffect::with_spec(target.clone(),
+        crate::continuous::Modification::AddAbilityGeneric(ability), Until::ForAsLongAs(Predicate::all([
+            Predicate::ObjectInZone { object: linked, zone: Zone::Exile },
+            Predicate::ObjectInZone { object: Object::AffectedObject, zone: Zone::Battlefield },
+        ])));
+    if let ChooseSpec::SpecificObject(target) = target {
+        grant = grant.with_source_type(crate::continuous::EffectSourceType::Resolution { locked_targets: vec![target] });
+    }
+    grant
+}
+
 impl EffectExecutor for CipherEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        visitor(&Effect::new(cipher_choice()));
+        visitor(&Effect::new(crate::effects::MoveToZoneEffect::new(ChooseSpec::Source, Zone::Exile, false)));
+        visitor(&Effect::new(linked_exile_ability_program(ChooseSpec::tagged("__cipher_recipient"),
+            ironsmith_core::ContinuousDurationObject::Tagged("__cipher_exiled".into()),
+            crate::ability::Ability::triggered(crate::triggers::Trigger::this_deals_combat_damage_to_player(PlayerFilter::Any),
+                vec![Effect::may(vec![Effect::new(CastTaggedEffect::new("__cipher_exiled", PlayerFilter::You)
+                    .as_copy().without_paying_mana_cost())])]))));
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(*self)
     }
@@ -1755,30 +1630,15 @@ impl EffectExecutor for CipherEffect {
                     ));
                 }
 
-                let spec = ChooseObjectsSpec::new(
-                    ctx.source,
-                    "Choose a creature you control to encode",
-                    candidates.clone(),
-                    1,
-                    Some(1),
-                );
-                let selection: Vec<ObjectId> = make_decision(
-                    game,
-                    ctx.decision_maker,
-                    ctx.controller,
-                    Some(ctx.source),
-                    spec,
-                );
+                let choice = ctx.with_object_tag("__cipher_recipient", Vec::new(), |ctx| {
+                    cipher_choice().execute_child_with_outputs(game, ctx)
+                })?;
                 if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)));
                 }
-                let normalized = normalize_object_selection(selection, &candidates, 1);
-                let Some(chosen_creature) = normalized.first().copied() else {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::declined(),
-                    ));
+                let Some(chosen_creature) = choice.outcome.instruction_result().objects()
+                    .and_then(|objects| objects.first()).copied() else {
+                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::declined()));
                 };
 
                 let original_source = ctx.source;
@@ -1848,31 +1708,8 @@ impl EffectExecutor for CipherEffect {
                         // the creature (layer 6). It's a continuous effect, not part of the
                         // creature's copiable values (CR 707.2), and it outlasts earlier
                         // ability-removing effects by timestamp.
-                        let grant = crate::effects::ApplyContinuousEffect::new(
-                            crate::continuous::EffectTarget::Specific(chosen_creature),
-                            crate::continuous::Modification::AddAbilityGeneric(ability),
-                            crate::effect::Until::ForAsLongAs(
-                                ironsmith_core::ContinuousDurationPredicate::all([
-                                    ironsmith_core::ContinuousDurationPredicate::ObjectInZone {
-                                        object: ironsmith_core::ContinuousDurationObject::Specific(
-                                            exiled_id,
-                                        ),
-                                        zone: Zone::Exile,
-                                    },
-                                    ironsmith_core::ContinuousDurationPredicate::ObjectInZone {
-                                        object: ironsmith_core::ContinuousDurationObject::Specific(
-                                            chosen_creature,
-                                        ),
-                                        zone: Zone::Battlefield,
-                                    },
-                                ]),
-                            ),
-                        )
-                        .with_source_type(
-                            crate::continuous::EffectSourceType::Resolution {
-                                locked_targets: vec![chosen_creature],
-                            },
-                        );
+                        let grant = linked_exile_ability_program(ChooseSpec::SpecificObject(chosen_creature),
+                            ironsmith_core::ContinuousDurationObject::Specific(exiled_id), ability);
                         let grant_outcome = grant.execute_child_with_outputs(game, ctx)?;
                         if ctx.decision_maker.awaiting_choice() {
                             return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
@@ -1888,7 +1725,7 @@ impl EffectExecutor for CipherEffect {
                                     exiled_id,
                                 ]));
                         Ok(crate::effects::CompletedEffectOutputs::from_children(
-                            [grant_outcome],
+                            [choice, grant_outcome],
                             |children| {
                                 EffectOutcome::aggregate_with_primary_result(original, children)
                             },
@@ -1923,6 +1760,13 @@ impl CastEncodedCardCopyEffect {
 }
 
 impl EffectExecutor for CastEncodedCardCopyEffect {
+    fn canonical_program(&self) -> Option<Effect> {
+        Some(Effect::may(vec![Effect::new(
+            CastTaggedEffect::new("cipher_encoded", PlayerFilter::You)
+                .as_copy().without_paying_mana_cost(),
+        )]))
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -1958,40 +1802,10 @@ impl EffectExecutor for CastEncodedCardCopyEffect {
                     ));
                 }
 
-                let choice_ctx = crate::decisions::context::BooleanContext::new(
-                    ctx.controller,
-                    Some(ctx.source),
-                    format!(
-                        "Cast a copy of {} without paying its mana cost?",
-                        encoded_obj.name
-                    ),
-                );
-                let cast_copy = ctx.decision_maker.decide_boolean(game, &choice_ctx);
-                if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                }
-                if !cast_copy {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::declined(),
-                    ));
-                }
-
                 let snapshot = ObjectSnapshot::from_object(&encoded_obj, game);
-                let prior = ctx.clear_object_tag("cipher_encoded");
-                ctx.set_tagged_objects("cipher_encoded", vec![snapshot]);
-                let result =
-                    CastTaggedEffect::new("cipher_encoded", crate::target::PlayerFilter::You)
-                        .as_copy()
-                        .without_paying_mana_cost()
-                        .execute_child_with_outputs(game, ctx);
-                if let Some(previous) = prior {
-                    ctx.set_tagged_objects("cipher_encoded", previous);
-                } else {
-                    ctx.clear_object_tag("cipher_encoded");
-                }
-                result
+                ctx.with_object_tag("cipher_encoded", vec![snapshot], |ctx| {
+                    self.canonical_program().unwrap().0.execute_child_with_outputs(game, ctx)
+                })
             },
         )
     }
@@ -2382,46 +2196,21 @@ impl EffectExecutor for SupportEffect {
             .map(crate::effects::CompletedEffectOutputs::into_outcome)
     }
 
+    fn canonical_program(&self) -> Option<Effect> {
+        Some(Effect::new(super::KeywordCompletionProgram {
+            action: KeywordActionKind::Support,
+            amount: self.amount.into(),
+            player: PlayerFilter::You,
+            body: Effect::new(crate::effects::PutCountersEffect::new(
+                CounterType::PlusOnePlusOne, 1, self.target.clone(),
+            ).with_target_count(ChoiceCount::up_to(self.amount as usize))),
+        }))
+    }
+
     fn execute_with_outputs(
-        &self,
-        game: &mut GameState,
-        ctx: &mut ExecutionContext,
+        &self, game: &mut GameState, ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
-        super::execute_transaction(
-            game,
-            ctx,
-            || crate::effects::CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
-            |game, ctx| {
-                let outcome = crate::effects::PutCountersEffect::new(
-                    CounterType::PlusOnePlusOne,
-                    1,
-                    self.target.clone(),
-                )
-                .with_target_count(ChoiceCount::up_to(self.amount as usize))
-                .execute_child_with_outputs(game, ctx)?;
-                if ctx.decision_maker.awaiting_choice() {
-                    return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
-                        EffectOutcome::count(0),
-                    ));
-                }
-                let primary = outcome.outcome.summary_projection();
-                let original =
-                    crate::effects::CompletedEffectOutputs::from_children([outcome], |children| {
-                        EffectOutcome::aggregate_with_primary_result(primary, children)
-                    });
-                super::complete_keyword_action_with_outputs(
-                    game,
-                    ctx,
-                    original,
-                    KeywordActionEvent::new(
-                        KeywordActionKind::Support,
-                        ctx.controller,
-                        ctx.source,
-                        self.amount,
-                    ),
-                )
-            },
-        )
+        self.canonical_program().expect("support program").0.execute_child_with_outputs(game, ctx)
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -2443,12 +2232,20 @@ pub struct AdaptEffect {
 }
 
 impl AdaptEffect {
+    fn counter_program(&self) -> crate::effects::PutCountersEffect {
+        crate::effects::PutCountersEffect::on_source(CounterType::PlusOnePlusOne, self.amount)
+    }
+
     pub fn new(amount: u32) -> Self {
         Self { amount }
     }
 }
 
 impl EffectExecutor for AdaptEffect {
+    fn visit_child_effects(&self, visitor: &mut dyn FnMut(&Effect)) {
+        visitor(&Effect::new(self.counter_program()));
+    }
+
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
@@ -2498,11 +2295,7 @@ impl EffectExecutor for AdaptEffect {
                     ));
                 }
 
-                let counters = crate::effects::PutCountersEffect::on_source(
-                    CounterType::PlusOnePlusOne,
-                    self.amount,
-                )
-                .execute_child_with_outputs(game, ctx)?;
+                let counters = self.counter_program().execute_child_with_outputs(game, ctx)?;
                 if ctx.decision_maker.awaiting_choice() {
                     return Ok(crate::effects::CompletedEffectOutputs::aggregate_only(
                         EffectOutcome::count(0),

@@ -4,6 +4,7 @@ use crate::cards::builders::ConditionalEffectAst;
 use crate::cards::builders::DamageActionAst;
 use crate::cards::builders::ForEachEffectAst;
 use crate::cards::builders::LifeResourceActionAst;
+use crate::cards::builders::ObjectChoiceEffectAst;
 use crate::cards::builders::PermissionEffectAst;
 use crate::cards::builders::StackActionAst;
 use crate::cards::builders::VoteEffectAst;
@@ -386,6 +387,7 @@ fn try_compile_for_each_object_become_copy_of_prior_choice(
                     set_base_power_toughness,
                     copy_exception_surface,
                     retain_source_colors,
+                    copy_ability_absent_marker,
                 }),
             ..
         }),
@@ -454,6 +456,7 @@ fn try_compile_for_each_object_become_copy_of_prior_choice(
         set_base_power_toughness.clone(),
         copy_exception_surface.clone(),
         *retain_source_colors,
+        copy_ability_absent_marker.clone(),
     );
     Ok(Some(compile_effect(&rewritten, ctx)?))
 }
@@ -659,6 +662,22 @@ fn try_compile_for_each_object_as_damage_source(
 /// lowering can wrap their results in tags or effect IDs. Ordinary optional
 /// actions retain their established result semantics.
 fn compound_optional_payment_actions(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
+    // An optional disjunction of payments is payable only when at least one
+    // complete mode can be paid. The modal cost executor owns that check and
+    // excludes impossible modes from the decision.
+    if let [EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { modes, .. })] = effects
+        && !modes.is_empty()
+        && modes.iter().all(|mode| compound_optional_payment_actions(&mode.effects).is_some())
+    {
+        return Some(effects.to_vec());
+    }
+    if let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::ZoneMoves(
+            ZoneMoveActionAst::Sacrifice { .. } | ZoneMoveActionAst::Discard { .. }
+        ), ..
+    })] = effects {
+        return Some(effects.to_vec());
+    }
     // Coordination retains the authored "and" boundary. Expose only that
     // conjunctive payment's semantic members to component lowering; a runtime
     // Sequence would execute them as ordinary independent instructions.
@@ -676,6 +695,15 @@ fn compound_optional_payment_actions(effects: &[EffectAst]) -> Option<Vec<Effect
     }
     if let [EffectAst::Sequence { effects }] = effects {
         return compound_optional_payment_actions(effects);
+    }
+    // Paying mana is a cost even without a second conjunct. An accepted
+    // optional offer must not count as paid when no mana is available.
+    if let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::Mana(crate::cards::builders::ManaActionAst::PayMana { .. }),
+        ..
+    })] = effects
+    {
+        return Some(effects.to_vec());
     }
     // An optional exact counter payment can only be accepted when the
     // complete amount is available. Otherwise the choice receipt alone
@@ -1445,12 +1473,25 @@ pub(super) fn try_compile_flow_and_iteration_effect(
                 tag.clone().into()
             };
 
+            let creates_tokens = ironsmith_compiler_resolve::reference_resolution::effects_only_create_tokens(effects);
+            let collection_tag = creates_tokens
+                .then(|| ctx.take_reserved_object_result_tag("created"))
+                .flatten();
             let (inner_effects, inner_choices) = compile_effects_in_iterated_player_context(
                 effects,
                 ctx,
                 Some(effective_tag.clone()),
             )?;
-            let effect = Effect::for_each_tagged(effective_tag, inner_effects);
+            let mut effect = Effect::for_each_tagged(effective_tag, inner_effects);
+            if creates_tokens
+                && let Some(created) = collection_tag.or_else(|| ctx.last_object_tag.clone()
+                    .filter(|tag| tag.as_str().starts_with("created_")))
+            {
+                // The enclosing annotation names the complete loop result;
+                // nested re-annotation may mint a different per-iteration tag.
+                effect = effect.tag_all(created.clone());
+                ctx.last_object_tag = Some(created);
+            }
             (vec![effect], inner_choices)
         }
         EffectAst::ForEach(ForEachEffectAst::ForEachTaggedWithControllerAtLastBlockedBy {

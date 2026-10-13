@@ -4432,7 +4432,7 @@ pub fn player_filter_matches_with_context(
         }
         PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. } => {
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } => {
             let mut filter_ctx = game.filter_context_for(controller, None);
             filter_ctx.defending_player = defending_player;
             player_filter_matches_game(spec, player, game, &filter_ctx)
@@ -4860,6 +4860,7 @@ fn verify_intervening_if_checked_impl(
         ability_index: None,
         options: crate::condition_eval::ExternalEvaluationOptions {
             triggering_object_current,
+            ignore_trigger_limits: triggering_object_current,
             ..Default::default()
         },
     };

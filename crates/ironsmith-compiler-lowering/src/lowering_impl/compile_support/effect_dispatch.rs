@@ -2672,6 +2672,7 @@ fn compile_become_copy(
         set_base_power_toughness,
         copy_exception_surface,
         retain_source_colors,
+        copy_ability_absent_marker,
     }) = &subject_verb.action
     else {
         unreachable!("typed copy route requires a BecomeCopy action")
@@ -2788,6 +2789,9 @@ fn compile_become_copy(
         apply = apply.with_additional_modification(
             crate::continuous::Modification::RemoveSupertypes(remove_supertypes.clone()),
         );
+    }
+    if let Some(marker) = copy_ability_absent_marker {
+        apply = apply.with_additional_runtime_modification(crate::effects::continuous::RuntimeModification::CopyAbilityAbsent(marker.clone()));
     }
     if *retain_source_colors {
         // CR 707.9b: the copy keeps the colors the source has now.
@@ -3184,7 +3188,7 @@ pub(super) fn player_target_choice_matches_filter(
     )
 }
 
-fn collect_value_player_target_choices(value: &Value, choices: &mut Vec<ChooseSpec>) {
+pub(super) fn collect_value_player_target_choices(value: &Value, choices: &mut Vec<ChooseSpec>) {
     match value {
         Value::DamageHistory(query) => {
             for spec in query.reference_specs() {
