@@ -85,7 +85,21 @@ jobs:
 
       - name: Build the engine and browser card assets
         if: steps.generated-cache.outputs.cache-hit != 'true'
-        run: ./rebuild-wasm.sh
+        shell: bash
+        env:
+          # Upstream's .cargo/config.toml names scripts/rustc-cache.sh as the
+          # rustc wrapper, but the script is not in the repository; an empty
+          # RUSTC_WRAPPER makes cargo call rustc directly.
+          RUSTC_WRAPPER: ""
+        run: |
+          # rebuild-wasm.sh runs scripts/prepare-exact-build-snapshots.mjs,
+          # which upstream has not published. Without it the package is a
+          # standard wasm-bindgen build, which the UI supports (exact-build
+          # snapshots are simply unavailable), so stand in a no-op script.
+          if [ ! -f scripts/prepare-exact-build-snapshots.mjs ]; then
+            echo "// Not published upstream; no-op for standard wasm-bindgen packages." > scripts/prepare-exact-build-snapshots.mjs
+          fi
+          ./rebuild-wasm.sh
 
       - name: Verify generated runtime
         shell: bash
