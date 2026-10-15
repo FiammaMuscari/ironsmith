@@ -1547,6 +1547,7 @@ impl WasmGame {
             manabrew_open_prompt: None,
             cached_snapshot: None,
             defer_mana_options: false,
+            automation_snapshot: false,
             mana_activation_inventory_cache: Default::default(),
         }
     }
@@ -2083,8 +2084,11 @@ impl WasmGame {
                 return Err("commander-variant matches require commander lists".to_string());
             };
             match config.format {
-                MatchFormatInput::Commander | MatchFormatInput::ArchenemyCommander => self
+                MatchFormatInput::Commander
+                | MatchFormatInput::PauperCommander
+                | MatchFormatInput::ArchenemyCommander => self
                     .validate_commander_setup(
+                        config.format,
                         player_count,
                         decks,
                         commanders,
@@ -2147,6 +2151,8 @@ impl WasmGame {
         self.match_format = config.format;
         self.game
             .set_commander_damage_loss_enabled(config.format.commander_damage_loss_enabled());
+        self.game
+            .set_commander_damage_loss_threshold(config.format.commander_damage_loss_threshold());
         let free_for_all_profile = match config.format {
             MatchFormatInput::FreeForAll => Some(config.free_for_all.unwrap_or_default()),
             MatchFormatInput::Planechase if player_count > 2 => {
@@ -3508,7 +3514,9 @@ impl WasmGame {
         let snapshot_started_at = PerfTimer::start();
         self.prepare_snapshot_continuous_state()
             .map_err(|error| JsValue::from_str(&format!("snapshot refresh failed: {error}")))?;
-        self.refresh_priority_affordability_display().map_err(|error| JsValue::from_str(&format!("priority timing refresh failed: {error}")))?;
+        let automation_snapshot = self.automation_snapshot;
+        self.refresh_priority_presentation_unless_automating()
+            .map_err(|error| JsValue::from_str(&format!("priority timing refresh failed: {error}")))?;
         let pending_cast_stack_id = self
             .priority_state
             .pending_cast
@@ -3525,7 +3533,7 @@ impl WasmGame {
             &mana_payment_view,
         );
         #[cfg(target_arch = "wasm32")]
-        if self.pending_decision_game.is_none() && !self.game.has_ui_battlefield_transitions()
+        if !automation_snapshot && self.pending_decision_game.is_none() && !self.game.has_ui_battlefield_transitions()
             && self.pending_crypto_audit_before.is_none()
             && let Some(cached) = self.cached_snapshot.as_ref()
             && cached.key == cache_key
@@ -3595,7 +3603,7 @@ impl WasmGame {
         };
         self.last_snapshot_perf = Some(perf.clone());
         #[cfg(target_arch = "wasm32")]
-        if self.pending_decision_game.is_none() && !had_battlefield_transitions
+        if !automation_snapshot && self.pending_decision_game.is_none() && !had_battlefield_transitions
             && self.pending_crypto_audit_before.is_none() {
             self.cached_snapshot = Some(CachedSnapshot {
                 key: cache_key,
@@ -4705,8 +4713,11 @@ impl WasmGame {
     }
 
     #[wasm_bindgen(js_name = sampleLoadedDeckSeed)]
-    pub fn sample_loaded_deck_seed(&mut self, player_index: u8) -> Result<JsValue, JsValue> {
-        let seed = self.build_loaded_deck_seed(player_index)?;
+    pub fn sample_loaded_deck_seed(
+        &mut self,
+        exclude_name: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let seed = self.build_loaded_deck_seed(exclude_name.as_deref())?;
         serde_wasm_bindgen::to_value(&seed)
             .map_err(|e| JsValue::from_str(&format!("failed to serialize custom card seed: {e}")))
     }
@@ -4937,6 +4948,18 @@ impl WasmGame {
         self.clear_active_resolving_stack_object();
         self.recompute_ui_decision()?;
         self.snapshot()
+    }
+
+    /// `dispatch` for a caller that only reads the result to keep automating
+    /// (auto-passing priority, default declarations). Game effects are
+    /// identical; a deferred priority decision stays pass-only instead of
+    /// computing the presentation menu, and the snapshot is not cached.
+    #[wasm_bindgen(js_name = dispatchForAutomation)]
+    pub fn dispatch_for_automation(&mut self, command: JsValue) -> Result<JsValue, JsValue> {
+        let previous = std::mem::replace(&mut self.automation_snapshot, true);
+        let result = self.dispatch(command);
+        self.automation_snapshot = previous;
+        result
     }
 
     /// Apply a player command for the currently pending decision.

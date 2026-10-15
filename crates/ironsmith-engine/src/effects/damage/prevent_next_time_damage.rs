@@ -306,7 +306,13 @@ impl EffectExecutor for PreventNextTimeDamageEffect {
             ReplacementEffect::with_matcher(ctx.source, ctx.controller, matcher, replacement_action)
         };
 
-        crate::effects::ApplyReplacementEffect::one_shot(replacement).execute_child(game, ctx)
+        // "The next time ... would deal damage" covers every part of that one
+        // damage occurrence (e.g. trample damage to blockers and a player),
+        // not just the first event committed from it.
+        game.effect_store
+            .replacement_effects
+            .add_next_damage_occurrence_effect(replacement);
+        Ok(EffectOutcome::resolved())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
@@ -361,6 +367,58 @@ mod tests {
         );
         assert_eq!(final_damage, 0);
         assert!(prevented);
+    }
+
+    #[test]
+    fn next_time_prevention_covers_every_part_of_one_damage_occurrence() {
+        // Shadowbane against a trampler: combat damage to a blocker and to
+        // you is one occurrence, so the shield prevents all of it.
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let creature = |game: &mut GameState, owner, name: &str, id| {
+            let definition = CardDefinitionBuilder::new(CardId::from_raw(id), name)
+                .card_types(vec![CardType::Creature])
+                .power_toughness(PowerToughness::fixed(2, 20))
+                .build();
+            game.create_object_from_definition(&definition, owner, Zone::Battlefield)
+        };
+        let blocker = creature(&mut game, alice, "Blocker", 61_001);
+        let trampler = creature(&mut game, bob, "Trampler", 61_002);
+
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(ObjectId::from_raw(61_003), alice, &mut dm);
+        PreventNextTimeDamageEffect::new(
+            PreventNextTimeDamageSource::ChoiceMatching(ObjectFilter::specific(trampler)),
+            PreventNextTimeDamageTarget::YouAndPermanents(
+                ObjectFilter::creature().controlled_by(PlayerFilter::You),
+            ),
+        )
+        .execute(&mut game, &mut ctx)
+        .unwrap();
+
+        let assignment = |target, amount| crate::events::processing::SimultaneousDamageEvent {
+            source: trampler,
+            target,
+            amount,
+            is_combat: true,
+            unpreventable: false,
+            cause: crate::events::cause::EventCause::combat_damage(trampler),
+            source_snapshot: None,
+        };
+        let occurrence = vec![
+            assignment(DamageTarget::Object(blocker), 20),
+            assignment(DamageTarget::Player(alice), 5),
+        ];
+        crate::effects::damage::execute_damage_batch(&mut game, &mut ctx, occurrence.clone(), None)
+            .unwrap();
+        assert_eq!(game.damage_on(blocker), 0);
+        assert_eq!(game.player(alice).unwrap().life, 20);
+
+        // The shield is used up by that occurrence.
+        crate::effects::damage::execute_damage_batch(&mut game, &mut ctx, occurrence, None)
+            .unwrap();
+        assert_eq!(game.player(alice).unwrap().life, 15);
     }
 
     #[test]
@@ -431,6 +489,55 @@ mod tests {
                 .expect("finite matcher fixture evaluates successfully"),
             "matcher should not match unpreventable damage"
         );
+    }
+
+    #[test]
+    fn unpreventable_damage_neither_uses_up_nor_reflects_a_next_time_shield() {
+        // CR 615.12 + 609.7b: the shield prevents nothing, so it isn't used up,
+        // and Deflecting Palm's "if damage is prevented this way" rider does nothing.
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source_def = CardDefinitionBuilder::new(CardId::from_raw(91_411), "Bob's Source")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(3, 3))
+            .build();
+        let source = game.create_object_from_definition(&source_def, bob, Zone::Battlefield);
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        PreventNextTimeDamageEffect::new(
+            PreventNextTimeDamageSource::Choice,
+            PreventNextTimeDamageTarget::You,
+        )
+        .reflecting_to_source_controller()
+        .execute(&mut game, &mut ctx)
+        .unwrap();
+        let hit = |unpreventable| crate::events::processing::SimultaneousDamageEvent {
+            source,
+            target: DamageTarget::Player(alice),
+            amount: 3,
+            is_combat: false,
+            unpreventable,
+            cause: crate::events::cause::EventCause::from_effect(source, bob),
+            source_snapshot: None,
+        };
+        let results = crate::events::processing::process_simultaneous_damage_assignments_with_event(
+            &mut game,
+            &[hit(true)],
+        )
+        .unwrap();
+        assert_eq!(results[0].assignments.iter().map(|a| a.amount).sum::<u32>(), 3);
+        assert_eq!(game.player(bob).unwrap().life, 20);
+        assert_eq!(game.effect_store.replacement_effects.effects().len(), 1);
+        // The retained shield still catches the next preventable damage.
+        let results = crate::events::processing::process_simultaneous_damage_assignments_with_event(
+            &mut game,
+            &[hit(false)],
+        )
+        .unwrap();
+        assert!(results[0].assignments.iter().all(|a| a.amount == 0));
+        assert_eq!(game.player(bob).unwrap().life, 17);
+        assert!(game.effect_store.replacement_effects.effects().is_empty());
     }
 
     #[test]

@@ -243,7 +243,8 @@ pub enum LoseReason {
     Poison,
     /// Attempted to draw from an empty library.
     DrewFromEmptyLibrary,
-    /// 21 or more combat damage from a single commander (Commander format).
+    /// Combat damage from a single commander at the variant's threshold
+    /// (21; 16 in Pauper EDH).
     CommanderDamage,
 }
 
@@ -1239,7 +1240,10 @@ fn check_player_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         if game.commander_damage_loss_enabled()
-            && player.commander_damage.values().any(|&damage| damage >= 21)
+            && player
+                .commander_damage
+                .values()
+                .any(|&damage| damage >= game.commander_damage_loss_threshold())
         {
             actions.push(StateBasedAction::PlayerLoses {
                 player: player.id,
@@ -2345,46 +2349,59 @@ fn prepare_and_apply_state_based_actions(
     }
     let mut committed_zones = Vec::new();
     let mut destroy_receipts = Vec::new();
-    for (id, _, _) in &legend_plans {
-        commit_sba_zone(
-            game,
-            *id,
-            &mut prepared_zones,
-            &mut committed_zones,
-            decision_maker,
-        )?;
-        if decision_maker.awaiting_choice() {
-            return Ok(false);
+    // Damage destructions commit one at a time; replacement sources dying in
+    // this same check still apply to the others (CR 704.3, 614.1).
+    let pinned_replacements = game
+        .begin_simultaneous_replacement_pins()
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    let committed = (|| -> Result<bool, crate::effects::ExecutionError> {
+        for (id, _, _) in &legend_plans {
+            commit_sba_zone(
+                game,
+                *id,
+                &mut prepared_zones,
+                &mut committed_zones,
+                decision_maker,
+            )?;
+            if decision_maker.awaiting_choice() {
+                return Ok(false);
+            }
         }
-    }
-    for action in other_actions {
-        // Skip legend rule - it requires player choice
-        if matches!(action, StateBasedAction::LegendRuleViolation { .. }) {
-            continue;
+        for action in other_actions {
+            // Skip legend rule - it requires player choice
+            if matches!(action, StateBasedAction::LegendRuleViolation { .. }) {
+                continue;
+            }
+            // CR 704.7: one replacement effect replaces every simultaneous SBA
+            // that would make the same player lose. Collapse all loss reasons for
+            // that player into one replaceable game-loss event.
+            if let StateBasedAction::PlayerLoses { player, .. } = &action
+                && !processed_player_losses.insert(*player)
+            {
+                continue;
+            }
+            apply_single_sba_with_snapshots(
+                game,
+                action,
+                &pre_captured_snapshots,
+                &damage_destroyed_object_ids,
+                &simultaneous_zone_changes,
+                decision_maker,
+                &mut prepared_zones,
+                &mut committed_zones,
+                &mut destroy_receipts,
+            )?;
+            if decision_maker.awaiting_choice() {
+                return Ok(false);
+            }
+            any_applied = true;
         }
-        // CR 704.7: one replacement effect replaces every simultaneous SBA
-        // that would make the same player lose. Collapse all loss reasons for
-        // that player into one replaceable game-loss event.
-        if let StateBasedAction::PlayerLoses { player, .. } = &action
-            && !processed_player_losses.insert(*player)
-        {
-            continue;
-        }
-        apply_single_sba_with_snapshots(
-            game,
-            action,
-            &pre_captured_snapshots,
-            &damage_destroyed_object_ids,
-            &simultaneous_zone_changes,
-            decision_maker,
-            &mut prepared_zones,
-            &mut committed_zones,
-            &mut destroy_receipts,
-        )?;
-        if decision_maker.awaiting_choice() {
-            return Ok(false);
-        }
-        any_applied = true;
+        Ok(true)
+    })();
+    game.end_simultaneous_replacement_pins(pinned_replacements)
+        .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+    if !committed? {
+        return Ok(false);
     }
     crate::events::processing::commit_player_loss_receipts(game, &mut loss_receipts)?;
     let sibling_additions = committed_zones
@@ -4151,6 +4168,30 @@ mod tests {
                 } if *player == bob
             )
         }));
+    }
+
+    #[test]
+    fn pauper_commander_threshold_makes_sixteen_commander_damage_lethal() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 30);
+        let bob = PlayerId::from_index(1);
+        let bob_loses = |game: &GameState| {
+            check_state_based_actions(game).iter().any(|action| {
+                matches!(
+                    action,
+                    StateBasedAction::PlayerLoses {
+                        player,
+                        reason: LoseReason::CommanderDamage,
+                    } if *player == bob
+                )
+            })
+        };
+        game.player_mut(bob)
+            .expect("bob should exist")
+            .record_commander_damage(ObjectId::from_raw(100), 16);
+        assert!(!bob_loses(&game), "16 damage is not lethal at the default threshold");
+
+        game.set_commander_damage_loss_threshold(16);
+        assert!(bob_loses(&game), "16 damage is lethal in Pauper EDH");
     }
 
     #[test]

@@ -74,3 +74,43 @@ test('empty artwork fields use the template default image',async()=>{
   await paintMseCard(s.target,s.context,{},s.renderer,s);
   assert.deepEqual(s.surfaces[1].getContext().calls[0],['pixels',[40,50,60,255,40,50,60,255]]);
 });
+
+test('missing artwork uses native checker cells, clips partial checks and applies image masks',async()=>{
+  const s=setup([{name:'art',type:'image',value:null,props:{width:41,height:13,mask:'mask.png',angle:90}}]);
+  s.renderer.render=async()=>{
+    const data=new Uint8ClampedArray(41*13*4).fill(255);
+    for(let i=0;i<data.length;i+=4)data[i]=128;
+    return {width:41,height:13,hasAlpha:false,data};
+  };
+  await paintMseCard(s.target,s.context,{},s.renderer,s);
+  const pixels=s.surfaces[1].getContext().calls.find(call=>call[0]==='pixels')[1];
+  const sample=(x,y)=>pixels.slice((y*41+x)*4,(y*41+x)*4+4);
+  assert.deepEqual(sample(0,0),[235,235,235,128]);
+  assert.deepEqual(sample(10,0),[255,255,255,128]);
+  assert.deepEqual(sample(10,10),[235,235,235,128]);
+  assert.deepEqual(sample(40,12),[255,255,255,128]);
+  assert(s.surfaces[0].getContext().calls.some(call=>call[0]==='rotate'&&call[1]===-Math.PI/2));
+  const narrow=setup([{name:'art',type:'image',value:null,props:{width:40,height:13}}]);
+  await paintMseCard(narrow.target,narrow.context,{},narrow.renderer,narrow);
+  assert.equal(narrow.surfaces.length,1);
+});
+
+test('template corners are cut away instead of painted as white paper',async()=>{
+  const composites=async(name,value)=>{
+    const s=setup([{name,type:'choice',value,props:{render_style:'image'}}]);
+    s.context.textMeasurements.set(`card.${name}`,{result:{image:{width:2,height:1,hasAlpha:true,data:new Uint8ClampedArray([255,255,255,255,255,255,255,0])}}});
+    const create=s.createCanvas;
+    s.createCanvas=(width,height)=>{
+      const canvas=create(width,height),dc=canvas.getContext(),draw=dc.drawImage;
+      dc.drawImage=(...v)=>{dc.calls.push(['composite',dc.globalCompositeOperation??'source-over']);draw(...v);};
+      return canvas;
+    };
+    await paintMseCard(s.target,s.context,{},s.renderer,s);
+    return s.surfaces[0].getContext().calls.filter(call=>call[0]==='composite').map(call=>call[1]);
+  };
+  assert.deepEqual(await composites('corners','rounded and antialiased'),['destination-out']);
+  assert.deepEqual(await composites('corners 2','rounded'),['destination-out']);
+  // Square corners take the border color, so they still paint.
+  assert.deepEqual(await composites('corners','none'),['source-over']);
+  assert.deepEqual(await composites('watermark','rounded'),['source-over']);
+});

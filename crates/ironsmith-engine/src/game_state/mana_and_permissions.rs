@@ -87,6 +87,16 @@ impl GameState {
     pub fn update_replacement_effects(
         &mut self,
     ) -> Result<(), crate::static_ability_processor::StaticEffectDiscoveryError> {
+        // Replacement sources' conditions can read tapped state.
+        self.enter_derived_tap_reads();
+        let result = self.update_replacement_effects_inner();
+        self.exit_derived_tap_reads();
+        result
+    }
+
+    fn update_replacement_effects_inner(
+        &mut self,
+    ) -> Result<(), crate::static_ability_processor::StaticEffectDiscoveryError> {
         use crate::replacement_ability_processor::generate_replacement_effects_from_abilities;
         // Establish completeness before clearing the previously published set.
         let effects = generate_replacement_effects_from_abilities(self)?;
@@ -112,7 +122,80 @@ impl GameState {
                     .add_static_ability_effect(decline);
             }
         }
+        // A pinned source that has left during the current simultaneous event
+        // keeps replacing that event's remaining parts.
+        if let Some(pins) = self
+            .effect_store
+            .replacement_effects
+            .simultaneous_static_pins()
+            .map(<[_]>::to_vec)
+        {
+            for pin in pins {
+                if self
+                    .object(pin.source)
+                    .is_some_and(|object| object.zone == crate::zone::Zone::Battlefield)
+                {
+                    continue;
+                }
+                let key = pin.application_key();
+                if self
+                    .effect_store
+                    .replacement_effects
+                    .effects()
+                    .iter()
+                    .any(|effect| effect.application_key() == key)
+                {
+                    continue;
+                }
+                self.effect_store
+                    .replacement_effects
+                    .add_static_ability_effect(pin);
+            }
+        }
         Ok(())
+    }
+
+    /// Pin the battlefield's static replacement effects for one simultaneous
+    /// event committed object by object. Returns whether this call pinned.
+    pub(crate) fn begin_simultaneous_replacement_pins(
+        &mut self,
+    ) -> Result<bool, crate::static_ability_processor::StaticEffectDiscoveryError> {
+        if self
+            .effect_store
+            .replacement_effects
+            .simultaneous_static_pins()
+            .is_some()
+        {
+            return Ok(false);
+        }
+        self.update_replacement_effects()?;
+        let pins = self
+            .effect_store
+            .replacement_effects
+            .static_ability_effects()
+            .filter(|effect| {
+                self.object(effect.source)
+                    .is_some_and(|object| object.zone == crate::zone::Zone::Battlefield)
+            })
+            .cloned()
+            .collect();
+        self.effect_store
+            .replacement_effects
+            .set_simultaneous_static_pins(Some(pins));
+        Ok(true)
+    }
+
+    pub(crate) fn end_simultaneous_replacement_pins(
+        &mut self,
+        pinned: bool,
+    ) -> Result<(), crate::static_ability_processor::StaticEffectDiscoveryError> {
+        if !pinned {
+            return Ok(());
+        }
+        self.effect_store
+            .replacement_effects
+            .set_simultaneous_static_pins(None);
+        self.update_replacement_effects()
     }
 
     /// Prepare a complete read-only query view without performing game rules
@@ -3713,6 +3796,15 @@ impl GameState {
 
     pub fn commander_damage_loss_enabled(&self) -> bool {
         self.commander_damage_loss_enabled
+    }
+
+    /// Set how much combat damage from a single commander makes a player lose.
+    pub fn set_commander_damage_loss_threshold(&mut self, threshold: u32) {
+        self.commander_damage_loss_threshold = threshold;
+    }
+
+    pub fn commander_damage_loss_threshold(&self) -> u32 {
+        self.commander_damage_loss_threshold
     }
 
     /// Resolve a commander's stable identity from either its original or current object ID.

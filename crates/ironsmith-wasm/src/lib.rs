@@ -4882,6 +4882,9 @@ pub struct WasmGame {
     manabrew_open_prompt: Option<ManabrewOpenPrompt>,
     cached_snapshot: Option<CachedSnapshot>,
     defer_mana_options: bool,
+    /// Set only while `dispatchForAutomation` builds its result: the caller
+    /// reads the decision to auto-pass, so the snapshot omits presentation work.
+    automation_snapshot: bool,
     mana_activation_inventory_cache: std::cell::RefCell<Option<(u64, Vec<ManaActivationOptionView>)>>,
 }
 
@@ -5558,14 +5561,27 @@ enum MatchFormatInput {
     ConspiracyDraft,
     CommanderDraft,
     Commander,
+    /// Pauper EDH: Commander with 30 life and a 16 commander-damage loss.
+    #[serde(alias = "paupercommander")]
+    PauperCommander,
     Brawl,
 }
 
 impl MatchFormatInput {
+    /// Commander proper and its Pauper EDH variant, which share every
+    /// construction and setup rule except life total and commander damage.
+    fn is_commander(self) -> bool {
+        matches!(self, Self::Commander | Self::PauperCommander)
+    }
+
     fn uses_commander_setup(self) -> bool {
         matches!(
             self,
-            Self::Commander | Self::CommanderDraft | Self::Brawl | Self::ArchenemyCommander
+            Self::Commander
+                | Self::PauperCommander
+                | Self::CommanderDraft
+                | Self::Brawl
+                | Self::ArchenemyCommander
         )
     }
 
@@ -5574,6 +5590,7 @@ impl MatchFormatInput {
             Self::Brawl if player_count == 2 => 25,
             Self::Brawl => 30,
             Self::Commander => 40,
+            Self::PauperCommander => 30,
             Self::CommanderDraft => 40,
             Self::ArchenemyCommander => 40,
             Self::Archenemy | Self::SupervillainRumble => 20,
@@ -5594,6 +5611,7 @@ impl MatchFormatInput {
     fn effective_opening_hand_size(self, requested: Option<usize>) -> usize {
         match self {
             Self::Commander
+            | Self::PauperCommander
             | Self::CommanderDraft
             | Self::Vanguard
             | Self::Archenemy
@@ -5615,6 +5633,13 @@ impl MatchFormatInput {
 
     fn commander_damage_loss_enabled(self) -> bool {
         self != Self::Brawl
+    }
+
+    fn commander_damage_loss_threshold(self) -> u32 {
+        match self {
+            Self::PauperCommander => 16,
+            _ => ironsmith::game_state::DEFAULT_COMMANDER_DAMAGE_LOSS_THRESHOLD,
+        }
     }
 }
 
@@ -5702,6 +5727,7 @@ impl PregameState {
                 || matches!(
                     self.format,
                     MatchFormatInput::Commander
+                        | MatchFormatInput::PauperCommander
                         | MatchFormatInput::GrandMelee
                         | MatchFormatInput::Archenemy
                         | MatchFormatInput::SupervillainRumble

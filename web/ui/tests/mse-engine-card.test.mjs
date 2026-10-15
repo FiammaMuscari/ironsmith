@@ -1,3 +1,4 @@
+import {engineDoubleFacesToMse} from '../src/lib/mse/engine-card.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {engineCardToMse,engineRulesToMse} from '../src/lib/mse/engine-card.mjs';
@@ -11,6 +12,8 @@ test('explicit colors and indicators override mismatched costs without changing 
   assert.equal(engineCardToMse({type_line:'Creature',mana_cost:'{R}',colors:['R'],characteristic_signature:'colors: blue\nother: test'}).card.card_color,'blue');
   assert.equal(engineCardToMse({type_line:'Creature',mana_cost:'{R}',characteristic_signature:'colors:-\nother: test'}).card.card_color,'colorless');
   assert.equal(engineCardToMse({type_line:'Creature',color_identity:['U']}).card.card_color,undefined);
+  assert.equal(engineCardToMse({type_line:'Land Creature — Forest Dryad',colors:[],color_identity:['G']}).card.card_color,'green, land');
+  assert.equal(engineCardToMse({type_line:'Land',card_faces:[{type_line:'Land'}],color_identity:['G']}).card.card_color,undefined);
 });
 test('face indicators stay separate and native overrides remain authoritative',()=>{
   const snapshot={color_indicator:['W'],card_faces:[{color_indicator:['U']},{color_indicator:['R']}]};
@@ -20,12 +23,13 @@ test('face indicators stay separate and native overrides remain authoritative',(
   assert.throws(()=>engineCardToMse({colors:['purple']}),{code:'engine-colors'});
 });
 test('engine snapshots map current stats and preserve symbol and literal text boundaries',()=>{
-  const source={id:7,name:'Trial',mana_cost:'{2}{W/U}{B/P}',type_line:'Legendary Creature — Wizard',oracle_text:'{T}: Add {U}. <b> is literal.',power_toughness:'3/4',power:'5',rarity:'mythic'};
+  const source={id:7,name:'Trial',mana_cost:'{2}{W/U}{B/P}',type_line:'Legendary Creature — Wizard',oracle_text:'{T}: Add {U}. <b> is literal.',power_toughness:'3/4',power:'5',rarity:'mythic',flavor_text:'A <b>literal</b> story.'};
   const result=engineCardToMse(source);
-  assert.equal(result.card.casting_cost,'2W/UB/P');
+  assert.equal(result.card.casting_cost,'2W/UH/B');
   assert.equal(result.card.super_type,'Legendary Creature');assert.equal(result.card.sub_type,'Wizard');
   assert.equal(result.card.rule_text,'<sym>T</sym>: Add <sym>U</sym>. \u0001b> is literal.');
   assert.equal(result.card.power,'5');assert.equal(result.card.toughness,'4');
+  assert.equal(result.card.flavor_text,'A \u0001b>literal\u0001/b> story.');
   assert.equal(result.card.rarity,'mythic rare');assert.equal(result.uid,7);
   assert.equal(source.oracle_text,'{T}: Add {U}. <b> is literal.');
 });
@@ -37,6 +41,9 @@ test('multiple faces retain separate rules, and explicit active-face selection u
   assert.equal(active.card.name,'Display name');assert.equal(active.card.rule_text,'Updated <sym>U</sym>.');assert.equal(active.card.name_2,undefined);
   assert.throws(()=>engineCardToMse(snapshot,{faceIndex:2}),{code:'engine-face'});
   assert.equal(engineRulesToMse('Pay {2/W}.\nThen draw.'),'Pay <sym>2/W</sym>.\nThen draw.');
+  // Phyrexian and half mana use the MSE font's own spellings.
+  assert.equal(engineRulesToMse('{B/P}{G/U/P}{H}{HW}{½}{C/W}{S}{P}{CHAOS}{E}'),
+    '<sym>H/B</sym><sym>H/G/U</sym><sym>H</sym><sym>|W</sym><sym>.5</sym><sym>C/W</sym><sym>S</sym><sym>pawprint</sym><sym>chaos</sym><sym>E</sym>');
 });
 
 test('planeswalker costs use paragraph slots while preserving static abilities and symbol markup',()=>{
@@ -58,14 +65,33 @@ test('planeswalker face costs use native eight-slot offsets and explicit selecti
 });
 
 test('Saga grouped chapters map labels to ability boxes without duplicating their text',()=>{
-  const rules='(Add a lore counter.)\nI, II — Add {U}.\nIII — Draw a card.\nThen discard a card.';
+  const rules='(Add a lore counter.)\nI, II — Add {U}.\nIII — Choose one —\n• Draw a card.\n• Discard a card.';
   const result=engineCardToMse({type_line:'Enchantment — Saga',oracle_text:rules});
   assert.equal(result.card.chapter_text,'(Add a lore counter.)');
   assert.equal(result.card.level_1_text,'Add <sym>U</sym>.');
-  assert.equal(result.card.level_2_text,'Draw a card.\nThen discard a card.');
+  assert.equal(result.card.level_2_text,'Choose one —\n• Draw a card.\n• Discard a card.');
+  assert.equal(result.styling.reminder_text_offset,undefined);
   assert.equal(result.styling.chapter_textboxes,'two');assert.equal(result.styling.snap_chapter_to_box,'1,1,2');
   assert.equal(result.card.rule_text,engineRulesToMse(rules));
   assert.equal(engineCardToMse({type_line:'Enchantment — Saga',oracle_text:rules},{styling:{chapter_textboxes:'three'}}).styling.chapter_textboxes,'three');
+});
+
+test('abilities after a Saga\'s chapters join the reminder box, and the boxes are sized to their text',()=>{
+  const chapters=['I — Add {C}.','II — Create a 0/0 colorless Construct artifact creature token with "This token gets +1/+1 for each artifact you control."','III — Draw a card.'];
+  const gained=['{T}: Add {G}.','{2}, {T}: Create a 0/0 colorless Construct artifact creature token with "This token gets +1/+1 for each artifact you control."'];
+  const result=engineCardToMse({type_line:'Enchantment Land — Urza\'s Saga Forest',oracle_text:['(Add a lore counter.)',...chapters,...gained].join('\n')});
+  assert.equal(result.card.level_3_text,'Draw a card.');
+  assert.equal(result.card.chapter_text,'(Add a lore counter.)\n<sym>T</sym>: Add <sym>G</sym>.\n'+engineRulesToMse(gained[1]));
+  const grow=Number(result.styling.reminder_text_offset),offsets=result.styling.chapter_divider_offsets.split(',').slice(0,2).map(Number);
+  assert.ok(grow>0,'the reminder box grows to hold the abilities');
+  // Box x ends at column top + x*base + offset_x (template text_column_cell_height_array).
+  const column=155+grow,base=Math.trunc((437-column)/3);
+  const heights=[base+offsets[0],base+offsets[1]-offsets[0],base-offsets[1]];
+  assert.ok(heights.every(height=>height>=42),'every chapter keeps room for its numeral');
+  assert.ok(heights[1]>heights[0]&&heights[1]>heights[2],'the longest chapter gets the tallest box');
+  const creature=engineCardToMse({type_line:'Enchantment Creature — Saga',oracle_text:['I — Add {C}.','II — Draw.','{T}: Add {G}.'].join('\n')});
+  assert.equal(creature.card.chapter_text,'<sym>T</sym>: Add <sym>G</sym>.');
+  assert.equal(creature.styling.reminder_text_offset,undefined);
 });
 
 test('Saga adaptation preserves face offsets, explicit selection, and non-Saga text',()=>{
@@ -75,4 +101,36 @@ test('Saga adaptation preserves face offsets, explicit selection, and non-Saga t
   const selected=engineCardToMse(snapshot,{faceIndex:1});assert.equal(selected.card.level_1_text,'One.');
   assert.equal(engineCardToMse({type_line:'Instant',oracle_text:'I — One.'}).card.level_1_text,undefined);
   assert.throws(()=>engineCardToMse({type_line:'Enchantment — Saga',oracle_text:'I, III — One.'}),{code:'engine-saga'});
+});
+
+
+test('double-faced snapshots become reciprocal linked cards with independent face fields',()=>{
+  const snapshot={id:'example',layout:'modal_dfc',card_faces:[
+    {name:'Front',type_line:'Creature',power:'2',toughness:'3',oracle_text:'First.'},
+    {name:'Back',type_line:'Planeswalker',loyalty:'4',oracle_text:'+1: Draw a card.'},
+  ]};
+  const result=engineDoubleFacesToMse(snapshot,{faceIndex:1,rulesText:'-2: Scry 2.',nativeCard:{image:'back-art'}});
+  const [front,back]=result.cards;
+  assert.equal(result.selected,1);
+  assert.equal(front.card.name,'Front');assert.equal(front.card.name_2,undefined);
+  assert.equal(front.card.rule_text,'First.');assert.equal(front.card.image,undefined);
+  assert.equal(back.card.name,'Back');assert.equal(back.card.loyalty_cost_1,'-2');assert.equal(back.card.image,'back-art');
+  assert.equal(front.card.linked_card_1,back.uid);assert.equal(back.card.linked_card_1,front.uid);
+  assert.equal(front.card.linked_relation_1,'Back Face');assert.equal(back.card.linked_relation_1,'Front Face');
+  assert.equal(front.card.transformation,'modal front');assert.equal(back.card.transformation,'modal back');
+  assert.equal(engineDoubleFacesToMse({...snapshot,layout:'split'}),null);
+  assert.throws(()=>engineDoubleFacesToMse(snapshot,{faceIndex:2}),{code:'engine-face'});
+  assert.throws(()=>engineDoubleFacesToMse({...snapshot,card_faces:[{}]}),{code:'engine-face'});
+});
+
+test('a land renders in the colors of its current intrinsic mana (Yavimaya makes itself a Forest)',()=>{
+  assert.equal(engineCardToMse({type_line:'Legendary Land — Forest',intrinsic_mana:['G']}).card.card_color,'green, land');
+  assert.equal(engineCardToMse({type_line:'Land Creature — Forest Dryad',intrinsic_mana:['G']}).card.card_color,'green, land');
+});
+
+test('a Yavimaya Forest keeps the colors its rules text produces',()=>{
+  assert.equal(engineCardToMse({type_line:'Land — Forest',oracle_text:'{T}, Pay 1 life: Add {U} or {R}. (Reminder {B}.)',intrinsic_mana:['G']}).card.card_color,'blue, red, green, land, multicolor');
+  assert.equal(engineCardToMse({type_line:'Land — Forest',oracle_text:'{T}: Add {U}.',color_identity:['U'],intrinsic_mana:['G']}).card.card_color,'blue, green, land, multicolor');
+  // The template does not infer colors from rules text, so Spirebluff Canal needs them too.
+  assert.equal(engineCardToMse({type_line:'Land',oracle_text:'{T}: Add {U} or {R}.'}).card.card_color,'blue, red, land, multicolor');
 });

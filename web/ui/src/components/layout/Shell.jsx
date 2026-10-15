@@ -3,11 +3,16 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { parseNames } from "@/lib/constants";
 import { installMainDecisionShortcut } from "@/lib/main-decision-shortcut";
+import { installHandToggleShortcut } from "@/lib/hand-open";
+import { readTableSetup, storeTableSetup, tableSeatNames } from "@/lib/table-setup";
 import { UI_NOTICE_EVENT } from "@/lib/ui-notices";
 import { decodeBase64UrlUtf8, normalizePuzzlePayload, PUZZLE_ZONE_ORDER } from "@/lib/puzzles";
+import { withSupportedCards } from "@/lib/unsupported-card-substitution";
+import { PUBLIC_FORMATS, usesCommanders } from "@/lib/relay/formats";
 import {
   MATCH_FORMAT_COMMANDER,
   MATCH_FORMAT_NORMAL,
+  normalizeMatchFormat,
   readDefaultLobbyDeck,
 } from "@/lib/decklists";
 import {
@@ -27,6 +32,8 @@ import TableErrorBoundary from "./TableErrorBoundary";
 import MobileLandscapeGate from "./MobileLandscapeGate";
 import ArenaAmbience from "./ArenaAmbience";
 import LogDrawer from "@/components/overlays/LogDrawer";
+import PerspectiveHandoffBanner from "@/components/overlays/PerspectiveHandoffBanner";
+import KeyboardShortcutsOverlay from "@/components/overlays/KeyboardShortcutsOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
   addFixedStartingBoardPreset,
@@ -38,6 +45,7 @@ import {
 export default function Shell() {
   const ui = useUiText();
   useEffect(() => installMainDecisionShortcut(document), []);
+  useEffect(() => installHandToggleShortcut(document), []);
   const {
     game,
     state,
@@ -57,8 +65,9 @@ export default function Shell() {
   useTabAttention();
   const initialPuzzleQueryRef = useRef(readPuzzleQueryParams());
   const syncedLobbyUrlRef = useRef("");
+  const [savedTableSetup] = useState(readTableSetup);
   const [playerNames, setPlayerNames] = useState(
-    () => initialPuzzlePlayerNames(initialPuzzleQueryRef.current) || "Alice,Bob"
+    () => initialPuzzlePlayerNames(initialPuzzleQueryRef.current) || savedTableSetup.playerNames
   );
 
   useEffect(() => {
@@ -81,8 +90,18 @@ export default function Shell() {
     syncedLobbyUrlRef.current = "";
   }, [multiplayer?.hostPeerId, multiplayer?.lobbyId, multiplayer?.mode]);
   const [startingLife, setStartingLife] = useState(
-    () => initialPuzzleStartingLife(initialPuzzleQueryRef.current) ?? 20
+    () => initialPuzzleStartingLife(initialPuzzleQueryRef.current) ?? savedTableSetup.startingLife
   );
+  // Menu edits are the player's table setup, so they are saved; loads that
+  // bring their own names (puzzles, goldfish) use the raw setters instead.
+  const editPlayerNames = useCallback((value) => {
+    setPlayerNames(value);
+    storeTableSetup({ playerNames: value, startingLife });
+  }, [startingLife]);
+  const editStartingLife = useCallback((value) => {
+    setStartingLife(value);
+    storeTableSetup({ playerNames, startingLife: value });
+  }, [playerNames]);
   const [logOpen, setLogOpen] = useState(false);
   const [lobbyOpen, setLobbyOpen] = useState(false);
   const [zoneViews, setZoneViews] = useState(["battlefield"]);
@@ -149,7 +168,7 @@ export default function Shell() {
             <div key={notice.id} className={`relative overflow-hidden border shadow-[0_10px_26px_rgba(0,0,0,0.45)] ${toneClasses}`}>
               <div className="workspace-notice-body px-3 py-2 pr-9 text-left">
                 <div className="workspace-notice-title text-[13px] font-bold uppercase tracking-wide">{ui(notice.title)}</div>
-                {notice.body ? <div className="workspace-notice-text mt-1 text-[13px] font-semibold leading-tight">{ui(notice.body)}</div> : null}
+                {notice.body ? <div className="workspace-notice-text mt-1 max-h-[40vh] overflow-y-auto whitespace-pre-line text-[13px] font-semibold leading-tight">{ui(notice.body)}</div> : null}
               </div>
               {actions.length > 0 ? (
                 <div className="flex gap-2 overflow-x-auto px-3 pb-3 pr-9">
@@ -264,7 +283,7 @@ export default function Shell() {
     if (initialPuzzleQueryRef.current || fixedStartingBoard) return;
     const lobbyQuery = initialLobbyQueryRef.current;
     if (lobbyQuery.lobbyId || lobbyQuery.deckText || lobbyQuery.commanderText) return;
-    startupBoardRef.current = prefetchRandomStartingBoard(parseNames(playerNames), startingLife, semanticThreshold);
+    startupBoardRef.current = prefetchRandomStartingBoard(tableSeatNames(playerNames), startingLife, semanticThreshold);
     // Mount-time settings are the ones the first init reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -301,14 +320,14 @@ export default function Shell() {
           await game.resetEmpty(parseNames(playerNames), startingLife);
           await refresh("WASM loaded", { throwOnError: true });
         } else {
-          const names = parseNames(playerNames);
+          const names = tableSeatNames(playerNames);
           const prefetched = startupBoardRef.current;
           startupBoardRef.current = null;
           const prefetchedPayload = prefetched?.key === startingBoardKey(names, startingLife, semanticThreshold)
             ? await prefetched.payload.catch(() => null)
             : null;
           if (prefetchedPayload && !fixedStartingBoard) {
-            await applyPuzzleToGame(game, prefetchedPayload);
+            await applyStartingBoard(game, prefetchedPayload);
           } else {
             await resetStartingBoard(game, names, startingLife, fixedStartingBoard, semanticThreshold);
           }
@@ -377,7 +396,7 @@ export default function Shell() {
         return;
       }
       try {
-        const names = parseNames(playerNames);
+        const names = tableSeatNames(playerNames);
         await resetStartingBoard(game, names, startingLife, fixedStartingBoard, semanticThreshold);
         setDeckLoadingMode(false);
         await refresh("Game reset");
@@ -389,10 +408,10 @@ export default function Shell() {
 
   const handleLoadCustomDecks = useCallback(async (payload) => {
     return runWasmInteraction(async () => {
-      if (!game) return;
+      if (!game) return false;
       if (multiplayer.mode !== "idle") {
         setStatus("Deck loading is disabled while a lobby is active", true);
-        return;
+        return false;
       }
       try {
         setStatus("Preparando partida de prueba con bots...");
@@ -423,37 +442,6 @@ export default function Shell() {
             Math.max(0, Math.min(playerCount - 1, Number(payload.perspectivePlayerIndex)))
           );
         }
-        let testPositions = [];
-        const testPositionWarnings = [];
-        if (
-          payload?.seedTestPosition
-          && typeof game.seedLoadedDeckTestPosition === "function"
-        ) {
-          const requestedSeedIndices = Array.isArray(payload?.seedPlayerIndices)
-            ? payload.seedPlayerIndices
-              .map((index) => Number(index))
-              .filter((index) => Number.isInteger(index) && index >= 0 && index < playerCount)
-            : Array.from({ length: playerCount }, (_, index) => index);
-          const seedIndices = [...new Set(requestedSeedIndices)];
-          for (const playerIndex of seedIndices) {
-            try {
-              testPositions[playerIndex] = await game.seedLoadedDeckTestPosition(playerIndex);
-            } catch (error) {
-              // A deck made entirely of unresolved/land cards should not
-              // cancel the test match. Keep the loaded library and report the
-              // missing test-position seed as a warning instead.
-              testPositionWarnings.push(`player ${playerIndex + 1}: ${String(error)}`);
-            }
-          }
-        }
-        const testPosition = Number.isFinite(Number(payload?.perspectivePlayerIndex))
-          ? testPositions[Math.max(0, Math.min(playerCount - 1, Number(payload.perspectivePlayerIndex)))] || null
-          : null;
-        const seededPlayerCount = testPositions.filter(Boolean).length;
-        const seededBattlefieldCount = testPositions.reduce(
-          (total, position) => total + (position?.battlefield?.length || 0),
-          0,
-        );
         setDeckLoadingMode(false);
         const loaded = result?.loaded ?? 0;
         const failed = Array.isArray(result?.failed) ? result.failed : [];
@@ -466,9 +454,7 @@ export default function Shell() {
         pushNotice({
           tone: "success",
           title: "Deck load complete",
-          body: testPosition
-            ? `Loaded ${loaded} card${loaded === 1 ? "" : "s"}. Test position ready for ${seededPlayerCount} player${seededPlayerCount === 1 ? "" : "s"} with ${seededBattlefieldCount} battlefield cards.${testPositionWarnings.length ? ` ${testPositionWarnings.length} position warning${testPositionWarnings.length === 1 ? "" : "s"}.` : ""}`
-            : `Loaded ${loaded} card${loaded === 1 ? "" : "s"}.${testPositionWarnings.length ? ` ${testPositionWarnings.length} position warning${testPositionWarnings.length === 1 ? "" : "s"}.` : ""}`,
+          body: `Loaded ${loaded} card${loaded === 1 ? "" : "s"}.`,
         });
         if (failed.length > 0) {
           const copyActions = [
@@ -521,50 +507,121 @@ export default function Shell() {
             .filter(Boolean)
             .join(", ");
           await refresh(
-            `Partida de prueba lista: ${loaded} cartas en bibliotecas y manos${testPosition ? ", con posición inicial" : ""}. ${failed.length} fallaron${issueSummary ? ` (${issueSummary})` : ""}: ${failedStr}`
+            `Partida de prueba lista: ${loaded} cartas en bibliotecas y manos. ${failed.length} fallaron${issueSummary ? ` (${issueSummary})` : ""}: ${failedStr}`
           );
         } else {
-          const positionSummary = testPosition
-            ? ` ${seededBattlefieldCount} en battlefield, ${testPositions.reduce((total, position) => total + (position?.graveyard?.length || 0), 0)} en cementerio y ${testPositions.reduce((total, position) => total + (position?.exile?.length || 0), 0)} en exilio.`
-            : "";
-          await refresh(`Partida de prueba lista: ${loaded} cartas en bibliotecas y manos${testPosition ? ", con posición inicial" : ""}.${positionSummary}`);
+          await refresh(`Partida de prueba lista: ${loaded} cartas en bibliotecas y manos.`);
         }
+        return true;
       } catch (err) {
         setDeckLoadingMode(false);
         setStatus(`Load decks failed: ${err}`, true);
+        return false;
       }
     });
   }, [game, multiplayer.mode, playerNames, pushNotice, refresh, runWasmInteraction, setStatus, startingLife]);
 
-  const handleOpenLobbyFromDecks = useCallback((deckTexts, requestedPlayerCount, requestedDeckOptions) => {
-    const texts = Array.isArray(deckTexts) ? deckTexts : [];
-    const filledTexts = texts.filter((text) => String(text || "").trim());
-    const requestedCount = Number(requestedPlayerCount);
-    const desiredPlayers = Number.isFinite(requestedCount)
-      ? Math.max(2, Math.min(4, Math.floor(requestedCount)))
-      : Math.max(2, Math.min(4, filledTexts.length || 2));
-    const firstDeckText = String(
-      texts.find((text) => String(text || "").trim()) || ""
-    );
-    const deckOptions = (Array.isArray(requestedDeckOptions) ? requestedDeckOptions : [])
-      .filter((option) => String(option?.deckText || "").trim())
-      .slice(0, 8)
-      .map((option, index) => ({
-        id: String(option?.id || `editor-${index}`),
-        label: String(option?.label || `Deck ${index + 1}`),
-        deckText: String(option.deckText),
-      }));
-
-    setLobbyOverlayInitial({
-      ...buildLobbyOverlayInitialState(null, "create"),
-      desiredPlayers,
-      createDeckText: firstDeckText,
-      createDeckOptions: deckOptions,
-    });
-    setDeckLoadingMode(false);
-    setPuzzleSetupMode(false);
-    setLobbyOpen(true);
-  }, []);
+  // Goldfish games are local. Normal ones reuse the deck-test path (bots keep
+  // the demo deck in empty seats); Commander needs a real commander setup, so
+  // it starts a full match where empty seats mirror a loaded deck.
+  const handleStartGoldfish = useCallback(async (payload) => {
+    let started = false;
+    // Same rule as hosted lobbies, in every format: an unloadable card becomes
+    // a basic land instead of being dropped or rejecting the whole deck.
+    const substitutions = [];
+    const withSupportedSeats = async (decks, sideboards) => {
+      for (let index = 0; index < decks.length; index += 1) {
+        const supported = await withSupportedCards(
+          { deck: decks[index] || [], sideboard: sideboards[index] || [] },
+          { game, onSubstitute: (entries) => substitutions.push(...entries) },
+        );
+        decks[index] = supported.deck;
+        sideboards[index] = supported.sideboard;
+      }
+    };
+    // Pauper EDH goldfish runs as its own engine format (30 life, 16 commander damage).
+    const goldfishFormat = normalizeMatchFormat(payload?.format);
+    if (!usesCommanders(goldfishFormat)) {
+      const decks = [...(payload?.decks || [])];
+      const sideboards = decks.map((_, index) => payload?.sideboards?.[index] || []);
+      try {
+        await withSupportedSeats(decks, sideboards);
+      } catch (err) {
+        setStatus(`Goldfish failed: ${err}`, true);
+        return false;
+      }
+      started = await handleLoadCustomDecks({ ...payload, decks, sideboards });
+    } else {
+      started = await runWasmInteraction(async () => {
+        if (!game || typeof game.startMatch !== "function") return false;
+        if (multiplayer.mode !== "idle") {
+          setStatus("Deck loading is disabled while a lobby is active", true);
+          return false;
+        }
+        const playerCount = Math.max(2, Math.min(4, Math.floor(Number(payload?.playerCount) || 2)));
+        const decks = Array.from({ length: playerCount }, (_, index) => payload?.decks?.[index] || []);
+        const commanders = Array.from({ length: playerCount }, (_, index) => payload?.commanders?.[index] || []);
+        const sideboards = Array.from({ length: playerCount }, (_, index) => payload?.sideboards?.[index] || []);
+        const sourceIndex = decks.findIndex((deck, index) => deck.length > 0 && commanders[index].length > 0);
+        if (sourceIndex < 0) {
+          setStatus("Commander goldfish needs at least one deck with a Commander section", true);
+          return false;
+        }
+        for (let index = 0; index < playerCount; index += 1) {
+          if (decks[index].length > 0 && commanders[index].length > 0) continue;
+          decks[index] = decks[sourceIndex];
+          commanders[index] = commanders[sourceIndex];
+          sideboards[index] = sideboards[sourceIndex];
+        }
+        const names = parseNames(playerNames);
+        const goldfishNames = Array.from({ length: playerCount }, (_, index) => (
+          names[index] || (index === 0 ? "Player 1" : `Bot ${index + 1}`)
+        ));
+        try {
+          setStatus("Starting Commander goldfish...");
+          await withSupportedSeats(decks, sideboards);
+          await game.startMatch({
+            playerNames: goldfishNames,
+            startingLife: PUBLIC_FORMATS[goldfishFormat]?.startingLife || 40,
+            seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
+            format: PUBLIC_FORMATS[goldfishFormat]?.engineFormat || MATCH_FORMAT_COMMANDER,
+            decks,
+            sideboards,
+            commanders,
+          });
+          setPlayerNames(goldfishNames.join(","));
+          const perspective = Math.max(0, Math.min(playerCount - 1, Number(payload?.perspectivePlayerIndex) || 0));
+          await game.setPerspective(perspective);
+          setDeckLoadingMode(false);
+          setPuzzleSetupMode(false);
+          await refresh("Commander goldfish ready");
+          return true;
+        } catch (err) {
+          setStatus(`Goldfish failed: ${err}`, true);
+          return false;
+        }
+      });
+    }
+    if (started) {
+      setLobbyOpen(false);
+      // Mirrored seats repeat the same swaps; list each card once.
+      const replaced = [...new Map(substitutions.map((entry) => [entry.from, entry])).values()];
+      if (replaced.length > 0) {
+        const lines = replaced.map(({ from, to }) => `${from} → ${to}`);
+        pushNotice({
+          tone: "warning",
+          title: replaced.length === 1 ? "1 card replaced by a land" : `${replaced.length} cards replaced by lands`,
+          body: lines.join("\n"),
+          actions: [{
+            label: "Copy list",
+            copyText: lines.join("\n"),
+            copyStatusMessage: "Copied replaced card list",
+          }],
+        });
+      }
+    }
+    return started;
+  }, [game, handleLoadCustomDecks, multiplayer.mode, playerNames, pushNotice, refresh, runWasmInteraction, setPlayerNames, setStatus]);
 
   const handleChangePerspective = useCallback(
     async (playerIndex) => {
@@ -661,16 +718,12 @@ export default function Shell() {
   const utilityControlsElement = (
     <TopbarUtilityControls
       playerNames={playerNames}
-      setPlayerNames={setPlayerNames}
+      setPlayerNames={editPlayerNames}
       startingLife={startingLife}
-      setStartingLife={setStartingLife}
+      setStartingLife={editStartingLife}
       onReset={handleReset}
       onRefresh={() => void runWasmInteraction(() => refresh("Refreshed"))}
       onToggleLog={() => setLogOpen((o) => !o)}
-      onEnterDeckLoading={() => {
-        setPuzzleSetupMode(false);
-        setDeckLoadingMode((mode) => !mode);
-      }}
       onOpenPuzzleSetup={() => {
         setDeckLoadingMode(false);
         setPuzzleSetupMode((mode) => !mode);
@@ -686,25 +739,19 @@ export default function Shell() {
         setPuzzleSetupMode(false);
         setLobbyOpen(true);
       }}
-      deckLoadingMode={deckLoadingMode}
       onAddCardNotice={pushNotice}
-      showInlineControls={!dockToolbarsInTable && !nonDesktopViewport && !tabletCompactViewport}
     />
   );
   const topbarElement = (
     <Topbar
       utilityControls={utilityControlsElement}
       playerNames={playerNames}
-      setPlayerNames={setPlayerNames}
+      setPlayerNames={editPlayerNames}
       startingLife={startingLife}
-      setStartingLife={setStartingLife}
+      setStartingLife={editStartingLife}
       onReset={handleReset}
       onRefresh={() => void runWasmInteraction(() => refresh("Refreshed"))}
       onToggleLog={() => setLogOpen((o) => !o)}
-      onEnterDeckLoading={() => {
-        setPuzzleSetupMode(false);
-        setDeckLoadingMode((mode) => !mode);
-      }}
       onOpenPuzzleSetup={() => {
         setDeckLoadingMode(false);
         setPuzzleSetupMode((mode) => !mode);
@@ -720,7 +767,6 @@ export default function Shell() {
         setPuzzleSetupMode(false);
         setLobbyOpen(true);
       }}
-      deckLoadingMode={deckLoadingMode}
       onAddCardNotice={pushNotice}
       mobileOpponentIndex={mobileOpponentIndex}
       setMobileOpponentIndex={setMobileOpponentIndex}
@@ -739,10 +785,6 @@ export default function Shell() {
     <TableActionControls
       compact={false}
       onAddCardNotice={pushNotice}
-      onEnterDeckLoading={() => {
-        setPuzzleSetupMode(false);
-        setDeckLoadingMode((mode) => !mode);
-      }}
       onOpenPuzzleSetup={() => {
         setDeckLoadingMode(false);
         setPuzzleSetupMode((mode) => !mode);
@@ -757,7 +799,6 @@ export default function Shell() {
         setPuzzleSetupMode(false);
         setLobbyOpen(true);
       }}
-      deckLoadingMode={deckLoadingMode}
       puzzleSetupMode={puzzleSetupMode}
     />
   );
@@ -792,7 +833,6 @@ export default function Shell() {
           deckLoadingMode={deckLoadingMode}
           puzzleSetupMode={puzzleSetupMode}
           onLoadDecks={handleLoadCustomDecks}
-          onOpenLobby={handleOpenLobbyFromDecks}
           onTestDecks={handleLoadCustomDecks}
           onCancelDeckLoading={() => setDeckLoadingMode(false)}
           onLoadPuzzle={(payload, successMessage) => runWasmInteraction(
@@ -812,10 +852,13 @@ export default function Shell() {
         />
       </TableErrorBoundary>
       <LogDrawer open={logOpen} onOpenChange={setLogOpen} />
+      {!multiplayer.matchStarted ? <PerspectiveHandoffBanner /> : null}
+      <KeyboardShortcutsOverlay />
       {lobbyOpen ? (
         <LobbyOverlay
           key={lobbyOverlayInitial.mode}
           onClose={() => setLobbyOpen(false)}
+          onStartGoldfish={handleStartGoldfish}
           defaultName={parseNames(playerNames)[0] || "Player"}
           defaultStartingLife={startingLife}
           initialMode={lobbyOverlayInitial.mode}
@@ -871,7 +914,18 @@ async function resetStartingBoard(game, names, startingLife, fixed, semanticThre
     return;
   }
   const payload = await buildRandomStartingBoard(names, startingLife, semanticThreshold);
-  await applyPuzzleToGame(game, payload);
+  await applyStartingBoard(game, payload);
+}
+
+// Commander tables start as real matches; other formats load a seeded board.
+async function applyStartingBoard(game, payload) {
+  if (!payload?.match) return applyPuzzleToGame(game, payload);
+  if (typeof game.startMatch !== "function") throw new Error("This engine cannot start a Commander match");
+  await game.startMatch({
+    ...payload.match,
+    seed: Math.floor(Math.random() * Number.MAX_SAFE_INTEGER),
+  });
+  if (typeof game.setPerspective === "function") await game.setPerspective(0);
 }
 
 async function applyPuzzleToGame(game, payload) {

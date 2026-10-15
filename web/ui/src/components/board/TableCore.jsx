@@ -1,6 +1,5 @@
 import useUiText from "@/i18n/useUiText";
 import CardCreationControls from "@/components/layout/CardCreationControls";
-import DiagnosticsSheet from "@/components/layout/DiagnosticsSheet";
 import PriorityHoldControl from "@/components/decisions/PriorityHoldControl";
 import { useCastPlayerHovered } from "@/context/DragContext";
 import { cloneElement, useCallback, useLayoutEffect, useRef, useState } from "react";
@@ -100,7 +99,6 @@ export default function TableCore({
   zoneActivityByPlayer = {},
   deckLoadingMode,
   puzzleSetupMode = false,
-  onOpenLobby,
   onTestDecks,
   onCancelDeckLoading,
   onLoadPuzzle,
@@ -235,6 +233,25 @@ export default function TableCore({
     });
   }, [multiplayer?.players, state?.players]);
 
+  // The brand and table tools float over the top-right of the opponent row;
+  // the last opponent header pads itself by their measured width.
+  const utilityControlsRef = useRef(null);
+  useLayoutEffect(() => {
+    const controls = utilityControlsRef.current;
+    const table = tableRef.current;
+    if (!controls || !table) return undefined;
+    const measure = () => {
+      table.style.setProperty("--header-utility-width", `${Math.ceil(controls.getBoundingClientRect().width)}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(controls);
+    return () => {
+      observer.disconnect();
+      table.style.removeProperty("--header-utility-width");
+    };
+  });
+
   useLayoutEffect(() => {
     const dock = humanActionDockRef.current;
     const table = tableRef.current;
@@ -336,7 +353,7 @@ export default function TableCore({
   }
 
   if (deckLoadingMode) {
-    return <DeckLoadingView onOpenLobby={onOpenLobby} onTestDecks={onTestDecks} onCancel={onCancelDeckLoading} />;
+    return <DeckLoadingView onTestDecks={onTestDecks} onCancel={onCancelDeckLoading} />;
   }
 
   if (puzzleSetupMode) {
@@ -472,16 +489,8 @@ export default function TableCore({
           </div>
         ) : null}
         {middleUtilityControls ? (
-          <div className="player-header-utility-controls">
-            {cloneElement(middleUtilityControls, {
-              showBrand: focusedHudDesktop,
-              children: zoneActionControls ? (
-                <>
-                  <DiagnosticsSheet />
-                  {zoneActionControls}
-                </>
-              ) : null,
-            })}
+          <div ref={utilityControlsRef} className="player-header-utility-controls">
+            {cloneElement(middleUtilityControls, { showBrand: focusedHudDesktop })}
           </div>
         ) : null}
       </div>

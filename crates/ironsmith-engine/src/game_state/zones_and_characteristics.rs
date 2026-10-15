@@ -4896,6 +4896,11 @@ impl GameState {
         if self.continuous_state_is_clean() {
             return self.cached_continuous_effects_snapshot_arc();
         }
+        if let Some(context) = crate::continuous::nested_regeneration_context(self) {
+            return crate::continuous::regenerate_in_context(context, || {
+                crate::static_ability_processor::get_all_continuous_effects(self)
+            });
+        }
         Arc::new(crate::static_ability_processor::get_all_continuous_effects(
             self,
         ))
@@ -5087,6 +5092,7 @@ impl GameState {
         &self,
         id: ObjectId,
     ) -> Option<Arc<crate::continuous::CalculatedCharacteristics>> {
+        let _tap_reads = self.derived_tap_read_scope();
         if self
             .object(id)
             .is_some_and(|object| object.zone == Zone::Battlefield && self.is_phased_out(id))
@@ -5111,7 +5117,23 @@ impl GameState {
             return cached;
         }
 
-        let all_effects = self.all_continuous_effects();
+        if !self.continuous_state_is_clean()
+            && let Some(context) = crate::continuous::nested_regeneration_context(self)
+        {
+            // A dirty read inside another calculation (a delirium count reading
+            // each graveyard card) repeats in an identical layer context.
+            return crate::continuous::characteristics_in_context(context, id, || {
+                let all_effects = self.all_continuous_effects_arc();
+                self.runtime_cache
+                    .work_counters
+                    .bump_characteristics_full_recomputes();
+                self.runtime_cache
+                    .work_counters
+                    .add_effects_considered(all_effects.len() as u64);
+                self.calculated_characteristics_with_effects(id, &all_effects)
+            });
+        }
+        let all_effects = self.all_continuous_effects_arc();
         self.runtime_cache
             .work_counters
             .bump_characteristics_full_recomputes();
@@ -5549,6 +5571,7 @@ impl GameState {
         effects: &[ContinuousEffect],
         skipped_effect: Option<ContinuousEffectId>,
     ) -> Option<PlayerId> {
+        let _tap_reads = self.derived_tap_read_scope();
         if !effects.iter().any(|effect| {
             skipped_effect != Some(effect.id)
                 && matches!(
@@ -5868,14 +5891,14 @@ impl GameState {
 
     /// Get the calculated subtypes of an object (with continuous effects applied).
     pub fn calculated_subtypes(&self, id: ObjectId) -> Vec<crate::types::Subtype> {
-        self.calculated_characteristics(id)
+        self.calculated_characteristics_arc(id)
             .map(|c| c.subtypes.to_vec())
             .unwrap_or_default()
     }
 
     /// Get the calculated card types of an object (with continuous effects applied).
     pub fn calculated_card_types(&self, id: ObjectId) -> Vec<crate::types::CardType> {
-        self.calculated_characteristics(id)
+        self.calculated_characteristics_arc(id)
             .map(|c| c.card_types.to_vec())
             .unwrap_or_default()
     }
@@ -5924,6 +5947,13 @@ impl GameState {
     /// - Before processing any event that might be affected by "can't" effects
     /// - After any permanent enters or leaves the battlefield
     pub fn update_cant_effects(&mut self) {
+        // Restriction sources' conditions can read tapped state.
+        self.enter_derived_tap_reads();
+        self.update_cant_effects_inner();
+        self.exit_derived_tap_reads();
+    }
+
+    fn update_cant_effects_inner(&mut self) {
         use crate::ability::AbilityKind;
         use crate::static_abilities::StaticAbility;
 
@@ -6069,9 +6099,18 @@ impl GameState {
                     (object.zone == Zone::Battlefield).then_some(object_id)
                 })
                 .collect();
-            if self.continuous_state_is_clean() {
+            // A dirty state has no characteristics cache to consult, so derive
+            // every recipient in one layer pass: one dependency sort for the
+            // whole battlefield instead of one per permanent.
+            let mut dirty_batch = if self.continuous_state_is_clean() {
                 self.prewarm_calculated_characteristics(&battlefield_ids);
-            }
+                None
+            } else {
+                Some(self.calculated_characteristics_batch_with_effects(
+                    &battlefield_ids,
+                    all_effects.as_slice(),
+                ))
+            };
             self.objects
                 .iter()
                 .flat_map(|(&object_id, object)| {
@@ -6083,14 +6122,9 @@ impl GameState {
                     let zone = object.zone;
                     let controller = self.controller_of(object);
                     match zone {
-                        Zone::Battlefield => if self.continuous_state_is_clean() {
-                            self.calculated_characteristics_arc(object_id)
-                        } else {
-                            self.calculated_characteristics_with_effects(
-                                object_id,
-                                all_effects.as_slice(),
-                            )
-                            .map(Arc::new)
+                        Zone::Battlefield => match dirty_batch.as_mut() {
+                            None => self.calculated_characteristics_arc(object_id),
+                            Some(batch) => batch.remove(&object_id).map(Arc::new),
                         }
                         .map(|chars| {
                             chars

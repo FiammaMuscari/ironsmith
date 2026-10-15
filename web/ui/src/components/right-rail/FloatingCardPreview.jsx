@@ -11,9 +11,6 @@ import {
 } from "@/context/HoverContext";
 import HoverArtOverlay from "./HoverArtOverlay";
 import useDisplayedCardImage from "@/hooks/useDisplayedCardImage";
-import { cardArtCropUrl } from "@/lib/card-image-variants";
-import { prepareCardFrame } from "@/lib/card-frame-preparation";
-import { resolveScryfallImageUrl } from "@/lib/scryfall";
 import { playerAccentVars } from "@/lib/player-colors";
 import { samePlayerId } from "@/lib/player-display";
 import { getVisibleStackObjects } from "@/lib/stack-targets";
@@ -21,6 +18,7 @@ import { canHoverInspectorObject, objectExistsInState, resolveStackInspectObject
 
 import { requestInspectorDetails } from "@/lib/inspector-details-cache";
 import { stackFramePreview, visibleFrameCards } from "@/lib/stack-frame-preview";
+import useCardStackMode from "@/hooks/useCardStackMode";
 
 const PREVIEW_OPEN_DELAY_MS = 500;
 const PREVIEW_CLOSE_DELAY_MS = 240;
@@ -195,17 +193,15 @@ function stackFrameFloor() {
   return bounds?.width > 0 ? bounds : null;
 }
 
-// Desktop keeps the top entry exposed and overlays the rest of its reserved rail.
-// With full cards the frame stands beside the bounded stack column instead,
-// top-aligned with it, so opening an entry's details never moves the frame.
-// Compact layouts retain the adjacent preview with the normal hover height budget.
+// Both desktop layouts place the frame beside the stack column, top-aligned
+// with the rail so expanding an entry never moves or covers its preview.
 function stackAnchoredPreviewPosition(anchorRect, size) {
   if (!anchorRect || typeof window === "undefined") return null;
   const margin = 8, gap = 8;
   const rail = window.innerWidth >= 1024
     ? document.querySelector('[data-my-zone] .my-zone-stack-rail') : null;
   const railBounds = rail?.getBoundingClientRect();
-  if (railBounds?.width > 0 && fullCardsHud()) {
+  if (railBounds?.width > 0) {
     const top = Math.max(margin, railBounds.top);
     // Stop above whatever is highest underneath: the phase track (hidden
     // during some decisions), the hand's cards, or the player bar.
@@ -217,17 +213,6 @@ function stackAnchoredPreviewPosition(anchorRect, size) {
     const bottom = Math.min(stackFrameFloor()?.top ?? window.innerHeight, phaseTop || Infinity, handTop) - margin;
     return { left: Math.round(railBounds.right + 12), top: Math.round(top), right: 'auto',
       maxHeight: `${Math.max(0, Math.floor(bottom - top))}px` };
-  }
-  if (railBounds?.width > 0) {
-    const topEntry = rail.querySelector('.stack-timeline-entry:not([data-leaving="true"])');
-    const entryBounds = topEntry?.getBoundingClientRect();
-    const minimumTop = Math.max(margin, (entryBounds?.bottom ?? anchorRect.bottom) + 4);
-    const floorBounds = stackFrameFloor();
-    const bottom = floorBounds ? floorBounds.top - 8 : window.innerHeight - margin;
-    const maximumHeight = Math.max(0, Math.min(bottom - minimumTop, railBounds.width * 88 / 63));
-    const top = floorBounds ? bottom - Math.min(size.height, maximumHeight) : minimumTop;
-    return { left: Math.round(railBounds.left), top: Math.round(top), right: 'auto',
-      maxHeight: `${Math.floor(maximumHeight)}px` };
   }
   const localBoard = document.querySelector('[data-my-zone] .my-zone-board-shell')?.getBoundingClientRect();
   const minimumTop = Math.max(phaseToolbarTop(margin), localBoard?.top ?? margin);
@@ -296,7 +281,13 @@ export default function FloatingCardPreview({
   const disabled = externallyDisabled || previewSuppressed;
   const { game, state, dispatch, cancelDecision, cancelBackgroundDispatch } = useGame();
   const [rememberedCards, setRememberedCards] = useState([]);
-  const automaticPreview = useMemo(() => stackFramePreview(state, rememberedCards), [state, rememberedCards]);
+  // The compact appearance's card pile already shows every stack entry at
+  // full frame size: no second frame opens for one.
+  const cardStackMode = useCardStackMode();
+  const automaticPreview = useMemo(
+    () => (cardStackMode ? null : stackFramePreview(state, rememberedCards)),
+    [cardStackMode, state, rememberedCards],
+  );
   useEffect(() => {
     // Keep public snapshots only, including sources that disappear on resolution.
     queueMicrotask(() => setRememberedCards(previous => {
@@ -381,7 +372,9 @@ export default function FloatingCardPreview({
   // Anchored previews are explicit card-name clicks, so they may inspect a
   // spell on the stack or a card in another zone even though passive hand
   // hovers remain excluded from this surface.
-  const anchoredObjectId = !disabled && !dragState && objectExistsInState(state, anchoredCardPreview?.objectId)
+  const anchoredObjectId = !disabled && !dragState
+    && !(cardStackMode && anchoredCardPreview?.placement === "stack")
+    && objectExistsInState(state, anchoredCardPreview?.objectId)
     ? String(anchoredCardPreview.objectId)
     : null;
   // Explicit selections bypass passive-hover exclusions. Hand cards stay
@@ -391,6 +384,7 @@ export default function FloatingCardPreview({
     && !dragState
     && !targetingMode
     && state?.decision?.kind !== "mana_payment"
+    && !(cardStackMode && getVisibleStackObjects(state).some((entry) => String(entry.id) === String(pinnedObjectId)))
     && objectExistsInState(state, pinnedObjectId)
     ? String(pinnedObjectId)
     : null;
@@ -443,46 +437,7 @@ export default function FloatingCardPreview({
         || getVisibleStackObjects(state).find(entry => String(entry.id) === lockedObjectId) || null
   ), [lockedObjectId, automaticObjectId, automaticPreview?.entry, state]);
   const isStackSource = id => id != null && lockedStackEntry != null && id === lockedObjectId;
-  const preparationCard = useMemo(() => {
-    const stackEntry = lockedStackEntry && requestedObjectId === lockedObjectId ? lockedStackEntry : null;
-    if (stackEntry === automaticPreview?.entry) return automaticPreview.card;
-    // A stack entry prepares its source card's frame (the entry carries no
-    // type line), found by the entry's own inspect id, never by its number.
-    const needle = stackEntry ? resolveStackInspectObjectId(state, stackEntry) : requestedObjectId;
-    const matches = card => card && [card.id, ...(stackEntry ? [] : [card.inspect_object_id]), ...(card.member_ids || [])]
-      .some(id => id != null && String(id) === needle);
-    if (stackEntry && needle == null) return stackEntry;
-    for (const player of state?.players || []) {
-      for (const zone of ['battlefield', 'hand_cards', 'graveyard_cards', 'exile_cards', 'command_cards', 'ante_cards']) {
-        const card = (player[zone] || []).find(matches);
-        if (card) return card;
-      }
-    }
-    const viewedCard = [
-      ...(state?.viewed_cards?.cards || []),
-      ...(state?.players || []).flatMap((player) => player?.persistent_look_cards || []),
-    ].find(matches);
-    if (viewedCard) return viewedCard;
-    return stackEntry || getVisibleStackObjects(state).find(matches);
-  }, [lockedObjectId, lockedStackEntry, requestedObjectId, state, automaticPreview]);
-  const preparationName = preparationCard?.name;
-  const preparationType = preparationCard?.type_line;
-  // Every card this surface shows is presented as a frame, whatever zone it
-  // came from: a stack source, a graveyard or exile card gets the same live
-  // rendering a battlefield card does, rather than a printing with a separate
-  // details panel over it.
-  const shouldPrepareFrame = Boolean(preparationCard);
-  const requestedImageUrl = useDisplayedCardImage(requestedObjectId, isStackSource(requestedObjectId));
   const renderedImageUrl = useDisplayedCardImage(renderedObjectId, isStackSource(renderedObjectId));
-  useEffect(() => {
-    if (!preparationName || !shouldPrepareFrame) return undefined;
-    let active = true;
-    // Start asset work immediately, in parallel with the existing hover delay.
-    (requestedImageUrl ? Promise.resolve(cardArtCropUrl(requestedImageUrl)) : resolveScryfallImageUrl(preparationName, 'art_crop'))
-      .then(url => active ? prepareCardFrame(url, preparationType) : null)
-      .catch(() => {});
-    return () => { active = false; };
-  }, [preparationName, preparationType, requestedImageUrl, shouldPrepareFrame]);
 
   const interactiveActions = useMemo(() => {
     if (renderedObjectId == null) return [];
@@ -706,7 +661,6 @@ export default function FloatingCardPreview({
           transientPreview={isStackSource(renderedObjectId) && lockedStackEntry === automaticPreview?.entry
             ? { card: automaticPreview.card } : null}
           displayMode="card-frame"
-          enableFramePreparation
           sourceImageUrl={renderedImageUrl}
           availableInspectorWidth={size.width}
           availableInspectorHeight={size.height}

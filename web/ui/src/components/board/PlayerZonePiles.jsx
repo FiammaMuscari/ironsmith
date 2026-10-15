@@ -8,7 +8,7 @@ import { useHover } from "@/context/HoverContext";
 import ZoneArt from "./ZonePileArt";
 import { LOOK_DONE_EVENT, LOOK_FADE_MS, lookViewKey, temporaryLookView, persistentLookCards, mergeLookCards } from "@/lib/look-pile";
 import { samePlayerId } from "@/lib/player-display";
-import { isFaceUpZoneCard, PILE_ZONES, zonePileCards } from "@/lib/zone-piles";
+import { isFaceUpZoneCard, pileZonesFor, zonePileCards } from "@/lib/zone-piles";
 import { isObjectChosen, requestObjectSelection } from "@/lib/object-selection";
 import { useChosenObjectIds } from "@/context/ObjectSelectionContext";
 import LobbyChat from "@/components/right-rail/LobbyChat";
@@ -110,7 +110,8 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
   });
   const topCard = cards.find(isFaceUpZoneCard) || cards[0];
   const remainingCards = cards.filter((card) => card !== topCard);
-  const label = t(zone === "graveyard" ? "zone.graveyardFull" : zone === "look" ? "zone.look" : "zone.exileFull");
+  const label = zone === "command" ? "Command"
+    : t(zone === "graveyard" ? "zone.graveyardFull" : zone === "look" ? "zone.look" : "zone.exileFull");
   const count = zone === "graveyard" ? (player.graveyard_size ?? cards.length) : cards.length;
   const decision = state?.decision?.kind === "targets" ? state.decision
     : castIntent?.targetDecision || state?.decision;
@@ -217,12 +218,15 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     const stackTargeted = isStackTargeted(card);
     const hoverSource = isHoverSource(card);
     const hoverLabel = cardHoverLabel(card);
+    // A face-up card opens the preview, which names it already; a bare-name
+    // native tooltip would sit on top of that preview.
+    const previews = isFaceUpZoneCard(card) && !String(card.id).startsWith("look-top-");
     // The check has to sit outside the row button to stay clickable, so the
     // row gets a wrapper of its own strip width.
     return <span key={card.id} className="zone-pile-card-slot" data-stack-target={stackTargeted ? "true" : undefined} data-hover-source={hoverSource ? "true" : undefined}>
       <button type="button" className={`zone-pile-card-row${chosen ? " is-chosen" : ""}`}
         aria-label={card.name || ui("Face-down card")}
-        title={hoverLabel}
+        title={previews && hoverLabel === card.name ? undefined : hoverLabel}
         data-object-id={String(card.id).startsWith("look-top-") ? undefined : card.id} data-zone-card={zone}
         data-target-legal={legal ? "true" : undefined} data-stack-target={stackTargeted ? "true" : undefined}
         data-hover-source={hoverSource ? "true" : undefined} aria-disabled={disabled || undefined}
@@ -499,7 +503,7 @@ export default function PlayerZonePiles({ player, onCardClick, legalTargetObject
       data-opponent-zone-piles={!isLocal ? "true" : undefined}>
       {/* Spans the piles' own height, so anything here lines up with them. */}
       {leadingRail}
-      {PILE_ZONES.map((zone) => <ZonePile key={zone} player={player} zone={zone}
+      {pileZonesFor(state).map((zone) => <ZonePile key={zone} player={player} zone={zone}
         onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} />)}
       {isLocal &&
         <div className="player-look-pile"><LookPile key={state?.perspective} player={player} onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} /></div>}

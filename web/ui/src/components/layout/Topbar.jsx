@@ -48,10 +48,8 @@ export default function Topbar({
   onReset,
   onRefresh,
   onToggleLog,
-  onEnterDeckLoading,
   onOpenPuzzleSetup,
   onOpenLobby,
-  deckLoadingMode,
   puzzleSetupMode = false,
   onAddCardNotice,
   mobileOpponentIndex = 0,
@@ -214,14 +212,11 @@ export default function Topbar({
           onReset={onReset}
           onRefresh={onRefresh}
           onToggleLog={onToggleLog}
-          onEnterDeckLoading={onEnterDeckLoading}
           onOpenPuzzleSetup={onOpenPuzzleSetup}
           onOpenLobby={onOpenLobby}
-          deckLoadingMode={deckLoadingMode}
           puzzleSetupMode={puzzleSetupMode}
           onAddCardNotice={onAddCardNotice}
           triggerIcon="menu"
-          showQuickActions
         />
       </header>
     );

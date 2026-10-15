@@ -1,7 +1,9 @@
 import {MseError} from './document.mjs';
 import {loadMseTemplate,MseTemplateContext} from './template.mjs';
 import {paintMseCard} from './card-painter.mjs';
-import {engineCardToMse} from './engine-card.mjs';
+import {engineCardToMse,engineDoubleFacesToMse} from './engine-card.mjs';
+import {MseCardRegistry} from './card-links.mjs';
+import {selectMseStyle} from './style-selection.mjs';
 import {MseImageRenderer} from './image-renderer.mjs';
 import {createMseImageLoader} from './browser-images.mjs';
 import {createBrowserSymbolRenderer} from './browser-symbols.mjs';
@@ -14,6 +16,9 @@ export class MseCardRenderer{
     this.store=store;this.fonts=fonts;this.createCanvas=createCanvas;this.loadCardImage=loadCardImage;
     this.images=imageRenderer??new MseImageRenderer({loadAsset:createMseImageLoader(store),renderSymbol:createBrowserSymbolRenderer({store})});
     this.templates=new Map();this.targets=new WeakMap();this.disposed=false;
+    // Finished renders by request, so a card prepared in the background, or
+    // inspected again, draws without rendering. Results are never mutated.
+    this.results=new Map();this.resultLimit=24;
   }
   check(signal){
     if(this.disposed)throw new MseError('renderer-disposed','Card renderer has been disposed');
@@ -27,13 +32,46 @@ export class MseCardRenderer{
     }
     const template=await this.templates.get(style);this.check();return template;
   }
-  async render({style,context={},snapshot,adapter={}},{signal,onFieldDrawn}={}){
+  async prepareContext({style,context={},snapshot,adapter={}},{signal}={}){
     this.check(signal);
     const template=await this.template(style);this.check(signal);
-    const values=snapshot===undefined?context:engineCardToMse(snapshot,adapter);
+    const regions=template.style.all('card region').map(region=>region.record().text('name'));
+    const combinedFaces=regions.includes('front')&&regions.includes('back');
+    const doubleFaces=combinedFaces||adapter.linkedFaces===false?null:engineDoubleFacesToMse(snapshot,adapter);
+    if(doubleFaces){
+      const registry=new MseCardRegistry();
+      const templates=await Promise.all(doubleFaces.cards.map((_,index)=>index===doubleFaces.selected?template:this.template(selectMseStyle(snapshot,{faceIndex:index}))));
+      this.check(signal);
+      const contexts=doubleFaces.cards.map((values,index)=>new MseTemplateContext(templates[index],{
+        fieldUpdateMode:this.fieldUpdateMode,...values,cardRegistry:registry,spellcheckEnabled:false,
+      }));
+      // Register both faces before scripts run: get_front_face/get_back_face
+      // must work while defaults and automatic frame choices are evaluated.
+      for(const card of contexts)card.initializeScripts();
+      for(const card of contexts)card.initialize();
+      return contexts[doubleFaces.selected];
+    }
+    const values=snapshot===undefined?context:engineCardToMse(snapshot,combinedFaces?{...adapter,faceIndex:null}:adapter);
     const card=new MseTemplateContext(template,{fieldUpdateMode:this.fieldUpdateMode,...values,spellcheckEnabled:false}).initialize();
-    return this.renderContext(card,{signal,onFieldDrawn});
+    return card;
   }
+  async render(request,options={}){
+    const key=options.cache===false?null:JSON.stringify(request);
+    const cached=key&&this.results.get(key);
+    if(cached){
+      this.check(options.signal);
+      this.results.delete(key);this.results.set(key,cached);
+      return cached;
+    }
+    const context=await this.prepareContext(request,options);
+    const result=await this.renderContext(context,options);
+    if(key){
+      this.results.set(key,result);
+      if(this.results.size>this.resultLimit)this.results.delete(this.results.keys().next().value);
+    }
+    return result;
+  }
+  has(request){return this.results.has(JSON.stringify(request));}
   async renderContext(context,{signal,onFieldDrawn}={}){
     this.check(signal);
     const width=Number(context.template.style.text('card width')),height=Number(context.template.style.text('card height'));
@@ -58,5 +96,5 @@ export class MseCardRenderer{
     target.getContext('2d').drawImage(result.canvas,0,0);
     return result;
   }
-  dispose(){this.disposed=true;this.templates.clear();this.targets=new WeakMap();}
+  dispose(){this.disposed=true;this.templates.clear();this.results.clear();this.targets=new WeakMap();}
 }

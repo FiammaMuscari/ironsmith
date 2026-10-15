@@ -1,4 +1,6 @@
+import {isChoiceFieldType,choiceRenderFlags} from './choice-fields.mjs';
 import { paintChoiceLabel } from './choice-painter.mjs';
+import {paintInfoField,infoCaption} from './info-painter.mjs';
 import { MseError } from './document.mjs';
 import { text, force } from './script-values.mjs';
 import { paintTextLayout } from './text-painter.mjs';
@@ -11,20 +13,33 @@ import { resizeArtwork } from './artwork-sampling.mjs';
 import { combineChannel } from './image-combine.mjs';
 import { drawCombinedLayer } from './field-blend.mjs';
 
+// magic-modules corners fields: "corners", then "corners 2"/"corners 3" per face.
+const CORNER_FIELD=/^corners(?:[ _]\d+)?$/;
+
 // Draw into a private surface so a failed field never commits a partial card.
 // Unsupported drawing paths remain explicit until their native behavior exists.
 export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(w,h)=>new OffscreenCanvas(w,h),loadCardImage,onFieldDrawn}={}) {
-  await context.prepareTextLayouts(fonts,renderer);
+  const preparation=await context.prepareTextLayouts(fonts,renderer);
   const revision=context.layoutRevision;
   const width=Number(context.template.style.text('card width')),height=Number(context.template.style.text('card height'));
   if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1||width*height>(renderer.maxPixels||16777216))throw new MseError('card-size','Invalid card canvas dimensions');
   const surface=createCanvas(width,height),base=surface.getContext('2d');
-  base.fillStyle=cssColor(color(context.template.style.text('card background','white')));base.fillRect(0,0,width,height);
+  // MSE paints an unset card background white, which shows as a white rim
+  // around the frame's rounded corners. Outside the frame stays transparent
+  // unless a template asks for a background itself.
+  const background=context.template.style.text('card background','');
+  if(background){base.fillStyle=cssColor(color(background));base.fillRect(0,0,width,height);}
   const fields=[];
-  for(const [group,layouts] of [['card',context.template.layouts],['extra_card',context.template.extraLayouts]])for(const [name,layout] of layouts){
+  for(const [group,layouts] of [['card',context.template.layouts],['extra_card',context.template.extraLayouts]])for(const name of new Set([...(context.template.definitions?.[group]?.keys()||[]),...layouts.keys()])){
+    const layout=layouts.get(name);if(!layout)continue;
     if(context.fieldVisible(name,group))fields.push({group,name,layout,z:layout.programs.has('z_index')?context.property(name,'z_index',group):0});
   }
   fields.sort((a,b)=>a.z-b.z);
+  // Start the mask and default-image downloads of every field before drawing.
+  if(renderer?.prefetch)for(const {group,name,layout} of fields)for(const key of ['mask','default']){
+    if(!layout.programs.has(key))continue;
+    try{const value=context.property(name,key,group);if(value!==null&&value!=='')renderer.prefetch(mseImage(value,context.template.name));}catch{/* drawn below */}
+  }
   for(const {group,name,layout} of fields){
     try{
       const get=(key,fallback)=>layout.programs.has(key)?context.property(name,key,group):fallback;
@@ -35,9 +50,9 @@ export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(
       if(!Number.isFinite(angle))throw new MseError('card-rotation','Field angle must be finite');
       // Native text/art viewers do not have a combine property. A color
       // field's combine mode applies only to its mask-generated bitmap.
-      const supportsCombine=['choice','boolean','multiple choice'].includes(type)||(type==='color'&&get('mask',null));
+      const supportsCombine=isChoiceFieldType(type)||(type==='color'&&get('mask',null));
       let combine=supportsCombine?text(get('combine','normal')):'normal';
-      if(['choice','boolean','multiple choice'].includes(type)){
+      if(isChoiceFieldType(type)){
         const imageMode=context.textMeasurements.get(`${group}.${name}`)?.result?.combine;
         if(imageMode&&imageMode!=='default')combine=imageMode;
       }
@@ -54,15 +69,25 @@ export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(
         if(angle%360)ctx.rotate(-(angle%360)*Math.PI/180);
         if(type==='text'){
           const result=context.textMeasurements.get(`${group}.${name}`)?.result;
-          if(result)await paintTextLayout(ctx,result,fonts);
+          if(result)await paintTextLayout(ctx,result,fonts,{height:h});
+        }else if(type==='info'){
+          await paintInfoField(ctx,text(context.field(group,name)),context.font(name,group),fonts,{
+            width:w,height:h,caption:infoCaption(context.cells[group].get(name).definition.record),
+            alignment:text(get('alignment','top left')),background:get('background_color','white'),
+            ...Object.fromEntries(['Left','Right','Top','Bottom'].map(side=>['padding'+side,Number(get('padding_'+side.toLowerCase(),2))])),
+          });
         }else{
-          let image;
-          if(['choice','boolean','multiple choice'].includes(type)){
-            const style=text(get('render_style','text'));
+          let image,cutAway=false;
+          if(isChoiceFieldType(type)){
+            const style=choiceRenderFlags(text(get('render_style','text')));
             const value=text(context.field(group,name));
-            if(value&&!style.includes('hidden')){
-              image=style.includes('image')?context.textMeasurements.get(`${group}.${name}`)?.result?.image:null;
-              if(style.includes('text'))label={value,font:context.font(name,group),options:{width:w,height:h,alignment:text(get('alignment','stretch')),withImage:style.includes('image'),imageWidth:image?.width??null}};
+            // The magic-modules corners paint white "paper" outside the rounded
+            // corners (only "none" uses the border color). Off paper, that
+            // white shows as nicks on every corner, so cut them away instead.
+            cutAway=CORNER_FIELD.test(name)&&group==='card'&&value!=='none'&&value!=='invisible';
+            if(value&&!style.hidden){
+              image=style.image?context.textMeasurements.get(`${group}.${name}`)?.result?.image:null;
+              if(style.text)label={value,font:context.font(name,group),options:{width:w,height:h,alignment:text(get('alignment','stretch')),withImage:style.image,imageWidth:image?.width??null}};
             }
             const maskValue=get('mask',null);
             if(image && maskValue!==null && maskValue!==''){
@@ -107,6 +132,16 @@ export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(
               const graph=mseImage(defaultValue,context.template.name);
               if(graph.operation!=='blank')image=resizeRaster(await renderer.render(graph,{width:iw,height:ih}),iw,ih,renderer.maxPixels);
             }
+            // ImageValueViewer uses this placeholder even for non-editing
+            // exports. Its 10-pixel checks are local to the image field and
+            // pass through the same mask/rotation as actual artwork.
+            if(!image&&w>40){
+              image=allocateRaster(iw,ih,false,renderer.maxPixels);
+              for(let y=0;y<ih;y++)for(let x=0;x<iw;x++){
+                const shade=(Math.floor(x/10)+Math.floor(y/10))%2?255:235;
+                image.data.set([shade,shade,shade,255],(y*iw+x)*4);
+              }
+            }
             const maskValue=get('mask',null);
             if(image&&maskValue!==null&&maskValue!==''){
               const mask=resizeRaster(await renderer.render(mseImage(maskValue,context.template.name),{width:iw,height:ih}),iw,ih,renderer.maxPixels);
@@ -118,6 +153,7 @@ export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(
             const bitmap=createCanvas(image.width,image.height),dc=bitmap.getContext('2d'),pixels=dc.createImageData(image.width,image.height);
             pixels.data.set(image.data);dc.putImageData(pixels,0,0);
             const offset=alignmentOffset(parseAlignment(text(get('alignment',type==='color'?'left top':'stretch'))),w,h,image.width,image.height);
+            if(cutAway)ctx.globalCompositeOperation='destination-out';
             ctx.drawImage(bitmap,offset.x,offset.y);
           }
         }
@@ -135,5 +171,5 @@ export async function paintMseCard(target,context,fonts,renderer,{createCanvas=(
   }
   if(revision!==context.layoutRevision)throw new MseError('layout-stale','Card changed while it was being drawn');
   target.drawImage(surface,0,0);
-  return {width,height,fields:fields.length,nativeParityVerified:false};
+  return {width,height,fields:fields.length,preparation:preparation?{passes:preparation.passes,fields:preparation.fields,reprepared:preparation.reprepared}:null,nativeParityVerified:false};
 }
