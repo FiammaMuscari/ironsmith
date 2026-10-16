@@ -1,5 +1,6 @@
 import { useAutomaticHandReveal } from "@/hooks/useAutomaticHandReveal";
 import { buildOpponentDecisionCommand } from "@/lib/opponent-decision.js";
+import { selectGoldfishPlayer } from "@/lib/goldfish-player.js";
 import { COMBAT_STEPS, createPriorityStops } from "@/lib/priority-stops";
 import { usePaymentOptions } from "@/hooks/usePaymentOptions";
 import { ManaPaymentEditorProvider } from "@/context/ManaPaymentEditorContext";
@@ -54,7 +55,7 @@ import { DEFAULT_UI_FONT, uiFontStack } from "@/lib/ui-fonts";
 import { readFixedStartingBoard, storeFixedStartingBoard } from "@/lib/starting-board";
 import { hexToRgbString } from "@/lib/player-colors";
 import { samePlayerId } from "@/lib/player-display";
-import { hotseatFollowTarget, readFollowActivePlayer, storeFollowActivePlayer } from "@/lib/hotseat-follow";
+import { createPregameFollower, emptyPregameAction, hotseatFollowTarget, readFollowActivePlayer, storeFollowActivePlayer } from "@/lib/hotseat-follow";
 import { forcedObjectSelectionCommand, localForcedObjectSelectionCommand } from "@/lib/forced-object-selection";
 
 import { GameContext } from "./GameContext.shared";
@@ -927,6 +928,7 @@ export function GameProvider({ children }) {
   const externalAutoPassGateRef = useRef(null);
   const [followActivePlayer, setFollowActivePlayerRaw] = useState(readFollowActivePlayer);
   const followActivePlayerRef = useRef(followActivePlayer);
+  const pregameFollowerRef = useRef(createPregameFollower());
   const setFollowActivePlayer = useCallback((value) => {
     const enabled = Boolean(value);
     followActivePlayerRef.current = enabled;
@@ -1277,7 +1279,7 @@ export function GameProvider({ children }) {
         };
       }
 
-      if (multiplayerActiveRef.current || !autoPassEnabled) {
+      if (multiplayerActiveRef.current) {
         return {
           state: currentState,
           autoPasses: 0,
@@ -1301,16 +1303,20 @@ export function GameProvider({ children }) {
 
       let perspectiveSwitches = 0;
       for (let i = 0; i < maxSettleIterations; i++) {
-        while (
-          st
-          && st.decision
-          && (
-            !samePlayerId(st.decision.player, st.perspective)
-            || st.active_player !== st.perspective
-          )
-        ) {
-          const followTarget = followActivePlayerRef.current && typeof currentGame.setPerspective === "function"
-            ? hotseatFollowTarget(st)
+        while (st && st.decision) {
+          const pregameTarget = pregameFollowerRef.current(st);
+          const emptyPregame = emptyPregameAction(st);
+          if (emptyPregame) {
+            if (autoPasses >= maxAutoPasses) { holdReason = "auto-pass safety limit reached"; break; }
+            const decisionBefore = summarizeDecision(st.decision);
+            st = await dispatchForAutomation(currentGame, priorityCommandForAction(emptyPregame));
+            autoPasses += 1;
+            trace.push({ kind: "empty_pregame", decision_before: decisionBefore,
+              decision_after: summarizeDecision(st?.decision || null) });
+            continue;
+          }
+          const followTarget = typeof currentGame.setPerspective === "function"
+            ? pregameTarget ?? (autoPassEnabled && followActivePlayerRef.current ? hotseatFollowTarget(st) : null)
             : null;
           if (followTarget !== null && perspectiveSwitches < playerCount * 4) {
             const decisionBefore = summarizeDecision(st.decision);
@@ -1329,6 +1335,9 @@ export function GameProvider({ children }) {
               decision_after: summarizeDecision(st?.decision || null) });
             continue;
           }
+          if (!autoPassEnabled) break;
+          if (samePlayerId(st.decision.player, st.perspective)
+            && samePlayerId(st.active_player, st.perspective)) break;
           if (st.decision.kind === "priority") {
             const isLocalOffTurnPriority = samePlayerId(st.decision.player, st.perspective);
             const passAction = (st.decision.actions || []).find((a) => a.kind === "pass_priority");
@@ -1448,7 +1457,7 @@ export function GameProvider({ children }) {
             decision_after: summarizeDecision(st?.decision || null) });
           continue;
         }
-        if (holdReason) break;
+        if (holdReason || !autoPassEnabled) break;
         if (!st || st.game_over || st.decision) break;
         if (phaseAdvances >= maxPhaseAdvances) { holdReason = "phase auto-advance safety limit reached"; break; }
         const before = `${st.turn_number}|${st.phase}|${st.step}|${st.priority_player}|${st.stack_size}`;
@@ -2444,6 +2453,26 @@ export function GameProvider({ children }) {
   // the saved auto-resolve preference: the stop itself keeps holding until the
   // player acts, and with default stops a paused run is the normal outcome.
   const pausePassing = stopResolveAll;
+  const changeGoldfishPlayer = useCallback(async (playerId) => runWasmInteraction(async () => {
+    if (!game || multiplayerActiveRef.current) return;
+    stopResolveAll();
+    try {
+      const result = await selectGoldfishPlayer(game, playerId,
+        command => dispatchForAutomation(game, command));
+      const current = await game.uiState();
+      priorityStops.holdCurrentPriority(current);
+      await finalizeState(game, current, {
+        message: result.reached ? `Viewing as player ${playerId}` : "Player switch paused for a required decision",
+        allowOpponentAutomation: false,
+        allowTrivialAutomation: false,
+      });
+    } catch (error) {
+      const current = await game.uiState();
+      priorityStops.holdCurrentPriority(current);
+      await finalizeState(game, current, { allowOpponentAutomation: false, allowTrivialAutomation: false });
+      setStatus(`Change player failed: ${error}`, true);
+    }
+  }), [game, runWasmInteraction, stopResolveAll, priorityStops, finalizeState, setStatus]);
   const startResolveAll = useCallback(() => {
     const current = stateRef.current;
     const stackSize = Number(current?.stack_size || 0);
@@ -2463,19 +2492,18 @@ export function GameProvider({ children }) {
     setResolveAllTick((tick) => tick + 1);
   }, [stateRef, priorityStops]);
 
-  const togglePhasePassing = useCallback(() => {
+  const beginPhasePassing = useCallback((ignoreStops = false) => {
     if (resolveAllRef.current?.phases) {
       stopResolveAll();
       return;
     }
     const current = stateRef.current;
     if (!current || current.game_over
-      || !samePlayerId(current.active_player, current.perspective)
-      || current.decision?.kind === "mana_payment") return;
+      || (ignoreStops && !samePlayerId(current.active_player, current.perspective))
+      || current.mana_payment || current.decision?.kind === "mana_payment") return;
     // Explicitly resume automation, but leave phase/step stops intact.
     priorityStops.resume(current);
-    // Clicking Pass while sitting at a stop moves on from it; later stops
-    // still pause the run.
+    // Release the starting stop; Go To honors later stops and End turn bypasses them.
     const pass = findPassPriorityAction(current.decision);
     if (pass && samePlayerId(current.decision?.player, current.perspective)) {
       priorityStops.beforeCommand(priorityCommandForAction(pass), current);
@@ -2484,6 +2512,7 @@ export function GameProvider({ children }) {
     setHoldRule("never");
     resolveAllRef.current = {
       phases: true,
+      ignoreStops,
       turn: current.turn_number ?? null,
       stackSize: Number(current.stack_size || 0),
       passes: 0,
@@ -2493,6 +2522,8 @@ export function GameProvider({ children }) {
     setPhasePassing(true);
     setResolveAllTick(tick => tick + 1);
   }, [stateRef, stopResolveAll, priorityStops]);
+  const togglePhasePassing = useCallback(() => beginPhasePassing(true), [beginPhasePassing]);
+  const startPhaseAdvance = useCallback(() => beginPhasePassing(false), [beginPhasePassing]);
 
   useEffect(() => {
     const run = resolveAllRef.current;
@@ -2520,8 +2551,8 @@ export function GameProvider({ children }) {
     if (decision?.kind !== "priority" && !passCombat) return;
     if (passCombat && (
       (decision.attacker_options || []).some(option => option.must_attack)
-      || priorityStopsState.stops['phase:Combat']
-      || COMBAT_STEPS.some(step => priorityStopsState.stops[`step:${step}`])
+      || (!run.ignoreStops && (priorityStopsState.stops['phase:Combat']
+        || COMBAT_STEPS.some(step => priorityStopsState.stops[`step:${step}`])))
     )) {
       // A combat stop also opts out of declaring no attackers automatically:
       // otherwise that declaration would remove the later blocking window.
@@ -2529,7 +2560,8 @@ export function GameProvider({ children }) {
       return;
     }
     if (run?.dispatchedFrom === state) return;
-    const stopReason = priorityStops.stopReason(state);
+    const reason = priorityStops.stopReason(state);
+    const stopReason = run?.ignoreStops && reason?.startsWith("stop at ") ? null : reason;
     if (stopReason || holdRule === "always") {
       if (run?.phases || stopReason?.startsWith("stop at ")) pausePassing();
       return;
@@ -3206,6 +3238,7 @@ export function GameProvider({ children }) {
       dispatchInBackground,
       cancelDecision,
       refresh,
+      changeGoldfishPlayer,
       autoPassEnabled,
       setAutoPassEnabled,
       autoResolveEnabled,
@@ -3263,6 +3296,7 @@ export function GameProvider({ children }) {
       startResolveAll,
       phasePassing,
       togglePhasePassing,
+      startPhaseAdvance,
     }),
     [
       setState,
@@ -3278,7 +3312,7 @@ export function GameProvider({ children }) {
       status,
       setStatus,
       runWasmInteraction,
-      dispatch, dispatchInBackground, cancelBackgroundDispatch, cancelDecision, refresh, autoPassEnabled, autoResolveEnabled, holdRule, uiFont,
+      dispatch, dispatchInBackground, cancelBackgroundDispatch, cancelDecision, refresh, changeGoldfishPlayer, autoPassEnabled, autoResolveEnabled, holdRule, uiFont,
       priorityStopsState, cyclePriorityStop, holdPostActionPriority,
       playerAccentOverrides, setPlayerAccentOverride, inspectorDebug, fixedStartingBoard,
       activeEffectOrderingState, moveEffectOrderingItem,
@@ -3305,6 +3339,7 @@ export function GameProvider({ children }) {
       startResolveAll,
       phasePassing,
       togglePhasePassing,
+      startPhaseAdvance,
     ]
   );
 

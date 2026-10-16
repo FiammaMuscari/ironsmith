@@ -213,6 +213,8 @@ pub struct ConspiracySetupCard {
 mod hidden_hand_regression_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod mana_invalidation_tests;
 
 /// Pending replacement effect choice when multiple effects apply to the same event.
 ///
@@ -1332,10 +1334,15 @@ struct RuntimeCacheState {
     /// state. While false, no retained derived result depends on which
     /// permanents are tapped, so a tap or untap only invalidates the object.
     derived_state_read_tapped: Cell<bool>,
+    /// Mana-pool reads made by the same cached derivations. A mana-only
+    /// mutation cannot affect them when this is false. Do not use this for
+    /// a whole activation, which can also change tapping and event history.
+    derived_state_read_mana: Cell<bool>,
     /// Reads recorded before the global invalidations since the last
     /// regeneration. Restored if the state is marked clean without one
     /// (`retain_continuous_state_after_mana_activation`).
     derived_tap_reads_before_dirty: Cell<bool>,
+    derived_mana_reads_before_dirty: Cell<bool>,
     effects_snapshot: RefCell<Option<(u64, Arc<Vec<ContinuousEffect>>)>>,
     controller_cache: RefCell<Option<ControllerCache>>,
     payment_restriction_presence: Cell<Option<PaymentRestrictionPresenceCache>>,
@@ -1387,7 +1394,9 @@ impl Clone for RuntimeCacheState {
             // A clone taken inside a derivation is not itself inside one.
             derived_tap_read_depth: Cell::new(0),
             derived_state_read_tapped: Cell::new(self.derived_state_read_tapped.get()),
+            derived_state_read_mana: Cell::new(self.derived_state_read_mana.get()),
             derived_tap_reads_before_dirty: Cell::new(self.derived_tap_reads_before_dirty.get()),
+            derived_mana_reads_before_dirty: Cell::new(self.derived_mana_reads_before_dirty.get()),
             continuous_state_active_player: Cell::new(self.continuous_state_active_player.get()),
             continuous_state_phase: Cell::new(self.continuous_state_phase.get()),
             continuous_state_step: Cell::new(self.continuous_state_step.get()),
@@ -1439,7 +1448,9 @@ impl RuntimeCacheState {
             cant_update_deferral: Cell::new(None),
             derived_tap_read_depth: Cell::new(0),
             derived_state_read_tapped: Cell::new(false),
+            derived_state_read_mana: Cell::new(false),
             derived_tap_reads_before_dirty: Cell::new(false),
+            derived_mana_reads_before_dirty: Cell::new(false),
             continuous_state_active_player: Cell::new(active_player),
             continuous_state_phase: Cell::new(Phase::Beginning),
             continuous_state_step: Cell::new(Some(Step::Untap)),
@@ -5479,7 +5490,8 @@ impl GameState {
 
     /// Marks the start of a derivation whose result may be retained across a
     /// tap (see `derived_state_read_tapped`). Reads of tapped state are
-    /// recorded until the returned scope drops.
+    /// recorded until the returned scope drops. The scope also tracks reads
+    /// through `player_mana_pool`, for mana-only invalidation.
     pub(crate) fn derived_tap_read_scope(&self) -> DerivedTapReadScope<'_> {
         let depth = &self.runtime_cache.derived_tap_read_depth;
         depth.set(depth.get().saturating_add(1));
@@ -5500,11 +5512,6 @@ impl GameState {
 
     pub(crate) fn note_tapped_state_read(&self) {
         if self.runtime_cache.derived_tap_read_depth.get() > 0 {
-            if !self.runtime_cache.derived_state_read_tapped.get()
-                && std::env::var_os("TAP_READ_TRACE").is_some()
-            {
-                eprintln!("TAPREAD {}", std::backtrace::Backtrace::force_capture());
-            }
             self.runtime_cache.derived_state_read_tapped.set(true);
         }
     }
@@ -5513,6 +5520,16 @@ impl GameState {
     /// tapped state, so a tap or untap must invalidate it.
     pub(crate) fn derived_state_read_tapped(&self) -> bool {
         self.runtime_cache.derived_state_read_tapped.get()
+    }
+
+    /// Read the live pool from a rules expression. Cached derivations must
+    /// use this instead of reading `Player::mana_pool` directly. Pool writes
+    /// and the uncached scalar-domain validation deliberately bypass it.
+    pub(crate) fn player_mana_pool(&self, player: PlayerId) -> Option<&crate::player::ManaPool> {
+        if self.runtime_cache.derived_tap_read_depth.get() > 0 {
+            self.runtime_cache.derived_state_read_mana.set(true);
+        }
+        self.player(player).map(|player| &player.mana_pool)
     }
 
     pub(crate) fn mark_continuous_state_dirty(&self) {
@@ -5536,6 +5553,8 @@ impl GameState {
         if self.runtime_cache.derived_tap_read_depth.get() == 0 {
             let before = &self.runtime_cache.derived_tap_reads_before_dirty;
             before.set(before.get() | self.runtime_cache.derived_state_read_tapped.replace(false));
+            let before = &self.runtime_cache.derived_mana_reads_before_dirty;
+            before.set(before.get() | self.runtime_cache.derived_state_read_mana.replace(false));
         }
         // A characteristic query can populate the cache while another refresh
         // is pending. Every later context mutation must invalidate that view.
@@ -5566,7 +5585,13 @@ impl GameState {
         }
     }
 
-    fn mark_object_characteristics_dirty(&mut self, id: ObjectId) {
+    /// A change to `id`'s battlefield state that no cached characteristic
+    /// derivation read (see `derived_tap_read_scope`). Snapshots and other
+    /// mutation-revision caches still observe it; calculated characteristics,
+    /// including the object's own, stay valid. Recomputing only this object
+    /// against its peers' cached values could even settle a mutual
+    /// ability-copy loop differently from a full recompute.
+    pub(crate) fn mark_object_state_changed_keeping_characteristics(&mut self, id: ObjectId) {
         self.object_store.changes.record(id);
         self.object_store.render_changes.record(id);
         let counter = &self
@@ -5574,10 +5599,22 @@ impl GameState {
             .work_counters
             .continuous_local_invalidations;
         counter.set(counter.get().saturating_add(1));
+        self.bump_mutation_revision();
+    }
+
+    /// A change to `id`'s state that a continuous effect may observe. There is
+    /// deliberately no per-object recompute: rederiving one object against its
+    /// peers' cached values is not equivalent to a full layer pass when
+    /// objects' characteristics depend on each other (a mutual ability-copy
+    /// loop, CR 613.8b), so every such change rebuilds the whole state.
+    fn mark_object_changed_and_continuous_state_dirty(&mut self, id: ObjectId) {
+        self.object_store.changes.record(id);
+        self.object_store.render_changes.record(id);
         let revision = self.bump_mutation_revision();
         self.runtime_cache
             .characteristics_cache
             .bump_object_revision(id, revision);
+        self.mark_continuous_state_dirty();
     }
 
     pub(crate) fn bump_mutation_revision(&mut self) -> u64 {
@@ -5770,6 +5807,7 @@ impl GameState {
         // Static effects were just regenerated and the characteristics cache
         // was cleared by the invalidation, so earlier reads are gone.
         self.runtime_cache.derived_tap_reads_before_dirty.set(false);
+        self.runtime_cache.derived_mana_reads_before_dirty.set(false);
         self.runtime_cache
             .continuous_state_revision
             .set(self.effect_store.continuous_effects.revision());
@@ -6069,6 +6107,9 @@ impl GameState {
         // Nothing was rederived, so the retained state keeps its recorded reads.
         let before = self.runtime_cache.derived_tap_reads_before_dirty.replace(false);
         let read = &self.runtime_cache.derived_state_read_tapped;
+        read.set(read.get() | before);
+        let before = self.runtime_cache.derived_mana_reads_before_dirty.replace(false);
+        let read = &self.runtime_cache.derived_state_read_mana;
         read.set(read.get() | before);
         true
     }

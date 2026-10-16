@@ -207,7 +207,7 @@ impl GameState {
                 ),
             );
         }
-        match chars.spell_effect {
+        match Arc::unwrap_or_clone(chars.spell_effect) {
             crate::snapshot::SpellProgramState::Present(program) => Ok(program),
             crate::snapshot::SpellProgramState::Absent => Ok(Default::default()),
             crate::snapshot::SpellProgramState::Unavailable => Err(
@@ -4991,7 +4991,7 @@ impl GameState {
             numeric_range_error: None,
             numeric_choice_error: None,
             text_change_error: None,
-            spell_effect: crate::snapshot::SpellProgramState::Absent,
+            spell_effect: Arc::new(crate::snapshot::SpellProgramState::Absent),
             text_changes: Vec::new(),
             ability_gain_prohibitions: Vec::new(),
             aura_attach_filter: None,
@@ -5022,6 +5022,34 @@ impl GameState {
             self.commander_objects(),
             self,
         )
+    }
+
+    /// `calculated_characteristics_with_effects` for snapshot capture. When
+    /// `effects` is the clean state's own effect snapshot (the same
+    /// allocation), the characteristics cache holds exactly this result, so
+    /// a board-wide capture does not rerun the layer system per object.
+    pub(crate) fn calculated_characteristics_for_capture(
+        &self,
+        id: ObjectId,
+        effects: &[ContinuousEffect],
+    ) -> Option<crate::continuous::CalculatedCharacteristics> {
+        if self.continuous_state_is_clean()
+            && !self.is_phased_out(id)
+            && self
+                .runtime_cache
+                .effects_snapshot
+                .borrow()
+                .as_ref()
+                .is_some_and(|(revision, cached)| {
+                    *revision == self.effect_store.continuous_effects.revision()
+                        && std::ptr::eq(cached.as_slice(), effects)
+                })
+        {
+            return self
+                .calculated_characteristics_arc(id)
+                .map(|chars| chars.as_ref().clone());
+        }
+        self.calculated_characteristics_with_effects(id, effects)
     }
 
     pub(crate) fn calculated_characteristics_batch_with_effects(
@@ -5277,9 +5305,9 @@ impl GameState {
                     numeric_range_error: None,
                     numeric_choice_error: None,
                     text_change_error: None,
-                    spell_effect: crate::snapshot::SpellProgramState::from_option(
+                    spell_effect: Arc::new(crate::snapshot::SpellProgramState::from_option(
                         object.spell_effect_owned(),
-                    ),
+                    )),
                     text_changes: Vec::new(),
                     ability_gain_prohibitions: Vec::new(),
                     aura_attach_filter: object.aura_attach_filter_owned(),

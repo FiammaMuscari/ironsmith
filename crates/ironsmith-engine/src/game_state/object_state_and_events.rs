@@ -80,6 +80,7 @@ impl GameState {
     pub fn mark_damage(&mut self, id: ObjectId, amount: u32) {
         if amount > 0 {
             self.object_store.changes.record(id);
+            self.object_store.render_changes.record(id);
             *self
                 .battlefield_flags_mut()
                 .damage_marked
@@ -91,6 +92,7 @@ impl GameState {
     /// Set the exact damage marked on an object.
     pub fn set_damage_marked(&mut self, id: ObjectId, amount: u32) {
         self.object_store.changes.record(id);
+        self.object_store.render_changes.record(id);
         if amount == 0 {
             self.battlefield_flags_mut().damage_marked.remove(&id);
         } else {
@@ -230,6 +232,7 @@ impl GameState {
     /// Clear damage from an object.
     pub fn clear_damage(&mut self, id: ObjectId) {
         self.object_store.changes.record(id);
+        self.object_store.render_changes.record(id);
         self.battlefield_flags_mut().damage_marked.remove(&id);
     }
 
@@ -322,6 +325,7 @@ impl GameState {
 
         for id in self.battlefield_flags.damage_marked.keys().copied() {
             self.object_store.changes.record(id);
+            self.object_store.render_changes.record(id);
         }
         let BattlefieldFlags {
             damage_marked,
@@ -375,14 +379,14 @@ impl GameState {
             return;
         }
         if self.battlefield_flags_mut().dealt_damage_since_entered.insert(id) {
-            self.mark_source_designation_changed(id, Self::condition_reads_damage_dealt_state);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
     /// Mark a creature as monstrous.
     pub fn set_monstrous(&mut self, id: ObjectId) {
         if self.battlefield_flags_mut().monstrous.insert(id) {
-            self.mark_source_designation_changed(id, Self::condition_reads_monstrous_state);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
@@ -419,7 +423,7 @@ impl GameState {
                 != Some(count)
         };
         if changed {
-            self.mark_source_designation_changed(id, Self::condition_reads_devoured_count);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
@@ -496,7 +500,7 @@ impl GameState {
                 .until(crate::effect::Until::ThisLeavesTheBattlefield);
                 self.effect_store.continuous_effects.add_effect(effect);
             }
-            self.mark_source_designation_changed(id, Self::condition_reads_suspected_state);
+            self.mark_object_changed_and_continuous_state_dirty(id);
             return true;
         }
         false
@@ -513,7 +517,7 @@ impl GameState {
         }
         let removed = self.battlefield_flags_mut().suspected.remove(&id);
         if removed {
-            self.mark_source_designation_changed(id, Self::condition_reads_suspected_state);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
         removed
     }
@@ -548,7 +552,7 @@ impl GameState {
                 .prepared_spell_sources
                 .insert(copy_id, id);
         }
-        self.mark_object_characteristics_dirty(id);
+        self.mark_object_changed_and_continuous_state_dirty(id);
         true
     }
 
@@ -574,7 +578,7 @@ impl GameState {
         {
             self.remove_object(copy_id);
         }
-        self.mark_object_characteristics_dirty(id);
+        self.mark_object_changed_and_continuous_state_dirty(id);
         true
     }
 
@@ -602,7 +606,7 @@ impl GameState {
         };
         self.battlefield_flags_mut().prepared.remove(&source);
         self.unlink_prepared_spell_copy(source);
-        self.mark_object_characteristics_dirty(source);
+        self.mark_object_changed_and_continuous_state_dirty(source);
     }
 
     fn unlink_prepared_spell_copy(&mut self, id: ObjectId) -> Option<ObjectId> {
@@ -660,7 +664,7 @@ impl GameState {
         } else {
             self.battlefield_flags_mut().class_levels.insert(id, level);
         }
-        self.mark_source_designation_changed(id, Self::condition_reads_class_level);
+        self.mark_object_changed_and_continuous_state_dirty(id);
         true
     }
 
@@ -668,7 +672,7 @@ impl GameState {
     pub fn solve_case(&mut self, id: ObjectId) -> bool {
         let changed = self.battlefield_flags_mut().solved_cases.insert(id);
         if changed {
-            self.mark_source_designation_changed(id, Self::condition_reads_case_solved);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
         changed
     }
@@ -687,7 +691,7 @@ impl GameState {
             .saddled_until_end_of_turn
             .insert(id)
         {
-            self.mark_source_designation_changed(id, Self::condition_reads_saddled_state);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
@@ -882,7 +886,7 @@ impl GameState {
     /// Mark a face-down permanent as manifested.
     pub fn set_manifested(&mut self, id: ObjectId) {
         if self.battlefield_flags_mut().manifested.insert(id) {
-            self.mark_object_characteristics_dirty(id);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
@@ -890,7 +894,7 @@ impl GameState {
     /// characteristics cannot reconstruct this provenance.
     pub fn set_cloaked(&mut self, id: ObjectId) {
         if self.battlefield_flags_mut().cloaked.insert(id) {
-            self.mark_object_characteristics_dirty(id);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
     }
 
@@ -1137,7 +1141,7 @@ impl GameState {
         if face_down_changed {
             self.mark_face_down_state_changed(id);
         } else if origin_changed {
-            self.mark_object_characteristics_dirty(id);
+            self.mark_object_changed_and_continuous_state_dirty(id);
         }
         face_down_changed
     }
@@ -2304,7 +2308,7 @@ impl GameState {
             self.unlink_prepared_spell_copy(source);
             if self.battlefield_flags.prepared.contains(&source) {
                 self.battlefield_flags_mut().prepared.remove(&source);
-                self.mark_object_characteristics_dirty(source);
+                self.mark_object_changed_and_continuous_state_dirty(source);
             }
         }
         {
@@ -3551,7 +3555,7 @@ impl GameState {
             }
         };
         if face_status_changed {
-            self.mark_object_characteristics_dirty(target_id);
+            self.mark_object_changed_and_continuous_state_dirty(target_id);
         }
         self.effect_store
             .continuous_effects
