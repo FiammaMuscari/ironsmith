@@ -1107,7 +1107,9 @@ pub(super) fn compile_cant_action(
             Some(player @ (PlayerFilter::Target(_) | PlayerFilter::AliasedTarget(_))) => {
                 player.clone()
             }
-            None if !filter.tagged_constraints.is_empty() => match ctx.last_player_filter.as_ref() {
+            // A global set ("creatures") also uses an explicitly declared
+            // step-owner target; it need not be controlled by that player.
+            None => match ctx.last_player_filter.as_ref() {
                 Some(player @ (PlayerFilter::Target(_) | PlayerFilter::AliasedTarget(_))) => {
                     player.clone()
                 }
@@ -2814,6 +2816,7 @@ pub(super) fn compile_subject_verb_middle(
             zones,
             tag,
             source_tags,
+            filter_source_snapshots,
         } => {
             let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             // Reference resolution can relocate the pool (a looked-at hand
@@ -2830,12 +2833,12 @@ pub(super) fn compile_subject_verb_middle(
             if !source_tags.is_empty() {
                 effect = effect.from_tagged_sources(
                     source_tags
-                        .clone()
-                        .into_iter()
-                        .map(ironsmith_compiler_semantic::TagKey::from)
-                        .collect::<Vec<_>>(),
+                        .iter()
+                        .map(|source| resolve_it_tag_key(&source.key, &current_reference_env(ctx)))
+                        .collect::<Result<Vec<_>, _>>()?,
                 );
             }
+            effect.filter_source_snapshots = *filter_source_snapshots;
             ctx.last_object_tag = Some(tag.clone().into());
             Ok((vec![Effect::new(effect)], Vec::new()))
         }
@@ -3240,13 +3243,14 @@ pub(super) fn compile_subject_verb_middle(
             )
         }),
         SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesAll {
+            mode,
             filter,
             abilities,
             duration,
             condition,
             set_quantifier_surface,
         }) => {
-            let removals = lower_ability_removal_modifications(abilities)?;
+            let removals = lower_ability_removal_modifications(abilities, *mode)?;
             let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let mut choices = Vec::new();
             collect_targeted_player_specs_from_filter(&resolved_filter, &mut choices);
@@ -3350,6 +3354,7 @@ pub(super) fn compile_subject_verb_middle(
             ))
         }
         SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesFromTarget {
+            mode,
             target,
             abilities,
             duration,
@@ -3372,7 +3377,7 @@ pub(super) fn compile_subject_verb_middle(
                 })
                 .map(Some);
             }
-            let removals = lower_ability_removal_modifications(abilities)?;
+            let removals = lower_ability_removal_modifications(abilities, *mode)?;
             let Some((first_removal, other_removals)) = removals.split_first() else {
                 return compile_tagged_effect_for_target(target, ctx, "granted", |spec| {
                     Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
@@ -4460,6 +4465,7 @@ fn token_abilities_are_same_printed_ability(
 /// every static ability with that identity.
 fn lower_ability_removal_modifications(
     abilities: &[GrantedAbilityAst],
+    mode: ironsmith_core::AbilityLossMode,
 ) -> Result<Vec<crate::continuous::Modification>, CardTextError> {
     let (families, concrete): (Vec<_>, Vec<_>) = abilities
         .iter()
@@ -4476,7 +4482,11 @@ fn lower_ability_removal_modifications(
             crate::ability::AbilityKind::Static(static_ability)
                 if static_ability.id() == crate::static_abilities::StaticAbilityId::Changeling
         );
-        removals.push(crate::continuous::Modification::RemoveAbility(ability));
+        removals.push(if mode == ironsmith_core::AbilityLossMode::Lose {
+            crate::continuous::Modification::RemoveAbility(ability)
+        } else {
+            crate::continuous::Modification::RemoveAbilityWithMode { ability, mode }
+        });
         if loses_all_creature_types {
             removals.push(crate::continuous::Modification::RemoveAllSubtypesOfFamily(
                 crate::types::SubtypeFamily::Creature,

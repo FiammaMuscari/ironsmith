@@ -1589,7 +1589,7 @@ if filter.zone == Some(Zone::Hand)
             Zone::Library => ("in a library", "library"),
             Zone::Stack => ("on the stack", "stack"),
             Zone::Exile => ("in exile", "exile"),
-            Zone::Command => ("in the command zone", "command"),
+            Zone::Command => ("in the command zone", "command zone"),
             Zone::Ante => ("in ante", "ante"),
             Zone::OutsideGame => ("outside the game", "outside"),
         };
@@ -1599,6 +1599,7 @@ if filter.zone == Some(Zone::Hand)
         // creature", not "... on the battlefield").
         let controlled_battlefield_choice = choose_primary_zone(choose) == Some(Zone::Battlefield)
             && choose.filter.zone.or(choose.zone) == Some(Zone::Battlefield)
+            && choose.additional_zones.is_empty()
             && !choose.count.random;
         let suppress_location_suffix =
             revealed_keyword_choice_label(choose).is_some() || controlled_battlefield_choice;
@@ -1753,6 +1754,9 @@ if filter.zone == Some(Zone::Hand)
     if let Some(choose_card_type) = effect.downcast_ref::<crate::effects::ChooseCardTypeEffect>() {
         let chooser = describe_player_filter(&choose_card_type.chooser);
         let choose_verb = player_verb(&chooser, "choose", "chooses");
+        if let Some((filter, count)) = &choose_card_type.shared_among {
+            return format!("{chooser} {choose_verb} a card type shared among {count} {}", filter.description());
+        }
         let permanent_type_options = [
             crate::types::CardType::Artifact,
             crate::types::CardType::Creature,

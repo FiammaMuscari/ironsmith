@@ -1320,6 +1320,9 @@ pub enum TaggedOpbjectRelation {
     /// The candidate could produce at least one type of mana that the tagged
     /// object could produce (Mana Web).
     SharesProducibleManaTypeWithTagged,
+    /// Positive damage from this exact object incarnation to the remembered
+    /// recipient during the current turn, even if that recipient has left.
+    DealtDamageToTaggedThisTurn { combat_only: bool },
 }
 
 /// A characteristic that can be compared between a candidate object and a
@@ -2234,6 +2237,13 @@ pub struct ObjectFilter {
     /// using its current characteristics rather than its saved snapshot.
     #[cfg_attr(feature = "serde", serde(default))]
     pub match_current_state: bool,
+    /// A card-quality predicate reads the face underneath a face-down overlay.
+    /// Revealing a permanent does not itself turn that permanent face up.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub use_face_up_characteristics: bool,
+    /// Require the current permanent to have the renowned designation.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub renowned: bool,
     pub controller: Option<PlayerFilter>,
     pub cast_by: Option<PlayerFilter>,
     /// A stack spell must not have been cast from this zone.
@@ -4466,6 +4476,9 @@ impl ObjectFilter {
 
         let mut parts = Vec::new();
         let mut post_noun_qualifiers: Vec<String> = Vec::new();
+        if self.renowned {
+            parts.push("renowned".to_string());
+        }
         let append_token_after_type = self.token;
         let mut controller_suffix: Option<String> = None;
         let mut owner_suffix: Option<String> = None;
@@ -5250,6 +5263,11 @@ impl ObjectFilter {
                 }
                 TaggedOpbjectRelation::WasAttachedToTaggedObject => {
                     post_noun_qualifiers.push("that was attached to it".to_string());
+                }
+                TaggedOpbjectRelation::DealtDamageToTaggedThisTurn { combat_only } => {
+                    post_noun_qualifiers.push(if combat_only {
+                        "that dealt combat damage to it this turn"
+                    } else { "that dealt damage to it this turn" }.to_string());
                 }
                 TaggedOpbjectRelation::SoulbondPartnerOfTagged => {
                     post_noun_qualifiers.push("paired with it".to_string());

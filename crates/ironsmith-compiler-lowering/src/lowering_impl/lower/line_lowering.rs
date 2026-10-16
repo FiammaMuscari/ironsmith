@@ -350,7 +350,7 @@ fn is_conditional_spell_counter_and_damage_prevention_group(
         &crate::static_abilities::StaticAbility,
         &crate::ConditionExpr,
     )> {
-        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } =
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } =
             &ability.payload
         else {
             return None;
@@ -451,6 +451,7 @@ fn materialize_ability(
     semantic_facts: &LineSemanticFacts,
 ) -> Result<CardDefinitionBuilder, CardTextError> {
     let mut ability = lower_prepared_ability(ability)?;
+    super::finalization_support::preserve_triggered_source_zone_alternatives(&mut ability);
     preserve_ability_self_replacement_surface(&mut ability, &semantic_facts.statement);
     preserve_triggered_leading_unless_surface(
         &mut ability,
@@ -486,6 +487,7 @@ fn materialize_triggered(
         parsed,
         prepared: Some(NormalizedPreparedAbility::Triggered { trigger, prepared }),
     })?;
+    super::finalization_support::preserve_triggered_source_zone_alternatives(&mut parsed);
     preserve_ability_self_replacement_surface(&mut parsed, &semantic_facts.statement);
     preserve_triggered_leading_unless_surface(
         &mut parsed,
@@ -542,6 +544,9 @@ fn trigger_frequency_condition(
     maximum: Option<u32>,
     facts: &crate::model::facts::TriggerFrequencyFacts,
 ) -> Option<PredicateAst> {
+    if let Some(limit) = facts.max_triggers_per_object {
+        return Some(PredicateAst::TriggerFrequency(TriggerFrequencyPredicateAst::MaxTriggersPerObject(limit)));
+    }
     maximum.map(|limit| {
         PredicateAst::TriggerFrequency(
             if limit == 1 && facts.first_time_each_or_this_turn && facts.becomes_crewed {

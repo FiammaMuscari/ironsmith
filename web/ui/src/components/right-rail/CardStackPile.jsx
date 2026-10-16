@@ -1,3 +1,4 @@
+import { stackSpellFrameColors } from '@/lib/stack-frame-preview.js';
 import useUiText from "@/i18n/useUiText";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -219,7 +220,7 @@ function isLandscapeCard(card) {
 
 function frameCardForEntry(entry, source) {
   const base = {
-    ...(source || {}),
+    ...(stackSpellFrameColors(entry, source) || {}),
     source_kind: entry.source_kind,
     name: entry.name || source?.name || "",
   };
@@ -471,7 +472,7 @@ function CardStackPileEntry({
   );
 }
 
-// The compact appearance's stack: the entries as a literal pile of rendered
+// The desktop layouts’ stack: the entries as a literal pile of rendered
 // cards, newest in front, each glowing with its owner's color. One entry is
 // "viewed" -- the top one unless a click or the chevrons picked another -- and
 // the pager under the pile shows where it sits.

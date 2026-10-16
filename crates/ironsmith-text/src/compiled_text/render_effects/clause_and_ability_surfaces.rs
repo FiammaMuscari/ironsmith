@@ -10083,7 +10083,7 @@ pub(crate) fn describe_static_ability_with_subject(
             ironsmith_core::StaticAbilityPayload::LoyaltyAbilitiesAnyTime { filter } => {
                 return describe_loyalty_timing_permission(filter, subject);
             }
-            ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } => {
+            ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } => {
                 let inner = crate::static_abilities::StaticAbility::from_model((**ability).clone());
                 // A gated activation-cost modifier reads as a trailing "if"
                 // ("This ability costs {3} less to activate if you attacked
@@ -10351,7 +10351,7 @@ pub(crate) fn describe_static_ability_with_subject(
         }
         return text;
     }
-    if let Some(ironsmith_core::StaticAbilityPayload::Conditional { ability, condition }) =
+    if let Some(ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. }) =
         static_ability.compiled_model().map(|model| &model.payload)
         && let ironsmith_core::StaticAbilityPayload::DoubleDamageAmountReplacement {
             source_filter,
@@ -16784,7 +16784,10 @@ pub(super) fn describe_triggered_inline_ability(
     }
 
     match trigger_frequency {
-        Some(TriggerFrequencySurface::AbilityMaxTimesEachTurn(max)) => {
+        Some(TriggerFrequencySurface::AbilityMaxTriggersPerObject(max)) => {
+                    line.push_str(&if max == 1 { ". This ability triggers only once".to_string() } else { format!(". This ability triggers only {max} times") });
+                }
+                Some(TriggerFrequencySurface::AbilityMaxTimesEachTurn(max)) => {
             if max == 1 {
                 line.push_str(". This ability triggers only once each turn");
             } else if max == 2 {

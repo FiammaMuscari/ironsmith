@@ -806,21 +806,9 @@ impl DamageInstructionInputsExt for DealDamageEffect {
                         self.unpreventable,
                     ));
                 }
-                AttackEventTarget::Battle(object_id) => {
-                    if game.object(object_id).is_none()
-                        || !game.current_has_card_type(object_id, CardType::Battle)
-                    {
-                        return Ok(DamageInstructionPlan::Finished(
-                            EffectOutcome::target_invalid(),
-                        ));
-                    }
-                    return Ok(DamageInstructionPlan::single(
-                        ctx,
-                        DamageTarget::Object(object_id),
-                        amount,
-                        self.source_is_combat,
-                        self.unpreventable,
-                    ));
+                // This recipient explicitly includes only players and planeswalkers.
+                AttackEventTarget::Battle(_) => {
+                    return Ok(DamageInstructionPlan::Finished(EffectOutcome::target_invalid()));
                 }
                 // CR 506.4c: it isn't attacking anything.
                 AttackEventTarget::Nothing => {
@@ -907,6 +895,40 @@ impl DamageInstructionInputsExt for DealDamageEffect {
                 self.source_is_combat,
                 self.unpreventable,
             ));
+        }
+
+        if !self.target.is_target()
+            && self.target.count() == crate::effect::ChoiceCount::exactly(1)
+            && let ChooseSpec::ObjectOrPlayer(objects, players) = self.target.base()
+        {
+            // A mixed recipient named without "target" is chosen now. It must
+            // not default to the first permanent or announce a spell target.
+            let filter_ctx = ctx.filter_context(game);
+            let players = crate::effects::helpers::resolve_player_filter_to_list(
+                game, players, &filter_ctx, ctx,
+            )?;
+            let objects = crate::effects::helpers::resolve_objects_from_spec(
+                game, &ChooseSpec::All(objects.clone()), ctx,
+            )?;
+            let mut menu = players.into_iter().map(|player| (
+                DamageTarget::Player(player),
+                game.player(player).map(|player| player.name.clone()).unwrap_or_default(),
+            )).collect::<Vec<_>>();
+            menu.extend(objects.into_iter().filter(|id| object_can_be_dealt_damage(game, *id)).map(|id| (
+                DamageTarget::Object(id), game.object(id).unwrap().name.to_string(),
+            )));
+            if menu.is_empty() {
+                return Ok(DamageInstructionPlan::Finished(EffectOutcome::count(0)));
+            }
+            let chooser = ctx.controller;
+            let chosen = crate::effects::composition::scoped_choice::select_typed_option(
+                game, ctx, chooser, "Choose damage recipient", &menu,
+                crate::effects::composition::scoped_choice::SingleChoicePolicy::First,
+            )?;
+            return Ok(match chosen {
+                Some(chosen) => DamageInstructionPlan::single(ctx, chosen, amount, self.source_is_combat, self.unpreventable),
+                None => DamageInstructionPlan::Finished(EffectOutcome::count(0)),
+            });
         }
 
         if matches!(
@@ -1630,6 +1652,42 @@ mod tests {
     use crate::target::{ObjectFilter, PlayerFilter};
     use crate::types::CardType;
     use crate::zone::Zone;
+
+    #[test]
+    fn attack_event_damage_preserves_player_or_planeswalker_and_excludes_battle() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = create_creature(&mut game, "Damage source", 1, 1, alice, vec![]);
+        let walker_card = CardBuilder::new(CardId::new(), "Attacked planeswalker")
+            .card_types(vec![CardType::Planeswalker]).build();
+        let walker = game.create_object_from_card(&walker_card, bob, Zone::Battlefield);
+        let battle_card = CardBuilder::new(CardId::new(), "Attacked battle")
+            .card_types(vec![CardType::Battle]).build();
+        let battle = game.create_object_from_card(&battle_card, bob, Zone::Battlefield);
+        for (attacked, expected) in [
+            (AttackEventTarget::Player(bob), Some(DamageTarget::Player(bob))),
+            (AttackEventTarget::Planeswalker(walker), Some(DamageTarget::Object(walker))),
+            (AttackEventTarget::Battle(battle), None),
+            (AttackEventTarget::Nothing, None),
+        ] {
+            let event = crate::triggers::TriggerEvent::new_with_provenance(
+                CreatureAttackedEvent::new(source, attacked), crate::provenance::ProvNodeId::default());
+            let mut ctx = ExecutionContext::new_default(source, alice).with_triggering_event(event);
+            let effect = DealDamageEffect::new(1, ChooseSpec::AttackedPlayerOrPlaneswalker);
+            let plan = effect.resolve_damage_inputs(&mut game, &mut ctx).unwrap();
+            match (plan, expected) {
+                (DamageInstructionPlan::Assignments { events, .. }, Some(target)) => {
+                    assert_eq!(events.len(), 1);
+                    assert_eq!(events[0].target, target);
+                    assert_eq!(events[0].amount, 1);
+                    assert!(!events[0].is_combat);
+                }
+                (DamageInstructionPlan::Finished(_), None) => {}
+                _ => panic!("attack-event recipient did not match the explicit union"),
+            }
+        }
+    }
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()

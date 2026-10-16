@@ -21,6 +21,7 @@ import { getPlayerAccent } from "@/lib/player-colors";
 import {
   customCardCounterOverrides,
   fetchScryfallCardMeta,
+  fetchCardFaceSource,
   isCompiledCardName,
 } from "@/lib/scryfall";
 import { useScryfallImage } from "@/hooks/useScryfallImageUrl";
@@ -699,7 +700,34 @@ export default function GameCard({
     ? requestedGlowKind
     : targetingMode ? (isLegalTarget ? "target-legal" : null) : requestedGlowKind;
   const showActionBorder = (hasAvailableAction || glowKind === "action-link") && !targetingMode;
-  const name = card.name || "";
+  const [handFace, setHandFace] = useState(null);
+  useEffect(() => {
+    if (variant !== "hand") return undefined;
+    let request = 0;
+    const onActionHover = async ({detail}) => {
+      if (String(detail?.objectId) !== String(card.id)) return;
+      const action = detail?.action;
+      if (!["cast_spell", "play_land"].includes(action?.kind)) return;
+      const current = ++request;
+      const label = String(action.label || "").replace(/^(Cast|Play)\s+/i, "");
+      const matchesName = name => label === name || label.startsWith(`${name} (`) || label.startsWith(`${name} with `);
+      if (!action.action_ref?.back_face && matchesName(card.name)) {
+        setHandFace(null);
+        return;
+      }
+      const source = card.card_faces?.length ? card : await fetchCardFaceSource(card.name).catch(() => null);
+      if (current !== request || !source?.card_faces?.length || source.layout === "split") return;
+      const face = action.action_ref?.back_face
+        ? source.card_faces[1]
+        : source.card_faces.find(face => matchesName(face.name));
+      if (face) setHandFace({id:card.id, sourceName:card.name, face});
+    };
+    window.addEventListener("ironsmith:hand-action-hover", onActionHover);
+    return () => { request++; window.removeEventListener("ironsmith:hand-action-hover", onActionHover); };
+  }, [card, variant]);
+  const shownHandFace = variant === "hand" && handFace?.id === card.id && handFace.sourceName === card.name ? handFace.face : null;
+  const presentationCard = shownHandFace ? {...shownHandFace, id:card.id} : card;
+  const name = presentationCard.name || "";
   // English name stays the lookup key everywhere (art, mana parsing, DOM
   // attributes); only user-facing labels use the localized name.
   const displayName = useTranslatedCardName(name, card.oracle_id || card.oracleId || null);
@@ -710,21 +738,17 @@ export default function GameCard({
   const artVersion = variant === "hand" || usePortraitBattlefield ? "normal" : "art_crop";
   const { url: resolvedArtUrl, ready: artResolved } = useScryfallImage(sourceImageUrl ? "" : name, artVersion);
   const artUrl = sourceImageUrl || resolvedArtUrl;
-  // A card compiled in the forge may carry an existing card's name, and both
-  // the hand and the portrait battlefield show that printing's scan whole.
-  // Its printed text is the template's, not this card's, so the live frame is
-  // drawn over it instead -- with no art to borrow, the frame draws itself,
-  // which is also why a compiled card does not wait for a prepared frame.
+  // Render hand text and frames locally; only custom supplied prints retain
+  // their complete image. The selected printing still supplies art/metadata.
   const compiledCustomCard = isCompiledCardName(name);
   const hasCustomPrint = compiledCustomCard && Boolean(customCardAssets(name));
+  const useHandFrame = variant === "hand" && !hasCustomPrint;
   const imageLoading = variant === "hand" ? "eager" : "lazy";
   const imageFetchPriority = variant === "hand" ? "high" : "auto";
   const [repairedHandArt, setRepairedHandArt] = useState(null);
   const displayedArtUrl = variant === "hand" && repairedHandArt?.source === artUrl
     ? repairedHandArt.url || artUrl
     : artUrl;
-  const showHandLoadingFrame = variant === "hand" && (isHovered || isCastTargetHovered || isInspected)
-    && (!artUrl || repairedHandArt?.source !== artUrl);
   const useArenaBattlefield = compactArtwork;
   const useTokenBattlefield = useArenaBattlefield;
   const count = Number(card.count);
@@ -1486,8 +1510,8 @@ export default function GameCard({
       {variant !== "stack" && <span className="card-inspector-source-glow" aria-hidden="true" />}
       {pseudoHandOwnerAccent && <span className="card-pseudo-hand-owner-glow" aria-hidden="true" />}
       <div className="game-card-surface">
-        {(usePortraitBattlefield || (variant === "hand" && compiledCustomCard && !hasCustomPrint) || (showHandLoadingFrame && !hasCustomPrint)) && (
-          <MiniatureCardFrame card={card} imageUrl={artUrl} />
+        {(usePortraitBattlefield || useHandFrame) && (
+          <MiniatureCardFrame card={presentationCard} imageUrl={artUrl} />
         )}
         {(showActionBorder || isLegalTarget) && !useTokenBattlefield && (
           <span className="card-action-border" aria-hidden="true" />
@@ -1495,7 +1519,7 @@ export default function GameCard({
         {chosenObjectId != null && (
           <SelectionCheckBadge objectId={chosenObjectId} />
         )}
-        {(variant !== "battlefield" || !useTokenBattlefield) && (
+        {!useHandFrame && (variant !== "battlefield" || !useTokenBattlefield) && (
           <LoadingCardArt
             sourceKey={artUrl}
             colors={cardArtColors(resolvedBattlefieldCard)}

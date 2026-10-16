@@ -1,3 +1,4 @@
+import { LOOK_DONE_EVENT, lookViewKey, temporaryLookView } from "@/lib/look-pile";
 import { useAutomaticHandReveal } from "@/hooks/useAutomaticHandReveal";
 import { buildOpponentDecisionCommand } from "@/lib/opponent-decision.js";
 import { selectGoldfishPlayer } from "@/lib/goldfish-player.js";
@@ -63,9 +64,11 @@ const TARGET_SUBMIT_CANCEL_DEBOUNCE_MS = 250;
 const AUDIT_REPLAY_GATE_WAIT_ATTEMPTS = 8;
 const UI_FONT_STORAGE_KEY = "ironsmith.uiFont";
 const AUTO_RESOLVE_STORAGE_KEY = "ironsmith.autoResolveEnabled";
-function readAutoResolveEnabled() {
-  try { return window.localStorage.getItem(AUTO_RESOLVE_STORAGE_KEY) === "true"; }
-  catch { return false; }
+function readAutoResolveMode() {
+  try {
+    const saved = window.localStorage.getItem(AUTO_RESOLVE_STORAGE_KEY);
+    return saved === "true" ? "regular" : ["regular", "safe", "all"].includes(saved) ? saved : "off";
+  } catch { return "off"; }
 }
 const PLAYER_ACCENTS_STORAGE_KEY = "ironsmith.playerAccentOverrides";
 
@@ -857,23 +860,33 @@ export function GameProvider({ children }) {
   const { state, setState, stateRef, subscribeState, isSnapshotRendered } = useGameSnapshot();
   const [status, setStatusRaw] = useState({ msg: "Loading WASM...", isError: false });
   const [autoPassEnabled, setAutoPassEnabled] = useState(true);
-  const [autoResolveEnabled, setAutoResolveEnabledRaw] = useState(readAutoResolveEnabled);
+  const [autoResolveMode, setAutoResolveModeRaw] = useState(readAutoResolveMode);
+  const autoResolveModeRef = useRef(autoResolveMode);
+  const autoResolveEnabled = autoResolveMode !== "off";
   const autoResolveEnabledRef = useRef(autoResolveEnabled);
   const [phasePassing, setPhasePassing] = useState(false);
   const [holdRule, setHoldRule] = useState("never");
   const [priorityStops] = useState(() => createPriorityStops({
-    postActionEnabled: autoResolveEnabled,
+    phaseStopsEnabled: autoResolveEnabled,
+    resolveMode: autoResolveMode,
     storage: typeof window === "undefined" ? null : window.localStorage,
   }));
-  const setAutoResolveEnabled = useCallback(value => {
-    const enabled = Boolean(typeof value === "function" ? value(autoResolveEnabledRef.current) : value);
+  const setAutoResolveMode = useCallback(value => {
+    const mode = typeof value === "function" ? value(autoResolveModeRef.current) : value;
+    const enabled = mode !== "off";
+    autoResolveModeRef.current = mode;
     autoResolveEnabledRef.current = enabled;
-    // Cancel a running/pending hold window synchronously so its deadline cannot
-    // submit a pass between the toggle click and the next React effect cleanup.
-    priorityStops.setPostActionEnabled(enabled);
-    setAutoResolveEnabledRaw(enabled);
-    try { window.localStorage.setItem(AUTO_RESOLVE_STORAGE_KEY, String(enabled)); } catch { /* Storage may be unavailable. */ }
-  }, [priorityStops]);
+    priorityStops.setResolveMode(mode);
+    if (mode === "safe" || mode === "all") priorityStops.resume(stateRef.current);
+    priorityStops.setPhaseStopsEnabled(enabled);
+    priorityStops.observe(stateRef.current);
+    setAutoResolveModeRaw(mode);
+    try { window.localStorage.setItem(AUTO_RESOLVE_STORAGE_KEY, mode); } catch { /* Storage may be unavailable. */ }
+  }, [priorityStops, stateRef]);
+  const setAutoResolveEnabled = useCallback(value => {
+    const enabled = typeof value === "function" ? value(autoResolveEnabledRef.current) : value;
+    setAutoResolveMode(enabled ? "regular" : "off");
+  }, [setAutoResolveMode]);
   const priorityStopsState = useSyncExternalStore(priorityStops.subscribe, priorityStops.getSnapshot);
   const cyclePriorityStop = useCallback(key => priorityStops.cycleStop(key, stateRef.current), [priorityStops, stateRef]);
   const holdPostActionPriority = useCallback(() => priorityStops.hold(stateRef.current), [priorityStops, stateRef]);
@@ -1966,7 +1979,7 @@ export function GameProvider({ children }) {
     const currentState = state;
     const forcedObjects = localForcedObjectSelectionCommand(currentState);
     if (!forcedObjects && (priorityStops.stopReason(currentState)
-      || (Number(currentState?.stack_size || 0) > 0 && !autoResolveEnabled))) return;
+      || Number(currentState?.stack_size || 0) > 0)) return;
     const result = forcedObjects ? { command: forcedObjects } : buildMultiplayerSmartAutoPass({
       autoPassEnabled,
       holdRule,
@@ -2431,6 +2444,8 @@ export function GameProvider({ children }) {
       }
       if (priorityStops.expire(window.id, current)) {
         void dispatch(priorityCommandForAction(pass), "Passed priority");
+      } else if (priorityStops.getSnapshot().window?.id === window.id) {
+        timer = setTimeout(passWhenReady, 25);
       }
     };
     timer = setTimeout(passWhenReady, Math.max(0, Math.ceil(window.startedAt + window.duration - performance.now())));
@@ -2445,6 +2460,19 @@ export function GameProvider({ children }) {
   // for still prompt; the run resumes after they are answered.
   const [resolveAllTick, setResolveAllTick] = useState(0);
   const resolveAllRef = useRef(null);
+  const completedLookRef = useRef("");
+  useEffect(() => {
+    const completeLook = () => {
+      completedLookRef.current = lookViewKey(temporaryLookView(stateRef.current), null);
+      setResolveAllTick(tick => tick + 1);
+    };
+    window.addEventListener(LOOK_DONE_EVENT, completeLook);
+    return () => window.removeEventListener(LOOK_DONE_EVENT, completeLook);
+  }, [stateRef]);
+  useEffect(() => {
+    const key = lookViewKey(temporaryLookView(state), null);
+    if (key !== completedLookRef.current) completedLookRef.current = "";
+  }, [state]);
   const stopResolveAll = useCallback(() => {
     resolveAllRef.current = null;
     setPhasePassing(false);
@@ -2527,7 +2555,7 @@ export function GameProvider({ children }) {
 
   useEffect(() => {
     const run = resolveAllRef.current;
-    if ((!run && !autoResolveEnabled) || run?.inFlight) return;
+    if (!run || run.inFlight) return;
     const stackSize = Number(state?.stack_size || 0);
     if (
       !state
@@ -2566,7 +2594,9 @@ export function GameProvider({ children }) {
       if (run?.phases || stopReason?.startsWith("stop at ")) pausePassing();
       return;
     }
-    if (run?.phases && state.viewed_cards && !state.viewed_cards.inspector_only && !state.viewed_cards.inspectorOnly) return;
+    const pendingLook = temporaryLookView(state);
+    if (run?.phases && pendingLook && !pendingLook.acknowledged
+      && lookViewKey(pendingLook, null) !== completedLookRef.current) return;
     const passAction = findPassPriorityAction(decision);
     if (!passCombat && (!passAction || (passAction.label && passAction.label !== "Pass priority"))) {
       stopResolveAll();
@@ -2576,7 +2606,6 @@ export function GameProvider({ children }) {
     // the current snapshot to paint. Otherwise dispatch drops it and the
     // same-state guard prevents the stack from draining any further.
     const timer = setTimeout(() => {
-      if (!run && !autoResolveEnabledRef.current) return;
       if (stateRef.current !== state) {
         setResolveAllTick((tick) => tick + 1);
         return;
@@ -3243,6 +3272,8 @@ export function GameProvider({ children }) {
       setAutoPassEnabled,
       autoResolveEnabled,
       setAutoResolveEnabled,
+      autoResolveMode,
+      setAutoResolveMode,
       holdRule,
       setHoldRule,
       priorityStops: priorityStopsState.stops,
@@ -3312,7 +3343,7 @@ export function GameProvider({ children }) {
       status,
       setStatus,
       runWasmInteraction,
-      dispatch, dispatchInBackground, cancelBackgroundDispatch, cancelDecision, refresh, changeGoldfishPlayer, autoPassEnabled, autoResolveEnabled, holdRule, uiFont,
+      dispatch, dispatchInBackground, cancelBackgroundDispatch, cancelDecision, refresh, changeGoldfishPlayer, autoPassEnabled, autoResolveEnabled, autoResolveMode, setAutoResolveMode, setAutoResolveEnabled, holdRule, uiFont,
       priorityStopsState, cyclePriorityStop, holdPostActionPriority,
       playerAccentOverrides, setPlayerAccentOverride, inspectorDebug, fixedStartingBoard,
       activeEffectOrderingState, moveEffectOrderingItem,

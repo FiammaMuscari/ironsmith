@@ -1,3 +1,4 @@
+import { localCardBuildSource, cardBuildDraft } from "./card-build-draft.js";
 import { customCardAssets, customCardImageUrl } from "./custom-card-assets.js";
 import { localizedPrintingFlavor } from './printing-flavor.js';
 import { printingForImageFace } from './card-printing-face.js';
@@ -1086,7 +1087,7 @@ export function resolveScryfallPrintingMetadata(imageUrl) {
 // Already fetched metadata, read synchronously (undefined when not fetched).
 export function peekScryfallPrintingMetadata(imageUrl) {
   const id = printingId(imageUrl);
-  return id && resolvedPrintingMetadata.has(id) ? printingForImageFace(resolvedPrintingMetadata.get(id), imageUrl) : undefined;
+  return !id ? null : resolvedPrintingMetadata.has(id) ? printingForImageFace(resolvedPrintingMetadata.get(id), imageUrl) : undefined;
 }
 
 
@@ -1134,4 +1135,15 @@ export function resolveScryfallLocalizedFlavorText(imageUrl, locale) {
   localizedFlavorRequests.set(key, request);
   if (localizedFlavorRequests.size > 96) localizedFlavorRequests.delete(localizedFlavorRequests.keys().next().value);
   return request;
+}
+
+// The local source block supplies characteristics omitted by its image metadata.
+export async function fetchCardFaceSource(cardName) {
+  const local = await fetchLocalCardPayload(cardName).catch(() => null);
+  const card = localCardBuildSource(local) || await fetchScryfallCardJson(cardName);
+  return card;
+}
+
+export async function fetchCardBuildDraft(cardName) {
+  return cardBuildDraft(await fetchCardFaceSource(cardName));
 }

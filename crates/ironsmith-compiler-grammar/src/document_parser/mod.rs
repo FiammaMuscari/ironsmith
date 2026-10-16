@@ -283,6 +283,11 @@ fn strip_trigger_frequency_suffix_tokens(
 fn strip_trailing_trigger_cap_suffix_tokens(
     tokens: &[OwnedLexToken],
 ) -> (&[OwnedLexToken], Option<u32>) {
+    if let Some(head) = grammar::strip_lexed_suffix_phrase(tokens, &["this", "ability", "triggers", "only", "once"]) {
+        // The complete authored line's semantic facts retain this lifetime cap.
+        // It must not be represented as a per-turn count.
+        return (head, None);
+    }
     let Some(shape) = document_grammar::parse_trailing_trigger_cap_suffix_tokens(tokens) else {
         return (tokens, None);
     };
@@ -4655,6 +4660,9 @@ fn try_push_complete_typed_static_line(
 /// gain; the quoted-gain fast path declines them all alike, whatever the
 /// order.
 const QUOTED_GAIN_DECLINES: &[fn(&PreprocessedLine) -> Result<bool, CardTextError>] = &[
+    // A land-type reset, ability removal, and quoted mana grant form one
+    // continuous rule, not a resolving ability-gain statement.
+    |line| Ok(crate::keyword_static::parse_filtered_land_reset_and_grant_line(&line.tokens)?.is_some()),
     // A trigger owns any quoted ability in its result. Do not probe that
     // quote as though the entire trigger were a static anthem.
     |line| Ok(line_starts_with_trigger_intro_tokens(&line.tokens)),
@@ -5817,6 +5825,7 @@ mod tests {
     #[test]
     fn quoted_gain_shortcut_does_not_claim_continuous_bundles() {
         for text in [
+            "Lands your opponents control with the chosen name lose all land types and abilities, and they gain \"{T}: Add one mana of any color.\"",
             "Enchanted creature gets +2/+2 and has \"Whenever this creature attacks, draw a card.\"",
             "During your turn, each non-Equipment artifact and non-Aura enchantment you control with mana value 3 or greater is a 5/5 Elemental creature in addition to its other types and has haste and \"Whenever this creature deals combat damage to a player, draw a card.\"",
         ] {

@@ -278,6 +278,9 @@ pub enum ExecutionFact {
     /// Exact cards disclosed by this reveal instruction. Empty is a completed
     /// empty reveal; absence is unavailable evidence.
     RevealedCards(Vec<OutcomeObjectMemory>),
+    /// Source snapshot, authored destination, and exact original arrival for
+    /// every moved object. Includes tokens and excludes replacement additions.
+    OriginalZoneMoveObjects(Vec<(OutcomeObjectMemory, crate::zone::Zone, OutcomeObjectMemory)>),
 }
 
 impl ExecutionFact {
@@ -1522,6 +1525,16 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::CastOrActivatePayments { player: filter, pay_life, sacrifice } => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker.cast_or_activate_payment_restrictions.push(crate::game_state::ScopedCastOrActivatePaymentRestriction {
+                            iterated_player, payer: player.id, controller, source, pay_life: *pay_life,
+                            sacrifice: sacrifice.clone(), tagged_objects: tagged_objects.clone(),
+                        });
+                    }
+                }
+            }
             Restriction::SearchLibraries(filter) => {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
@@ -1995,6 +2008,16 @@ impl RestrictionExt for Restriction {
                         && filter.matches(object, &ctx, game)
                     {
                         *tracker.must_block.entry(object.id).or_default() += 1;
+                    }
+                }
+            }
+            Restriction::MustBeBlockedBy { attacker, blockers } => {
+                let matching = game.battlefield.iter().copied().filter(|&id| {
+                    !game.is_phased_out(id) && game.object(id).is_some_and(|obj| blockers.matches(obj, &ctx, game))
+                }).collect::<std::collections::HashSet<_>>();
+                for &id in &game.battlefield {
+                    if !game.is_phased_out(id) && game.object(id).is_some_and(|obj| attacker.matches(obj, &ctx, game)) {
+                        tracker.must_be_blocked_by.entry(id).or_default().push(matching.clone());
                     }
                 }
             }

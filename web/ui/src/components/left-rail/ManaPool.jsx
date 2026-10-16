@@ -1,3 +1,5 @@
+import PlayerCounters from "./PlayerCounters";
+import { playerCounters } from "@/lib/player-counters";
 import useUiText from "@/i18n/useUiText";
 import { MANA_SYMBOLS } from "@/lib/constants";
 import { ManaSymbol } from "@/lib/mana-symbols";
@@ -5,13 +7,15 @@ import { cn } from "@/lib/utils";
 
 export default function ManaPool({
   pool,
+  player,
   alwaysVisible = false,
   compact = false,
+  activeScale = 1,
   className = "",
 }) {
   const ui = useUiText();
   const safePool = pool && typeof pool === "object" ? pool : {};
-  if (!alwaysVisible && safePool !== pool) return null;
+  if (!alwaysVisible && safePool !== pool && !playerCounters(player).length) return null;
 
   const chips = MANA_SYMBOLS.map(({ key, symbol, label }) => {
     const amount = Number(safePool[key]);
@@ -20,6 +24,7 @@ export default function ManaPool({
     return (
       <span
         key={key}
+        data-mana-active={safeAmount > 0 ? "true" : "false"}
         className={cn(
           "mana-pool-chip inline-flex items-center gap-0.5 bg-background/70 rounded-none px-1 py-px",
           safeAmount <= 0 && "mana-pool-chip--empty",
@@ -27,7 +32,7 @@ export default function ManaPool({
         )}
       >
         <span aria-label={ui("{0} {1} mana in pool", { 0: safeAmount, 1: ui(label) })} className="inline-flex items-center">
-          <ManaSymbol sym={symbol} size={compact ? 12 : 14} />
+          <ManaSymbol sym={symbol} size={(compact ? 12 : 14) * (safeAmount > 0 ? activeScale : 1)} />
         </span>
         <span className="min-w-[7px] text-center text-[11px] leading-none font-bold text-foreground">
           {safeAmount}
@@ -36,7 +41,7 @@ export default function ManaPool({
     );
   }).filter(Boolean);
 
-  if (!chips.length) return null;
+  if (!chips.length && !playerCounters(player).length) return null;
 
   return (
     <div
@@ -50,6 +55,7 @@ export default function ManaPool({
       title={ui("Mana pool by type")}
     >
       {chips}
+      <PlayerCounters player={player} />
     </div>
   );
 }

@@ -804,6 +804,7 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
                         .map(ObjectFilter::source_with_surface)
                         .unwrap_or_else(ObjectFilter::source);
                 return Ok(TriggerSpec::CounterRemovedFrom {
+                    source_controller: None,
                     filter,
                     counter_type,
                     last: false,
@@ -812,6 +813,26 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
                 });
             }
         }
+    }
+
+    // Active removal names the acting player as well as the changed object.
+    if crate::word_primitives::parse_sequence_prefix(&words, &["you", "remove", "the", "last"])
+        && let Some(counter_idx) = words.iter().position(|word| *word == "counter")
+        && counter_idx > 4
+        && words.get(counter_idx + 1) == Some(&"from")
+        && is_source_reference_words(&words[counter_idx + 2..])
+    {
+        let start = trigger_word_token_start(tokens, 4).ok_or_else(|| CardTextError::ParseError("missing counter descriptor".into()))?;
+        let end = trigger_word_token_start(tokens, counter_idx).ok_or_else(|| CardTextError::ParseError("missing counter noun".into()))?;
+        let source = trigger_word_token_start(tokens, counter_idx + 2).ok_or_else(|| CardTextError::ParseError("missing counter source".into()))?;
+        let counter_type = trigger_counter_type_from_descriptor(&tokens[start..end])
+            .ok_or_else(|| CardTextError::ParseError("unknown removed counter type".into()))?;
+        let filter = source_reference_surface_for_trigger_subject(&tokens[source..])
+            .map(ObjectFilter::source_with_surface).unwrap_or_else(ObjectFilter::source);
+        return Ok(TriggerSpec::CounterRemovedFrom {
+            filter, source_controller: Some(PlayerFilter::You),
+            counter_type: Some(counter_type), last: true, one_or_more: true, caused_by_source: false,
+        });
     }
 
     // "the last <type> counter is removed from this <source>" is a
@@ -845,6 +866,7 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
             .map(ObjectFilter::source_with_surface)
             .unwrap_or_else(ObjectFilter::source);
         return Ok(TriggerSpec::CounterRemovedFrom {
+                    source_controller: None,
             filter,
             counter_type: Some(counter_type),
             last: true,
@@ -885,6 +907,7 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
         .map(ObjectFilter::source_with_surface)
         .unwrap_or_else(ObjectFilter::source);
         Some(TriggerSpec::CounterRemovedFrom {
+                    source_controller: None,
             filter,
             counter_type: None,
             last: false,
@@ -3527,6 +3550,10 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
         return Ok(trigger);
     }
 
+    if let Some(trigger) = permanent_tap_state::parse_cost_qualified_tap_trigger(tokens)? {
+        return Ok(trigger);
+    }
+
     if let Some(trigger) = permanent_tap_state::parse_permanent_tap_state_trigger(tokens)? {
         return Ok(trigger);
     }
@@ -3808,6 +3835,21 @@ pub(super) fn parse_trigger_clause_lexed_unstacked(
             damaged_player_one_or_more: has_leading_one_or_more(&tokens[recipient]),
             during_turn: None,
         });
+    }
+
+    for (suffix, combat_only) in [
+        (&["is", "dealt", "excess", "damage"][..], false),
+        (&["is", "dealt", "excess", "combat", "damage"][..], true),
+        (&["are", "dealt", "excess", "damage"][..], false),
+        (&["are", "dealt", "excess", "combat", "damage"][..], true),
+    ] {
+        if let Some(subject) = words.strip_suffix(suffix) {
+            let token_end = trigger_word_token_start(tokens, subject.len()).unwrap_or(tokens.len());
+            if let Some(mut filter) = parse_trigger_subject_filter_lexed(&tokens[..token_end])? {
+                if has_leading_one_or_more(&tokens[..token_end]) { filter.set_union_one_or_more(true); }
+                return Ok(TriggerSpec::IsDealtExcessDamage { filter, combat_only });
+            }
+        }
     }
 
     if let Some(is_word_idx) = dealt_excess_noncombat_damage_subject_word_idx(&words) {

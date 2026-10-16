@@ -2546,6 +2546,7 @@ fn modeled_source_keyword_grant(
     if let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: granted,
         condition,
+        ..
     } = &model.payload
     {
         let keyword = crate::static_abilities::StaticAbility::from_model(granted.as_ref().clone());
@@ -3428,7 +3429,7 @@ fn modeled_conditioned_source_anthem(ability: &Ability) -> Option<(i32, i32, &Co
     }
     let model = static_ability.compiled_model()?;
     let (payload, outer_condition) = match &model.payload {
-        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } =>
+        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } =>
             (&ability.payload, Some(condition)),
         payload => (payload, None),
     };
@@ -3531,7 +3532,7 @@ fn describe_structural_starting_life_threshold_anthem(ability: &Ability) -> Opti
         ironsmith_core::StaticAbilityPayload::Anthem(anthem) => {
             (anthem, anthem.condition.as_ref()?)
         }
-        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } => {
+        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } => {
             let ironsmith_core::StaticAbilityPayload::Anthem(anthem) = &ability.payload else {
                 return None;
             };
@@ -4595,6 +4596,7 @@ fn modeled_direct_conditional_source_rule(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner,
         condition,
+        ..
     } = &model.payload
     else {
         return None;
@@ -4701,7 +4703,7 @@ fn describe_structural_source_state_conditioned_global_rule(
         return None;
     };
     let model = static_ability.compiled_model()?;
-    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } = &model.payload
+    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } = &model.payload
     else {
         return None;
     };
@@ -4740,7 +4742,7 @@ fn describe_structural_source_combat_presence_restriction(
         return None;
     };
     let model = static_ability.compiled_model()?;
-    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } = &model.payload
+    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } = &model.payload
     else {
         return None;
     };
@@ -4997,6 +4999,7 @@ fn modeled_source_counter_threshold_static_predicate<'a>(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner,
         condition,
+        ..
     } = &model.payload
     else {
         return None;
@@ -5293,6 +5296,7 @@ fn describe_structural_labeled_animation_grant_bundle(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: types_inner,
         condition,
+        ..
     } = &types_model.payload
     else {
         return None;
@@ -5307,6 +5311,7 @@ fn describe_structural_labeled_animation_grant_bundle(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: pt_inner,
         condition: pt_condition,
+        ..
     } = &pt_static.compiled_model()?.payload
     else {
         return None;
@@ -5327,6 +5332,7 @@ fn describe_structural_labeled_animation_grant_bundle(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: subtypes_inner,
         condition: subtypes_condition,
+        ..
     } = &subtypes_static.compiled_model()?.payload
     else {
         return None;
@@ -5483,6 +5489,7 @@ fn describe_structural_threshold_color_grant_bundle(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner_color,
         condition,
+        ..
     } = &color_model.payload
     else {
         return None;
@@ -5732,6 +5739,7 @@ fn describe_structural_threshold_source_modifier_bundle(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner_color,
         condition: color_condition,
+        ..
     } = &color_model.payload
     else {
         return None;
@@ -32241,7 +32249,7 @@ fn impending_helper_abilities(def: &CardDefinition) -> Option<(i32, Vec<usize>)>
                     continue;
                 };
                 match &model.payload {
-                    ironsmith_core::StaticAbilityPayload::Conditional { ability, condition }
+                    ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. }
                         if impending_paid(condition) =>
                     {
                         let ironsmith_core::StaticAbilityPayload::EntersWithCountersValue {
@@ -33525,6 +33533,7 @@ fn describe_structural_counter_removal_damage_prevention(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: prevention,
         condition,
+        ..
     } = &model.payload
     else {
         return None;
@@ -34150,9 +34159,14 @@ fn describe_condition_collection_choice_trigger(ability: &Ability) -> Option<Str
     else {
         return None;
     };
-    let [tag_effect, sequence_effect] = triggered.effects.flattened_default_effects() else {
+    let effects = triggered.effects.flattened_default_effects();
+    let (sequence_effect, captures) = effects.split_last()?;
+    if captures.is_empty() || !captures.iter().all(|effect| {
+        effect.downcast_ref::<crate::effects::TagTriggeringSourceEffect>()
+            .is_some_and(|tag| matches!(tag.tag.as_str(), "triggering" | "triggering_source"))
+    }) {
         return None;
-    };
+    }
     let sequence = sequence_effect.downcast_ref::<crate::effects::SequenceEffect>()?;
     if sequence.surface != ironsmith_core::SequenceSurface::Coordinated
         || sequence.result_label.is_some()
@@ -34174,7 +34188,6 @@ fn describe_condition_collection_choice_trigger(ability: &Ability) -> Option<Str
         return None;
     }
     let payload = [
-        tag_effect.clone(),
         choose_effect.clone(),
         gain_effect.clone(),
         untap_effect.clone(),
@@ -34742,7 +34755,7 @@ fn describe_structural_attached_zero_life_rule(ability: &Ability) -> Option<Stri
         return None;
     };
     let model = static_ability.compiled_model()?;
-    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } = &model.payload
+    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } = &model.payload
     else {
         return None;
     };
@@ -35250,7 +35263,7 @@ fn describe_structural_delirium_maximum_hand_size(ability: &Ability) -> Option<S
         )
     };
     let exact = match &model.payload {
-        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } => {
+        ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } => {
             exact_leaf(ability, 0)
                 && matches!(
                     condition,
@@ -35283,6 +35296,7 @@ fn describe_structural_conditional_additional_land_play(ability: &Ability) -> Op
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner,
         condition,
+        ..
     } = &model.payload
     else {
         return None;
@@ -36955,7 +36969,7 @@ fn describe_source_line_turn_partitioned_source_base_pt_group(
             return None;
         };
         let model = static_ability.compiled_model()?;
-        let ironsmith_core::StaticAbilityPayload::Conditional { ability: inner, condition } =
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability: inner, condition , ..} =
             &model.payload
         else {
             return None;
@@ -37006,7 +37020,7 @@ fn describe_source_line_attack_partitioned_characteristic_pt_group(
             return None;
         };
         let model = static_ability.compiled_model()?;
-        let ironsmith_core::StaticAbilityPayload::Conditional { ability: inner, condition } =
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability: inner, condition , ..} =
             &model.payload
         else {
             return None;
@@ -37648,6 +37662,7 @@ fn describe_source_line_conditional_type_addition_activated_grant_group(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: type_inner,
         condition,
+        ..
     } = &type_static.compiled_model()?.payload
     else {
         return None;
@@ -37959,6 +37974,78 @@ fn describe_source_line_conditional_animation_group(abilities: &[Ability], subje
         describe_condition(condition?)))
 }
 
+fn describe_complementary_entry_counter_group(abilities: &[Ability], subject: &str) -> Option<String> {
+    fn entry(ability: &Ability) -> Option<(CounterType, &Value, &Condition)> {
+        let AbilityKind::Static(ability) = &ability.kind else { return None; };
+        let ironsmith_core::StaticAbilityPayload::EntersWithCountersIfCondition {
+            counter, count, condition, added_abilities, ..
+        } = &ability.compiled_model()?.payload else { return None; };
+        if !added_abilities.is_empty() { return None; }
+        Some((*counter, count, condition))
+    }
+    let [ordinary, alternate] = abilities else { return None; };
+    let (counter, base, ordinary_condition) = entry(ordinary)?;
+    let (alternate_counter, replacement, condition) = entry(alternate)?;
+    let Condition::Not(negated) = ordinary_condition else { return None; };
+    if counter != alternate_counter || negated.as_ref() != condition || base == replacement { return None; }
+    let counter = describe_counter_type(counter);
+    let noun = |value: &Value| if matches!(value.unhinted(), Value::Fixed(1)) { "counter" } else { "counters" };
+    Some(format!("{subject} enters with {} {counter} {} on it. If {}, it enters with {} {counter} {} on it instead",
+        describe_value(base), noun(base), describe_condition(condition), describe_value(replacement), noun(replacement)))
+}
+
+#[cfg(test)]
+mod complementary_entry_counter_text_tests {
+    use super::*;
+
+    fn entry(count: i32, condition: Condition) -> Ability {
+        let model: crate::static_abilities::CompiledStaticAbility = ironsmith_core::StaticAbility {
+            id: Some(crate::static_abilities::StaticAbilityId::EnterWithCountersIfCondition),
+            label: String::new(),
+            payload: ironsmith_core::StaticAbilityPayload::EntersWithCountersIfCondition {
+                counter: CounterType::PlusOnePlusOne,
+                count: Value::Fixed(count),
+                condition,
+                display: String::new(),
+                added_abilities: Vec::new(),
+            },
+        };
+        Ability::static_ability(crate::static_abilities::StaticAbility::from_model(model))
+    }
+
+    #[test]
+    fn complementary_entry_counts_render_the_alternative_instead() {
+        let base = entry(6, Condition::Not(Box::new(Condition::ThisSpellEscaped)));
+        let alternate = entry(12, Condition::ThisSpellEscaped);
+        let text = describe_complementary_entry_counter_group(&[base.clone(), alternate], "This creature").unwrap();
+        assert!(text.contains("6 +1/+1 counters"), "{text}");
+        assert!(text.contains("this spell escaped"), "{text}");
+        assert!(text.contains("12 +1/+1 counters on it instead"), "{text}");
+        assert!(describe_complementary_entry_counter_group(
+            &[base, entry(12, Condition::ThisSpellWasKicked)], "This creature").is_none());
+    }
+}
+
+/// A complete generated basic-type family is one quantified rule. The
+/// provenance flag distinguishes it from five literally authored conditions,
+/// whose individual land-type words remain editable by text-changing effects.
+fn describe_implied_basic_type_landwalk_group(abilities: &[Ability], subject: &str) -> Option<String> {
+    let basic = [Subtype::Plains, Subtype::Island, Subtype::Swamp, Subtype::Mountain, Subtype::Forest];
+    if abilities.len() != basic.len() { return None; }
+    let mut seen = Vec::new();
+    for member in abilities {
+        if member.functional_zones.as_slice() != [Zone::Battlefield] { return None; }
+        let AbilityKind::Static(static_ability) = &member.kind else { return None; };
+        let model = static_ability.compiled_model()?;
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, implied_words: true } = &model.payload else { return None; };
+        let ironsmith_core::StaticAbilityPayload::Landwalk(ironsmith_core::LandwalkKind::Subtype { subtype, snow: false }) = &ability.payload else { return None; };
+        if !basic.contains(subtype) || seen.contains(subtype)
+            || *condition != Condition::YouControl(ObjectFilter::land().with_subtype(*subtype)) { return None; }
+        seen.push(*subtype);
+    }
+    Some(format!("For each basic land type among lands you control, {} has landwalk of that type", lowercase_first(subject)))
+}
+
 fn describe_source_line_static_group(
     abilities: &[Ability],
     member_count: usize,
@@ -37980,7 +38067,9 @@ fn describe_source_line_static_group(
     {
         return Some(text);
     }
-    describe_source_line_conditional_animation_group(members, subject)
+    describe_implied_basic_type_landwalk_group(members, subject)
+        .or_else(|| describe_complementary_entry_counter_group(members, subject))
+        .or_else(|| describe_source_line_conditional_animation_group(members, subject))
         .or_else(|| describe_source_line_attached_animation_group(members))
         .or_else(|| describe_source_line_attached_subtype_and_predicate_group(members))
         .or_else(|| describe_source_line_additive_type_loss_group(members))
@@ -38532,6 +38621,7 @@ fn describe_source_line_conditional_self_animation_group(
         let ironsmith_core::StaticAbilityPayload::Conditional {
             ability: inner,
             condition: member_condition,
+            ..
         } = &static_ability.compiled_model()?.payload
         else {
             return None;
@@ -38623,6 +38713,7 @@ fn describe_source_line_conditional_self_characteristics_group(
         let ironsmith_core::StaticAbilityPayload::Conditional {
             ability: inner,
             condition: member_condition,
+            ..
         } = &static_ability.compiled_model()?.payload
         else {
             return None;
@@ -38723,7 +38814,7 @@ fn describe_source_line_conditioned_player_object_hexproof_group(
     let AbilityKind::Static(player_static) = &player_ability.kind else {
         return None;
     };
-    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } =
+    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } =
         &player_static.compiled_model()?.payload
     else {
         return None;
@@ -38778,7 +38869,7 @@ fn describe_source_line_conditioned_prevention_and_keyword(
     let AbilityKind::Static(prevention) = &prevention.kind else {
         return None;
     };
-    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } =
+    let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } =
         &prevention.compiled_model()?.payload
     else {
         return None;
@@ -39303,6 +39394,7 @@ fn describe_source_line_conditioned_source_anthem_trait_group(
         let ironsmith_core::StaticAbilityPayload::Conditional {
             ability,
             condition: companion_condition,
+            ..
         } = &companion_static.compiled_model()?.payload
         else {
             return None;
@@ -39513,6 +39605,7 @@ fn describe_source_line_conditional_self_anthem_keyword_grant_group(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner_anthem,
         condition,
+        ..
     } = &anthem_static.compiled_model()?.payload
     else {
         return None;
@@ -40389,6 +40482,7 @@ fn unwrapped_static_model(
         ironsmith_core::StaticAbilityPayload::Conditional {
             ability: inner,
             condition,
+            ..
         } => Some((inner, Some(condition))),
         _ => Some((model, None)),
     }
@@ -42351,7 +42445,7 @@ fn describe_source_line_attached_keyword_otherwise_prevention_group(
     } else {
         let AbilityKind::Static(prevention) = &prevention_ability.kind else { return None; };
         let model = prevention.compiled_model()?;
-        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition } = &model.payload else { return None; };
+        let ironsmith_core::StaticAbilityPayload::Conditional { ability, condition, .. } = &model.payload else { return None; };
         let ironsmith_core::StaticAbilityPayload::PreventMatchingDamage(spec) = &ability.payload else { return None; };
         let source = ObjectFilter::creature().in_zone(Zone::Battlefield)
             .match_tagged("enchanted", crate::target::TaggedOpbjectRelation::IsTaggedObject);

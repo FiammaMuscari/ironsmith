@@ -9,6 +9,9 @@ pub(super) fn matches_subject(
     allow_calculated_pt: bool,
     view: Option<&crate::derived_view::DerivedGameView<'_>>,
 ) -> bool {
+    if filter.renowned && !game.is_renowned(subject.object_id()) {
+        return false;
+    }
     // Numeric comparisons can already bind an outer candidate. Preserve that
     // lexical binding; otherwise relative owner/controller predicates refer
     // to the object being matched, for live objects and snapshots alike.
@@ -644,7 +647,10 @@ pub(super) fn matches_subject(
             if !object_subtypes.contains(&chosen_type) {
                 return false;
             }
-        } else if let Some(chosen_type) = game.chosen_card_type(source) {
+        } else if let Some(chosen_type) = game.chosen_card_type(source).or_else(|| {
+            ctx.source_snapshot.as_ref().filter(|snapshot| snapshot.object_id == source)
+                .and_then(|snapshot| snapshot.chosen_card_type)
+        }) {
             if !object_card_types.contains(&chosen_type) {
                 return false;
             }
@@ -675,7 +681,10 @@ pub(super) fn matches_subject(
         return false;
     }
     if filter.chosen_card_type {
-        let Some(chosen_type) = ctx.source.and_then(|source| game.chosen_card_type(source)) else {
+        let Some(chosen_type) = ctx.source.and_then(|source| game.chosen_card_type(source).or_else(|| {
+            ctx.source_snapshot.as_ref().filter(|snapshot| snapshot.object_id == source)
+                .and_then(|snapshot| snapshot.chosen_card_type)
+        })) else {
             return false;
         };
         if !object_card_types.contains(&chosen_type) {

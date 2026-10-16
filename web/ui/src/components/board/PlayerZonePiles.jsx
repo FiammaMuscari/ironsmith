@@ -1,3 +1,6 @@
+import ZonePileLabel from "./ZonePileLabel";
+import { createPortal } from "react-dom";
+import { visibleLibraryCards } from "@/lib/library-pile";
 import LibraryZonePile from "@/components/board/LibraryZonePile";
 import useUiText from "@/i18n/useUiText";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -25,7 +28,7 @@ import {
 const ZONE_TARGET_GROW_MS = 220;
 // Desktop HUD: the local Graveyard/Exile column rises toward the opponent
 // piles above it to leave the decision dock more height underneath.
-const LOCAL_PILES_MAX_LIFT = 120;
+const LOCAL_PILES_MAX_LIFT = 160;
 const LOCAL_PILES_CLEARANCE = 20;
 export const ZONE_PILES_MOVED_EVENT = "ironsmith:zone-piles-moved";
 
@@ -65,7 +68,7 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
   useLayoutEffect(() => {
     if (!open) return undefined;
     const trigger = triggerRef.current;
-    const battlefield = trigger?.closest(".has-zone-piles");
+    const battlefield = trigger?.closest(".has-zone-piles") || trigger?.closest(".table-shell");
     if (!battlefield) return undefined;
     const measure = () => {
       const anchor = trigger.getBoundingClientRect();
@@ -112,9 +115,9 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
   });
   const topCard = cards.find(isFaceUpZoneCard) || cards[0];
   const remainingCards = cards.filter((card) => card !== topCard);
-  const label = zone === "command" ? "Command"
+  const label = zone === "library" ? "Deck" : zone === "command" ? "Command"
     : t(zone === "graveyard" ? "zone.graveyardFull" : zone === "look" ? "zone.look" : "zone.exileFull");
-  const count = zone === "graveyard" ? (player.graveyard_size ?? cards.length) : cards.length;
+  const count = zone === "library" ? (player.library_size ?? cards.length) : zone === "graveyard" ? (player.graveyard_size ?? cards.length) : cards.length;
   const decision = state?.decision?.kind === "targets" ? state.decision
     : castIntent?.targetDecision || state?.decision;
   const choosingTarget = decision?.kind === "targets";
@@ -133,13 +136,8 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     const timer = setTimeout(() => setOpen(true), 160);
     return () => clearTimeout(timer);
   }, [hoverOpensZone]);
-  // A decision option can stand for a card sitting in this pile, and graveyard
-  // and exile never expand inline (see shouldShowZoneBody) -- the pile is the
-  // only way to see into them. So hovering such an option opens the pile, and
-  // moving on closes it, at the same unhurried pace a pointer gets. Only a
-  // pile opened this way closes again, so one the player is holding stays put.
-  // A hovered stack object links the cards it is aimed at the same way, so a
-  // spell pointed at a card in this pile opens it and marks that card.
+  // Stack target hovers may open their linked zones. Decision choices instead
+  // preview their card on the collapsed pile without moving the options.
   const isStackTargeted = (card) => card != null && hoveredLinkedObjectIds.has(String(card.id));
   // The card a hover elsewhere stands for -- a dies trigger on the stack whose
   // source is already in here -- is marked the way an aimed-at card is. A card
@@ -150,9 +148,11 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     && hoveredObjectId != null
     && String(card.id) === String(hoveredObjectId)
     && String(rowHoveredId) !== String(card.id);
-  const holdsHoveredCard = (hoveredObjectId != null
+  const optionHoveredCard = canChoose && (choosingOption || choosingObject || choosingTarget)
+    ? cards.find(card => isHoverSource(card) && isFaceUpZoneCard(card)) : null;
+  const holdsHoveredCard = !optionHoveredCard && ((hoveredObjectId != null
     && cards.some((card) => String(card?.id) === String(hoveredObjectId)))
-    || cards.some(isStackTargeted);
+    || cards.some(isStackTargeted));
   const openedByHoverRef = useRef(false);
   useEffect(() => {
     if (holdsHoveredCard) {
@@ -195,7 +195,7 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
       .map((id) => cards.find((card) => String(card.id) === String(id)))
       .find(Boolean)
     : null;
-  const collapsedCard = latestChosenCard || topCard;
+  const collapsedCard = optionHoveredCard || latestChosenCard || topCard;
   const chosenInPile = !open && choosingObject
     ? latestChosenCard || cards.find((card) => isObjectChosen(chosenObjectIds, card.id))
     : null;
@@ -299,10 +299,13 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
         opacity: fading ? 0 : 1,
         transition: `${fading ? `opacity ${LOOK_FADE_MS}ms linear` : "opacity 120ms ease"}, transform ${ZONE_TARGET_GROW_MS}ms ease`,
       }}>
-      <span className="zone-pile-label">{ui(label)} <strong>{count}</strong></span>
+      <ZonePileLabel label={ui(label)} count={count} />
       <PopoverTrigger asChild>
         <button ref={triggerRef} type="button" className="zone-pile" data-zone-pile={zone}
           data-zone-owner={String(player.id ?? player.index)}
+          data-option-hovered={optionHoveredCard ? "true" : undefined}
+          data-zone-card={!open && optionHoveredCard ? zone : undefined}
+          data-object-id={!open && optionHoveredCard ? optionHoveredCard.id : undefined}
           data-has-targets={hasLegalCards ? "true" : undefined}
           aria-label={ui("{0}'s {1}, {2} cards. Open zone", { 0: player.name, 1: ui(label), 2: count })}
           onPointerEnter={(event) => {
@@ -374,7 +377,9 @@ function LookPile({ player, onCardClick, legalTargetObjectIds }) {
   const [open, setOpen] = useState(false);
   const acknowledged = state?.decision?.kind === "priority" && view?.acknowledged === true;
   const active = Boolean(key) && !acknowledged && key !== completedKey;
-  const persistent = persistentLookCards(state);
+  const libraryIds = new Set((state?.players || []).flatMap((entry) =>
+    visibleLibraryCards(state, entry)).map((card) => String(card.id)));
+  const persistent = persistentLookCards(state).filter((card) => !libraryIds.has(String(card.id)));
   useEffect(() => {
     const done = () => { setCompletedKey(key); setRetained(view); };
     window.addEventListener(LOOK_DONE_EVENT, done);
@@ -405,6 +410,7 @@ function LookPile({ player, onCardClick, legalTargetObjectIds }) {
 export default function PlayerZonePiles({ player, onCardClick, legalTargetObjectIds, leadingRail = null }) {
   const { state } = useGame();
   const ref = useRef(null);
+  const [commandDock, setCommandDock] = useState(null);
   useLayoutEffect(() => {
     const piles = ref.current;
     const container = piles?.parentElement;
@@ -413,6 +419,9 @@ export default function PlayerZonePiles({ player, onCardClick, legalTargetObject
     const look = piles.querySelector(".player-look-pile");
     let frame;
     const measure = () => {
+      setCommandDock(piles.dataset.localZonePiles === "true"
+        ? container.closest(".table-shell")?.querySelector(".local-command-zone-dock") ?? null
+        : null);
       const bounds = container.getBoundingClientRect();
       const cards = Array.from(container.querySelectorAll(".battlefield-row-card"))
         .map((card) => card.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
@@ -444,7 +453,7 @@ export default function PlayerZonePiles({ player, onCardClick, legalTargetObject
       if (board) {
         board.style.setProperty("--battlefield-objects-top", `${Math.max(0, top - boardBounds.top)}px`);
         const zoneTop = Math.max(0, top - boardBounds.top);
-        // Grow down from Look so target highlighting cannot overlap Exile/Command.
+        // Grow down from Look so target highlighting cannot overlap the preceding pile.
         look?.style.setProperty("--zone-pile-target-scale", "1.5");
         look?.style.setProperty("--zone-pile-width", `${pileWidth}px`);
         const pilesTop = Math.max(0, boardBounds.top + zoneTop - bounds.top - containerClientTop);
@@ -509,6 +518,7 @@ export default function PlayerZonePiles({ player, onCardClick, legalTargetObject
   }, [player]);
   const isLocal = samePlayerId(player.id ?? player.index, state?.perspective);
   const zones = ["exile", ...pileZonesFor(state).map(zone => zone === "exile" ? "library" : zone)];
+  const dockCommand = isLocal && commandDock && zones.includes("command");
   if (!isLocal) zones.reverse();
   return <>
     <div ref={ref} className="player-zone-piles" data-player-zone-piles
@@ -516,13 +526,19 @@ export default function PlayerZonePiles({ player, onCardClick, legalTargetObject
       data-opponent-zone-piles={!isLocal ? "true" : undefined}>
       {/* Spans the piles' own height, so anything here lines up with them. */}
       {leadingRail}
-      {zones.map((zone) => zone === "library"
-        ? <LibraryZonePile key="library" player={player} />
+      {zones.filter((zone) => !(dockCommand && zone === "command")).map((zone) => zone === "library"
+        ? <LibraryZonePile key="library" player={player} onCardClick={onCardClick}
+            renderExpandedPile={(cards) => <ZonePile player={player} zone="library" cardsOverride={cards}
+              onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} />} />
         : <ZonePile key={zone} player={player} zone={zone}
           onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} />)}
       {isLocal &&
         <div className="player-look-pile"><LookPile key={state?.perspective} player={player} onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} /></div>}
     </div>
+    {dockCommand && createPortal(
+      <ZonePile player={player} zone="command" onCardClick={onCardClick} legalTargetObjectIds={legalTargetObjectIds} />,
+      commandDock
+    )}
     {isLocal && <div className="player-zone-chat-dock"><LobbyChat /></div>}
   </>;
 }

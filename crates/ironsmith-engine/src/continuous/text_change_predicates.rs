@@ -265,6 +265,7 @@ pub(crate) fn rewrite_value_words(value: &Value, change: TextChange) -> RewriteR
         }
         Value::CreaturesDiedThisTurnControlledBy(player) | Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
+        | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
         | Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player) | Value::LifeTotal(player) | Value::LifeTotalAsTurnBegan(player)
@@ -594,7 +595,7 @@ pub(crate) fn rewrite_condition_words(condition: &Condition, change: TextChange)
         | Condition::SourceBlockedOrBecameBlockedSinceLastUpkeep | Condition::TargetObjectsHaveDifferentColorSets
         | Condition::TargetIsSoulbondPaired | Condition::ThisAbilityResolvedThisTurnExactly(_)
         | Condition::ThisAbilityActivatedThisTurnAtLeast(_)
-        | Condition::FirstTimeThisTurn | Condition::SourceFirstCrewedThisTurn | Condition::MaxTimesEachTurn(_)
+        | Condition::FirstTimeThisTurn | Condition::SourceFirstCrewedThisTurn | Condition::MaxTimesEachTurn(_) | Condition::MaxTriggersPerObject(_)
         | Condition::DoThisMaxTimesEachTurn(_) | Condition::TriggeringObjectWasEnchanted
         | Condition::TriggeringObjectBecameTappedFirstTimeThisTurn | Condition::TriggeringObjectHadCountersPutFirstTimeThisTurn
         | Condition::TriggeringObjectHadToAttackThisCombat | Condition::YouWonTriggeringClash

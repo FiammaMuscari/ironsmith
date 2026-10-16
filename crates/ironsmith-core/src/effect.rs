@@ -282,6 +282,9 @@ pub enum Until {
     PlayersNextUntapStep {
         player: PlayerFilter,
     },
+    /// Ends with the controller's next actual upkeep, including an additional
+    /// upkeep. An upkeep already underway when this starts is not the next one.
+    YourNextUpkeepEnd,
 }
 
 impl Until {
@@ -2300,6 +2303,8 @@ impl SearchLibrarySlot {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct SearchLibraryEffect {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub participant_tag: Option<crate::tag::TagKey>,
     pub filter: ObjectFilter,
     pub destination: crate::zone::Zone,
     pub chooser: PlayerFilter,
@@ -2319,6 +2324,7 @@ impl SearchLibraryEffect {
         reveal: bool,
     ) -> Self {
         Self {
+            participant_tag: None,
             filter,
             destination,
             chooser,
@@ -3696,6 +3702,11 @@ impl<E> ForEachObjectCorrelatedResultEffect<E> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
 pub struct ChooseObjectsEffect {
+    /// "and/or" permits a nonempty subset of the authored search zones.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub optional_search_zones: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub search_participant_tag: Option<crate::tag::TagKey>,
     pub filter: ObjectFilter,
     pub count: ChoiceCount,
     pub count_value: Option<Value>,
@@ -3744,6 +3755,7 @@ impl ChooseObjectsEffect {
         tag: impl Into<crate::tag::TagKey>,
     ) -> Self {
         Self {
+            search_participant_tag: None,
             filter,
             count: count.into(),
             count_value: None,
@@ -3753,6 +3765,7 @@ impl ChooseObjectsEffect {
             additional_zones: Vec::new(),
             tag: tag.into(),
             description: "Choose".to_string(),
+            optional_search_zones: false,
             is_search: false,
             reveal: false,
             reveal_is_presentation_only: Some(false),
@@ -5950,6 +5963,10 @@ pub struct TagMatchingObjectsEffect {
     /// of objects that were actually affected by preceding effects, including
     /// objects that have since changed zones.
     pub source_tags: Vec<crate::tag::TagKey>,
+    /// Apply `filter` to the captured snapshots before retaining the union.
+    /// Legacy unions use the filter only as descriptive provenance.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub filter_source_snapshots: bool,
 }
 
 impl std::fmt::Debug for TagMatchingObjectsEffect {
@@ -5963,6 +5980,9 @@ impl std::fmt::Debug for TagMatchingObjectsEffect {
         if !self.source_tags.is_empty() {
             debug.field("source_tags", &self.source_tags);
         }
+        if self.filter_source_snapshots {
+            debug.field("filter_source_snapshots", &true);
+        }
         debug.finish()
     }
 }
@@ -5975,6 +5995,7 @@ impl TagMatchingObjectsEffect {
             additional_zones: Vec::new(),
             tag: tag.into(),
             source_tags: Vec::new(),
+            filter_source_snapshots: false,
         }
     }
 
@@ -5986,6 +6007,15 @@ impl TagMatchingObjectsEffect {
         source_tags: impl IntoIterator<Item = crate::tag::TagKey>,
     ) -> Self {
         self.source_tags = source_tags.into_iter().collect();
+        self
+    }
+
+    pub fn from_filtered_tagged_sources(
+        mut self,
+        source_tags: impl IntoIterator<Item = crate::tag::TagKey>,
+    ) -> Self {
+        self.source_tags = source_tags.into_iter().collect();
+        self.filter_source_snapshots = true;
         self
     }
 

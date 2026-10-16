@@ -1034,6 +1034,8 @@ pub struct TurnStore {
     pub exhaust_activations_in_progress: HashSet<(ObjectId, usize)>,
     /// Activation totals that survive turns and control changes, but not object identity changes.
     pub ability_activations_per_object: HashMap<(ObjectId, crate::continuous::AbilityOrigin), u32>,
+    /// Trigger totals that survive turns and control changes, scoped to incarnation/acquisition.
+    pub triggers_fired_per_object: HashMap<(ObjectId, crate::triggers::TriggerIdentity), u32>,
     /// Explicit combat damage assignments keyed by attacker then damage recipient.
     pub combat_damage_assignments: HashMap<ObjectId, HashMap<ObjectId, u32>>,
     /// Objects that assign no combat damage for the rest of the current turn.
@@ -1865,6 +1867,17 @@ pub struct LandPlayRestrictionFilter {
     pub tagged_objects: HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ScopedCastOrActivatePaymentRestriction {
+    pub iterated_player: Option<PlayerId>,
+    pub payer: PlayerId,
+    pub controller: PlayerId,
+    pub source: Option<ObjectId>,
+    pub pay_life: bool,
+    pub sacrifice: Option<crate::target::ObjectFilter>,
+    pub tagged_objects: HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+}
+
 /// Tracks active "can't" effects in the game.
 ///
 /// Per Rule 614.17, "can't" effects are not replacement effects - they are
@@ -1872,6 +1885,7 @@ pub struct LandPlayRestrictionFilter {
 /// checked BEFORE attempting an action or event.
 #[derive(Debug, Clone, Default)]
 pub struct CantEffectTracker {
+    pub cast_or_activate_payment_restrictions: Vec<ScopedCastOrActivatePaymentRestriction>,
     /// Players who can't gain life.
     /// Example: Sulfuric Vortex, Erebos, God of the Dead
     pub cant_gain_life: HashSet<PlayerId>,
@@ -1920,6 +1934,9 @@ pub struct CantEffectTracker {
     /// Attackers that must be blocked this turn if able.
     /// Example: "Target creature must be blocked this turn if able."
     pub must_be_blocked: HashSet<ObjectId>,
+
+    /// Each set is one independent existential blocking requirement.
+    pub must_be_blocked_by: HashMap<ObjectId, Vec<HashSet<ObjectId>>>,
 
     /// Positive attack requirements from resolving rule effects, not abilities.
     pub must_attack: HashMap<ObjectId, usize>,
@@ -2708,6 +2725,7 @@ impl CantEffectTracker {
     }
 
     pub fn merge(&mut self, other: CantEffectTracker) {
+        self.cast_or_activate_payment_restrictions.extend(other.cast_or_activate_payment_restrictions);
         self.cant_gain_life.extend(other.cant_gain_life);
         self.cant_search.extend(other.cant_search);
         self.cant_search_own_library_from_own_effects
@@ -2744,6 +2762,9 @@ impl CantEffectTracker {
                 .extend(attackers);
         }
         self.must_be_blocked.extend(other.must_be_blocked);
+        for (attacker, groups) in other.must_be_blocked_by {
+            self.must_be_blocked_by.entry(attacker).or_default().extend(groups);
+        }
         for (object, count) in other.must_block {
             *self.must_block.entry(object).or_default() += count;
         }
@@ -2876,6 +2897,7 @@ impl CantEffectTracker {
     /// Clear all tracked "can't" effects.
     /// Called when rebuilding the tracker from current game state.
     pub fn clear(&mut self) {
+        self.cast_or_activate_payment_restrictions.clear();
         self.cant_gain_life.clear();
         self.cant_search.clear();
         self.cant_search_own_library_from_own_effects.clear();
@@ -2889,6 +2911,7 @@ impl CantEffectTracker {
         self.cant_block_specific_attackers.clear();
         self.must_block_specific_attackers.clear();
         self.must_be_blocked.clear();
+        self.must_be_blocked_by.clear();
         self.must_attack.clear();
         self.must_attack_players.clear();
         self.must_block.clear();
@@ -5951,7 +5974,7 @@ impl GameState {
                 Self::object_filter_is_tap_sensitive(filter)
             }
             // A currently inactive wrapper may become active after production.
-            P::Conditional { ability, condition } => {
+            P::Conditional { ability, condition, .. } => {
                 Self::condition_is_mana_sensitive(condition)
                     || Self::static_ability_is_mana_sensitive(&StaticAbility::from_model(
                         (**ability).clone(),
@@ -6251,6 +6274,7 @@ impl GameState {
             | crate::effect::Value::DamageDealtThisTurnByTaggedSpellCast(_) => true,
             crate::effect::Value::CountPlayers(player)
             | crate::effect::Value::CountPlayersWithCardsInHandAtLeast(player, _)
+            | crate::effect::Value::CountPlayersWithCardsInLibraryAtMost(player, _)
             | crate::effect::Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
             | crate::effect::Value::CountPlayersWithPoisonCountersAtLeast(player, _)
             | crate::effect::Value::PartySize(player)

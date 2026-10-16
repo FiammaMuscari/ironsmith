@@ -3,6 +3,7 @@ use super::*;
 impl GameState {
     /// Record an actual upkeep boundary, including additional upkeeps.
     pub fn mark_upkeep_began(&mut self, player: PlayerId) {
+        self.effect_store.continuous_effects.mark_upkeep_began(player, self.turn.turn_number);
         let controlled = self
             .battlefield
             .iter()
@@ -27,6 +28,11 @@ impl GameState {
         self.turn_store
             .previous_upkeep_turn_by_player
             .insert(player, previous);
+    }
+
+    pub fn finish_upkeep_duration_tracking(&mut self) {
+        let players = self.turn_players();
+        self.effect_store.continuous_effects.expire_at_upkeep_end(&players);
     }
 
     pub fn enchanted_permanent_attacked_or_blocked_since_last_upkeep(
@@ -2432,6 +2438,7 @@ impl GameState {
         source_object_id: ObjectId,
         trigger_id: TriggerIdentity,
     ) {
+        *self.turn_store.triggers_fired_per_object.entry((source_object_id, trigger_id)).or_default() += 1;
         *self
             .turn_store
             .turn_history
@@ -2456,6 +2463,10 @@ impl GameState {
             .get(&(source_object_id, trigger_id))
             .copied()
             .unwrap_or(0)
+    }
+
+    pub fn trigger_fire_count_per_object(&self, source: ObjectId, identity: TriggerIdentity) -> u32 {
+        self.turn_store.triggers_fired_per_object.get(&(source, identity)).copied().unwrap_or(0)
     }
 
     /// Record that a triggered ability's "Do this only once each turn"

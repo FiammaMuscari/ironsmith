@@ -3973,3 +3973,4 @@ pub(super) fn spirit_token_reciprocal_blocking_rule_enforces_both_directions() {
         "a Spirit creature should be allowed to block the Spirit token"
     );
 }
+

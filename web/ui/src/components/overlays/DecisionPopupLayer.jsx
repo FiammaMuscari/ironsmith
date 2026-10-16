@@ -2984,6 +2984,26 @@ function PriorityBar({
   if (!decision || isCombatDecision) return null;
   if (isPriorityDecision && !passAction) return null;
 
+  // Ordering choices already live in the effect rail / stack. Only the
+  // confirmation belongs here, in the same slot as priority and combat.
+  if (inline && dockSubmitFooter && effectOrderingDecision && !showViewedCardsStep && !showPeerWaitOpeningPreviews) {
+    return (
+      <div ref={inlineRootRef} className="pointer-events-none absolute inset-0 z-[120] flex items-stretch">
+        <div className="priority-inline-panel priority-inline-panel--segmented priority-inline-panel--main-only pointer-events-auto relative flex h-full w-full">
+          {canCancelDecision ? <div className="combat-floating-hint">{renderCancelControl()}</div> : null}
+          <div className="action-strip-layout action-strip-layout--segmented flex min-h-[46px] items-stretch gap-2">
+            <div className="action-strip-command-region shrink-0 self-stretch" style={decisionButtonStyle}>
+              <div className="action-strip-main-region h-full w-[132px] shrink-0 self-stretch" style={decisionButtonStyle}>
+                {renderExpandedPrimaryControl(false, true)}
+              </div>
+            </div>
+          </div>
+          {quickControls}
+        </div>
+      </div>
+    );
+  }
+
   if (inline) {
     return (
       <>
@@ -3111,7 +3131,7 @@ function PriorityBar({
                       {!peerWaiting && !postActionPriorityWindow && (
                         <div className="action-strip-main-text-stack absolute left-2 top-2 z-20">
                           <div className="action-strip-main-title-row">
-                            <ActionStripMainTitleText>{ui(passCurrentLabel)}</ActionStripMainTitleText>
+                            <ActionStripMainTitleText key={passCurrentLabel}>{ui(passCurrentLabel)}</ActionStripMainTitleText>
                           </div>
                           <div
                             className="action-strip-main-controls"
@@ -3495,7 +3515,7 @@ function PriorityBar({
                     {!peerWaiting && (
                       <div className="action-strip-main-text-stack absolute left-2 top-2 z-20">
                         <div className="action-strip-main-title-row">
-                          <ActionStripMainTitleText>{ui(passCurrentLabel)}</ActionStripMainTitleText>
+                          <ActionStripMainTitleText key={passCurrentLabel}>{ui(passCurrentLabel)}</ActionStripMainTitleText>
                         </div>
                         <div
                           className="action-strip-main-controls"
@@ -3859,6 +3879,28 @@ function CombatBar({ anchor = null, inline = false, replaceMiddleControls = fals
       </Button>
     </PeerWaitPopover>
   );
+  if (inline && quickControls) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-[120] flex items-stretch">
+        <div className="priority-inline-panel priority-inline-panel--segmented priority-inline-panel--main-only combat-floating-controls pointer-events-auto relative flex h-full w-full">
+          <div className="combat-floating-hint">
+            <strong>{t(decision.kind === "attackers" ? "decision.chooseAttackers" : "decision.chooseBlockers")}</strong>
+            <span>{t(!canAct ? "decision.waitingForOpponent" : decision.kind === "attackers" ? "decision.attackersHint" : "decision.blockersHint")}</span>
+            {canCancelDecision ? <Button variant="ghost" size="sm" onClick={() => cancelDecision()}>{t("decision.cancel")}</Button> : null}
+          </div>
+          <div className="action-strip-layout action-strip-layout--segmented flex min-h-[46px] items-stretch gap-2">
+            <div className="action-strip-command-region shrink-0 self-stretch" style={decisionButtonStyle}>
+              <div className="action-strip-main-region h-full w-[132px] shrink-0 self-stretch" style={decisionButtonStyle}>
+                {primaryControl}
+              </div>
+            </div>
+          </div>
+          {quickControls}
+          <DecisionRouter decision={decision} canAct={canAct} combatInline onCombatActionChange={handleCombatActionChange} />
+        </div>
+      </div>
+    );
+  }
   return (
     <>
       {topbarHost ? createPortal(primaryControl, topbarHost) : null}

@@ -238,6 +238,7 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
         Value::CreaturesDiedThisTurnControlledBy(player)
         | Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
+        | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
         | Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
@@ -547,6 +548,8 @@ pub fn condition_mentions_iterated_player(condition: &Condition) -> bool {
 fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
     use Restriction::*;
     match restriction {
+        CastOrActivatePayments { player, sacrifice, .. } => player.mentions_iterated_player()
+            || sacrifice.as_ref().is_some_and(object_filter_mentions_iterated_player),
         AdditionalLandPlays(player, _)
         | NoMaximumHandSize(player)
         | DrawFromBottom(player)
@@ -626,6 +629,7 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         }
         BlockSpecificAttacker { blockers, attacker }
         | MustBlockSpecificAttacker { blockers, attacker }
+        | MustBeBlockedBy { blockers, attacker }
         | BeTargetedFrom(blockers, attacker)
         | BeAttachedBy(blockers, attacker)
         | AttackPermanents {

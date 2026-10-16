@@ -1435,6 +1435,7 @@ fn is_sunburst_counter_grant(
     let ironsmith_core::StaticAbilityPayload::Conditional {
         ability: inner,
         condition,
+        ..
     } = &model.payload
     else {
         return false;
@@ -4928,6 +4929,7 @@ pub(crate) fn describe_until(until: &Until) -> String {
         Until::YourNextTurn => "until your next turn".to_string(),
         Until::YourNextTurnEnd => "until the end of your next turn".to_string(),
         Until::YourNextUpkeep => "until your next upkeep".to_string(),
+        Until::YourNextUpkeepEnd => "until the end of your next upkeep".to_string(),
         Until::NextEndStep => "until the next end step".to_string(),
         Until::ControllersNextUntapStep => "during its controller's next untap step".to_string(),
         Until::YourNextUntapStep => "during your next untap step".to_string(),
@@ -5485,6 +5487,13 @@ fn restriction_backref_subject(filter: &ObjectFilter) -> Option<String> {
 
 pub(crate) fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     match restriction {
+        crate::effect::Restriction::CastOrActivatePayments { player, pay_life, sacrifice } => {
+            let mut components = Vec::new();
+            if *pay_life { components.push("pay life".to_string()); }
+            if let Some(filter) = sacrifice { components.push(format!("sacrifice {}", pluralize_noun_phrase(&filter.description()))); }
+            format!("{} can't {} to cast spells or activate abilities", describe_player_set_filter(player), components.join(" or "))
+        }
+
         crate::effect::Restriction::AdditionalLandPlays(filter, count) => {
             if *count == u32::MAX {
                 format!(
@@ -5957,6 +5966,9 @@ pub(crate) fn describe_restriction(restriction: &crate::effect::Restriction) -> 
             let subject = restriction_backref_subject(attackers)
                 .unwrap_or_else(|| attackers.description());
             format!("{subject} attacks {} if able", describe_player_filter(player))
+        }
+        crate::effect::Restriction::MustBeBlockedBy { attacker, blockers } => {
+            format!("{} must be blocked by a {} if able", attacker.description(), blockers.description())
         }
         crate::effect::Restriction::MustBeBlocked(filter) => {
             format!("{} must be blocked if able", filter.description())
@@ -6441,6 +6453,7 @@ fn describe_prior_result_active_action(action: crate::effect::PriorEffectAction)
         crate::effect::PriorEffectAction::Destroyed => "destroy",
         crate::effect::PriorEffectAction::Discarded => "discard",
         crate::effect::PriorEffectAction::Copied => "copy",
+        crate::effect::PriorEffectAction::Investigated => "investigate",
         crate::effect::PriorEffectAction::Drawn => "draw",
         crate::effect::PriorEffectAction::Exiled => "exile",
         crate::effect::PriorEffectAction::Goaded => "goad",

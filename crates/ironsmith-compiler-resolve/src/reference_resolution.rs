@@ -180,6 +180,7 @@ fn trigger_supports_event_amount(trigger: &TriggerSpec) -> bool {
                     | TriggerSpec::IsDealtDamage(_)
                     | TriggerSpec::IsDealtCombatDamage(_)
                     | TriggerSpec::IsDealtExcessNoncombatDamage(_)
+                    | TriggerSpec::IsDealtExcessDamage { .. }
                     | TriggerSpec::ThisDealsDamage
                     | TriggerSpec::ThisDealsDamageTo(_)
                     | TriggerSpec::DealsDamage { .. }
@@ -4091,6 +4092,48 @@ fn bind_additional_cost_object_placeholder(effect: &mut EffectAst, env: &Referen
     });
 }
 
+// A source-zone condition establishes the host for the first attachment
+// placement in its consequent. The explicitly named card remains the moved
+// object; its trailing "attached to it" refers back to the tested source.
+fn bind_source_condition_attachment_host(effect: &mut EffectAst) {
+    fn bind_first(effect: &mut EffectAst) {
+        match effect {
+            EffectAst::Sequence { effects } | EffectAst::SourceSentence { effects, .. } => {
+                if let Some(first) = effects.first_mut() { bind_first(first); }
+            }
+            EffectAst::SubjectVerb(subject) => {
+                if let SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
+                    target: TargetAst::Object(filter, ..),
+                    zone: crate::zone::Zone::Battlefield,
+                    attached_to: Some(host), ..
+                }) = &mut subject.action
+                    && filter.tagged_constraints.iter().any(|binding|
+                        binding.tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str()
+                        && binding.relation == TaggedOpbjectRelation::IsTaggedObject)
+                    && matches!(host, TargetAst::Tagged(tag, _) if tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str())
+                {
+                    if let TargetAst::Tagged(_, span) = host {
+                        *host = TargetAst::Source(span.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    match effect {
+        EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            predicate: PredicateAst::Source(crate::model::ast::SourcePredicateAst::SourceIsInZone(crate::zone::Zone::Battlefield)),
+            if_true, ..
+        }) => {
+            if let Some(first) = if_true.first_mut() { bind_first(first); }
+        }
+        EffectAst::Sequence { effects } | EffectAst::SourceSentence { effects, .. } => {
+            for effect in effects { bind_source_condition_attachment_host(effect); }
+        }
+        _ => {}
+    }
+}
+
 fn annotate_effect_sequence_with_env_internal(
     effects: Vec<EffectAst>,
     mut current_env: ReferenceEnv,
@@ -4119,6 +4162,7 @@ fn annotate_effect_sequence_with_env_internal(
     }
 
     while let Some(mut effect) = effects.next() {
+        bind_source_condition_attachment_host(&mut effect);
         bind_additional_cost_object_placeholder(&mut effect, &current_env);
         let tag_id_floor = id_gen.next_tag_id;
         let in_env = current_env.clone();
@@ -4658,6 +4702,22 @@ pub fn preserves_existing_it_for_power_self_damage_followup(
         && target_tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str()
 }
 
+// A branch's first result gate can consume the outcome from before the
+// conditional. Instructions later in a branch have their own antecedents.
+fn nested_entry_result_gate(effect: &EffectAst) -> Option<&EffectAst> {
+    match effect {
+        EffectAst::Conditionals(ConditionalEffectAst::Conditional { if_true, if_false, .. }) => {
+            [if_true.first(), if_false.first()].into_iter().flatten().find_map(|entry| {
+                if result_gate_surface(entry).is_some() { Some(entry) }
+                else { nested_entry_result_gate(entry) }
+            })
+        }
+        EffectAst::SourceSentence { effects, .. } | EffectAst::Sequence { effects }
+            if effects.len() == 1 => nested_entry_result_gate(&effects[0]),
+        _ => None,
+    }
+}
+
 fn maybe_assign_effect_result_id(
     effect: &EffectAst,
     remaining: &[EffectAst],
@@ -4686,6 +4746,8 @@ fn maybe_assign_effect_result_id(
     let next_is_result_gate = remaining.first().is_some_and(|next| {
         result_gate_surface(next).is_some() && result_gate_accepts_producer(next, effect)
     });
+    let next_nested_result_gate = remaining.first().and_then(nested_entry_result_gate)
+        .filter(|gate| result_gate_accepts_producer(gate, effect));
     let next_is_if_result_with_opponent_doesnt = next_is_result_gate
         && matches!(
             remaining.get(1),
@@ -4758,6 +4820,7 @@ fn maybe_assign_effect_result_id(
         || next_is_if_result_with_opponent_did
         || next_is_if_result_with_player_did
         || next_is_result_gate
+        || next_nested_result_gate.is_some()
         || next_needs_event_derived_amount
         || later_needs_event_derived_amount
         || next_needs_prior_effect_value
@@ -4773,8 +4836,9 @@ fn maybe_assign_effect_result_id(
     // producer for lowering; allocating a fresh ID leaves the resolved gate
     // reading an outcome that no runtime instruction writes.
     if result_gate_surface(effect).is_none()
-        && next_is_result_gate
+        && (next_is_result_gate || next_nested_result_gate.is_some())
         && let Some(condition) = remaining.first().and_then(resolved_result_gate_id)
+            .or_else(|| next_nested_result_gate.and_then(resolved_result_gate_id))
     {
         id_gen.next_effect_id = id_gen.next_effect_id.max(condition.0 + 1);
         return Some(condition);
@@ -5006,6 +5070,7 @@ fn effect_can_supply_prior_effect_memory(effect: &EffectAst) -> bool {
                 | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageEach { .. })
                 | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageToRecipients { .. })
 | SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources { .. })
+                | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Investigate { .. })
                 | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Connive { .. })
                 | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ConniveIterated)
                 | SubjectVerbActionAst::Stack(StackActionAst::Counter { .. })
@@ -5144,6 +5209,7 @@ fn effect_can_supply_event_derived_amount_for(effect: &EffectAst, consumer: &Eff
         PriorEffectAction::Discarded,
         PriorEffectAction::Drawn,
         PriorEffectAction::Copied,
+        PriorEffectAction::Investigated,
         PriorEffectAction::Exiled,
         PriorEffectAction::Goaded,
         PriorEffectAction::Milled,
@@ -5213,7 +5279,7 @@ pub fn effect_references_typed_removed_counter_metric(effect: &EffectAst) -> boo
     references_removed_count
 }
 
-fn effect_references_outer_metric_through_iteration(effect: &EffectAst) -> bool {
+pub fn effect_references_outer_metric_through_iteration(effect: &EffectAst) -> bool {
     if effect_references_typed_removed_counter_metric(effect) {
         return true;
     }
@@ -5226,8 +5292,8 @@ fn effect_references_outer_metric_through_iteration(effect: &EffectAst) -> bool 
             _ => None,
         };
         references_partitioned_exile |= query.is_some_and(|query| {
-            query.action == Some(PriorEffectAction::Exiled)
-                && query.player == Some(PlayerFilter::IteratedPlayer)
+            query.use_origin_memory || (query.action == Some(PriorEffectAction::Exiled)
+                && query.player == Some(PlayerFilter::IteratedPlayer))
         });
     });
     references_partitioned_exile
@@ -5422,6 +5488,8 @@ fn is_object_memory_producer_for_action(effect: &EffectAst, action: PriorEffectA
         ),
         PriorEffectAction::Copied => matches!(producer_action,
             SubjectVerbActionAst::Stack(crate::model::StackActionAst::CopySpell { .. })),
+        PriorEffectAction::Investigated => matches!(producer_action,
+            SubjectVerbActionAst::KeywordActions(KeywordActionAst::Investigate { .. })),
         PriorEffectAction::Drawn => {
             matches!(
                 producer_action,
@@ -7235,6 +7303,7 @@ fn resolve_effect_result_values_in_fields(
             | SubjectVerbActionAst::Mana(ManaActionAst::EmptyManaPool)
             | SubjectVerbActionAst::Game(GameActionAst::EndTurn)
             | SubjectVerbActionAst::Game(GameActionAst::EndCombatPhase)
+            | SubjectVerbActionAst::Game(GameActionAst::DrawGame)
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipTurn)
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipCombatPhases)
             | SubjectVerbActionAst::TurnStructure(
@@ -8466,6 +8535,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             | SubjectVerbActionAst::Mana(ManaActionAst::EmptyManaPool)
             | SubjectVerbActionAst::Game(GameActionAst::EndTurn)
             | SubjectVerbActionAst::Game(GameActionAst::EndCombatPhase)
+            | SubjectVerbActionAst::Game(GameActionAst::DrawGame)
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipTurn)
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipCombatPhases)
             | SubjectVerbActionAst::TurnStructure(
@@ -9370,9 +9440,13 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
                 filter,
                 ..
             }) => bind_unresolved_it_in_filter(filter, seed_tag),
-            SubjectVerbActionAst::TagMatchingObjects { filter, tag, .. } => {
-                bind_unresolved_it_in_filter(filter, seed_tag)
-                    + bind_unresolved_it_in_tag(&mut tag.key, seed_tag)
+            SubjectVerbActionAst::TagMatchingObjects { filter, tag, source_tags, .. } => {
+                let mut bound = bind_unresolved_it_in_filter(filter, seed_tag)
+                    + bind_unresolved_it_in_tag(&mut tag.key, seed_tag);
+                for source in source_tags {
+                    bound += bind_unresolved_it_in_tag(&mut source.key, seed_tag);
+                }
+                bound
             }
             SubjectVerbActionAst::Characteristics(CharacteristicActionAst::AddCardTypes {
                 target,
@@ -9992,6 +10066,7 @@ fn bind_unresolved_it_in_restriction(
         }
         Restriction::BlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBlockSpecificAttacker { blockers, attacker }
+        | Restriction::MustBeBlockedBy { blockers, attacker }
         | Restriction::BeAttachedBy(blockers, attacker) => {
             bind_unresolved_it_in_filter(blockers, seed_tag)
                 + bind_unresolved_it_in_filter(attacker, seed_tag)
@@ -11296,6 +11371,7 @@ mod tests {
 
     fn event_amount_library_search() -> EffectAst {
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjectsAcrossZones {
+            optional_search_zones: false,
             filter: ObjectFilter::land().in_zone(Zone::Library),
             count: ChoiceCount::up_to_dynamic_x(),
             count_value: Some(Value::EventValue(EventValueSpec::Amount)),
@@ -11312,6 +11388,7 @@ mod tests {
             player: PlayerAst::You,
             effects: vec![EffectAst::ObjectChoices(
                 ObjectChoiceEffectAst::ChooseObjectsAcrossZones {
+                    optional_search_zones: false,
                     filter: ObjectFilter::default(),
                     count: ChoiceCount::up_to(1),
                     count_value: None,
@@ -12933,4 +13010,51 @@ mod cast_quantity_binding_tests {
         assert_eq!(ironsmith_compiler_semantic::trigger_references::trigger_cast_event_quantity(&trigger), None);
         assert!(!trigger_supports_event_amount(&trigger));
     }
+}
+
+#[cfg(test)]
+mod optional_and_investigate_result_tests {
+    use super::*;
+    use crate::cards::builders::SubjectVerbRoleAst;
+    use crate::model::reference_state::ReferenceImports as ModelReferenceImports;
+    #[test]
+    fn conditional_branch_entry_imports_the_preceding_optional_result() {
+        let gain = EffectAst::subject_verb(SubjectVerbRoleAst::AffectedPlayer, PlayerAst::You,
+            SubjectVerbActionAst::LifeResources(LifeResourceActionAst::GainLife { amount: Value::Fixed(3) }));
+        let effects = vec![
+            EffectAst::Permissions(PermissionEffectAst::May { effects: vec![EffectAst::subject_verb_investigate(PlayerAst::You, Value::Fixed(1))] }),
+            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                predicate: PredicateAst::YourTurn, if_true: vec![gain.clone()],
+                if_false: vec![EffectAst::Conditionals(ConditionalEffectAst::IfResult { predicate: IfResultPredicate::Did, effects: vec![gain] })],
+            }),
+        ];
+        let annotated = annotate_effect_sequence(&effects, &ModelReferenceImports::default(),
+            EffectReferenceResolutionConfig::default(), IdGenContext::default()).unwrap();
+        let prior = annotated.effects[0].assigned_effect_id.expect("optional action must export its result");
+        let EffectAst::Conditionals(ConditionalEffectAst::Conditional { if_false, .. }) = &annotated.effects[1].effect else { panic!("expected state gate"); };
+        assert!(matches!(&if_false[0], EffectAst::Conditionals(ConditionalEffectAst::ResolvedIfResult { condition, .. }) if *condition == prior), "{if_false:?}");
+    }
+
+    #[test]
+    fn investigate_participant_count_keeps_the_original_opponent_action() {
+        let producer = EffectAst::ForEach(ForEachEffectAst::ForEachOpponent {
+            effects: vec![EffectAst::Permissions(PermissionEffectAst::May {
+                effects: vec![EffectAst::subject_verb_investigate(PlayerAst::That, Value::Fixed(1))],
+            })],
+        });
+        let loss = EffectAst::ForEach(ForEachEffectAst::ForEachOpponentDoesNot {
+            effects: vec![EffectAst::subject_verb(SubjectVerbRoleAst::AffectedPlayer, PlayerAst::That,
+                SubjectVerbActionAst::LifeResources(LifeResourceActionAst::LoseLife { amount: Value::Fixed(1) }))],
+            predicate: None,
+        });
+        let query = ironsmith_core::PriorEffectMetricQuery::new(EffectMetricSource::Outcome, EffectMetric::PlayersWithPositiveCount)
+            .with_action(PriorEffectAction::Investigated).with_player(PlayerFilter::Opponent);
+        let consumer = EffectAst::subject_verb_investigate(PlayerAst::You, Value::PendingPriorEffectMetric(query.clone()));
+        let annotated = annotate_effect_sequence(&[producer, loss, consumer],
+            &ModelReferenceImports::default(), EffectReferenceResolutionConfig::default(), IdGenContext::default()).unwrap();
+        let producer_id = annotated.effects[0].assigned_effect_id.expect("opponent action needs a receipt");
+        let EffectAst::SubjectVerb(SubjectVerbEffectAst { action: SubjectVerbActionAst::KeywordActions(KeywordActionAst::Investigate { count }), .. }) = &annotated.effects[2].effect else { panic!("expected investigate consumer"); };
+        assert!(matches!(count, Value::PriorEffectMetric { effect_id, query: found } if *effect_id == producer_id && found == &query), "{count:?}");
+    }
+
 }

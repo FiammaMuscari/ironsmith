@@ -6,6 +6,8 @@
 //! two different readings of one input are an ambiguity error.
 
 use super::*;
+use crate::grammar::primitives;
+use winnow::{Parser, combinator::opt};
 use crate::cards::builders::ConditionalEffectAst;
 use crate::cards::builders::ForEachEffectAst;
 use crate::cards::builders::LifeResourceActionAst;
@@ -412,8 +414,17 @@ fn read_opponent_special_shape(
                         clause_text
                     )));
                 }
+                let actor_tokens;
+                let effect_tokens = if outer.participant_is_actor {
+                    actor_tokens = prepend_that_player_subject(effect_tokens);
+                    actor_tokens.as_slice()
+                } else {
+                    effect_tokens
+                };
                 let mut branch_effects = parse_effect_chain(effect_tokens)?;
-                force_implicit_token_controller_you(&mut branch_effects);
+                if !outer.participant_is_actor {
+                    force_implicit_token_controller_you(&mut branch_effects);
+                }
                 return Ok(Some(wrap_opponents(
                     &iteration_filter,
                     vec![EffectAst::Conditionals(ConditionalEffectAst::Conditional {
@@ -435,6 +446,61 @@ fn read_opponent_special_shape(
 fn read_who_clause(input: &ParticipantClause<'_>) -> Result<Option<EffectAst>, CardTextError> {
     let outer = input.outer;
     let clause_text = input.clause_text;
+    if let Some(((), controlled)) = primitives::parse_prefix(outer.inner_tokens, primitives::phrase(&["who", "controlled"]))
+        && let Some((returned, (), body)) = primitives::find_prefix(controlled, || primitives::phrase(&["returned", "this", "way"]))
+        && returned > 0 && !body.is_empty()
+    {
+        let mut filter = parse_object_filter(&controlled[..returned], false)?;
+        filter.controller = Some(PlayerFilter::IteratedPlayer);
+        filter.zone = Some(crate::zone::Zone::Battlefield);
+        let mut query = ironsmith_core::PriorEffectMetricQuery::new(
+            ironsmith_core::EffectMetricSource::AffectedObjects, ironsmith_core::EffectMetric::Count,
+        ).with_filter(filter).with_action(ironsmith_core::PriorEffectAction::Returned);
+        query.use_origin_memory = true;
+        let effects = parse_effect_chain_inner(crate::lexer::trim_lexed_commas(body))?;
+        return Ok(Some(wrap_opponents(&input.iteration_filter, vec![
+            EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+                predicate: PredicateAst::ValueComparison {
+                    left: Value::PendingPriorEffectMetric(query),
+                    operator: crate::effect::ValueComparisonOperator::GreaterThan,
+                    right: Value::Fixed(0),
+                },
+                if_true: effects, if_false: Vec::new(),
+            }),
+        ])));
+    }
+    if let Some((_, effect_tokens)) = primitives::parse_prefix(outer.inner_tokens, (
+        primitives::phrase(&["who", "discarded"]),
+        opt(primitives::kw("a")), primitives::kw("card"),
+        opt(primitives::kw("that")), primitives::kw("shares"),
+        opt(primitives::kw("a")), primitives::phrase(&["card", "type", "with"]),
+        opt(primitives::kw("the")), primitives::phrase(&["card", "you", "discarded"]),
+    ).void()) {
+        let mut effects = parse_effect_chain_inner(effect_tokens)?;
+        if outer.participant_is_actor {
+            bind_quantified_participant_actor(&mut effects);
+        }
+        let span = outer.inner_tokens.first().map(|token| token.span).unwrap_or_else(TextSpan::synthetic);
+        let all = crate::tag::TagRef::of(format!("__prior_discards_{}_{}", span.line, span.start));
+        let own = crate::tag::TagRef::of(format!("__own_prior_discards_{}_{}", span.line, span.start));
+        let mut own_filter = ObjectFilter::default();
+        own_filter.owner = Some(PlayerFilter::You);
+        let mut matching = ObjectFilter::default().shares_card_type_with_tagged(own.clone());
+        matching.owner = Some(PlayerFilter::IteratedPlayer);
+        return Ok(Some(EffectAst::Sequence { effects: vec![
+            EffectAst::subject_verb_tagged_object_union(
+                ObjectFilter::default(), Vec::new(), all.clone(),
+                vec![crate::tag::CompilerReferenceTag::It.bind()]),
+            EffectAst::subject_verb_filtered_tagged_objects(own_filter, own, vec![all.clone()]),
+            wrap_opponents(&input.iteration_filter, vec![
+                EffectAst::Conditionals(crate::cards::builders::ConditionalEffectAst::Conditional {
+                    predicate: PredicateAst::TaggedMatches(all, matching),
+                    if_true: effects,
+                    if_false: Vec::new(),
+                }),
+            ]),
+        ] }));
+    }
     if let Some(who) = for_each_shapes::parse_who_clause_shape(outer.inner_tokens) {
         match who {
             WhoClauseShape::TappedLandForMana { effect_tokens } => {

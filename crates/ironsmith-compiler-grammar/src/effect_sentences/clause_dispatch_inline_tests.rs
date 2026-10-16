@@ -1,5 +1,5 @@
 use super::*;
-use crate::CardType;
+use crate::{CardType, Subtype};
 use crate::cards::builders::ChoiceActionAst;
 use crate::cards::builders::ConditionalEffectAst;
 use crate::cards::builders::GrantActionAst;
@@ -921,4 +921,105 @@ fn airbend_clause_is_a_targeted_action_with_complete_operand() {
         let result = parse_effect_clause(&lex_tail(invalid));
         assert!(result.is_err(), "{invalid}: {result:#?}");
     }
+}
+
+#[test]
+fn twice_negative_x_pump_preserves_both_stats_and_rad_followup() {
+    use crate::cards::builders::StatChangeActionAst;
+    let tokens = lex_tail("Each creature gets twice -X/-X until end of turn. Each player gets X rad counters.");
+    let effects = crate::effect_sentences::parse_effect_sentences_lexed(&tokens).unwrap();
+    assert_eq!(effects.len(), 2, "{effects:?}");
+    let EffectAst::SubjectVerb(pump) = &effects[0] else { panic!("{effects:?}") };
+    let SubjectVerbActionAst::StatChanges(StatChangeActionAst::PumpAll { filter, power, toughness, duration, .. }) = &pump.action else { panic!("{effects:?}") };
+    assert_eq!(filter.card_types, [CardType::Creature]);
+    assert_eq!(power, &Value::Scaled(Box::new(Value::XTimes(-1)), 2));
+    assert_eq!(power, toughness);
+    assert_eq!(duration, &Until::EndOfTurn);
+    let rad = format!("{:?}", effects[1]);
+    assert!(rad.contains("RadCounters"), "{rad}");
+    assert!(rad.contains("X"), "{rad}");
+    let invalid = lex_tail("Each creature gets twice -X/-X until end of turn unless you pay {2}.");
+    assert!(crate::effect_sentences::parse_effect_sentences_lexed(&invalid).is_err());
+}
+
+#[test]
+fn game_draw_statement_is_not_a_card_draw_instruction() {
+    let tokens = lex_tail("The game is a draw.");
+    let effects = crate::effect_sentences::parse_effect_sentences_lexed(&tokens).unwrap();
+    assert!(matches!(effects.as_slice(), [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action: SubjectVerbActionAst::Game(crate::cards::builders::GameActionAst::DrawGame), ..
+    })]), "{effects:?}");
+    let invalid = lex_tail("The game is a draw unless you pay {2}.");
+    assert!(!matches!(crate::effect_sentences::parse_effect_sentences_lexed(&invalid),
+        Ok(ref effects) if matches!(effects.as_slice(), [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action: SubjectVerbActionAst::Game(crate::cards::builders::GameActionAst::DrawGame), ..
+        })])));
+}
+
+#[test]
+fn draw_then_discard_keeps_independent_sacrificed_stats() {
+    let tokens = lex_tail("cards equal to the sacrificed creature's toughness, then discard cards equal to its power.");
+    let effect = crate::effect_sentences::verb_handlers::parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You))).unwrap();
+    let EffectAst::Sequence { effects } = &effect else { panic!("{effect:?}") };
+    assert_eq!(effects.len(), 2);
+    let EffectAst::SubjectVerb(draw) = &effects[0] else { panic!("{effect:?}") };
+    let SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count }) = &draw.action else { panic!("{effect:?}") };
+    assert!(matches!(count.unhinted(), Value::ToughnessOf(_)), "{count:?}");
+    let Value::ToughnessOf(drawn_from) = count.unhinted() else { unreachable!() };
+    let EffectAst::SubjectVerb(discard) = &effects[1] else { panic!("{effect:?}") };
+    let SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Discard { count, .. }) = &discard.action else { panic!("{effect:?}") };
+    assert!(matches!(count.unhinted(), Value::PowerOf(_)), "{count:?}");
+    let Value::PowerOf(discarded_from) = count.unhinted() else { unreachable!() };
+    assert_eq!(drawn_from, discarded_from);
+    assert!(count.surface_hints().iter().any(|hint| matches!(hint,
+        ironsmith_core::ValueSurfaceHint::SacrificedObject(_))));
+    let invalid = lex_tail("cards equal to the sacrificed creature's toughness, then discard cards equal to its power unless you pay {2}.");
+    assert!(crate::effect_sentences::verb_handlers::parse_draw(&invalid, Some(SubjectAst::Player(PlayerAst::You))).is_err());
+}
+
+#[test]
+fn draw_then_explicit_player_optional_search_keeps_both_instructions() {
+    let tokens = lex_tail("Draw a card, then you may search your library for a Plains card, put it onto the battlefield tapped, then shuffle.");
+    let effects = crate::effect_sentences::parse_effect_sentences_lexed(&tokens).unwrap();
+    fn visit(effect: &EffectAst, order: &mut Vec<&'static str>) {
+        match effect {
+            EffectAst::SubjectVerb(action) => match &action.action {
+                SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count }) => {
+                    assert_eq!(count.unhinted(), &Value::Fixed(1));
+                    order.push("draw");
+                }
+                SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::SearchLibrary { filter, destination, chooser, shuffle, tapped, .. }) => {
+                    assert!(filter.subtypes.contains(&Subtype::Plains));
+                    assert_eq!(destination, &Zone::Battlefield);
+                    assert_eq!(chooser, &PlayerAst::You);
+                    assert!(*shuffle && *tapped);
+                    order.push("search");
+                }
+                _ => {}
+            },
+            EffectAst::Permissions(crate::cards::builders::PermissionEffectAst::May { .. }
+                | crate::cards::builders::PermissionEffectAst::MayByPlayer { .. }) => order.push("may"),
+            _ => {}
+        }
+        crate::model::visit::for_each_nested_effects(effect, true, |children| {
+            for child in children { visit(child, order); }
+        });
+    }
+    let mut order = Vec::new();
+    for effect in &effects { visit(effect, &mut order); }
+    assert_eq!(order, ["draw", "may", "search"], "{effects:?}");
+}
+
+#[test]
+fn targeted_face_down_reveal_announces_and_reveals_the_same_object() {
+    let tokens = lex_tail("target face-down permanent");
+    let effect = crate::effect_sentences::verb_handlers::parse_reveal(&tokens, None).unwrap();
+    let EffectAst::Sequence { effects } = effect else { panic!("expected target then reveal") };
+    let [EffectAst::SubjectVerb(target), EffectAst::SubjectVerb(reveal)] = effects.as_slice() else { panic!("{effects:?}") };
+    let SubjectVerbActionAst::TargetOnly { target: TargetAst::Object(filter, ..), explicit_declaration } = &target.action else { panic!("{effects:?}") };
+    assert!(*explicit_declaration);
+    assert_eq!(filter.face_down, Some(true));
+    assert_eq!(filter.zone, Some(Zone::Battlefield));
+    let SubjectVerbActionAst::RevealLook(crate::cards::builders::RevealLookActionAst::RevealTagged { tag }) = &reveal.action else { panic!("{effects:?}") };
+    assert_eq!(tag.as_str(), crate::tag::CompilerReferenceTag::It.as_str());
 }

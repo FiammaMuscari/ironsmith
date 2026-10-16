@@ -40,9 +40,14 @@ pub(crate) fn split_drafted_noted_name_qualifier_tokens(
 ) -> Option<(Vec<OwnedLexToken>, String)> {
     let view = TokenWordView::new(tokens);
     let words = view.to_word_refs();
-    let qualifier_start =
-        crate::word_primitives::parse_sequence_start(&words, DRAFTED_NOTED_NAME_QUALIFIER)?;
-    let name_start = qualifier_start + DRAFTED_NOTED_NAME_QUALIFIER.len();
+    let (qualifier_start, qualifier_len) = [
+        DRAFTED_NOTED_NAME_QUALIFIER,
+        &["with", "a", "name", "noted", "as", "you", "drafted", "cards", "named"][..],
+    ].into_iter().find_map(|phrase| {
+        crate::word_primitives::parse_sequence_start(&words, phrase)
+            .map(|start| (start, phrase.len()))
+    })?;
+    let name_start = qualifier_start + qualifier_len;
     if qualifier_start == 0 || name_start >= words.len() {
         return None;
     }
@@ -738,6 +743,13 @@ pub fn has_shared_terminal_object_noun(tokens: &[OwnedLexToken]) -> bool {
     else {
         return false;
     };
+    // A noun immediately after a conjunction is its own arm: "Giant,
+    // Wizard, or spell" includes subtype permanents and arbitrary spells.
+    // In "Giant or Wizard spell", the terminal noun is instead shared.
+    if tokens[..noun_idx].iter().rev().find_map(OwnedLexToken::as_word)
+        .is_some_and(|word| matches!(word, "or" | "and" | "and/or")) {
+        return false;
+    }
     if tokens[..=noun_idx]
         .iter()
         .filter(|token| is_shared_noun(token))
@@ -1011,6 +1023,9 @@ fn finalize_public_object_filter(
         || words
             .windows(2)
             .any(|part| part == ["enchanted", "creatures"])
+        || words
+            .windows(3)
+            .any(|part| part == ["an", "enchanted", "creature"])
     {
         filter
             .tagged_constraints
@@ -3902,5 +3917,23 @@ mod morph_ability_filter_tests {
         let filter = parse_object_filter(&tokens, false).unwrap();
         assert!(filter.other);
         assert_eq!(filter.static_abilities, [crate::static_abilities::StaticAbilityId::Morph]);
+    }
+}
+
+#[cfg(test)]
+mod indefinite_enchanted_filter_tests {
+    use super::*;
+
+    #[test]
+    fn indefinite_enchanted_creature_uses_any_attached_aura() {
+        let tokens = crate::lexer::lex_line("an enchanted creature", 0).unwrap();
+        let filter = crate::activation_and_restrictions::trigger_subject_filters::parse_trigger_subject_filter_lexed(&tokens).unwrap().unwrap();
+        assert_eq!(filter.card_types, [crate::types::CardType::Creature]);
+        assert!(filter.tagged_constraints.is_empty(), "{filter:#?}");
+        assert_eq!(filter.with_attached_object.unwrap().subtypes, [crate::types::Subtype::Aura]);
+
+        let tokens = crate::lexer::lex_line("enchanted creature", 0).unwrap();
+        let filter = parse_object_filter_lexed(&tokens, false).unwrap();
+        assert!(filter.tagged_constraints.iter().any(|constraint| constraint.tag.as_str() == "enchanted"));
     }
 }

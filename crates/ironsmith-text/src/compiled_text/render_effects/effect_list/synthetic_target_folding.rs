@@ -199,6 +199,7 @@ fn value_references_identity(value: &Value, identity: &SyntheticTargetIdentity<'
         }
         Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
+        | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
         | Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
@@ -252,6 +253,8 @@ fn restriction_references_identity(
     use crate::effect::Restriction;
 
     match restriction {
+        Restriction::CastOrActivatePayments { player, sacrifice, .. } => player_filter_references_identity(player, identity)
+            || sacrifice.as_ref().is_some_and(|filter| object_filter_references_identity(filter, identity)),
         Restriction::AdditionalLandPlays(player, _)
         | Restriction::NoMaximumHandSize(player)
         | Restriction::DrawFromBottom(player)
@@ -302,6 +305,7 @@ fn restriction_references_identity(
         }
         Restriction::BlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBlockSpecificAttacker { blockers, attacker }
+        | Restriction::MustBeBlockedBy { blockers, attacker }
         | Restriction::BeTargetedFrom(blockers, attacker)
         | Restriction::BeAttachedBy(blockers, attacker)
         | Restriction::AttackPermanents {

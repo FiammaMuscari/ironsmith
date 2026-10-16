@@ -52,7 +52,7 @@ use super::reference_helpers::{
 };
 use super::reference_resolution::{
     EffectReferenceResolutionConfig, annotate_effect_sequence,
-    effect_references_prior_prevention_amount, effect_references_typed_removed_counter_metric,
+    effect_references_prior_prevention_amount, effect_references_outer_metric_through_iteration,
     preserves_existing_it_for_power_self_damage_followup,
 };
 use super::runtime_static_ability_helpers::{
@@ -198,6 +198,9 @@ pub fn compile_effects(
     compile_annotated_effects_with_context(&annotated, ctx)
 }
 
+#[path = "compile_support/search_participant_bundles.rs"]
+mod search_participant_bundles;
+
 pub fn compile_annotated_effects_with_context(
     annotated: &AnnotatedEffectSequence,
     ctx: &mut EffectLoweringContext,
@@ -210,6 +213,10 @@ pub fn compile_annotated_effects_with_context(
         id_gen.next_effect_id = id_gen.next_effect_id.max(id.0 + 1);
     }
     ctx.apply_id_gen_context(id_gen);
+    if let Some(compiled) = search_participant_bundles::compile_search_participant_bundle(annotated, ctx)? {
+        apply_local_reference_env(ctx, &annotated.final_env);
+        return Ok(compiled);
+    }
     let mut compiled = Vec::new();
     let mut choices = Vec::new();
     let mut idx = 0;
@@ -1144,6 +1151,7 @@ pub fn bind_relative_iterated_player_in_value_to_player_filter(
         Value::CreaturesDiedThisTurnControlledBy(player)
         | Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
+        | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
         | Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
@@ -1318,7 +1326,7 @@ pub fn hand_exile_filter_and_count(
 
     let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
     normalize_hand_or_graveyard_cross_zone_filter(&mut resolved_filter);
-    let zones = hand_or_graveyard_choice_zones(&resolved_filter);
+    let zones = choice_zones_including_hand(&resolved_filter);
     let Some(zones) = zones else {
         return Ok(None);
     };
@@ -1350,7 +1358,7 @@ pub fn normalize_hand_or_graveyard_cross_zone_filter(filter: &mut ObjectFilter) 
     }
 }
 
-fn hand_or_graveyard_choice_zones(filter: &ObjectFilter) -> Option<Vec<Zone>> {
+fn choice_zones_including_hand(filter: &ObjectFilter) -> Option<Vec<Zone>> {
     if filter.zone == Some(Zone::Hand) {
         return Some(vec![Zone::Hand]);
     }
@@ -1361,7 +1369,7 @@ fn hand_or_graveyard_choice_zones(filter: &ObjectFilter) -> Option<Vec<Zone>> {
     let mut zones = Vec::new();
     for option in &filter.any_of {
         let zone = option.zone?;
-        if !matches!(zone, Zone::Hand | Zone::Graveyard) {
+        if !matches!(zone, Zone::Hand | Zone::Graveyard | Zone::Command) {
             return None;
         }
         if !zones.contains(&zone) {
@@ -1473,7 +1481,7 @@ pub fn normalized_hand_or_graveyard_choice_filter(
 ) -> Option<(ObjectFilter, Vec<Zone>)> {
     let mut filter = filter.clone();
     normalize_hand_or_graveyard_cross_zone_filter(&mut filter);
-    let zones = hand_or_graveyard_choice_zones(&filter)?;
+    let zones = choice_zones_including_hand(&filter)?;
     strip_choice_zones_from_filter(&mut filter, &zones);
     Some((filter, zones))
 }

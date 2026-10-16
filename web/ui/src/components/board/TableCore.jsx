@@ -1,5 +1,5 @@
 import useUiText from "@/i18n/useUiText";
-import CardCreationControls from "@/components/layout/CardCreationControls";
+import PlayNavigation from "@/components/layout/PlayNavigation";
 import PriorityHoldControl from "@/components/decisions/PriorityHoldControl";
 import { useCastPlayerHovered } from "@/context/DragContext";
 import { cloneElement, useCallback, useLayoutEffect, useRef, useState } from "react";
@@ -121,10 +121,8 @@ export default function TableCore({
     playerAccentOverrides,
     multiplayer,
     surrenderRequested,
-    autoResolveEnabled,
     phasePassing,
     togglePhasePassing,
-    setAutoResolveEnabled,
   } = useGame();
   const { t } = useI18n();
   const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
@@ -146,7 +144,7 @@ export default function TableCore({
     largeDesktopViewport,
   } = useViewportLayout();
   const focusedHudDesktop = !nonDesktopViewport && !tabletCompactViewport;
-  const dockDecisionUtilities = focusedHudDesktop;
+  const dockNavigationUtilities = focusedHudDesktop;
   const players = state?.players || [];
   const perspective = state?.perspective;
 
@@ -160,7 +158,7 @@ export default function TableCore({
     state?.game_over
     || (decision && decision.kind !== "priority")
   );
-  useDecisionControlMotion(tableRef, expandedActionBar);
+  useDecisionControlMotion(tableRef);
   const compactPriorityBarHeight = portraitCompactViewport
     ? 188
     : (landscapeMobileViewport ? 44 : 58);
@@ -240,7 +238,7 @@ export default function TableCore({
     const controls = utilityControlsRef.current;
     const table = tableRef.current;
     if (!table) return undefined;
-    if (dockDecisionUtilities) {
+    if (dockNavigationUtilities) {
       table.style.setProperty("--header-utility-width", "0px");
       return () => table.style.removeProperty("--header-utility-width");
     }
@@ -282,12 +280,11 @@ export default function TableCore({
     const update = () => {
       frame = 0;
       if (!dock.isConnected) return;
-      const dockRect = dock.getBoundingClientRect();
-      const dockWidth = dockRect.width || dock.offsetWidth;
-      const dockHeight = dockRect.height || dock.offsetHeight;
+      const dockWidth = dock.offsetWidth;
+      const dockHeight = dock.offsetHeight;
       if (!dockWidth || !dockHeight) return;
       const dockExtrasHeight = Math.max(0,
-        dockHeight - (decisionRolloutRef.current?.getBoundingClientRect().height || dockHeight));
+        dockHeight - (decisionRolloutRef.current?.offsetHeight || dockHeight));
 
       const zoneElements = [...document.querySelectorAll(FLOATING_DOCK_PROTECTED_ZONES)]
         .filter((element) => element !== dock && !dock.contains(element));
@@ -317,7 +314,11 @@ export default function TableCore({
       const handRight = reservedRect
         ? (reservedRect.left + reservedRect.right) / 2 + Number(reservedFan.dataset.handReservedHalfWidth)
         : handRects.reduce((right, rect) => Math.max(right, rect.right), 0);
-      const handTop = handRects.reduce((top, rect) => Math.min(top, rect.top), window.innerHeight);
+      // Invisible draw slots still reserve the fan envelope. Revealing a
+      // card must not move the action button a second time.
+      const handTop = reservedRect
+        ? reservedRect.top
+        : handRects.reduce((top, rect) => Math.min(top, rect.top), window.innerHeight);
       if (state?.decision?.kind === 'mana_payment' && !surrenderRequested) {
         const opponentRows = [...table.querySelectorAll('.battlefield-panel--opponents [data-zone-anchor-player]')].map(zone => zone.querySelector('.battlefield-row[data-bf-side="top"]')).filter(Boolean);
         const opponentCards = opponentRows.flatMap(row => [...row.querySelectorAll('.battlefield-row-card')]);
@@ -367,7 +368,7 @@ export default function TableCore({
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener(ZONE_PILES_MOVED_EVENT, schedule);
     };
-  }, [focusedHudDesktop, dockDecisionUtilities, deckLoadingMode, puzzleSetupMode, state?.players, state?.decision, state?.phase, state?.step, surrenderRequested]);
+  }, [focusedHudDesktop, dockNavigationUtilities, deckLoadingMode, puzzleSetupMode, state?.players, state?.decision, state?.phase, state?.step, surrenderRequested]);
 
   if (!players.length) {
     return <main className="table-gradient table-shell rounded-none min-h-0" />;
@@ -408,22 +409,7 @@ export default function TableCore({
         disabled={Boolean(state?.game_over)}
         onClick={togglePhasePassing}
       >{ui("End turn")}</button>}
-      {!state?.mana_payment && state?.decision?.kind !== "mana_payment" && <button
-        type="button"
-        className="battlefield-auto-pass-toggle"
-        data-enabled={autoResolveEnabled ? "true" : "false"}
-        aria-pressed={Boolean(autoResolveEnabled)}
-        aria-label={ui("Auto-pass")}
-        data-tooltip={ui("Auto-pass")}
-        title={ui("Show a timed Hold Priority button after casting or activating. Turn off to resolve manually.")}
-        onClick={() => setAutoResolveEnabled((enabled) => !enabled)}
-      >
-        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
-          <path d="m3.25 4.5 5.5 5.5-5.5 5.5" />
-          <path d="m10.25 4.5 5.5 5.5-5.5 5.5" />
-        </svg>
-        <span className="sr-only">{t("action.autoPass")}</span>
-      </button>}
+      <PriorityHoldControl battlefield />
     </div>
   ) : null;
   const middleTopbarElement = focusedHudDesktop && middleTopbar
@@ -493,25 +479,27 @@ export default function TableCore({
                 </span>
               </span>
             )}
+            {focusedHudDesktop ? <div className="local-command-zone-dock" /> : null}
           </div>
         </div>
         {!focusedHudDesktop ? <PriorityHoldControl /> : null}
-        <div className="local-player-mana-dock">
+        {!focusedHudDesktop && <div className="local-player-mana-dock">
         <ManaPool
           pool={me.mana_pool}
+          player={me}
           alwaysVisible
           compact
           className="player-name-mana battlefield-header-mana"
         />
-        </div>
+        </div>}
         {focusedHudDesktop ? (
           // Chat tab sits right after the player's name, between it and the
           // hand; the panel opens upward from there.
           <div className="player-header-chat-dock">
-            <LobbyChat showOffline onOpenLobby={zoneActionControls?.props?.onOpenLobby} />
+            <LobbyChat />
           </div>
         ) : null}
-        {middleUtilityControls && !dockDecisionUtilities ? (
+        {middleUtilityControls && !dockNavigationUtilities ? (
           <div ref={utilityControlsRef} className="player-header-utility-controls">
             {cloneElement(middleUtilityControls, { showBrand: focusedHudDesktop })}
           </div>
@@ -519,7 +507,10 @@ export default function TableCore({
       </div>
       {focusedHudDesktop ? (
         <div className="player-header-card-controls">
-          <CardCreationControls shortLabels onAddCardNotice={zoneActionControls?.props?.onAddCardNotice} />
+          <PlayNavigation onOpenLobby={zoneActionControls?.props?.onOpenLobby} onAddCardNotice={zoneActionControls?.props?.onAddCardNotice} />
+          {middleUtilityControls && <div className="navigation-utility-controls">
+            {cloneElement(middleUtilityControls, { showBrand: true, menuFirst: true, showLearn: true })}
+          </div>}
         </div>
       ) : null}
       {!dockStackRailInBoard ? (
@@ -641,14 +632,9 @@ export default function TableCore({
           />}
         </div>
       </div>
-      {dockDecisionUtilities && middleUtilityControls ? (
-        <div className="decision-header-utility-controls" style={humanActionDockPosition ? {
-          position: "relative",
-          left: `calc(${humanActionDockPosition.navigationRight - humanActionDockPosition.left}px - 100%)`,
-        } : undefined}>
-          {cloneElement(middleUtilityControls, { showBrand: true })}
-        </div>
-      ) : null}
+      <div className="decision-mana-dock">
+        <ManaPool pool={me.mana_pool} player={me} alwaysVisible compact activeScale={2} />
+      </div>
     </div>
   ) : null;
   if (landscapeMobileViewport) {
@@ -714,7 +700,8 @@ export default function TableCore({
       />
       {focusedHudDesktop && (
         <div className="table-phase-divider">
-          <div className="topbar-phase-shell"><PhaseTrack compact /></div>
+          {/* Reserve both tracker rows so combat never resizes either field. */}
+          <div className="topbar-phase-shell"><PhaseTrack compact reserveCombatSpace /></div>
         </div>
       )}
       {planarZoneElement}

@@ -51,6 +51,17 @@ test('card-glint paints a real Magic face and keeps live ability actions', {time
     await page.route('**/card-glint/**/magic-presentation.js',route=>route.abort());
     await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/card-glint.html`);
     await page.locator('[data-card-glint-frame="error"]').waitFor({state:'attached'});
+    const fallback=page.locator('[data-frame-mode="baked"]');
+    await fallback.waitFor();
+    await fallback.locator('.simple-card-frame__stock').evaluate(image=>image.decode());
+    const artBox=await fallback.locator('.simple-card-frame__art').boundingBox();
+    const loaderBox=await fallback.locator('[data-card-art-loader]').boundingBox();
+    assert.ok(loaderBox.x>=artBox.x-1 && loaderBox.y>=artBox.y-1);
+    assert.ok(loaderBox.x+loaderBox.width<=artBox.x+artBox.width+1);
+    assert.ok(loaderBox.y+loaderBox.height<=artBox.y+artBox.height+1);
+    assert.equal(await fallback.locator('[data-mana-color="U"]').count(),1);
+    await page.screenshot({path:'test-results/card-glint-baked-fallback.png'});
+
     await page.locator('.simple-card-frame').getByRole('button',{name:'Glint Test Adept: {T}: Draw a card.'}).click();
     assert.equal(await page.evaluate(()=>window.glintActivated),'draw');
   } finally {await browser.close();await vite.close();}
@@ -71,6 +82,8 @@ test('initial hand and battlefield warm without mounted frames and follow live s
     await page.evaluate(()=>window.finishGlintBackground());
     await page.evaluate(()=>window.showGlintBackground());
     await page.locator('[data-card-glint-frame="ready"]').waitFor();
+    await page.waitForFunction(()=>window.glintReadyAtFirstPaint!==undefined);
+    assert.equal(await page.evaluate(()=>window.glintReadyAtFirstPaint),true,'completed background frame is visible on the first paint');
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await vite.close();}
 });
@@ -133,5 +146,134 @@ test('cached double-faced printing stays ready in the live preview', {timeout:30
     await page.getByRole('img',{name:new RegExp(back.name)}).waitFor();
     await page.locator('[data-card-glint-frame="ready"]').waitFor({timeout:8000});
     await page.getByRole('button',{name:/Tamiyo, Seasoned Scholar:/}).first().press('Enter');
+  } finally {await browser.close();await vite.close();}
+});
+
+test('custom Island uses a default glint frame with local art and source attribution', {timeout:30000}, async()=>{
+  const vite=await createServer({server:{host:'127.0.0.1',port:0},logLevel:'error'});
+  await vite.listen();const browser=await chromium.launch();
+  try {
+    const page=await browser.newPage();
+    await page.route('https://api.scryfall.com/**',route=>route.abort());
+    await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/card-glint.html?warm`);
+    await page.evaluate(async()=>{
+      const {customCardAssets,customCardImageUrl}=await import('/src/lib/custom-card-assets.js');
+      const island=customCardAssets('Island');
+      window.changeGlintCard({name:'Island',type_line:island.typeLine,oracle_text:'',color_identity:['U'],flavor_text:island.flavorText});
+      window.setGlintArt(customCardImageUrl('Island'));
+      window.setGlintRules({lines:[],actions:new Map()});window.showGlintFrame();
+    });
+    await page.locator('[data-card-glint-frame="ready"]').waitFor({timeout:15000});
+    assert.equal(await page.locator('[data-card-glint-frame="error"]').count(),0);
+    const source=page.getByRole('link',{name:'Open original post on reddit.com'});
+    const href='https://www.reddit.com/r/custommagic/comments/ch910l/bob_ross_basic_lands/';
+    assert.equal(await source.getAttribute('href'),href);
+    const linkBox=await source.boundingBox(),frameBox=await page.locator('[data-card-glint-frame="ready"]').boundingBox();
+    assert.ok(linkBox.y>=frameBox.y+frameBox.height*.93,'attribution stays in the bottom black border');
+    assert.ok(linkBox.y+linkBox.height<frameBox.y+frameBox.height,'attribution stays inside the card');
+    assert.ok(linkBox.x>=frameBox.x && linkBox.x+linkBox.width<=frameBox.x+frameBox.width,'attribution fits horizontally');
+    await page.locator('.card-frame-presentation').screenshot({path:'/tmp/custom-island-source-link.png'});
+    await page.context().route('https://www.reddit.com/**',route=>route.fulfill({contentType:'text/html',body:'Original post'}));
+    const popupPromise=page.waitForEvent('popup');
+    await source.click();
+    const popup=await popupPromise;
+    await popup.waitForLoadState();
+    assert.equal(popup.url(),href);
+    await popup.close();
+  }finally{await browser.close();await vite.close();}
+});
+
+test('land Sagas select plates from live intrinsic mana and revert when it is removed',async()=>{
+  const vite=await createServer({server:{host:'127.0.0.1',port:0},logLevel:'error'});
+  await vite.listen();const browser=await chromium.launch();
+  try {
+    const page=await browser.newPage();
+    await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/card-glint.html?warm`);
+    const variants=await page.evaluate(async()=>{
+      const {loadCardGlint}=await import('/src/lib/card-glint/session.mjs');
+      const {cardGlintFace}=await import('/src/lib/card-glint/card.mjs');
+      const {cardFrameSnapshot}=await import('/src/lib/card-frame-snapshot.mjs');
+      const api=await loadCardGlint();
+      const card={name:"Urza's Saga",type_line:'Enchantment Land — Saga',colors:[],color_identity:[],oracle_text:'I — Add {C}.',layout:'saga'};
+      return ['', ' Forest', ' Island Forest', ''].map(extra=>{
+        const face=cardGlintFace(JSON.parse(cardFrameSnapshot({...card,type_line:card.type_line+extra})));
+        return {colors:face.colors,palette:face.frameColors,assets:api.canvasAssetUrls(face).filter(Boolean)};
+      });
+    });
+    assert.deepEqual(variants.map(v=>v.palette),[[],['G'],['U','G'],[]]);
+    for(const v of variants)assert.deepEqual(v.colors,[],'frame tint does not change game colors');
+    assert.ok(variants[0].assets.some(url=>url.endsWith('/saga/regular/l.png')));
+    assert.ok(variants[1].assets.some(url=>url.endsWith('/sagaFrameG.png')));
+    assert.ok(!variants[1].assets.some(url=>url.endsWith('/saga/regular/l.png')));
+    for(const color of ['U','G'])assert.ok(variants[2].assets.some(url=>url.endsWith(`/sagaFrame${color}.png`)));
+    assert.deepEqual(variants[3],variants[0]);
+  }finally{await browser.close();await vite.close();}
+});
+
+test('live land Saga preview retains the glint frame and granted mana actions', {timeout:60000},async()=>{
+  const vite=await createServer({server:{host:'127.0.0.1',port:0},logLevel:'error'});
+  await vite.listen();const browser=await chromium.launch();
+  try {
+    const page=await browser.newPage();
+    await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/card-glint.html?warm`);
+    await page.evaluate(()=>{
+      const lines=[
+        'I — This Saga gains "{T}: Add {C}."',
+        'II — This Saga gains "{2}, {T}: Create a 0/0 colorless Construct artifact creature token with \'This token gets +1/+1 for each artifact you control.\'"',
+        'III — Search your library for an artifact card with mana cost {0} or {1}, put it onto the battlefield, then shuffle.',
+        '{T}: Add {C}.',
+      ];
+      window.changeGlintCard({name:"Urza's Saga",type_line:'Enchantment Land — Urzas Saga Forest',colors:[],color_identity:[],oracle_text:lines.join('\n')});
+      window.setGlintRules({lines,actions:new Map([[2,[{id:'chapter'}]],[3,[{id:'mana'}]]])});window.showGlintFrame();
+    });
+    await page.locator('[data-card-glint-frame="ready"]').waitFor({timeout:40000});
+    await page.getByRole('button',{name:/Urza's Saga: III/}).first().press('Enter');
+    assert.equal(await page.evaluate(()=>window.glintActivated),'chapter');
+    await page.getByRole('button',{name:"Urza's Saga: {T}: Add {C}.",exact:true}).first().press('Enter');
+    assert.equal(await page.evaluate(()=>window.glintActivated),'mana');
+  }finally{await browser.close();await vite.close();}
+});
+
+test('colored lands paint their outer stock from the land palette', {timeout:120000}, async()=>{
+  const vite=await createServer({server:{host:'127.0.0.1',port:0},logLevel:'error'});
+  await vite.listen();const browser=await chromium.launch();
+  try {
+    const page=await browser.newPage({viewport:{width:1100,height:1100}});
+    await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/tests/card-glint.html?warm`);
+    const results=await page.evaluate(async()=>{
+      const {cardGlintFace}=await import('/src/lib/card-glint/card.mjs');
+      const {renderCardGlint,loadCardGlint}=await import('/src/lib/card-glint/session.mjs');
+      const api=await loadCardGlint();
+      document.body.replaceChildren();document.body.style.cssText='display:flex;flex-wrap:wrap;gap:10px;background:#222';
+      const cards=[
+        ['Yavimaya, Cradle of Growth','Legendary Land — Forest',['G']],
+        ['Island','Basic Land — Island',['U']],
+        ['Plains','Basic Land — Plains',['W']],
+        ['Swamp','Basic Land — Swamp',['B']],
+        ['Mountain','Basic Land — Mountain',['R']],
+        ['Forest','Basic Land — Forest',['G']],
+        ['Dual land','Land',['U','G']],
+        ['Wastes','Basic Land',[]],
+      ];
+      const results=[];
+      for(const [name,type_line,palette] of cards){
+        const face=cardGlintFace({name,type_line,colors:[],color_identity:palette});
+        const {canvas}=await renderCardGlint(face);
+        const copy=document.createElement('canvas');copy.width=canvas.width;copy.height=canvas.height;
+        copy.getContext('2d').drawImage(canvas,0,0);copy.style.width='244px';copy.style.height='340px';document.body.append(copy);
+        const pixels=canvas.getContext('2d').getImageData(Math.round(canvas.width*.045),Math.round(canvas.height*.3),1,1).data;
+        results.push({name,colors:face.colors,assets:api.canvasAssetUrls(face),pixel:[...pixels]});
+      }
+      return results;
+    });
+    for(const [index,color] of ['G','U','W','B','R','G','Gold','Land'].entries()){
+      assert.deepEqual(results[index].colors,[]);
+      assert.ok(results[index].assets.some(url=>url?.endsWith(`/bg/${color}.webp`)),results[index].name);
+    }
+    const [r,g,b]=results[0].pixel;
+    assert.ok(g>r && g>b,`Yavimaya outer stock is green: ${results[0].pixel}`);
+    const [ir,ig,ib]=results[1].pixel;
+    assert.ok(ib>ir && ib>ig,`Island outer stock is blue: ${results[1].pixel}`);
+    await page.screenshot({path:'test-results/card-glint-land-stock.png'});
   } finally {await browser.close();await vite.close();}
 });

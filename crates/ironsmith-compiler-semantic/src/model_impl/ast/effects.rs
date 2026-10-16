@@ -2352,6 +2352,7 @@ impl EffectAst {
                 zones,
                 tag,
                 source_tags: Vec::new(),
+                filter_source_snapshots: false,
             },
         )
     }
@@ -2370,6 +2371,25 @@ impl EffectAst {
                 zones,
                 tag,
                 source_tags,
+                filter_source_snapshots: false,
+            },
+        )
+    }
+
+    pub fn subject_verb_filtered_tagged_objects(
+        filter: ObjectFilter,
+        tag: TagRef,
+        source_tags: Vec<TagRef>,
+    ) -> Self {
+        Self::subject_verb(
+            SubjectVerbRoleAst::Actor,
+            PlayerAst::Implicit,
+            SubjectVerbActionAst::TagMatchingObjects {
+                filter,
+                zones: Vec::new(),
+                tag,
+                source_tags,
+                filter_source_snapshots: true,
             },
         )
     }
@@ -3033,6 +3053,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesAll {
+                mode: ironsmith_core::AbilityLossMode::Lose,
                 filter,
                 abilities,
                 duration,
@@ -3052,6 +3073,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesAll {
+                mode: ironsmith_core::AbilityLossMode::Lose,
                 filter,
                 abilities,
                 duration,
@@ -3155,6 +3177,7 @@ impl EffectAst {
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::StatChanges(StatChangeActionAst::RemoveAbilitiesFromTarget {
+                mode: ironsmith_core::AbilityLossMode::Lose,
                 target,
                 abilities,
                 duration,
@@ -5320,7 +5343,17 @@ impl EffectAst {
         Self::subject_verb(
             SubjectVerbRoleAst::Chooser,
             player,
-            SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardType { options }),
+            SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardType { options, shared_among: None }),
+        )
+    }
+
+    pub fn subject_verb_choose_shared_card_type(player: PlayerAst, filter: ObjectFilter, count: u32) -> Self {
+        Self::subject_verb(
+            SubjectVerbRoleAst::Chooser,
+            player,
+            SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardType {
+                options: Vec::new(), shared_among: Some((filter, count)),
+            }),
         )
     }
 
@@ -6292,7 +6325,7 @@ impl EffectAst {
         Self::subject_verb(
             SubjectVerbRoleAst::AffectedPlayer,
             player,
-            SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayAnyLife { min_amount }),
+            SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayAnyLife { min_amount, maximum: None, source_owned: false }),
         )
     }
 
@@ -6502,6 +6535,11 @@ impl EffectAst {
             player,
             SubjectVerbActionAst::Tokens(TokenActionAst::CreateEmblem { emblem }),
         )
+    }
+
+    pub fn subject_verb_draw_game() -> Self {
+        Self::subject_verb(SubjectVerbRoleAst::Actor, PlayerAst::Implicit,
+            SubjectVerbActionAst::Game(GameActionAst::DrawGame))
     }
 
     pub fn subject_verb_lose_game(player: PlayerAst) -> Self {

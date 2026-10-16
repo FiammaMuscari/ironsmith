@@ -784,6 +784,7 @@ pub enum TriggerKind {
     /// enchantment is on the battlefield", "When you cast or cycle ~").
     /// Appended to preserve serialized variant ordinals.
     ZoneGated { trigger: Box<Trigger>, zones: Vec<Zone> },
+    PermanentTappedToPayCost { filter: ObjectFilter, cost_kind: crate::OptionalCostKind },
 }
 
 /// The player mentioned as gaining or losing control is distinct from the
@@ -1285,6 +1286,9 @@ impl Trigger {
                 one_or_more: false,
             },
         )
+    }
+    pub fn permanent_tapped_to_pay_cost(filter: ObjectFilter, cost_kind: crate::OptionalCostKind) -> Self {
+        Self::typed("permanent_tapped_to_pay_cost", TriggerKind::PermanentTappedToPayCost { filter, cost_kind })
     }
     pub fn becomes_untapped() -> Self {
         Self::typed("becomes_untapped", TriggerKind::BecomesUntapped)
@@ -1825,6 +1829,15 @@ impl Trigger {
                 combat_only: true,
                 noncombat_only: false,
                 excess_only: false,
+                minimum: None, single_source: false,
+            },
+        )
+    }
+    pub fn is_dealt_excess_damage(target: ChooseSpec, combat_only: bool) -> Self {
+        Self::typed(
+            "is_dealt_excess_damage",
+            TriggerKind::IsDealtDamage {
+                target, combat_only, noncombat_only: false, excess_only: true,
                 minimum: None, single_source: false,
             },
         )
@@ -2957,6 +2970,9 @@ pub struct CounterRemovedFromTrigger {
     /// Require the counter removal event to have been caused by this trigger's
     /// source. This is the event-provenance meaning of Oracle's "this way".
     pub caused_by_source: bool,
+    /// The controller of the effect or cost that removed the counters.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub source_controller: Option<PlayerFilter>,
 }
 
 impl CounterRemovedFromTrigger {
@@ -2967,7 +2983,13 @@ impl CounterRemovedFromTrigger {
             last: false,
             one_or_more: false,
             caused_by_source: false,
+            source_controller: None,
         }
+    }
+
+    pub fn source_controller(mut self, player: PlayerFilter) -> Self {
+        self.source_controller = Some(player);
+        self
     }
 
     pub fn one_or_more(mut self) -> Self {

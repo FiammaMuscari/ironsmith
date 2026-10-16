@@ -107,6 +107,7 @@ fn retarget_it_restriction_for_counter_followup(
         }
         Restriction::BlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBlockSpecificAttacker { blockers, attacker }
+        | Restriction::MustBeBlockedBy { blockers, attacker }
         | Restriction::BeAttachedBy(blockers, attacker) => {
             retarget_it_filter_for_counter_followup(blockers, source_filter);
             retarget_it_filter_for_counter_followup(attacker, source_filter);
@@ -805,6 +806,7 @@ fn parse_optional_put_from_owned_hand_or_graveyard_with_counters(
     let selected = helper_tag_for_tokens(clause.tokens(), "owned_zone_entry");
     let mut effects = vec![
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjectsAcrossZones {
+            optional_search_zones: false,
             filter,
             count: ChoiceCount::exactly(1),
             count_value: None,

@@ -198,7 +198,7 @@ pub(super) fn try_compile_object_zone_and_exchange_effect(
                     .map(as_followup_player_alias);
             }
             validate_card_selection_filter(&resolved_filter, None)?;
-            let cross_zone_choices = hand_or_graveyard_choice_zones(&resolved_filter);
+            let cross_zone_choices = choice_zones_including_hand(&resolved_filter);
             if let Some(zones) = &cross_zone_choices {
                 strip_choice_zones_from_filter(&mut resolved_filter, zones);
             }
@@ -218,6 +218,7 @@ pub(super) fn try_compile_object_zone_and_exchange_effect(
                     tag.clone().into(),
                     zones,
                     None,
+                    false,
                     false,
                 )
             } else if chooses_tagged_pool && resolved_filter.zone == Some(Zone::Exile) {
@@ -247,6 +248,7 @@ pub(super) fn try_compile_object_zone_and_exchange_effect(
                     tag.clone().into(),
                     scoped_collection_zones(),
                     None,
+                    false,
                     false,
                 )
             } else {
@@ -384,6 +386,7 @@ pub(super) fn try_compile_object_zone_and_exchange_effect(
             tag,
             zones,
             search_mode,
+            optional_search_zones,
         }) => {
             let subject = if *player == PlayerAst::Implicit {
                 // An imperative cross-zone choice (most notably "Search target
@@ -461,6 +464,7 @@ pub(super) fn try_compile_object_zone_and_exchange_effect(
                         zones.clone(),
                         *search_mode,
                         default_search,
+                        *optional_search_zones,
                     )
                 };
             ctx.last_it_choice_is_set =

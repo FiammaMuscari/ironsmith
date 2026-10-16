@@ -117,6 +117,7 @@ fn convert_counter_removed_from_trigger(
     trigger: ironsmith_core::trigger_model::CounterRemovedFromTrigger,
 ) -> crate::triggers::Trigger {
     let mut out = crate::triggers::CounterRemovedFromTrigger::new(trigger.filter);
+    if let Some(player) = trigger.source_controller { out = out.source_controller(player); }
     if let Some(counter_type) = trigger.counter_type {
         out = out.counter_type(counter_type);
     }
@@ -316,6 +317,7 @@ pub(crate) fn interpret_trigger_model(
         TriggerKind::CardsMilled { player, filter, one_or_more, per_player } => crate::triggers::Trigger::new(crate::triggers::CardsMilledTrigger { player, filter, one_or_more, per_player }),
         TriggerKind::PhasingChanged { filter, phased_in, one_or_more } => crate::triggers::Trigger::new(crate::triggers::PhasingChangedTrigger { filter, phased_in, one_or_more }),
         TriggerKind::BecomesTapped => crate::triggers::Trigger::becomes_tapped(),
+        TriggerKind::PermanentTappedToPayCost { filter, cost_kind } => crate::triggers::Trigger::permanent_tapped_to_pay_cost(filter, cost_kind),
         TriggerKind::PermanentBecomesTapped { filter, one_or_more } => {
             if one_or_more {
                 crate::triggers::Trigger::permanent_becomes_tapped_one_or_more(filter)

@@ -6087,6 +6087,7 @@ pub(super) fn value_references_target_player(value: &Value) -> bool {
         Value::CreaturesDiedThisTurnControlledBy(player)
         | Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
+        | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
         | Value::CountPlayersWithCardsInGraveyardAtLeast(player, _)
         | Value::CountPlayersWithPoisonCountersAtLeast(player, _)
         | Value::PartySize(player)
@@ -6788,7 +6789,7 @@ pub(crate) fn describe_pay_life_reveal_hand_choose_exile_effects(
     }
 
     let pay = pay_effect.downcast_ref::<crate::effects::PayAnyLifeEffect>()?;
-    if pay.player != ChooseSpec::you() || pay.min_amount != 0 {
+    if pay.player != ChooseSpec::you() || pay.min_amount != 0 || pay.maximum.is_some() {
         return None;
     }
 
@@ -11269,6 +11270,14 @@ pub(in crate::compiled_text) fn describe_structural_multisentence_effect_list(
         return Some(compact);
     }
 
+    if let Some(compact) = describe_search_participant_offer_sequence(effects) {
+        return Some(compact);
+    }
+
+    if let Some(compact) = describe_greatest_mana_value_tie_break_sequence(effects) {
+        return Some(compact);
+    }
+
     if let Some(compact) = describe_each_player_repeat_pay_life_tokens_sequence(effects) {
         return Some(compact);
     }
@@ -12911,6 +12920,7 @@ pub(super) fn describe_each_player_repeat_pay_life_tokens_sequence(
     };
     let pay_life = pay_life_effect.downcast_ref::<crate::effects::PayAnyLifeEffect>()?;
     if pay_life.min_amount != 0
+        || pay_life.maximum.is_some()
         || pay_life.player != ChooseSpec::Player(PlayerFilter::IteratedPlayer)
     {
         return None;
@@ -14294,4 +14304,109 @@ mod random_hand_look_tests {
             assert!(describe_random_hand_look_setup(&[&choose, &other_tag]).is_none());
         }
     }
+}
+
+/// Recover the public participants from a proved tie-break data flow, rather
+/// than displaying the resolution-local storage tags as player names.
+fn describe_greatest_mana_value_tie_break_sequence(effects: &[Effect]) -> Option<String> {
+    let [seed, process, winner] = effects else { return None; };
+    let seed = seed.downcast_ref::<crate::effects::TagPlayersEffect>()?;
+    let process = process.downcast_ref::<crate::effects::RepeatProcessEffect>()?;
+    let winner = winner.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()?;
+    if seed.filter != PlayerFilter::Any || winner.tag != seed.tag || winner.require_evidence
+        || !process.choice_history.is_empty()
+        || process.predicate != EffectPredicate::Value(crate::effect::Comparison::GreaterThan(1))
+    { return None; }
+    let [round, narrow] = process.effects.as_slice() else { return None; };
+    let round = round.downcast_ref::<crate::effects::ForPlayersEffect>()?;
+    let (narrow, narrow_id) = unwrap_with_id(narrow);
+    let narrow = narrow.downcast_ref::<crate::effects::KeepGreatestManaValuePlayersEffect>()?;
+    if narrow_id != Some(process.condition) || narrow.players_tag != seed.tag
+        || round.filter != PlayerFilter::TaggedPlayer(seed.tag.clone())
+        || round.stop_after_first_happened || round.sequential || round.starting_with_controller
+    { return None; }
+    let [exile] = round.effects.as_slice() else { return None; };
+    let exile = exile.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>()?;
+    if exile.count != Value::Fixed(1) || exile.player != PlayerFilter::IteratedPlayer
+        || exile.face_down || exile.accumulated_tags.as_slice() != [narrow.objects_tag.clone()]
+    { return None; }
+    let [reward] = winner.effects.as_slice() else { return None; };
+    let reward = reward.downcast_ref::<crate::effects::ExtraTurnEffect>()?;
+    if reward.player != PlayerFilter::IteratedPlayer { return None; }
+    Some("Each player exiles the top card of their library. The player who exiled the card with the greatest mana value takes an extra turn after this one. If two or more players' cards are tied for greatest, the tied players repeat this process until the tie is broken".to_string())
+}
+
+#[cfg(test)]
+mod tie_break_render_tests {
+    use super::*;
+
+    fn sequence(round_tag: &str, threshold: i32) -> Vec<Effect> {
+        vec![
+            Effect::new(crate::effects::TagPlayersEffect::new(PlayerFilter::Any, "contenders")),
+            Effect::new(crate::effects::RepeatProcessEffect::new(
+                vec![
+                    Effect::for_players(PlayerFilter::TaggedPlayer("contenders".into()), vec![
+                        Effect::new(crate::effects::ExileTopOfLibraryEffect::new(
+                            Value::Fixed(1), PlayerFilter::IteratedPlayer)
+                            .tag_moved("card").append_tagged(round_tag)),
+                    ]),
+                    Effect::with_id(7, Effect::new(crate::effects::KeepGreatestManaValuePlayersEffect::new(
+                        "contenders", "round"))),
+                ],
+                crate::effect::EffectId(7),
+                EffectPredicate::Value(crate::effect::Comparison::GreaterThan(threshold)),
+            )),
+            Effect::for_each_tagged_player("contenders", vec![Effect::new(crate::effects::ExtraTurnEffect {
+                player: PlayerFilter::IteratedPlayer,
+            })]),
+        ]
+    }
+
+    #[test]
+    fn tie_break_rendering_requires_matching_round_and_continuation() {
+        let text = describe_greatest_mana_value_tie_break_sequence(&sequence("round", 1))
+            .expect("proved tie-break sequence");
+        assert!(text.contains("greatest mana value takes an extra turn"));
+        assert!(!text.contains("contenders"));
+        assert!(describe_greatest_mana_value_tie_break_sequence(&sequence("other-round", 1)).is_none());
+        assert!(describe_greatest_mana_value_tie_break_sequence(&sequence("round", 0)).is_none());
+    }
+}
+
+/// Recover a searched-player qualifier only from the exact capture and
+/// consumption links; resolution-local tags are not public player names.
+fn describe_search_participant_offer_sequence(effects: &[Effect]) -> Option<String> {
+    let [seed, initial, offers, rewards, final_action] = effects else { return None; };
+    let seed = seed.downcast_ref::<crate::effects::TagPlayersEffect>()?;
+    let offers = offers.downcast_ref::<crate::effects::ForPlayersEffect>()?;
+    let rewards = rewards.downcast_ref::<crate::effects::ForPlayersEffect>()?;
+    let final_action = final_action.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()?;
+    if seed.filter != PlayerFilter::excluding(PlayerFilter::Any, PlayerFilter::Any)
+        || offers.filter != PlayerFilter::Opponent || offers.starting_with_controller || offers.stop_after_first_happened
+        || rewards.filter != PlayerFilter::excluding(PlayerFilter::TaggedPlayer(seed.tag.clone()), PlayerFilter::your_team())
+        || !rewards.sequential || rewards.starting_with_controller || rewards.stop_after_first_happened
+        || final_action.tag != seed.tag || !final_action.require_evidence { return None; }
+    let [shuffle] = final_action.effects.as_slice() else { return None; };
+    let shuffle = shuffle.downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
+    if shuffle.player != PlayerFilter::IteratedPlayer || shuffle.target_spec.is_some() { return None; }
+    fn captures(effect: &Effect, tag: &TagKey, count: &mut usize) -> bool {
+        if let Some(search) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
+            if search.is_search { *count += 1; return search.search_participant_tag.as_ref() == Some(tag); }
+        }
+        if let Some(search) = effect.downcast_ref::<crate::effects::SearchLibraryEffect>() {
+            *count += 1; return search.participant_tag.as_ref() == Some(tag);
+        }
+        let mut valid = true;
+        effect.visit_child_effects(&mut |child| valid &= captures(child, tag, count));
+        valid
+    }
+    for effects in [std::slice::from_ref(initial), offers.effects.as_slice(), rewards.effects.as_slice()] {
+        let mut count = 0;
+        if !effects.iter().all(|effect| captures(effect, &seed.tag, &mut count)) || count == 0 { return None; }
+    }
+    let initial_text = describe_effect(initial);
+    let offers_text = describe_effect(&Effect::new(offers.clone()));
+    let reward_text = describe_effect_list(&rewards.effects);
+    Some(format!("{}. {}. For each opponent who searches a library this way, {}. Then each player who searched a library this way shuffles",
+        initial_text.trim_end_matches('.'), offers_text.trim_end_matches('.'), lowercase_first(reward_text.trim_end_matches('.'))))
 }

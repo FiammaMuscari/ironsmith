@@ -1512,6 +1512,15 @@ fn tagged_constraint_matches_subject(
         TaggedOpbjectRelation::WasAttachedToTaggedObject => tagged_snapshots
             .iter()
             .any(|snapshot| snapshot.attachments.contains(&subject.subject_object_id())),
+        TaggedOpbjectRelation::DealtDamageToTaggedThisTurn { combat_only } => {
+            game.turn_store.turn_history.projected_records().any(|record| {
+                let Some(damage) = record.event.downcast::<crate::events::DamageEvent>() else { return false; };
+                damage.amount > 0 && (!combat_only || damage.is_combat)
+                    && damage.source == subject.subject_object_id()
+                    && matches!(damage.target, crate::events::DamageTarget::Object(recipient)
+                        if tagged_snapshots.iter().any(|snapshot| snapshot.object_id == recipient))
+            })
+        }
         TaggedOpbjectRelation::SoulbondPartnerOfTagged => tagged_snapshots.iter().any(|snapshot| {
             game.soulbond_partner(snapshot.object_id) == Some(subject.subject_object_id())
         }),
@@ -3482,6 +3491,46 @@ pub(crate) trait ObjectFilterExt {
     fn description(&self) -> String;
 }
 
+fn aura_could_enchant_host_filter(
+    attachment: &crate::object::AuraAttachmentFilter,
+    host_filter: &ObjectFilter,
+    ctx: &FilterContext,
+    game: &GameState,
+) -> bool {
+    use crate::object::AuraAttachmentFilterRuntimeExt;
+    let concrete_host = host_filter.source || host_filter.specific.is_some()
+        || host_filter.tagged_constraints.iter().any(|constraint| matches!(constraint.relation,
+            TaggedOpbjectRelation::IsTaggedObject | TaggedOpbjectRelation::SameObjectId));
+    if concrete_host {
+        let remembered = ctx.tagged_objects.values().flatten()
+            .chain(ctx.source_snapshot.iter())
+            .chain(ctx.source.and_then(|source| game.source_characteristic_lki_snapshot(source, ctx.source_snapshot.as_ref())))
+            .chain(host_filter.specific.and_then(|host| game.source_characteristic_lki_snapshot(host, None)))
+            .filter(|snapshot| snapshot.zone == Zone::Battlefield
+                && host_filter.matches_snapshot(snapshot, ctx, game))
+            .collect::<Vec<_>>();
+        if !remembered.is_empty() {
+            return remembered.into_iter().any(|captured| {
+                if let Some(current) = game.object(captured.object_id).filter(|object|
+                    object.zone == Zone::Battlefield && object.stable_id == captured.stable_id
+                    && !game.is_phased_out(object.id))
+                {
+                    return host_filter.matches(current, ctx, game)
+                        && attachment.matches_target(crate::object::AttachmentTarget::Object(current.id), ctx, game);
+                }
+                let Some(last_known) = game.source_characteristic_lki_snapshot(captured.object_id, Some(captured)) else { return false; };
+                let crate::object::AuraAttachmentFilter::Object(enchant_filter) = attachment else { return false; };
+                last_known.zone == Zone::Battlefield
+                    && host_filter.matches_snapshot(last_known, ctx, game)
+                    && enchant_filter.matches_snapshot(last_known, ctx, game)
+            });
+        }
+    }
+    game.battlefield.iter().filter_map(|id| game.object(*id))
+        .filter(|host| host_filter.matches(host, ctx, game))
+        .any(|host| attachment.matches_target(crate::object::AttachmentTarget::Object(host.id), ctx, game))
+}
+
 impl ObjectFilterExt for ObjectFilter {
     /// Check if an object matches this filter, with access to game state.
     ///
@@ -4007,25 +4056,12 @@ impl ObjectFilterExt for ObjectFilter {
         }
 
         if let Some(host_filter) = &self.could_enchant_object {
-            use crate::object::AuraAttachmentFilterRuntimeExt;
-            // CR 303.4a: an Aura "could enchant" an object its enchant
-            // ability allows. Evaluate against the live hosts that match.
+            // A concrete host uses current characteristics while present,
+            // then its last known battlefield characteristics after departure.
             let could_enchant = game
                 .object(subject.subject_object_id())
                 .and_then(|aura| aura.aura_attach_filter_owned())
-                .is_some_and(|attach| {
-                    game.battlefield
-                        .iter()
-                        .filter_map(|id| game.object(*id))
-                        .filter(|host| host_filter.matches(host, ctx, game))
-                        .any(|host| {
-                            attach.matches_target(
-                                crate::object::AttachmentTarget::Object(host.id),
-                                ctx,
-                                game,
-                            )
-                        })
-                });
+                .is_some_and(|attach| aura_could_enchant_host_filter(&attach, host_filter, ctx, game));
             if !could_enchant {
                 return false;
             }
@@ -4223,6 +4259,15 @@ impl ObjectFilterExt for ObjectFilter {
         allow_calculated_pt: bool,
         view: Option<&crate::derived_view::DerivedGameView<'_>>,
     ) -> bool {
+        if self.use_face_up_characteristics && object.face_down_cast_state.is_some() {
+            let mut face_up = object.clone();
+            face_up.end_face_down_cast_overlay();
+            let snapshot = crate::snapshot::ObjectSnapshot::from_object(&face_up, game);
+            let mut filter = self.clone();
+            filter.use_face_up_characteristics = false;
+            filter.match_current_state = false;
+            return filter.matches_snapshot(&snapshot, ctx, game);
+        }
         matching::matches_subject(
             self,
             ObjectSubject::Live(object),
@@ -4411,6 +4456,9 @@ impl ObjectFilterExt for ObjectFilter {
 
         let mut parts = Vec::new();
         let mut post_noun_qualifiers: Vec<String> = Vec::new();
+        if self.renowned {
+            parts.push("renowned".to_string());
+        }
         let append_token_after_type = self.token;
         let mut controller_suffix: Option<String> = None;
         let mut owner_suffix: Option<String> = None;
@@ -5059,6 +5107,11 @@ impl ObjectFilterExt for ObjectFilter {
                 }
                 TaggedOpbjectRelation::WasAttachedToTaggedObject => {
                     post_noun_qualifiers.push("that was attached to it".to_string());
+                }
+                TaggedOpbjectRelation::DealtDamageToTaggedThisTurn { combat_only } => {
+                    post_noun_qualifiers.push(if combat_only {
+                        "that dealt combat damage to it this turn"
+                    } else { "that dealt damage to it this turn" }.to_string());
                 }
                 TaggedOpbjectRelation::SoulbondPartnerOfTagged => {
                     post_noun_qualifiers.push("paired with it".to_string());

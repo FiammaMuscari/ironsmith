@@ -169,6 +169,7 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
         &non_target_words,
         &[
             &["the", "player", "or", "planeswalker", "its", "attacking"],
+            &["the", "player", "or", "planeswalker", "that", "creature", "is", "attacking"],
             &[
                 "the",
                 "player",
@@ -1009,6 +1010,19 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
         ));
     }
 
+    if matches!(remaining_words.as_slice(),
+        ["that", "player", "or", "a", "planeswalker", "that", "player", "controls"]
+        | ["that", "player", "or", "planeswalker", "that", "player", "controls"]
+        | ["that", "player", "or", "a", "planeswalker", "they", "control"]
+        | ["that", "player", "or", "planeswalker", "they", "control"])
+    {
+        let filter = ObjectFilter::default().in_zone(Zone::Battlefield)
+            .with_type(CardType::Planeswalker).controlled_by(PlayerFilter::IteratedPlayer);
+        return Ok(wrap_target_count(TargetAst::ObjectOrPlayer(
+            filter, PlayerFilter::IteratedPlayer, target_span,
+        ), target_count));
+    }
+
     let opponent_or_planeswalker = [
         &["opponent", "or", "planeswalker"][..],
         &["opponents", "or", "planeswalkers"][..],
@@ -1304,7 +1318,8 @@ pub fn parse_target_phrase_inner(tokens: &[OwnedLexToken]) -> Result<TargetAst, 
                 && matches!(words.last(), Some(&"card" | &"cards"))
                 && words[1..words.len() - 1]
                     .iter()
-                    .all(|word| crate::util::parse_card_type(word).is_some())
+                    .all(|word| crate::util::parse_card_type(word).is_some()
+                        || crate::util::parse_subtype_word(word).is_some())
             {
                 filter.zone = None;
             }

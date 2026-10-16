@@ -3344,3 +3344,117 @@ fn nameless_current_characteristics_do_not_inherit_an_alternate_split_name() {
     assert!(!super::names_share("", Some("Second"), "Second", None));
     assert!(!super::names_share("Second", None, crate::object::FACE_DOWN_DISPLAY_NAME, Some("Second")));
 }
+
+#[test]
+fn damage_to_tagged_recipient_history_preserves_exact_incarnations() {
+    use crate::events::{DamageEvent, DamageTarget};
+    use crate::events::cause::EventCause;
+    use crate::provenance::ProvNodeId;
+    use crate::triggers::TriggerEvent;
+    let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+    let alice = game.players[0].id;
+    let bob = game.players[1].id;
+    let creature = crate::card::CardBuilder::new(crate::ids::CardId::new(), "History creature")
+        .card_types(vec![CardType::Creature]).build();
+    let dealer = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+    let other = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+    let recipient = game.create_object_from_card(&creature, bob, Zone::Battlefield);
+    let snapshot = ObjectSnapshot::from_object(game.object(recipient).unwrap(), &game);
+    let tag = TagKey::from("damage_recipient");
+    let ctx = FilterContext::new(alice).with_tagged_objects(&std::collections::HashMap::from([
+        (tag.clone(), vec![snapshot.clone()]),
+    ]));
+    let filter = ObjectFilter::creature().match_tagged(tag.clone(),
+        TaggedOpbjectRelation::DealtDamageToTaggedThisTurn { combat_only: false });
+    let combat_filter = ObjectFilter::creature().match_tagged(tag.clone(),
+        TaggedOpbjectRelation::DealtDamageToTaggedThisTurn { combat_only: true });
+    for (source, amount) in [(dealer, 2), (other, 0)] {
+        game.record_turn_history_event(&TriggerEvent::new_with_provenance(
+            DamageEvent::with_cause(source, DamageTarget::Object(recipient), amount, false, EventCause::effect())
+                .with_target_snapshot(snapshot.clone()), ProvNodeId::default(),
+        ));
+    }
+    assert!(filter.matches(game.object(dealer).unwrap(), &ctx, &game));
+    assert!(!filter.matches(game.object(other).unwrap(), &ctx, &game));
+    assert!(!combat_filter.matches(game.object(dealer).unwrap(), &ctx, &game));
+    let departed = game.move_object(recipient, Zone::Graveyard, EventCause::effect()).unwrap();
+    assert!(filter.matches(game.object(dealer).unwrap(), &ctx, &game), "departed recipient retains its history");
+    let returned = game.move_object(departed, Zone::Battlefield, EventCause::effect()).unwrap();
+    let new_ctx = FilterContext::new(alice).with_tagged_objects(&std::collections::HashMap::from([
+        (tag, vec![ObjectSnapshot::from_object(game.object(returned).unwrap(), &game)]),
+    ]));
+    assert!(!filter.matches(game.object(dealer).unwrap(), &new_ctx, &game), "a new recipient incarnation has no earlier damage");
+    let dealer_snapshot = ObjectSnapshot::from_object(game.object(dealer).unwrap(), &game);
+    let departed_dealer = game.move_object(dealer, Zone::Hand, EventCause::effect()).unwrap();
+    let returned_dealer = game.move_object(departed_dealer, Zone::Battlefield, EventCause::effect()).unwrap();
+    assert!(!filter.matches(game.object(returned_dealer).unwrap(), &ctx, &game), "a new dealer incarnation has no earlier damage");
+    assert!(filter.matches_snapshot(&dealer_snapshot, &ctx, &game));
+    game.next_turn();
+    assert!(!filter.matches_snapshot(&dealer_snapshot, &ctx, &game), "damage history expires at the next turn");
+}
+
+#[test]
+fn aura_compatibility_uses_current_host_then_latest_departure_without_following_reentry() {
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::ids::CardId;
+    use crate::object::AuraAttachmentFilter;
+    let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+    let alice = PlayerId::from_index(0);
+    let host_card = CardBuilder::new(CardId::new(), "Remembered Aura host")
+        .card_types(vec![CardType::Creature]).power_toughness(PowerToughness::fixed(2, 2)).build();
+    let host = game.create_object_from_card(&host_card, alice, Zone::Battlefield);
+    let aura_card = CardBuilder::new(CardId::new(), "Compatibility Aura")
+        .card_types(vec![CardType::Enchantment]).subtypes(vec![Subtype::Aura]).build();
+    let creature_aura = game.create_object_from_card(&aura_card, alice, Zone::Library);
+    let artifact_aura = game.create_object_from_card(&aura_card, alice, Zone::Library);
+    game.object_mut(creature_aura).unwrap().aura_attach_filter =
+        Some(AuraAttachmentFilter::Object(ObjectFilter::creature()).into());
+    game.object_mut(artifact_aura).unwrap().aura_attach_filter =
+        Some(AuraAttachmentFilter::Object(ObjectFilter::artifact()).into());
+    let remembered = ObjectSnapshot::from_object_id(&game, host).unwrap();
+    let tags = std::collections::HashMap::from([(TagKey::from("triggering"), vec![remembered.clone()])]);
+    let ctx = FilterContext::new(alice).with_source(host)
+        .with_source_snapshot(Some(remembered.clone())).with_tagged_objects(&tags);
+    let mut query = ObjectFilter::default().with_subtype(Subtype::Aura);
+    query.could_enchant_object = Some(Box::new(ObjectFilter::tagged("triggering")));
+    let matches = |game: &GameState, aura| query.matches(game.object(aura).unwrap(), &ctx, game);
+    assert!(matches(&game, creature_aura));
+    assert!(!matches(&game, artifact_aura));
+    game.object_mut(host).unwrap().card_types = vec![CardType::Artifact].into();
+    game.refresh_continuous_state().unwrap();
+    assert!(!matches(&game, creature_aura), "current information overrides an older creature snapshot");
+    assert!(matches(&game, artifact_aura));
+    let graveyard = game.move_object_by_effect(host, Zone::Graveyard).unwrap();
+    assert!(!matches(&game, creature_aura), "departure information overrides announcement information");
+    assert!(matches(&game, artifact_aura));
+    let returned = game.move_object_by_effect(graveyard, Zone::Battlefield).unwrap();
+    game.object_mut(returned).unwrap().card_types = vec![CardType::Creature].into();
+    game.refresh_continuous_state().unwrap();
+    assert_ne!(returned, host);
+    assert_eq!(game.object(returned).unwrap().stable_id, remembered.stable_id);
+    assert!(!matches(&game, creature_aura), "the remembered host does not follow a new incarnation");
+    assert!(matches(&game, artifact_aura));
+    query.could_enchant_object = Some(Box::new(ObjectFilter::creature()));
+    assert!(query.matches(game.object(creature_aura).unwrap(), &ctx, &game));
+    assert!(!query.matches(game.object(artifact_aura).unwrap(), &ctx, &game), "a broad query sees only current hosts");
+}
+
+#[test]
+fn aura_compatibility_does_not_treat_library_memory_as_a_departed_permanent() {
+    use crate::card::CardBuilder;
+    use crate::ids::CardId;
+    use crate::object::AuraAttachmentFilter;
+    let mut game = GameState::new(vec!["Alice".into()], 20);
+    let alice = PlayerId::from_index(0);
+    let host_card = CardBuilder::new(CardId::new(), "Unentered host").card_types(vec![CardType::Creature]).build();
+    let host = game.create_object_from_card(&host_card, alice, Zone::Library);
+    let aura_card = CardBuilder::new(CardId::new(), "Library Aura").card_types(vec![CardType::Enchantment]).subtypes(vec![Subtype::Aura]).build();
+    let aura = game.create_object_from_card(&aura_card, alice, Zone::Library);
+    game.object_mut(aura).unwrap().aura_attach_filter = Some(AuraAttachmentFilter::Object(ObjectFilter::creature()).into());
+    let snapshot = ObjectSnapshot::from_object_id(&game, host).unwrap();
+    let tags = std::collections::HashMap::from([(TagKey::from("triggering"), vec![snapshot])]);
+    let ctx = FilterContext::new(alice).with_source(host).with_tagged_objects(&tags);
+    let mut query = ObjectFilter::default().with_subtype(Subtype::Aura);
+    query.could_enchant_object = Some(Box::new(ObjectFilter::tagged("triggering")));
+    assert!(!query.matches(game.object(aura).unwrap(), &ctx, &game));
+}

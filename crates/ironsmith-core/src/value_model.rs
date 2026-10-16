@@ -128,6 +128,8 @@ pub enum PriorEffectAction {
     CountersMoved(crate::counter::CounterType),
     /// Stack objects actually created by a copy instruction.
     Copied,
+    /// A completed investigate action, independently of how many Clues it created.
+    Investigated,
 }
 
 /// A metric over the last-known-information memory emitted by one exact
@@ -157,6 +159,10 @@ pub struct PriorEffectMetricQuery {
     /// rather than its selected set, source LKI, or replacement-added moves.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub original_destination: Option<crate::zone::Zone>,
+    /// Read source snapshots of original moves that reached their authored
+    /// destination (or `original_destination` when supplied), including tokens.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub use_origin_memory: bool,
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub color_choice: Option<ColorChoiceReference>,
 }
@@ -170,6 +176,7 @@ impl PriorEffectMetricQuery {
             player: None,
             action: None,
             original_destination: None,
+            use_origin_memory: false,
             color_choice: None,
             counter_type: None,
         }
@@ -694,6 +701,8 @@ pub enum Value {
     /// Number of matching players whose current hand contains at least the
     /// authored number of cards.
     CountPlayersWithCardsInHandAtLeast(PlayerFilter, u32),
+    /// Number of matching players whose individual library has at most this many cards.
+    CountPlayersWithCardsInLibraryAtMost(PlayerFilter, u32),
     /// Matching players with at least this many cards in their graveyards
     /// ("for each graveyard with seven or more cards in it").
     CountPlayersWithCardsInGraveyardAtLeast(PlayerFilter, u32),
@@ -1165,6 +1174,8 @@ pub enum Restriction {
         attacker: ObjectFilter,
     },
     MustBeBlocked(ObjectFilter),
+    /// At least one matching blocker must block each matching attacker if able.
+    MustBeBlockedBy { attacker: ObjectFilter, blockers: ObjectFilter },
     BlockAlone(ObjectFilter),
     Untap(ObjectFilter),
     BeBlocked(ObjectFilter),
@@ -1295,6 +1306,13 @@ pub enum Restriction {
     /// can't venture again, including through the initiative (CR 701.49).
     /// Appended.
     VentureMoreThanOnceEachTurn(PlayerFilter),
+    /// Prohibit payment components only when casting or activating (mana abilities included).
+    /// Appended for wire stability; other payment reasons remain unaffected.
+    CastOrActivatePayments {
+        player: PlayerFilter,
+        pay_life: bool,
+        sacrifice: Option<ObjectFilter>,
+    },
 }
 
 /// Which attacks an [`AttackTaxRule`] taxes, relative to the rule's
@@ -2502,6 +2520,8 @@ pub enum Condition {
     /// control." (Withering Wisps): a per-turn activation cap read when the
     /// ability is activated (CR 602.5b). Appended for wire stability.
     MaxActivationsPerTurnCount(AnthemCountExpression),
+    /// Trigger cap for this exact object incarnation and ability acquisition.
+    MaxTriggersPerObject(u32),
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

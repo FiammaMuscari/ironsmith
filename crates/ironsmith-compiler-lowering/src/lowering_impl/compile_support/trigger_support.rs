@@ -573,6 +573,7 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
             attached,
         } => Trigger::attachment_changed(attachment, recipient, attached),
         TriggerSpec::ThisBecomesTapped => Trigger::becomes_tapped(),
+        TriggerSpec::PermanentTappedToPayCost { filter, cost_kind } => Trigger::permanent_tapped_to_pay_cost(filter, cost_kind),
         TriggerSpec::PermanentBecomesTapped(filter) => Trigger::permanent_becomes_tapped(filter),
         TriggerSpec::PermanentBecomesTappedOneOrMore(filter) => {
             let display = format!(
@@ -818,6 +819,9 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::IsDealtDamage(filter) => Trigger::is_dealt_damage(ChooseSpec::Object(filter)),
         TriggerSpec::IsDealtCombatDamage(filter) => {
             Trigger::is_dealt_combat_damage(ChooseSpec::Object(filter))
+        }
+        TriggerSpec::IsDealtExcessDamage { filter, combat_only } => {
+            Trigger::is_dealt_excess_damage(ChooseSpec::Object(filter), combat_only)
         }
         TriggerSpec::IsDealtExcessNoncombatDamage(filter) => {
             Trigger::is_dealt_excess_noncombat_damage(ChooseSpec::Object(filter))
@@ -1115,12 +1119,14 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
         } => Trigger::nth_counter_put_on(filter, counter_type, counter_number),
         TriggerSpec::CounterRemovedFrom {
             filter,
+            source_controller,
             counter_type,
             last,
             one_or_more,
             caused_by_source,
         } => {
             let mut trigger = crate::triggers::CounterRemovedFromTrigger::new(filter);
+            if let Some(player) = source_controller { trigger = trigger.source_controller(player); }
             if let Some(counter_type) = counter_type {
                 trigger = trigger.counter_type(counter_type);
             }
@@ -1734,6 +1740,7 @@ pub fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec
             | TriggerSpec::IsDealtDamage(_)
             | TriggerSpec::IsDealtCombatDamage(_)
             | TriggerSpec::IsDealtExcessNoncombatDamage(_)
+                    | TriggerSpec::IsDealtExcessDamage { .. }
             | TriggerSpec::ThisDealsDamage
             | TriggerSpec::ThisDealsDamageTo(_)
             | TriggerSpec::ThisDealsDamageToPlayer { .. }
