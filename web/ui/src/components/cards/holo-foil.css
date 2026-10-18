@@ -152,6 +152,20 @@ body:has(.table-shell[data-focused-hud="true"] .battlefield-row[data-battlefield
     transform: skew(calc(var(--holo-tilt-y, 0deg) * -0.15), calc(var(--holo-tilt-x, 0deg) * 0.15));
     transition: transform 90ms linear, box-shadow 180ms ease;
   }
+
+  /* The action ring (yellow when playable, white while payment is unproven)
+     belongs to the face, so it leans with the card instead of staying put. */
+  [data-card-navigation-scope="hand"] .game-card.hand-card.card-action-available:is(:hover, .hovered, .inspected) {
+    box-shadow: none !important;
+  }
+
+  [data-card-navigation-scope="hand"] .game-card.hand-card.card-action-available:is(:hover, .hovered, .inspected) > .game-card-surface {
+    box-shadow: 0 0 0 2px #ffe083, 0 0 10px 3px rgba(255, 224, 131, 0.85) !important;
+  }
+
+  [data-card-navigation-scope="hand"] .game-card.hand-card.card-action-available.card-payment-unproven:is(:hover, .hovered, .inspected) > .game-card-surface {
+    box-shadow: 0 0 0 2px #fff, 0 0 10px 3px rgba(255, 255, 255, 0.6) !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

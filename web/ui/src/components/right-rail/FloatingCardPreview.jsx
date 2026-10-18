@@ -99,7 +99,36 @@ function zonePreviewLayout(anchorRect, size, source = null) {
   });
 }
 
+// A card named in the decision panel previews just left of the panel, level
+// with the stack pile on the left when one is showing, so the preview always
+// opens in the same place while the pointer moves down the list.
+function decisionChoicePreviewLayout(panel, size) {
+  const gap = 12;
+  const minimumTop = phaseToolbarTop(8);
+  const panelRect = panel.getBoundingClientRect();
+  const pileCard = [...document.querySelectorAll("[data-card-stack-pile] .card-stack-card")]
+    .map((card) => card.getBoundingClientRect())
+    .find((rect) => rect.width > 0 && rect.height > 0);
+  const fit = (height) => Math.max(0, Math.min(height, window.innerHeight - minimumTop - 8,
+    (panelRect.left - gap - 8) * 88 / 63));
+  const height = fit(pileCard ? pileCard.height : Math.max(size.height, FALLBACK_SIZE.height));
+  const width = height * 63 / 88;
+  const top = pileCard
+    ? pileCard.top
+    : panelRect.bottom - height;
+  return {
+    left: Math.max(8, panelRect.left - gap - width),
+    top: Math.max(minimumTop, Math.min(window.innerHeight - 8 - height, top)),
+    right: "auto",
+    height: `${height}px`,
+    width: `${width}px`,
+    maxHeight: `${height}px`,
+  };
+}
+
 function zonePreviewPosition(source, size) {
+  const panel = source.closest?.(".battlefield-human-action-dock");
+  if (panel) return decisionChoicePreviewLayout(panel, size);
   const anchorRect = source.getBoundingClientRect();
   return zonePreviewLayout(anchorRect, size, source);
 }
@@ -117,7 +146,10 @@ function previewPosition(objectId, size) {
   if (objectId == null || typeof document === "undefined" || typeof window === "undefined") return null;
   const candidates = Array.from(document.querySelectorAll(".game-card[data-object-id], [data-zone-card][data-object-id], .opponent-hand-card[data-object-id]"))
     .filter((element) => element.getAttribute("data-object-id") === String(objectId));
+  // A decision row naming the card wins over its zone pile, which also
+  // carries the id while it shows the hovered option.
   const source = candidates.find((element) => element.classList.contains("battlefield-row-card"))
+    || candidates.find((element) => element.closest(".battlefield-human-action-dock"))
     || candidates[0];
   if (!source) return null;
   if (source.hasAttribute("data-zone-card")) return zonePreviewPosition(source, size);

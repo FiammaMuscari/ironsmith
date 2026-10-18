@@ -144,3 +144,19 @@ export function knownHandCards(player) {
   }
   return [...known.values()];
 }
+
+const CHOICE_ZONES = new Set(["library", "graveyard", "exile"]);
+
+// The zone a decision option's card comes from, when it is off the table and
+// out of the hand: a graveyard, exile, or the library a look revealed.
+export function choiceCardZone(state, id) {
+  const key = String(id);
+  for (const player of state?.players || []) {
+    if ((player.graveyard_cards || []).some((card) => String(card.id) === key)) return "graveyard";
+    if ((player.exile_cards || []).some((card) => String(card.id) === key)) return "exile";
+  }
+  const view = temporaryLookView(state);
+  const looked = (view?.cards || []).find((card) => String(card.id) === key);
+  const zone = looked ? lookedCardZone(looked, view.zone ?? "library") : "";
+  return CHOICE_ZONES.has(zone) ? zone : null;
+}

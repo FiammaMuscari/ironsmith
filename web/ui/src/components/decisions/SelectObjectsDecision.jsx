@@ -1,6 +1,6 @@
 import useUiText from "@/i18n/useUiText";
-import ZoneArt from "@/components/board/ZonePileArt";
-import { zoneChoiceCards } from "@/lib/look-pile";
+import ZoneIcon from "@/components/board/ZoneIcon";
+import { choiceCardZone, zoneChoiceCards } from "@/lib/look-pile";
 import { useHandHoverObjectId } from "@/lib/hand-hover";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
@@ -64,11 +64,17 @@ export default function SelectObjectsDecision({
     [state]
   );
 
-  // Cards off the table (looked at, in a graveyard or exile) are offered as
-  // cards, so they can be read and picked here; the Look pile steps aside.
+  // Cards off the table (looked at, in a graveyard or exile) are picked here
+  // by name, and hovering a name previews the card; the piles step aside.
   const lookCards = useMemo(() => zoneChoiceCards(state), [state]);
+  const choiceZones = useMemo(() => new Map(candidates
+    .map((candidate) => [String(candidate.id), choiceCardZone(state, candidate.id)])
+    .filter(([, zone]) => zone)), [candidates, state]);
+  const zoneLabel = (zone) => (zone === "library" ? ui("Deck")
+    : t(zone === "graveyard" ? "zone.graveyardFull" : "zone.exileFull"));
   const scopedCandidates = useMemo(() => {
-    // A hovered card narrows name rows to it, but cards stay put.
+    // A hovered card narrows name rows to it, but off-table choices stay put:
+    // hovering one of them would otherwise hide the rest.
     if (stripLayout || lookCards) return candidates;
     if (hoveredObjectId == null) return candidates;
     const hoveredStr = String(hoveredObjectId);
@@ -208,11 +214,6 @@ export default function SelectObjectsDecision({
         >
           <div
             ref={rowsRef}
-            data-card-choices={lookCards ? "true" : undefined}
-            // The card row scrolls sideways; a vertical wheel moves it too.
-            onWheel={lookCards ? (event) => {
-              if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
-            } : undefined}
             className={cn(
             stripLayout
               ? "decision-strip-options-row decision-strip-options-row--vertical-objects flex w-full min-w-full flex-col items-stretch gap-1 py-0.5 pr-1"
@@ -248,7 +249,6 @@ export default function SelectObjectsDecision({
                     stripLayout && isSelected && STRIP_ITEM_ACTIVE_CLASS,
                     !stripLayout && isSelected && "is-selected",
                     !isDisabled && String(c.id) === handHoverObjectId && "is-highlighted",
-                    lookCards && "decision-option-row--card",
                     isDisabled
                       && (stripLayout
                         ? STRIP_ITEM_DISABLED_CLASS
@@ -276,18 +276,19 @@ export default function SelectObjectsDecision({
                   }}
                   onBlur={clearHover}
                 >
-                  {lookCards ? (
-                    <span className="decision-card-choice" title={localizeCardName(c.name)}>
-                      <ZoneArt card={lookCards.get(String(c.id))} />
-                      <span className="sr-only">{localizeCardName(c.name)}</span>
+                  {/* A card off the table wears its zone's glyph, as the
+                      zone chips do, so the source is clear at a glance. */}
+                  {choiceZones.get(String(c.id)) && (
+                    <span className="decision-option-zone" title={zoneLabel(choiceZones.get(String(c.id)))}>
+                      <ZoneIcon zone={choiceZones.get(String(c.id))} />
+                      <span className="sr-only">{zoneLabel(choiceZones.get(String(c.id)))}</span>
                     </span>
-                  ) : (
-                    <HighlightedDecisionText
-                      className="decision-option-label"
-                      text={localizeCardName(c.name)}
-                      highlightText={localizeCardName(c.name)}
-                    />
                   )}
+                  <HighlightedDecisionText
+                    className="decision-option-label"
+                    text={localizeCardName(c.name)}
+                    highlightText={localizeCardName(c.name)}
+                  />
                 </Button>
               );
             })}

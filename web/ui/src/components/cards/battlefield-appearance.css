@@ -134,6 +134,27 @@
 }
 /* Cards without an art tile have no strip; the open one overlays their bottom edge. */
 .arena-land-mana-strip[data-overlay="true"] { --mana-strip-height: clamp(6px, calc(var(--bf-card-height, 96px) * .07), 9px); top: calc(100% - 2px - var(--mana-strip-height)); left: 2px; right: 2px; }
+/* A full card frame opens its strip along the bottom of the rules box, inside
+   the card, as bare mana symbols: the frame already shows the card, so no bar
+   is drawn behind them. The box is card-glint's normal frame rules rectangle
+   (face-layout.ts): it ends 8.3% above the card's bottom edge and is inset
+   7.6% from each side. */
+.game-card:has(.battlefield-prepared-frame) .arena-land-mana-strip[data-overlay="true"][data-open="true"] {
+  top: auto; bottom: calc(8.3% + 3px); left: calc(7.6% + 2px); right: calc(7.6% + 2px);
+  justify-content: center; gap: 6px;
+  border: 0; border-radius: 0; box-shadow: none; overflow: visible;
+  background: none !important;
+}
+.game-card:has(.battlefield-prepared-frame) .arena-land-mana-strip[data-overlay="true"][data-open="true"] > button {
+  flex: none; border: 0; border-radius: 999px;
+  background: none !important; box-shadow: none;
+}
+.game-card:has(.battlefield-prepared-frame) .arena-land-mana-strip[data-overlay="true"][data-open="true"] > button img {
+  --mana-strip-icon-size: 20px;
+}
+.game-card:has(.battlefield-prepared-frame) .arena-land-mana-strip[data-overlay="true"][data-open="true"] > button:hover {
+  filter: brightness(1.18) drop-shadow(0 0 4px #fff8);
+}
 @media (prefers-reduced-motion: reduce) { .arena-land-mana-strip { transition: none; } }
 .arena-permanent[data-mana-strip="true"] :is(.arena-permanent-stat, .arena-permanent-pt) { bottom: calc(var(--mana-strip-height) + 3px); }
 
