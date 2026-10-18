@@ -12,6 +12,9 @@ pub struct DamageAmountReplacementShape<'a> {
     /// definite description of the preceding instruction's chosen damage
     /// source, rather than `it` or this object.
     pub definite_source: bool,
+    /// "it deals twice that much damage to itself instead" (Cut
+    /// Propulsion): the replacement repeats a self-damage recipient.
+    pub self_recipient: bool,
 }
 
 pub fn parse_damage_amount_replacement(
@@ -47,17 +50,37 @@ pub fn parse_damage_amount_replacement(
     if !repeats_source && !self_source && !definite_source {
         return None;
     }
+    // "... deals twice that much damage to itself": the self recipient is
+    // the repeated recipient of a self-damage instruction; the caller checks
+    // the replaced instruction damages its own source.
+    let self_recipient = repeats_source
+        && action.len() >= 2
+        && action[action.len() - 2].is_word("to")
+        && action[action.len() - 1].is_word("itself");
+    let action = if self_recipient { &action[..action.len() - 2] } else { action };
     // The entire action ends at `damage`: explicit destinations, additional
     // instructions, riders and repeated `instead` markers belong elsewhere.
-    if !action.last()?.is_word("damage") || deal + 2 >= action.len() {
-        return None;
-    }
-    let amount_tokens = &action[deal + 1..action.len() - 1];
+    let amount_tokens = if action.get(deal + 1)?.is_word("damage")
+        && action.get(deal + 2)?.is_word("equal")
+        && action.get(deal + 3)?.is_word("to")
+    {
+        // A repeated amount may follow "damage equal to" as well as
+        // precede "damage". The dependent clause still has no recipient.
+        let amount = &action[deal + 4..];
+        if amount.is_empty() { return None; }
+        amount
+    } else {
+        if !action.last()?.is_word("damage") || deal + 2 >= action.len() {
+            return None;
+        }
+        &action[deal + 1..action.len() - 1]
+    };
     Some(DamageAmountReplacementShape {
         predicate_tokens,
         amount_tokens,
         repeats_source,
         definite_source,
+        self_recipient,
     })
 }
 

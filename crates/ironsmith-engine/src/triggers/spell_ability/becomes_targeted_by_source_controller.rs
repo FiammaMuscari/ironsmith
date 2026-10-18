@@ -55,14 +55,14 @@ impl PlayerOrObjectBecomesTargetedBySourceControllerTrigger {
         self
     }
 
-    fn source_kind_matches(&self, by_ability: bool) -> bool {
+    fn source_kind_matches(&self, event: &BecomesTargetedEvent) -> bool {
         use ironsmith_core::filter_model::StackObjectKind;
         match self.source_kind {
             StackObjectKind::SpellOrAbility => true,
-            StackObjectKind::Spell => !by_ability,
-            StackObjectKind::Ability
-            | StackObjectKind::ActivatedAbility
-            | StackObjectKind::TriggeredAbility => by_ability,
+            StackObjectKind::Spell => !event.by_ability,
+            StackObjectKind::Ability => event.by_ability,
+            StackObjectKind::ActivatedAbility | StackObjectKind::TriggeredAbility =>
+                event.by_ability && event.stack_kind == Some(self.source_kind),
         }
     }
 
@@ -138,7 +138,7 @@ impl TriggerMatcher for PlayerOrObjectBecomesTargetedBySourceControllerTrigger {
         if !self
             .source_controller
             .matches_player(e.source_controller, &ctx.filter_ctx)
-            || !self.source_kind_matches(e.by_ability)
+            || !self.source_kind_matches(e)
         {
             return false;
         }
@@ -175,6 +175,14 @@ impl TriggerMatcher for PlayerOrObjectBecomesTargetedBySourceControllerTrigger {
             PlayerFilter::Opponent => "an opponent controls",
             _ => "a player controls",
         };
+        if self.once_per_stack_object
+            && self.player_filter == PlayerFilter::Any
+            && self.source_controller == PlayerFilter::Any
+            && self.object_filter == ObjectFilter::default()
+            && self.source_kind == ironsmith_core::filter_model::StackObjectKind::SpellOrAbility
+        {
+            return "Whenever a player chooses one or more targets".to_string();
+        }
         if self.once_per_stack_object {
             let object = self.object_filter.description();
             let object = object

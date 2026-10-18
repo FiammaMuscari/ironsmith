@@ -1369,6 +1369,9 @@ fn parse_statement_to_chunks_impl(
     parse_tokens: &[OwnedLexToken],
     parse_groups: &[Vec<OwnedLexToken>],
 ) -> Result<Vec<LineAst>, CardTextError> {
+    if let Some(abilities) = crate::keyword_static::parse_untapped_attachment_control_protection(parse_tokens)? {
+        return Ok(vec![LineAst::StaticAbilities(abilities)]);
+    }
     // This complete counter program must survive statement/static partitioning
     // intact. Prefer prepared tokens, where legitimate reminder text is gone.
     if let Some(effects) = crate::effect_sentences::counter_exile_permission::parse(parse_tokens)? {
@@ -1489,6 +1492,43 @@ fn parse_statement_to_chunks_impl(
     }
     if let Some(chunk) = parse_die_roll_result_adjustment_static_chunk(parse_tokens) {
         return Ok(vec![chunk]);
+    }
+    // An entry-time exile, failed-fulfillment destination and per-exiled
+    // counter choices are one replacement program with shared local results.
+    let entry_words = crate::lexer::parser_token_word_refs(parse_tokens);
+    if line.info.semantic_facts.statement.as_enters_effect_program.is_some()
+        && entry_words.windows(5).any(|words| words == ["instead", "of", "onto", "the", "battlefield"])
+        && entry_words.windows(3).any(|words| words == ["exiled", "this", "way"])
+    {
+        let body_start = parse_tokens.iter().position(OwnedLexToken::is_comma)
+            .ok_or_else(|| CardTextError::ParseError("as-enters program has no body boundary".into()))? + 1;
+        let effects = parse_effect_sentences_preserving_source_boundaries(&parse_tokens[body_start..])?;
+        return Ok(vec![LineAst::Statement { effects }]);
+    }
+    // "As this creature enters, roll X d6. It enters with a number of +1/+1
+    // counters on it equal to the total of those results." / "... roll a
+    // six-sided die twice. Its base power becomes the first result ...": the
+    // later sentence reads the as-enters program's own roll, so both
+    // sentences are one entry program (CR 614.1c) rather than a program plus
+    // an independent static rule that can't see the result.
+    if line
+        .info
+        .semantic_facts
+        .statement
+        .as_enters_effect_program
+        .is_some()
+        && split_lexed_sentences(parse_tokens).len() > 1
+        && token_word_refs(parse_tokens)
+            .iter()
+            .any(|word| matches!(*word, "result" | "results"))
+    {
+        // The entry header belongs to the static program owner, not to its
+        // executable body. Keep every following sentence in the same scope
+        // so the counter instruction can consume the local dice result.
+        let body_start = parse_tokens.iter().position(OwnedLexToken::is_comma)
+            .ok_or_else(|| CardTextError::ParseError("as-enters program has no body boundary".into()))? + 1;
+        let effects = parse_effect_sentences_preserving_source_boundaries(&parse_tokens[body_start..])?;
+        return Ok(vec![LineAst::Statement { effects }]);
     }
     // A target pump followed by the subjectless `and can't be blocked this
     // turn` tail is one atomic statement. Prepared statement groups can
@@ -1849,6 +1889,9 @@ fn parse_villainous_choice_statement_chunk(
             semantic_grammar::VillainousChoicePlayerIteration::ThatPlayer => {
                 (PlayerFilter::IteratedPlayer, "that player")
             }
+            semantic_grammar::VillainousChoicePlayerIteration::DefendingPlayer => {
+                (PlayerFilter::IteratedPlayer, "defending player")
+            }
         };
         let choice = EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice {
             player,
@@ -1885,6 +1928,13 @@ fn parse_villainous_choice_statement_chunk(
             }
             // The enclosing trigger already names "that player": one choice, no loop.
             semantic_grammar::VillainousChoicePlayerIteration::ThatPlayer => vec![choice],
+            semantic_grammar::VillainousChoicePlayerIteration::DefendingPlayer => {
+                vec![EffectAst::ForEach(ForEachEffectAst::ForEachPlayersFiltered {
+                    sequential: false,
+                    filter: PlayerFilter::Defending,
+                    effects: vec![choice],
+                })]
+            }
             semantic_grammar::VillainousChoicePlayerIteration::TargetOpponent => vec![
                 EffectAst::subject_verb_target_only(TargetAst::Player(
                     PlayerFilter::target_opponent(),
@@ -1981,10 +2031,30 @@ fn parse_die_roll_result_adjustment_static_chunk(tokens: &[OwnedLexToken]) -> Op
             ),
         ]));
     }
+    if let Some(sides) =
+        crate::grammar::statement_shapes::parse_die_roll_exchange_with_source_base_pt(tokens)
+    {
+        return Some(LineAst::StaticAbilities(vec![
+            crate::cards::builders::StaticAbilityAst::Static(
+                StaticAbility::die_roll_result_exchange_with_source_base_pt(
+                    PlayerFilter::You,
+                    sides,
+                    rendered,
+                ),
+            ),
+        ]));
+    }
     if crate::grammar::statement_shapes::is_extra_die_ignore_lowest(tokens) {
         return Some(LineAst::StaticAbilities(vec![
             crate::cards::builders::StaticAbilityAst::Static(
                 StaticAbility::extra_die_ignore_lowest(PlayerFilter::You, 1, rendered),
+            ),
+        ]));
+    }
+    if crate::grammar::statement_shapes::is_extra_planar_die_ignore_one(tokens) {
+        return Some(LineAst::StaticAbilities(vec![
+            crate::cards::builders::StaticAbilityAst::Static(
+                StaticAbility::extra_planar_die_ignore_one(PlayerFilter::You, rendered),
             ),
         ]));
     }
@@ -2015,6 +2085,19 @@ fn parse_die_roll_result_adjustment_static_chunk(tokens: &[OwnedLexToken]) -> Op
     let spec = semantic_grammar::parse_die_roll_adjustment_tokens(tokens)?;
     let life_cost = spec.life_cost;
     let amount = spec.adjustment;
+    if let Some(counter_type) = spec.source_counter_cost {
+        return Some(LineAst::StaticAbilities(vec![
+            crate::cards::builders::StaticAbilityAst::Static(
+                StaticAbility::die_roll_result_adjustment_removing_source_counter(
+                    PlayerFilter::You,
+                    counter_type,
+                    amount,
+                    spec.once_each_turn,
+                    rendered,
+                ),
+            ),
+        ]));
+    }
     let display = format!(
         "After you roll a die, you may pay {life_cost} life. If you do, increase or decrease the result by {amount}. Do this only once each turn."
     );
@@ -2289,6 +2372,14 @@ fn sentence_is_conditional_self_replacement_effect(sentence: &[OwnedLexToken]) -
     if crate::effect_sentences::recognizes_scalar_self_replacement_sentence(sentence) {
         return true;
     }
+    // "If ..., this artifact deals double that damage instead" (Goblin
+    // Charbelcher) restates the preceding damage instruction's amount; alone
+    // it has no amount or recipient, so it must share the statement.
+    if crate::grammar::effects::followup_shapes::parse_damage_amount_replacement(sentence)
+        .is_some()
+    {
+        return true;
+    }
     let instead_semantics =
         crate::grammar::effects::classify_instead_followup_semantics_tokens(sentence);
     if instead_semantics != crate::cards::builders::InsteadSemantics::SelfReplacement {
@@ -2536,6 +2627,7 @@ use lines_trigger_programs::{
     triggered_semantic_split_keeps_effect_backed_static_surfaces_in_resolution,
 };
 pub use lines_trigger_programs::{
+    exact_each_other_player_copies_triggering_spell_bundle,
     conditional_life_total_set, is_exact_correlated_trigger_effect_bundle,
     parse_special_triggered_line, parse_triggered_line, try_parse_optional_cost_with_cast_trigger,
 };

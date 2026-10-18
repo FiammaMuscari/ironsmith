@@ -268,6 +268,34 @@ pub(super) fn read_demonstrative_descriptor(
                     predicate
                 }));
             }
+            // "If that creature entered this turn" / "... entered the
+            // battlefield under your control this turn": an entry-history
+            // descriptor. The generic object-filter grammar reads it as an
+            // empty filter, silently testing only "is a permanent".
+            let descriptor_words = descriptor_clause.word_refs();
+            if let Some((controller, consumed)) =
+                crate::grammar::filters::player_relations::parse_entered_battlefield_this_turn_words(
+                    &descriptor_words,
+                )
+                && consumed == descriptor_words.len()
+            {
+                let mut filter = ObjectFilter::default();
+                filter.entered_battlefield_this_turn = true;
+                filter.entered_battlefield_controller = controller;
+                filter.zone = Some(Zone::Battlefield);
+                filter.set_entered_battlefield_explicit_surface(
+                    descriptor_words.contains(&"battlefield"),
+                );
+                if antecedent_surface.is_some() {
+                    filter.set_demonstrative_antecedent_surface(antecedent_surface);
+                }
+                let predicate = demonstrative_match_predicate(filter, match_time);
+                return Ok(Some(if negative {
+                    PredicateAst::Not(Box::new(predicate))
+                } else {
+                    predicate
+                }));
+            }
             if let Some(mut filter) =
                 parse_single_card_type_card_descriptor_tokens(&descriptor_tokens)
             {
@@ -989,6 +1017,9 @@ pub(super) const READINGS: &[Reading] = &[
                 && !input.read_by("triggering-spell-ordinal-predicate")
                 && !input.read_by("triggering-object-source-stat-predicate")
                 && !input.read_by("value-reference-comparison-predicate")
+                // Temporal alternatives retain their event-history subject;
+                // the generic demonstrative disjunction must not rebind it.
+                && !input.read_by("turn-history-intervening-predicate")
         },
         read: |input| input.outcome(read_demonstrative_or_descriptor(input)),
     },
@@ -1230,6 +1261,7 @@ pub(super) const READINGS: &[Reading] = &[
                     .is_some_and(|_| !is_article(token.parser_text()))
             }))
                 // Readings ranked above this one that read the input read it.
+                && !input.read_by("turn-history-intervening-predicate")
                 && !input.read_by("same-name-as-filter-predicate")
                 && !input.read_by("phase-step-gate-predicate")
                 && !input.read_by("rule")

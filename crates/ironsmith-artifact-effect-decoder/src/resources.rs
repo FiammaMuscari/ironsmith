@@ -24,6 +24,12 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "AddManaOfColorsAmongEffect" => {
             decode_as::<ironsmith_core::AddManaOfColorsAmongEffect>(payload).map(Some)
         }
+        "AddManaEqualToManaCostEffect" => {
+            decode_as::<ironsmith_core::AddManaEqualToManaCostEffect>(payload).map(Some)
+        }
+        "AddManaLostThisWayEffect" => {
+            decode_as::<ironsmith_core::AddManaLostThisWayEffect>(payload).map(Some)
+        }
         "AddManaOfImprintedColorsEffect" => {
             decode_as::<ironsmith_core::AddManaOfImprintedColorsEffect>(payload).map(Some)
         }
@@ -45,6 +51,9 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "EmptyManaPoolEffect" => {
             decode_as::<ironsmith_core::EmptyManaPoolEffect>(payload).map(Some)
         }
+        "ActivateManaAbilityOfEachLandEffect" => {
+            decode_as::<ironsmith_core::ActivateManaAbilityOfEachLandEffect>(payload).map(Some)
+        }
         "ExchangeLifeTotalsEffect" => {
             decode_as::<ironsmith_core::ExchangeLifeTotalsEffect>(payload).map(Some)
         }
@@ -63,6 +72,9 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "NoteLifeTotalEffect" => {
             decode_as::<ironsmith_core::NoteLifeTotalEffect>(payload).map(Some)
         }
+        "RedistributeLifeTotalsEffect" => {
+            decode_as::<ironsmith_core::RedistributeLifeTotalsEffect>(payload).map(Some)
+        }
         "PayLifeEffect" => decode_as::<ironsmith_core::PayLifeEffect>(payload).map(Some),
         "PayManaEffect" => decode_as::<ironsmith_core::PayManaEffect>(payload).map(Some),
         "ProliferateEffect" => decode_as::<ironsmith_core::ProliferateEffect>(payload).map(Some),
@@ -71,6 +83,9 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         }
         "PutCounterOfKindChosenFromEffect" => {
             decode_as::<ironsmith_core::PutCounterOfKindChosenFromEffect>(payload).map(Some)
+        }
+        "PutCounterOfRandomKindEffect" => {
+            decode_as::<ironsmith_core::PutCounterOfRandomKindEffect>(payload).map(Some)
         }
         "PutCountersEffect" => decode_as::<ironsmith_core::PutCountersEffect>(payload).map(Some),
         "RemoveAnyCountersAmongEffect" => {
@@ -95,8 +110,17 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "AddManaOfNotedTypeEffect" => {
             decode_as::<ironsmith_core::AddManaOfNotedTypeEffect>(payload).map(Some)
         }
+        "CastFaceDownUsingActivationManaEffect" => decode_as::<ironsmith_core::CastFaceDownUsingActivationManaEffect>(payload).map(Some),
+        "RegisterExtraDieReplacementEffect" => decode_as::<ironsmith_core::RegisterExtraDieReplacementEffect>(payload).map(Some),
+        "NoteActivationManaPaymentEffect" => decode_as::<ironsmith_core::NoteActivationManaPaymentEffect>(payload).map(Some),
         "NoteActivationManaTypeEffect" => {
             decode_as::<ironsmith_core::NoteActivationManaTypeEffect>(payload).map(Some)
+        }
+        "NoteTriggeringCreatureTypeEffect" => {
+            decode_as::<ironsmith_core::NoteTriggeringCreatureTypeEffect>(payload).map(Some)
+        }
+        "NoteCountersEffect" => {
+            decode_as::<ironsmith_core::NoteCountersEffect>(payload).map(Some)
         }
         _ => Ok(None),
     }
@@ -132,6 +156,14 @@ pub(super) fn map_card_ids(
             ironsmith_core::AddManaOfColorsAmongEffect,
         >(payload, context)
         .map(Some),
+        "AddManaEqualToManaCostEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::AddManaEqualToManaCostEffect,
+        >(payload, context)
+        .map(Some),
+        "AddManaLostThisWayEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::AddManaLostThisWayEffect,
+        >(payload, context)
+        .map(Some),
         "AddManaOfImprintedColorsEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::AddManaOfImprintedColorsEffect,
         >(payload, context)
@@ -158,6 +190,10 @@ pub(super) fn map_card_ids(
         .map(Some),
         "EmptyManaPoolEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::EmptyManaPoolEffect,
+        >(payload, context)
+        .map(Some),
+        "ActivateManaAbilityOfEachLandEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::ActivateManaAbilityOfEachLandEffect,
         >(payload, context)
         .map(Some),
         "ExchangeLifeTotalsEffect" => super::card_graph::map_payload_as::<
@@ -192,6 +228,10 @@ pub(super) fn map_card_ids(
             ironsmith_core::NoteLifeTotalEffect,
         >(payload, context)
         .map(Some),
+        "RedistributeLifeTotalsEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RedistributeLifeTotalsEffect,
+        >(payload, context)
+        .map(Some),
         "PayLifeEffect" => {
             super::card_graph::map_payload_as::<ironsmith_core::PayLifeEffect>(payload, context)
                 .map(Some)
@@ -210,6 +250,10 @@ pub(super) fn map_card_ids(
         .map(Some),
         "PutCounterOfKindChosenFromEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::PutCounterOfKindChosenFromEffect,
+        >(payload, context)
+        .map(Some),
+        "PutCounterOfRandomKindEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::PutCounterOfRandomKindEffect,
         >(payload, context)
         .map(Some),
         "PutCountersEffect" => {
@@ -248,8 +292,19 @@ pub(super) fn map_card_ids(
             ironsmith_core::AddManaOfNotedTypeEffect,
         >(payload, context)
         .map(Some),
+        "CastFaceDownUsingActivationManaEffect" => super::card_graph::map_payload_as::<ironsmith_core::CastFaceDownUsingActivationManaEffect>(payload, context).map(Some),
+        "RegisterExtraDieReplacementEffect" => super::card_graph::map_payload_as::<ironsmith_core::RegisterExtraDieReplacementEffect>(payload, context).map(Some),
+        "NoteActivationManaPaymentEffect" => super::card_graph::map_payload_as::<ironsmith_core::NoteActivationManaPaymentEffect>(payload, context).map(Some),
         "NoteActivationManaTypeEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::NoteActivationManaTypeEffect,
+        >(payload, context)
+        .map(Some),
+        "NoteTriggeringCreatureTypeEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::NoteTriggeringCreatureTypeEffect,
+        >(payload, context)
+        .map(Some),
+        "NoteCountersEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::NoteCountersEffect,
         >(payload, context)
         .map(Some),
         _ => Ok(None),

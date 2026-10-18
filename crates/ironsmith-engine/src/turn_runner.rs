@@ -13,7 +13,7 @@ use crate::game_loop::{
     AttackDeclarationTransaction, BlockDeclarationTransaction, GameLoopError,
     apply_attack_mana_ability_window_response, apply_attacker_declarations_with_dm,
     apply_blocker_mana_ability_window_response, attack_mana_ability_window_context,
-    begin_attack_declaration_transaction, begin_blocker_declaration_transaction,
+    begin_blocker_declaration_transaction,
     blocker_mana_ability_window_context, try_drain_pending_trigger_events,
     finish_attack_declaration_transaction,
     finish_blocker_declaration_transaction_deferring_triggers, generate_and_queue_step_triggers,
@@ -28,7 +28,6 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::rules::combat::deals_first_strike_damage_with_game;
 use crate::rules::state_based::check_state_based_actions;
 use crate::triggers::TriggerQueue;
-use crate::turn::execute_cleanup_step;
 
 /// What the caller should do next after calling [`TurnRunner::advance`].
 #[derive(Debug)]
@@ -816,6 +815,11 @@ pub struct TurnRunner {
     pending_distribution: Option<Vec<(crate::game_state::Target, u32)>>,
     /// Pending yes/no response for runner-driven boolean decisions.
     pending_boolean: Option<bool>,
+    /// CR 614.10 turn-begin skip offer (player, source) awaiting its answer.
+    pending_turn_begin_skip: Option<(PlayerId, ObjectId)>,
+    /// CR 614.10 draw-step skip offer (player, source, "if you do" program)
+    /// awaiting its answer (Fasting).
+    pending_draw_step_skip: Option<(PlayerId, ObjectId, Vec<crate::effect::Effect>)>,
     /// Pending CR 616 choice among draw replacement effects.
     pending_draw_replacement: Option<PendingDrawReplacementChoice>,
     /// Pending first-draw reveal decisions that pause the draw step.
@@ -826,6 +830,7 @@ pub struct TurnRunner {
     /// Choices of an SBA check the runner is applying.
     pending_sba_choices: Option<PendingSbaChoices>,
     pending_combat_damage_choices: Option<PendingTurnActionChoices>,
+    pending_face_up_choices: Option<PendingTurnActionChoices>,
     pending_saga_lore_choices: Option<PendingTurnActionChoices>,
     pending_mana_loss_choices: Option<PendingTurnActionChoices>,
     skipped_phase_boundary: Option<(Step, Phase, TurnScheduleDestination)>,
@@ -883,12 +888,15 @@ impl TurnRunner {
             pending_discard: None,
             pending_distribution: None,
             pending_boolean: None,
+            pending_turn_begin_skip: None,
+            pending_draw_step_skip: None,
             pending_draw_replacement: None,
             pending_draw_reveal: None,
             pending_draw_replacement_effects: None,
             pending_turn_draw: None,
             pending_sba_choices: None,
             pending_combat_damage_choices: None,
+            pending_face_up_choices: None,
             pending_saga_lore_choices: None,
             pending_mana_loss_choices: None,
             skipped_phase_boundary: None,
@@ -940,11 +948,12 @@ impl TurnRunner {
         tq: &mut TriggerQueue,
     ) -> Result<TurnAction, GameLoopError> {
         let retrying_untap_choice = self.has_pending_untap_continuation();
+        let retrying_face_up_choice = self.pending_face_up_choices.is_some();
         let runner_checkpoint = self.clone();
         let game_checkpoint = game.clone();
         let queue_checkpoint = tq.clone();
         let result = self.advance_inner(game, tq);
-        if (retrying_untap_choice && result.is_err())
+        if ((retrying_untap_choice || retrying_face_up_choice) && result.is_err())
             || matches!(&result, Err(GameLoopError::ExecutionFailed(error)) if error.is_incomplete_execution())
         {
             // Retain the accepted prefix and submitted response together with
@@ -1170,6 +1179,8 @@ impl TurnRunner {
                 for player in game.turn_players() {
                     game.mark_upkeep_began(player);
                 }
+                game.turn_store.upkeep_steps_started_this_turn =
+                    game.turn_store.upkeep_steps_started_this_turn.saturating_add(1);
                 game.reset_priority_for_new_window();
                 try_drain_pending_trigger_events(game, tq)?;
                 generate_and_queue_step_triggers(game, tq);
@@ -1197,16 +1208,40 @@ impl TurnRunner {
                 game.turn.step = Some(Step::Draw);
                 game.refresh_continuous_state()
                     .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
+                let draw_not_started = self.remaining_draw_players.is_empty()
+                    && self.pending_draw_replacement.is_none()
+                    && self.pending_draw_replacement_effects.is_none()
+                    && self.pending_draw_reveal.is_none()
+                    && self.pending_commander_choice.is_none();
+                // CR 614.10: "If you would begin your draw step, you may skip
+                // that step instead" (Fasting) is offered before the step
+                // begins; an accepted skip passes the step exactly like the
+                // mandatory skip below.
+                if draw_not_started {
+                    match self.offer_draw_step_skips(game, tq)? {
+                        DrawStepSkipOffer::Prompt(prompt) => {
+                            return Ok(TurnAction::Decision(prompt));
+                        }
+                        DrawStepSkipOffer::Skipped => {
+                            game.turn_store.draw_step_skip_declined.clear();
+                            game.reset_priority_for_new_window();
+                            self.state = finish_step_and_phase(
+                                game,
+                                Step::Draw,
+                                Phase::Beginning,
+                                TurnScheduleDestination::Phase(Phase::FirstMain),
+                            );
+                            return Ok(TurnAction::Continue);
+                        }
+                        DrawStepSkipOffer::None => {}
+                    }
+                }
                 // CR 614.10 / 500.11: "Skip your draw step" (Necropotence)
                 // proceeds past the whole step as though it didn't exist: no
                 // turn-based draw, no "beginning of draw step" triggers and no
                 // priority window. Anything waiting for the draw step waits
                 // for the next one that actually happens (CR 614.10a).
-                if self.remaining_draw_players.is_empty()
-                    && self.pending_draw_replacement.is_none()
-                    && self.pending_draw_replacement_effects.is_none()
-                    && self.pending_draw_reveal.is_none()
-                    && self.pending_commander_choice.is_none()
+                if draw_not_started
                     && game
                         .turn_players()
                         .iter()
@@ -1244,6 +1279,7 @@ impl TurnRunner {
                 if let Some(prompt) = self.empty_mana_pools_with_choices(game)? {
                     return Ok(TurnAction::Decision(prompt));
                 }
+                game.turn_store.draw_step_skip_declined.clear();
                 self.state = finish_step_and_phase(
                     game,
                     Step::Draw,
@@ -1516,6 +1552,10 @@ impl TurnRunner {
                         }
                     }
                 } else {
+                    let answers = match self.take_face_up_answers() {
+                        Ok(answers) => answers,
+                        Err(prompt) => return Ok(TurnAction::Decision(prompt)),
+                    };
                     let declarations = self.pending_attackers.take().unwrap_or_default();
                     validate_declared_attacking_bands(
                         game,
@@ -1536,12 +1576,23 @@ impl TurnRunner {
                                     "attack costs exist without an attacker".to_string(),
                                 )
                             })?;
-                        let transaction = begin_attack_declaration_transaction(
-                            game,
-                            &self.combat,
-                            tq,
-                            &declarations,
-                        )?;
+                        let mut trial = game.clone();
+                        let mut trial_triggers = tq.clone();
+                        let mut dm = QueuedAttackCostDecisionMaker::new(answers.clone());
+                        let result = crate::game_loop::begin_attack_declaration_transaction_with_dm(
+                            &mut trial, &self.combat, &mut trial_triggers, &declarations, &mut dm,
+                        );
+                        if let Some(prompt) = dm.pending_prompt {
+                            trial.restore_execution_checkpoint(game.clone(), true);
+                            *game = trial;
+                            self.pending_attackers = Some(declarations);
+                            self.retain_face_up_prompt(answers, prompt.clone());
+                            return Ok(TurnAction::Decision(prompt));
+                        }
+                        let transaction = result?.ok_or_else(|| GameLoopError::InvalidState(
+                            "attack preparation suspended without a prompt".into()))?;
+                        *game = trial;
+                        *tq = trial_triggers;
                         if let Some(first_prompt) = prompts.first().cloned() {
                             self.pending_attacker_optional_costs =
                                 Some(PendingAttackerOptionalCosts {
@@ -1576,20 +1627,35 @@ impl TurnRunner {
                             return Ok(action);
                         }
                     } else {
-                        let mut dm = QueuedAttackCostDecisionMaker::new(Vec::new());
-                        apply_attacker_declarations_with_dm(
-                            game,
-                            &mut self.combat,
-                            tq,
-                            &declarations,
-                            &mut dm,
-                        )?;
+                        let mut trial = game.clone();
+                        let mut trial_combat = self.combat.clone();
+                        let mut trial_triggers = tq.clone();
+                        let mut dm = QueuedAttackCostDecisionMaker::new(answers.clone());
+                        let result = apply_attacker_declarations_with_dm(
+                            &mut trial, &mut trial_combat, &mut trial_triggers, &declarations, &mut dm,
+                        );
+                        if let Some(prompt) = dm.pending_prompt {
+                            trial.restore_execution_checkpoint(game.clone(), true);
+                            *game = trial;
+                            self.pending_attackers = Some(declarations);
+                            self.retain_face_up_prompt(answers, prompt.clone());
+                            return Ok(TurnAction::Decision(prompt));
+                        }
+                        result?;
+                        *game = trial;
+                        self.combat = trial_combat;
+                        *tq = trial_triggers;
                     }
                 }
                 if let Some(bands) = self.pending_attacking_bands.take() {
                     record_declared_attacking_bands(&mut self.combat, bands);
                 }
                 crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
+                // CR 508.2: "at the beginning of the declare attackers step"
+                // abilities trigger once the declaration turn-based action is
+                // complete, alongside attack triggers.
+                game.combat = Some(self.combat.clone());
+                generate_and_queue_step_triggers(game, tq);
                 // The caller's priority loop puts these triggers on the stack
                 // with its interactive decision maker. Stacking here with the
                 // default chooser silently selects modes, targets, and order.
@@ -1651,7 +1717,15 @@ impl TurnRunner {
 
                 game.refresh_continuous_state()
                     .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
-                let ctx = get_declare_blockers_decision(game, &self.combat, defending_player);
+                let ctx = if game.blockers_declared_by_random_piles_this_turn() {
+                    crate::game_loop::get_pile_division_blockers_decision(
+                        game,
+                        &self.combat,
+                        defending_player,
+                    )
+                } else {
+                    get_declare_blockers_decision(game, &self.combat, defending_player)
+                };
                 self.state = TurnState::DeclareBlockersApply;
                 Ok(TurnAction::Decision(ctx))
             }
@@ -1744,6 +1818,18 @@ impl TurnRunner {
                                     self.defending_player.unwrap_or(game.turn.active_player),
                                 )
                             });
+                        // The answer divided creatures into piles; the piles
+                        // are assigned to attackers at random (Camouflage).
+                        let declarations = if game.blockers_declared_by_random_piles_this_turn() {
+                            crate::game_loop::assign_random_pile_blocks(
+                                game,
+                                &self.combat,
+                                player,
+                                &declarations,
+                            )
+                        } else {
+                            declarations
+                        };
                         (declarations, player, Vec::new())
                     };
                     defending_player = player;
@@ -1766,7 +1852,7 @@ impl TurnRunner {
                             return Ok(TurnAction::Decision(prompt));
                         }
                     };
-                    transaction.stage_proposed_combat_for_payment(game);
+                    transaction.stage_proposed_combat_for_payment(game)?;
                     let payers = transaction.mana_cost_payers();
                     if !payers.is_empty() {
                         let declaration_source =
@@ -2033,6 +2119,8 @@ impl TurnRunner {
             TurnState::EndStep => {
                 game.turn.phase = Phase::Ending;
                 game.turn.step = Some(Step::End);
+                game.turn_store.end_steps_started_this_turn =
+                    game.turn_store.end_steps_started_this_turn.saturating_add(1);
                 game.reset_priority_for_new_window();
                 generate_and_queue_step_triggers(game, tq);
 
@@ -2121,7 +2209,8 @@ impl TurnRunner {
                 // before damage is removed and "until end of turn" effects
                 // end (CR 514.2).
                 try_drain_pending_trigger_events(game, tq)?;
-                execute_cleanup_step(game);
+                crate::turn::try_execute_cleanup_step(game)
+                    .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
                 self.state = TurnState::CleanupRecursiveCheck;
                 Ok(TurnAction::Continue)
             }
@@ -2166,7 +2255,119 @@ impl TurnRunner {
 
             TurnState::CleanupRecursiveDiscard => self.advance_cleanup_discard_recursive(game),
 
-            TurnState::Complete => Ok(TurnAction::TurnComplete),
+            TurnState::Complete => {
+                if let Some(prompt) = self.offer_turn_begin_skips(game, tq)? {
+                    return Ok(TurnAction::Decision(prompt));
+                }
+                Ok(TurnAction::TurnComplete)
+            }
+        }
+    }
+
+    /// CR 614.10 (Time Vault): before the next turn begins, offer each
+    /// turn-begin skip replacement to the player who would begin that turn.
+    /// Accepting records a skip of that turn and untaps the source, and the
+    /// offers move on to whoever would begin the following turn; a declined
+    /// source is not offered again at this boundary.
+    fn offer_turn_begin_skips(
+        &mut self,
+        game: &mut GameState,
+        tq: &mut TriggerQueue,
+    ) -> Result<Option<DecisionContext>, GameLoopError> {
+        loop {
+            if let Some((player, source)) = self.pending_turn_begin_skip {
+                let Some(accepted) = self.pending_boolean.take() else {
+                    return Ok(Some(turn_begin_skip_prompt(game, player, source)));
+                };
+                self.pending_turn_begin_skip = None;
+                if accepted && game.object(source).is_some() {
+                    game.turn_store.skip_next_turn.insert(player);
+                    let was_tapped = game.is_tapped(source);
+                    game.untap(source);
+                    if was_tapped && !game.is_tapped(source) {
+                        let event =
+                            crate::events::PermanentUntappedEvent::capture(game, source, Some(player));
+                        let provenance = crate::provenance::ProvNodeId::default();
+                        game.queue_trigger_event(
+                            provenance,
+                            crate::triggers::TriggerEvent::new(event, provenance),
+                        );
+                        crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
+                    }
+                } else {
+                    game.turn_store.turn_begin_skip_declined.push(source);
+                }
+                continue;
+            }
+            let Some(player) = game.upcoming_turn_player() else {
+                return Ok(None);
+            };
+            let Some(source) = game.turn_begin_skip_offer(player) else {
+                return Ok(None);
+            };
+            self.pending_turn_begin_skip = Some((player, source));
+            self.pending_boolean = None;
+            return Ok(Some(turn_begin_skip_prompt(game, player, source)));
+        }
+    }
+
+    /// CR 614.10 (Fasting): as the draw step would begin, offer each
+    /// draw-step skip replacement to the players taking the turn. Accepting
+    /// runs that replacement's "if you do" program with its permanent as the
+    /// source and skips the whole step; a declined source is not offered
+    /// again at this draw step.
+    fn offer_draw_step_skips(
+        &mut self,
+        game: &mut GameState,
+        tq: &mut TriggerQueue,
+    ) -> Result<DrawStepSkipOffer, GameLoopError> {
+        loop {
+            if let Some((player, source, effects)) = self.pending_draw_step_skip.clone() {
+                let Some(accepted) = self.pending_boolean.take() else {
+                    return Ok(DrawStepSkipOffer::Prompt(draw_step_skip_prompt(
+                        game, player, source,
+                    )));
+                };
+                self.pending_draw_step_skip = None;
+                if !accepted {
+                    game.turn_store.draw_step_skip_declined.push(source);
+                    continue;
+                }
+                let mut hypothetical = game.clone();
+                let mut dm = QueuedAttackCostDecisionMaker::new(Vec::new());
+                let mut events = Vec::new();
+                {
+                    let mut ctx = crate::effects::ExecutionContext::new(source, player, &mut dm);
+                    for effect in &effects {
+                        let outcome =
+                            crate::effects::execute_effect(&mut hypothetical, effect, &mut ctx)
+                                .map_err(GameLoopError::ExecutionFailed)?;
+                        events.extend(outcome.events);
+                    }
+                }
+                if dm.pending_prompt.is_some() {
+                    return Err(GameLoopError::ResolutionFailed(
+                        "draw-step skip follow-up program cannot ask for a choice".into(),
+                    ));
+                }
+                *game = hypothetical;
+                let provenance = crate::provenance::ProvNodeId::default();
+                for event in events {
+                    game.queue_trigger_event(provenance, event);
+                }
+                crate::game_loop::try_drain_pending_trigger_events(game, tq)?;
+                return Ok(DrawStepSkipOffer::Skipped);
+            }
+            let players = game.turn_players();
+            let Some((player, source, effects)) = players.iter().copied().find_map(|player| {
+                game.draw_step_skip_offer(player)
+                    .map(|(source, effects)| (player, source, effects))
+            }) else {
+                return Ok(DrawStepSkipOffer::None);
+            };
+            self.pending_draw_step_skip = Some((player, source, effects));
+            self.pending_boolean = None;
+            return Ok(DrawStepSkipOffer::Prompt(draw_step_skip_prompt(game, player, source)));
         }
     }
 
@@ -2247,6 +2448,7 @@ impl TurnRunner {
             || self.pending_turn_draw.is_some()
             || self.pending_attacker_payment_choices.is_some()
             || self.pending_combat_damage_choices.is_some()
+            || self.pending_face_up_choices.is_some()
             || self.pending_saga_lore_choices.is_some()
             || self.pending_mana_loss_choices.is_some()
             || self.pending_cleanup_discard.is_some()
@@ -2258,6 +2460,9 @@ impl TurnRunner {
     fn replay_response_slot(&mut self) -> Option<&mut Option<AttackCostAnswer>> {
         if self.has_pending_combat_cost_choice() {
             return self.combat_cost_response_slot();
+        }
+        if let Some(pending) = self.pending_face_up_choices.as_mut() {
+            return Some(&mut pending.response);
         }
         if let Some(pending) = self.pending_combat_damage_choices.as_mut() {
             return Some(&mut pending.response);
@@ -2419,6 +2624,21 @@ impl TurnRunner {
         )
     }
 
+    fn take_face_up_answers(&mut self) -> Result<Vec<AttackCostAnswer>, DecisionContext> {
+        let Some(mut pending) = self.pending_face_up_choices.take() else { return Ok(Vec::new()); };
+        let Some(answer) = pending.response.take() else {
+            let prompt = pending.prompt.clone();
+            self.pending_face_up_choices = Some(pending);
+            return Err(prompt);
+        };
+        pending.answers.push(answer);
+        Ok(pending.answers)
+    }
+
+    fn retain_face_up_prompt(&mut self, answers: Vec<AttackCostAnswer>, prompt: DecisionContext) {
+        self.pending_face_up_choices = Some(PendingTurnActionChoices { answers, prompt, response: None });
+    }
+
     /// Record a pending division (if any), then return the next division
     /// decision the players must make before this damage step (CR 510.1).
     fn next_combat_damage_assignment_decision(
@@ -2427,6 +2647,26 @@ impl TurnRunner {
         first_strike: bool,
         use_snapshot: bool,
     ) -> Result<Option<DecisionContext>, GameLoopError> {
+        let answers = match self.take_face_up_answers() {
+            Ok(answers) => answers,
+            Err(prompt) => return Ok(Some(prompt)),
+        };
+        let mut trial = game.clone();
+        let mut dm = QueuedAttackCostDecisionMaker::new(answers.clone());
+        let ready = crate::game_loop::prepare_combat_damage_assigners(
+            &mut trial, &self.combat, first_strike,
+            use_snapshot.then_some(&self.first_step_strikers), &mut dm,
+        );
+        if let Some(prompt) = dm.pending_prompt {
+            trial.restore_execution_checkpoint(game.clone(), true);
+            *game = trial;
+            self.retain_face_up_prompt(answers, prompt.clone());
+            return Ok(Some(prompt));
+        }
+        if !ready.map_err(|error| GameLoopError::InvalidState(error.to_string()))? {
+            return Err(GameLoopError::InvalidState("damage preparation suspended without a prompt".into()));
+        }
+        *game = trial;
         game.refresh_continuous_state()
             .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
         // The refresh may have removed permanents from combat (CR 506.4).
@@ -3571,6 +3811,32 @@ impl TurnRunner {
             return Ok(RunnerProgress::NeedsDecision(ctx));
         }
     }
+}
+
+/// Where the CR 614.10 draw-step skip offers left the draw step.
+enum DrawStepSkipOffer {
+    /// No (further) offer applies; the step begins normally.
+    None,
+    /// A player must answer an offer.
+    Prompt(DecisionContext),
+    /// An offer was accepted and its program ran; the step is skipped.
+    Skipped,
+}
+
+fn draw_step_skip_prompt(game: &GameState, player: PlayerId, source: ObjectId) -> DecisionContext {
+    let mut context = BooleanContext::new(player, Some(source), "skip your draw step");
+    if let Some(object) = game.object(source) {
+        context = context.with_source_name(object.name.to_string());
+    }
+    DecisionContext::Boolean(context)
+}
+
+fn turn_begin_skip_prompt(game: &GameState, player: PlayerId, source: ObjectId) -> DecisionContext {
+    let mut context = BooleanContext::new(player, Some(source), "skip your next turn and untap it");
+    if let Some(object) = game.object(source) {
+        context = context.with_source_name(object.name.to_string());
+    }
+    DecisionContext::Boolean(context)
 }
 
 impl Default for TurnRunner {
@@ -4835,7 +5101,7 @@ mod tests {
                 ]])),
                 "Creatures can't block unless their controller pays {1} for each blocking creature.",
             )));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         game.turn.active_player = alice;
         game.turn.phase = Phase::Combat;
         game.turn.step = Some(Step::DeclareBlockers);
@@ -5062,7 +5328,7 @@ mod tests {
                     "Dynamic attack tax",
                 )));
             }
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
             game.turn.phase = Phase::Combat;
             game.turn.step = Some(Step::DeclareAttackers);
@@ -5165,7 +5431,7 @@ mod tests {
             game.turn.step = Some(Step::DeclareAttackers);
             game.turn.active_player = alice;
             game.turn.priority_player = Some(alice);
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("test continuous state refresh succeeds");
             runner.state = TurnState::DeclareAttackersApply;
             runner.respond_attackers(
                 vec![first, second]
@@ -5264,7 +5530,7 @@ mod tests {
                 ]])),
                 "Creatures can't block unless their controller pays {1} for each blocking creature.",
             )));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         game.turn.phase = Phase::Combat;
         game.turn.step = Some(Step::DeclareBlockers);
         game.turn.active_player = alice;
@@ -5333,7 +5599,7 @@ mod tests {
         let mountain = create_mountain(&mut game, alice);
         let second_mountain = create_mountain(&mut game, alice);
         add_attack_tax(&mut game, bob, 2);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         game.turn.phase = Phase::Combat;
         game.turn.step = Some(Step::DeclareAttackers);
@@ -5399,7 +5665,7 @@ mod tests {
                 None,
                 "You may exert this creature as it attacks",
             )));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         game.turn.phase = Phase::Combat;
         game.turn.step = Some(Step::DeclareAttackers);
@@ -5844,7 +6110,7 @@ mod tests {
         game.remove_summoning_sickness(attacker);
         let support = create_battlefield_creature(&mut game, alice, "Enlist Support");
         game.remove_summoning_sickness(support);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         game.turn.phase = Phase::Combat;
         game.turn.step = Some(Step::DeclareAttackers);
@@ -7010,4 +7276,37 @@ pub(crate) fn empty_mana_pools_without_choices(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod sol_78_face_up_runner_tests {
+    use super::*;
+
+    #[test]
+    fn attack_tap_is_preserved_when_face_up_identity_has_vigilance() {
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let mut game = GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        game.turn.active_player = alice;
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::DeclareAttackers);
+        let card = crate::card::CardBuilder::new(crate::ids::CardId::new(), "Vigilant identity")
+            .card_types(vec![crate::types::CardType::Creature])
+            .power_toughness(crate::card::PowerToughness::fixed(4, 4)).build();
+        let attacker = game.create_object_from_card(&card, alice, crate::zone::Zone::Battlefield);
+        game.object_mut(attacker).unwrap().abilities_mut().push(crate::ability::Ability::static_ability(
+            crate::static_abilities::StaticAbility::vigilance()));
+        game.remove_summoning_sickness(attacker);
+        assert!(game.set_face_down(attacker));
+        game.register_turn_face_up_before_action(attacker);
+        let mut runner = TurnRunner::from_state_for_sync(TurnState::DeclareAttackersApply);
+        runner.pending_attackers = Some(vec![AttackerDeclaration {
+            creature: attacker, target: crate::combat_state::AttackTarget::Player(bob),
+        }]);
+        let mut triggers = TriggerQueue::new();
+        runner.advance(&mut game, &mut triggers).unwrap();
+        assert!(!game.is_face_down(attacker));
+        assert!(game.is_tapped(attacker), "the originally required tap still happens");
+        assert_eq!(runner.combat.attackers.len(), 1);
+    }
 }

@@ -13,6 +13,10 @@ use helpers::*;
 mod binary_program;
 pub use binary_program::{BinaryPileCount, BinaryPileDestination, BinaryPilePartitioner, BinaryPileProducer, BinaryPileProgramShape};
 
+#[path = "divvy_shapes/pile_programs.rs"]
+mod pile_programs;
+pub use pile_programs::{ExilePlayDuration, PileObjectKind, PileOp, PilePickActor, PilePickDestination, PileProgramShape};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DivvyChooserShape {
     Opponent,
@@ -28,6 +32,9 @@ pub enum DivvyRestDestinationShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DivvySequenceShape {
     BinaryCards(BinaryPileProgramShape),
+    /// Multi-pile, labeled-pile, alternating-pick and per-player exile
+    /// permission programs (see `pile_programs`).
+    PileProgram(PileProgramShape),
     FixedExilePiles {
         first_count: i32,
         second_count: i32,
@@ -54,6 +61,9 @@ pub enum DivvySequenceShape {
     LandPiles,
     ExilePermanentCardsPile,
     RevealTopPiles,
+    /// The Fact or Fiction split whose other pile goes on the bottom of the
+    /// library in any order (Jace, Architect of Thought).
+    RevealTopPilesOtherOnBottom,
     ExileCreatureCardsFromGraveyards,
     ChooseOneOfThem,
     SearchFourDifferentNames {
@@ -67,6 +77,15 @@ pub enum DivvySequenceShape {
 pub fn parse_divvy_sequence_shape(sentences: &[&[OwnedLexToken]]) -> Option<DivvySequenceShape> {
     if let Some(program) = binary_program::parse(sentences) {
         return Some(DivvySequenceShape::BinaryCards(program));
+    }
+    {
+        let words = sentences
+            .iter()
+            .map(|tokens| TokenWordView::new(tokens).to_word_refs())
+            .collect::<Vec<_>>();
+        if let Some(program) = pile_programs::parse(&words) {
+            return Some(DivvySequenceShape::PileProgram(program));
+        }
     }
     let sentence_words = sentences
         .iter()
@@ -477,6 +496,24 @@ pub fn parse_divvy_sequence_shape(sentences: &[&[OwnedLexToken]]) -> Option<Divv
         )
     {
         return Some(DivvySequenceShape::RevealTopPiles);
+    }
+
+    if prefix(first, &["reveal", "the", "top"])
+        && sequence_has_phrase(&sentence_words, &["cards", "of", "your", "library"])
+        && sequence_has_phrase(
+            &sentence_words,
+            &["an", "opponent", "separates", "those", "cards", "into", "two", "piles"],
+        )
+        && sequence_has_phrase(&sentence_words, &["put", "one", "pile", "into", "your", "hand"])
+        && sequence_has_phrase(
+            &sentence_words,
+            &[
+                "the", "other", "on", "the", "bottom", "of", "your", "library", "in", "any",
+                "order",
+            ],
+        )
+    {
+        return Some(DivvySequenceShape::RevealTopPilesOtherOnBottom);
     }
 
     if exact_sequence(

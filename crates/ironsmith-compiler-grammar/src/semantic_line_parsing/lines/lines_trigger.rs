@@ -113,6 +113,13 @@ pub(super) fn parse_triggered_line_impl(
         trigger_parse_tokens,
         effect_parse_tokens,
     )?;
+    // "if you gained life this turn, distribute up to that many ..." (Lathiel):
+    // "that many" is the intervening condition's life total gained.
+    if let Some(predicate) = line.intervening_if.as_ref()
+        && let LineAst::Triggered { effects, .. } = &mut parsed
+    {
+        crate::clause_support::bind_intervening_life_gained_that_many(predicate, effects);
+    }
     if line.presentation == Some(PresentationLabel::CaseToSolve) {
         // The synthetic recognition text mentions a level counter only to
         // locate the trigger. It must never replace the typed solve action.
@@ -319,7 +326,11 @@ pub(super) fn parse_triggered_line_impl(
         DelayedScheduleStep::MainPhaseThisTurn => {
                 EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
                     trigger: crate::cards::builders::TriggerSpec::BeginningOfMainPhase {
-                        player: PlayerFilter::Any,
+                        player: if schedule.player == PlayerAst::You {
+                            PlayerFilter::You
+                        } else {
+                            PlayerFilter::Any
+                        },
                         surface: ironsmith_core::trigger_model::MainPhaseSurface::MainPhase,
                     },
                     effects,
@@ -407,6 +418,9 @@ pub fn is_exact_correlated_trigger_effect_bundle(effect_parse_tokens: &[OwnedLex
         || exact_dynamic_exile_permission_bundle(effect_parse_tokens).is_some()
         || exact_atomic_return_as_aura_bundle(effect_parse_tokens).is_some()
         || exact_looked_hand_optional_cast_bundle(effect_parse_tokens).is_some()
+        || exact_target_same_name_graveyard_may_cast_bundle(effect_parse_tokens).is_some()
+        || exact_target_graveyard_any_type_may_cast_bundle(effect_parse_tokens).is_some()
+        || exact_each_other_player_copies_triggering_spell_bundle(effect_parse_tokens).is_some()
 }
 
 pub(super) fn recognize_triggered_effect_surfaces(
@@ -599,6 +613,30 @@ pub(super) fn parse_triggered_ability_line_impl(
                 LineAst::Triggered {
                     trigger,
                     effects: vec![EffectAst::SolveCase],
+                    max_triggers_per_turn: inferred_max_triggers_per_turn,
+                },
+                line.intervening_if.clone(),
+            )?,
+            trigger_facts,
+            inferred_max_triggers_per_turn,
+            chosen_option,
+            presentation_label,
+        );
+    }
+    // The typed targeted same-name graveyard cast (Harness the Storm) must
+    // claim its body before any reader that runs the generic sentence parser
+    // with `?`: that parser has no `cast target card ...` verb and its hard
+    // error would end the triggered-line attempt before the special readers.
+    if let Some(effects) = exact_target_same_name_graveyard_may_cast_bundle(effect_parse_tokens)
+        .or_else(|| exact_target_graveyard_any_type_may_cast_bundle(effect_parse_tokens))
+        .or_else(|| exact_each_other_player_copies_triggering_spell_bundle(effect_parse_tokens))
+    {
+        let trigger = parse_trigger_clause_lexed(trigger_parse_tokens)?;
+        return apply_chosen_option_to_triggered_chunk(
+            apply_explicit_intervening_if_to_triggered_chunk(
+                LineAst::Triggered {
+                    trigger,
+                    effects,
                     max_triggers_per_turn: inferred_max_triggers_per_turn,
                 },
                 line.intervening_if.clone(),
@@ -2094,7 +2132,9 @@ pub(super) fn lower_special_rewrite_triggered_head(
     trigger_parse_tokens: &[OwnedLexToken],
     effect_parse_tokens: &[OwnedLexToken],
 ) -> Result<Option<LineAst>, CardTextError> {
-    if let Some(effects) = exact_target_same_name_graveyard_may_cast_bundle(effect_parse_tokens) {
+    if let Some(effects) = exact_target_same_name_graveyard_may_cast_bundle(effect_parse_tokens)
+        .or_else(|| exact_target_graveyard_any_type_may_cast_bundle(effect_parse_tokens))
+    {
         return Ok(Some(LineAst::Triggered {
             trigger: parse_trigger_clause_lexed(trigger_parse_tokens)?,
             effects,
@@ -2360,6 +2400,7 @@ pub(super) fn lower_special_rewrite_triggered_oath(
                         filter: Box::new(ObjectFilter::land()),
                         fewer: false,
                         as_you_activate: false,
+                        minimum_difference: 0,
                     },
                     Some(crate::TextSpan::synthetic()),
                 ),
@@ -2420,6 +2461,7 @@ pub(super) fn lower_special_rewrite_triggered_oath(
                         filter: Box::new(ObjectFilter::creature()),
                         fewer: false,
                         as_you_activate: false,
+                        minimum_difference: 0,
                     },
                     Some(crate::TextSpan::synthetic()),
                 ),
@@ -2478,6 +2520,28 @@ pub(super) fn lower_special_rewrite_triggered_oath(
         ))));
     }
 
+    if let Some(effects) =
+        semantic_grammar::parse_special_triggered_program_tokens(&line.full_parse_tokens)
+            .and_then(semantic_grammar::oath_opponent_majority_effects)
+    {
+        let trigger = if trigger_parse_tokens.is_empty() {
+            TriggerSpec::BeginningOfUpkeep(PlayerFilter::Any)
+        } else {
+            parse_trigger_clause_lexed(trigger_parse_tokens)?
+        };
+        return Ok(Some(LineAst::Ability(assemble_parsed_triggered_ability(
+            trigger.clone(),
+            effects,
+            derive_triggered_ability_functional_zones_from_facts(
+                &trigger,
+                &line.info.semantic_facts.triggered_ability.functional_zones,
+            ),
+            None,
+            None,
+            ReferenceImports::default(),
+        ))));
+    }
+
     if matches!(
         semantic_grammar::parse_special_triggered_program_tokens(&line.full_parse_tokens),
         Some(semantic_grammar::SpecialTriggeredProgram::OpponentGraveyardMinorityReturn)
@@ -2503,6 +2567,7 @@ pub(super) fn lower_special_rewrite_triggered_oath(
                         filter: Box::new(graveyard_creature_filter),
                         fewer: true,
                         as_you_activate: false,
+                        minimum_difference: 0,
                     },
                     Some(crate::TextSpan::synthetic()),
                 ),
@@ -2758,4 +2823,48 @@ pub fn try_parse_optional_cost_with_cast_trigger(
     rewrite_copy_count_to_times_paid_label_rewrite(&mut effects, &label);
 
     Ok(Some(LineAst::OptionalCostWithCastTrigger { cost, effects }))
+}
+
+/// "each other player copies that spell. Each of those players may choose new
+/// targets for their copy." (Hive Mind): every player other than the
+/// triggering spell's controller creates a copy they control (CR 707.10c),
+/// and each copier may choose new targets for their own copy.
+pub fn exact_each_other_player_copies_triggering_spell_bundle(
+    effect_parse_tokens: &[OwnedLexToken],
+) -> Option<Vec<EffectAst>> {
+    let words = crate::lexer::parser_token_word_refs(effect_parse_tokens);
+    const COPY: &[&str] = &["each", "other", "player", "copies", "that", "spell"];
+    const RETARGET: &[&str] = &[
+        "each", "of", "those", "players", "may", "choose", "new", "targets", "for", "their",
+        "copy",
+    ];
+    let may_choose_new_targets = if words.as_slice() == COPY {
+        false
+    } else if words.len() == COPY.len() + RETARGET.len()
+        && words.starts_with(COPY)
+        && words.ends_with(RETARGET)
+    {
+        true
+    } else {
+        return None;
+    };
+    let copy = EffectAst::subject_verb_copy_spell(
+        TargetAst::Tagged(crate::tag::CompilerReferenceTag::Triggering.bind(), None),
+        crate::effect::Value::Fixed(1),
+        PlayerAst::That,
+        may_choose_new_targets,
+        false,
+        Vec::new(),
+    )
+    .with_copy_target_reference_kind(crate::filter::StackObjectKind::Spell);
+    Some(vec![EffectAst::ForEach(ForEachEffectAst::ForEachPlayersFiltered {
+        sequential: false,
+        filter: crate::target::PlayerFilter::excluding(
+            crate::target::PlayerFilter::Any,
+            crate::target::PlayerFilter::AliasedControllerOf(crate::target::ObjectRef::tagged(
+                crate::tag::CompilerReferenceTag::Triggering.bind(),
+            )),
+        ),
+        effects: vec![copy],
+    })])
 }

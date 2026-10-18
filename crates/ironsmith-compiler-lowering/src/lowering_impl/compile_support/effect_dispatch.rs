@@ -501,7 +501,8 @@ pub(crate) fn link_unproduced_result_references_in_program(
     }
     let mut missing: Vec<EffectId> = Vec::new();
     for id in referenced {
-        if id != EffectId::ACTIVATION_COUNTER_COST && !defined.contains(&id) && !missing.contains(&id) {
+        if id != EffectId::ACTIVATION_COUNTER_COST && id != EffectId::ACTIVATION_RESULT_COST
+            && !defined.contains(&id) && !missing.contains(&id) {
             missing.push(id);
         }
     }
@@ -798,6 +799,14 @@ fn lower_source_top_only_choice(
         PlayerAst::TargetOpponent => PlayerFilter::Target(Box::new(PlayerFilter::Opponent)),
         player => resolve_non_target_player_filter(player, &current_reference_env(ctx))?,
     };
+    // "that player exiles the top card of one of their opponents' libraries"
+    // (Shared Fate): the opponents are the acting player's, not the
+    // ability controller's.
+    if filter.owner == Some(PlayerFilter::Opponent)
+        && !matches!(chooser, PlayerFilter::You | PlayerFilter::EffectController | PlayerFilter::Target(_))
+    {
+        filter.owner = Some(PlayerFilter::OpponentOf(Box::new(chooser.clone())));
+    }
     let tag = ctx.next_tag(tag_prefix);
     ctx.last_object_tag = Some(tag.clone());
     let choose = Effect::new(
@@ -1315,6 +1324,61 @@ fn compile_effect_inner(
             Vec::new(),
         ));
     }
+    if let EffectAst::RollDieKeepHighestPlayers { sides, keep, tag } = effect {
+        let players: crate::tag::TagKey = tag.clone().into();
+        return Ok((
+            vec![
+                Effect::new(crate::effects::TagPlayersEffect::new(
+                    crate::target::PlayerFilter::Any,
+                    players.clone(),
+                )),
+                Effect::new(crate::effects::RollDieKeepHighestPlayersEffect::new(
+                    players,
+                    *sides,
+                    keep.clone(),
+                )),
+            ],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::GrantPlayTaggedUntilPlayerNextEndStep {
+        tag,
+        player,
+        allow_land,
+        without_paying_mana_cost,
+    } = effect
+    {
+        let player_filter =
+            resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
+        let resolved_tag: crate::tag::TagKey =
+            if tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str() {
+                ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "until-next-end-step permission has no card antecedent".to_string(),
+                    )
+                })?
+            } else {
+                tag.clone().into()
+            };
+        let duration = crate::effects::GrantPlayTaggedDuration::UntilPlayerNextEndStep;
+        let mut effects = vec![Effect::new(crate::effects::GrantPlayTaggedEffect::new(
+            resolved_tag.clone(),
+            player_filter.clone(),
+            duration,
+            *allow_land,
+            ironsmith_core::value_model::ManaSpendMode::Normal,
+        ))];
+        if *without_paying_mana_cost {
+            let mut free =
+                crate::effects::GrantTaggedSpellFreeCastUntilEndOfTurnEffect::new(
+                    resolved_tag,
+                    player_filter,
+                );
+            free.duration = duration;
+            effects.push(Effect::new(free));
+        }
+        return Ok((effects, Vec::new()));
+    }
     if let EffectAst::SolveCase = effect {
         return Ok((
             vec![Effect::new(crate::effects::SolveCaseEffect::new())],
@@ -1323,6 +1387,168 @@ fn compile_effect_inner(
     }
     if let EffectAst::ChoosePlayerOption(choice) = effect {
         return Ok((vec![Effect::new(choice.clone())], Vec::new()));
+    }
+    if let EffectAst::TagLastDamageSource(capture) = effect {
+        return Ok((vec![Effect::new(capture.clone())], Vec::new()));
+    }
+    if let EffectAst::UnblockSoleBlockedAttackers(unblock) = effect {
+        return Ok((vec![Effect::new(unblock.clone())], Vec::new()));
+    }
+    if let EffectAst::GrantPayLifeManaAbilityUntilEndOfTurn(grant) = effect {
+        return Ok((vec![Effect::new(grant.clone())], Vec::new()));
+    }
+    if let EffectAst::RollAndStoreDieResults(roll) = effect {
+        return Ok((vec![Effect::new(roll.clone())], Vec::new()));
+    }
+    if let EffectAst::RerollStoredDieResults(reroll) = effect {
+        return Ok((vec![Effect::new(reroll.clone())], Vec::new()));
+    }
+    if let EffectAst::DeclareBlockersByRandomPilesThisTurn = effect {
+        return Ok((
+            vec![Effect::new(
+                ironsmith_core::DeclareBlockersByRandomPilesThisTurnEffect::new(),
+            )],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::UnblockSoleBlockedAttackersOf { blocker } = effect {
+        let (blocker, _choices) =
+            resolve_target_spec_with_choices(blocker, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(
+                crate::effects::UnblockSoleBlockedAttackersEffect::new(blocker),
+            )],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::BlockAttackerOfChoice {
+        blocker,
+        attackers,
+        optional,
+    } = effect
+    {
+        let (blocker, _choices) =
+            resolve_target_spec_with_choices(blocker, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(crate::effects::BlockAttackerOfChoiceEffect::new(
+                blocker,
+                attackers.clone(),
+                *optional,
+            ))],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::RevealSourceInHandUntilOwnersNextTurn(reveal) = effect {
+        return Ok((vec![Effect::new(reveal.clone())], Vec::new()));
+    }
+    if let EffectAst::PlayWithHandRevealed(reveal) = effect {
+        let mut reveal = reveal.clone();
+        // "that player" names the discourse player (a chosen target, or the
+        // participant of an enclosing loop).
+        if reveal.player == PlayerFilter::IteratedPlayer {
+            reveal.player =
+                resolve_non_target_player_filter(PlayerAst::That, &current_reference_env(ctx))?;
+        }
+        return Ok((vec![Effect::new(reveal)], Vec::new()));
+    }
+    if let EffectAst::CoinFlipLifeStakes { opponent, initial_stakes } = effect {
+        let (opponent, choices) =
+            resolve_target_spec_with_choices(opponent, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(crate::effects::CoinFlipLifeStakesEffect::new(
+                opponent,
+                *initial_stakes,
+            ))],
+            choices,
+        ));
+    }
+    if let EffectAst::ExchangeBlocks { blockers, attackers } = effect {
+        let (blockers, _choices) =
+            resolve_target_spec_with_choices(blockers, &current_reference_env(ctx))?;
+        let exchange = crate::effects::ExchangeBlocksEffect::new(blockers);
+        return Ok((
+            vec![Effect::new(if *attackers { exchange.between_attackers() } else { exchange })],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::TagSplicedCards { spell, tag } = effect {
+        let (spell, _choices) =
+            resolve_target_spec_with_choices(spell, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(crate::effects::TagSplicedCardsEffect::new(
+                spell,
+                tag.clone(),
+            ))],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::RegisterDamageCounterReplacement {
+        player,
+        counter_type,
+        object,
+        expiry,
+    } = effect
+    {
+        let (object, _choices) =
+            resolve_target_spec_with_choices(object, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(
+                crate::effects::RegisterDamageCounterReplacementEffect::new(
+                    player.clone(),
+                    *counter_type,
+                    object,
+                    *expiry,
+                ),
+            )],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::NoteCounters { object, tag } = effect {
+        let (object, _choices) =
+            resolve_target_spec_with_choices(object, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(crate::effects::NoteCountersEffect::new(
+                object,
+                tag.clone(),
+            ))],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::PutTriggeringCounterKind { target } = effect {
+        let (spec, choices) =
+            resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(
+                crate::effects::PutCountersEffect::new(
+                    crate::object::CounterType::PlusOnePlusOne,
+                    crate::effect::Value::EventValue(crate::effect::EventValueSpec::Amount),
+                    spec,
+                )
+                .with_counter_kind_from_trigger(),
+            )],
+            choices,
+        ));
+    }
+    if let EffectAst::RetainSpellChoices { target, controller_tag } = effect {
+        let (spec, choices) =
+            resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(crate::effects::RetainSpellChoicesEffect::new(
+                spec,
+                controller_tag.clone(),
+            ))],
+            choices,
+        ));
+    }
+    if let EffectAst::PutRetainedSpellCopyOntoStack { target } = effect {
+        let (spec, choices) =
+            resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+        return Ok((
+            vec![Effect::new(
+                crate::effects::PutRetainedSpellCopyOntoStackEffect::new(spec),
+            )],
+            choices,
+        ));
     }
     if let EffectAst::ControlVotesThisTurn = effect {
         return Ok((
@@ -1376,6 +1602,66 @@ fn compile_effect_inner(
         choices.extend(viewer.into_choices());
         return Ok((vec![Effect::new(look)], choices));
     }
+    if let EffectAst::RevealContestWinnerMayChangeTriggeringTargets {
+        doesnt_trigger_same_named_sources,
+    } = effect
+    {
+        // Every player reveals; the contenders narrow to those whose card has
+        // the greatest mana value, and only a sole winner may choose new
+        // targets for the triggering spell or ability (CR 115.7d).
+        let contenders = ctx.next_tag("reveal_contenders");
+        let revealed = ctx.next_tag("reveal_contest_card");
+        let narrow_id = ctx.next_effect_id();
+        let triggering: crate::tag::TagKey = crate::tag::TagKey::from("triggering_source");
+        let mut retarget = crate::effects::RetargetStackObjectEffect::new(ChooseSpec::Tagged(
+            triggering.clone(),
+        ))
+        .with_chooser(PlayerFilter::IteratedPlayer);
+        if *doesnt_trigger_same_named_sources {
+            retarget = retarget.without_triggering_same_named_sources();
+        }
+        return Ok((
+            vec![
+                Effect::new(crate::effects::TagTriggeringSourceEffect::new(triggering)),
+                Effect::new(crate::effects::TagPlayersEffect::new(
+                    PlayerFilter::Any,
+                    contenders.clone(),
+                )),
+                Effect::for_players(
+                    PlayerFilter::TaggedPlayer(contenders.clone()),
+                    vec![Effect::reveal_top_cards(
+                        PlayerFilter::IteratedPlayer,
+                        Value::Fixed(1),
+                        revealed.clone(),
+                    )],
+                ),
+                Effect::with_id(
+                    narrow_id.0,
+                    Effect::new(crate::effects::KeepGreatestManaValuePlayersEffect::new(
+                        contenders.clone(),
+                        revealed,
+                    )),
+                ),
+                Effect::if_then(
+                    narrow_id,
+                    crate::effect::EffectPredicate::Value(crate::effect::Comparison::Equal(1)),
+                    vec![Effect::for_players(
+                        PlayerFilter::TaggedPlayer(contenders),
+                        vec![Effect::new(retarget)],
+                    )],
+                ),
+            ],
+            Vec::new(),
+        ));
+    }
+    if let EffectAst::GrantTapUncontrolledLandsForMana = effect {
+        return Ok((
+            vec![Effect::new(
+                crate::effects::GrantTapUncontrolledLandsForManaEffect::new(PlayerFilter::You),
+            )],
+            Vec::new(),
+        ));
+    }
     if let EffectAst::GrantLoyaltyActivationAllowance { scope, allowance } = effect {
         return Ok((
             vec![Effect::new(crate::effects::GrantLoyaltyActivationAllowanceEffect::new(
@@ -1385,8 +1671,23 @@ fn compile_effect_inner(
             Vec::new(),
         ));
     }
+    if let EffectAst::CastFaceDownUsingActivationMana { player, filter, turn_face_up_before_action } = effect {
+        return Ok((vec![Effect::new(crate::effects::CastFaceDownUsingActivationManaEffect { player: player.clone(), filter: filter.clone(), turn_face_up_before_action: *turn_face_up_before_action })], Vec::new()));
+    }
+    if let EffectAst::RegisterExtraDieReplacement { player, chooser, additional } = effect {
+        let (spec, choices) = resolve_target_spec_with_choices(player, &current_reference_env(ctx))?;
+        return Ok((vec![Effect::new(crate::effects::RegisterExtraDieReplacementEffect {
+            player: spec, chooser: chooser.clone(), additional: *additional,
+        })], choices));
+    }
+    if let EffectAst::NoteActivationManaPayment = effect {
+        return Ok((vec![Effect::new(crate::effects::NoteActivationManaPaymentEffect::default())], Vec::new()));
+    }
     if let EffectAst::NoteActivationManaType = effect {
         return Ok((vec![Effect::note_activation_mana_type()], Vec::new()));
+    }
+    if let EffectAst::NoteTriggeringCreatureType = effect {
+        return Ok((vec![Effect::note_triggering_creature_type()], Vec::new()));
     }
     if let EffectAst::ChooseFriendsOrFoes { friends, foes } = effect {
         return Ok((
@@ -1498,7 +1799,12 @@ fn compile_effect_inner(
     }
     if let EffectAst::BindX { value, effects } = effect {
         let value = resolve_value_it_tag(value, &current_reference_env(ctx))?;
-        let (effects, choices) = compile_effects(effects, ctx)?;
+        // The body's X is this binding, not a later instruction's result.
+        let saved_announced_x = ctx.has_announced_x;
+        ctx.has_announced_x = true;
+        let compiled = compile_effects(effects, ctx);
+        ctx.has_announced_x = saved_announced_x;
+        let (effects, choices) = compiled?;
         return Ok((
             vec![Effect::new(crate::effects::BindXValueEffect::new(value, effects))],
             choices,
@@ -1621,6 +1927,29 @@ fn compile_effect_inner(
         // being mistaken for casting-time modal choices.
         let choose =
             crate::effects::ChooseModeEffect::choose_one(lowered_modes).with_chooser(chooser);
+        return Ok((vec![Effect::new(choose)], choices));
+    }
+    if let EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { modes }) = effect {
+        use crate::effect::EffectMode;
+        let mut lowered_modes = Vec::with_capacity(modes.len());
+        let mut choices = Vec::new();
+        for mode in modes {
+            let (mode_effects, mode_choices) = compile_effects(&mode.effects, ctx)?;
+            for choice in mode_choices {
+                push_choice(&mut choices, choice);
+            }
+            lowered_modes.push(EffectMode {
+                source_text: mode.description.clone(),
+                effects: mode_effects,
+            });
+        }
+        // A random resolution-time choice draws exactly one mode from the
+        // game RNG. The explicit chooser keeps it a resolution-time choice
+        // (a chooser-less mode choice is announced while casting, 601.2b);
+        // the random flag means no player is actually prompted.
+        let choose = crate::effects::ChooseModeEffect::choose_one(lowered_modes)
+            .with_chooser(PlayerFilter::You)
+            .with_random_mode_choice();
         return Ok((vec![Effect::new(choose)], choices));
     }
     if let EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice {
@@ -1874,22 +2203,40 @@ fn compile_effect_inner(
         target,
         starting_bid,
         winner_effects,
+        opponent,
+        controller_must_win,
     }) = effect
     {
         let refs = current_reference_env(ctx);
-        let (target_spec, mut choices) = resolve_target_spec_with_choices(target, &refs)?;
+        // "You and target spell's controller bid life": the other bidder
+        // is read before the reward clauses can move the antecedent.
+        let opponent = (*opponent)
+            .map(|player| resolve_non_target_player_filter(player, &refs))
+            .transpose()?;
+        let (target_spec, mut choices) = match target {
+            Some(target) => {
+                let (spec, choices) = resolve_target_spec_with_choices(target, &refs)?;
+                (Some(spec), choices)
+            }
+            None => (None, Vec::new()),
+        };
         let (winner_effects, winner_choices) = compile_effects(winner_effects, ctx)?;
         for choice in winner_choices {
             push_choice(&mut choices, choice);
         }
-        return Ok((
-            vec![Effect::new(crate::effects::BidLifeEffect::new(
-                target_spec,
-                crate::effects::LifeBidStart::Fixed(*starting_bid),
-                winner_effects,
-            ))],
-            choices,
-        ));
+        let starting_bid = match starting_bid {
+            Some(amount) => crate::effects::LifeBidStart::Fixed(*amount),
+            None => crate::effects::LifeBidStart::ControllerChooses,
+        };
+        let mut bid = crate::effects::BidLifeEffect::new(
+            ChooseSpec::Source,
+            starting_bid,
+            winner_effects,
+        );
+        bid.target = target_spec;
+        bid.opponent = opponent;
+        bid.controller_must_win = *controller_must_win;
+        return Ok((vec![Effect::new(bid)], choices));
     }
     if let EffectAst::Votes(VoteEffectAst::SecretChoiceStart {
         options,
@@ -2550,6 +2897,30 @@ fn try_compile_simple_source_sacrifice(
     if !filter.source {
         return Ok(None);
     }
+    // "{7}: Hold for Ransom's controller sacrifices it and draws a card." in
+    // a quoted ability Hold for Ransom grants: the named object's controller
+    // sacrifices that named object. With no explicit player the sacrifice is
+    // performed by the object's controller (CR 701.21a), which is exactly the
+    // authored chooser, and the granted-ability lowering rebinds the named
+    // source to the granting Aura.
+    if subject_verb.subject.player == PlayerAst::ItsController
+        && matches!(
+            filter.source_surface,
+            Some(
+                crate::target::SourceReferenceSurface::FullName(_)
+                    | crate::target::SourceReferenceSurface::ShortName(_)
+            )
+        )
+    {
+        let surface = filter.source_surface.clone().expect("checked named surface");
+        let source = ChooseSpec::Source.with_surface_hint(
+            crate::target::ChooseSpecSurfaceHint::SourceReference(surface),
+        );
+        return Ok(Some((
+            vec![Effect::new(crate::effects::SacrificeTargetEffect::new(source))],
+            Vec::new(),
+        )));
+    }
 
     let subject = resolve_subject_verb_subject(
         subject_verb_role(subject_verb.subject.role),
@@ -2585,6 +2956,7 @@ fn try_compile_plain_all_move_to_nonbattlefield_zone(
     ctx: &mut EffectLoweringContext,
 ) -> Result<Option<EffectCompileOutcome>, CardTextError> {
     let SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
+        retained_reference_tags,
         target,
         source_top_only: false,
         zone,
@@ -2612,7 +2984,9 @@ fn try_compile_plain_all_move_to_nonbattlefield_zone(
     else {
         return Ok(None);
     };
-    if *zone == Zone::Battlefield || !tagged_destinations.is_empty() {
+    if *zone == Zone::Battlefield || !tagged_destinations.is_empty()
+        || !retained_reference_tags.is_empty()
+    {
         return Ok(None);
     }
 
@@ -3155,15 +3529,17 @@ where
         }
         push_choice(&mut merged_choices, choice);
     }
-    if let Some(spec) = value_object_target_spec(&value)
-        && ctx.auto_tag_object_targets
-    {
-        let effect = tag_object_target_effect(
-            Effect::new(crate::effects::TargetOnlyEffect::new(spec.clone())),
-            &spec,
-            ctx,
-            "targeted",
-        );
+    if let Some(spec) = value_object_target_spec(&value) {
+        // The target is announced whether or not a later sentence refers back
+        // to it ("{2}, {T}: Draw a card for each creature type noted for
+        // target permanent you control named Volo's Journal" has no follow-up
+        // reference, and without the declaration the value has no target).
+        let target_only = Effect::new(crate::effects::TargetOnlyEffect::new(spec.clone()));
+        let effect = if ctx.auto_tag_object_targets {
+            tag_object_target_effect(target_only, &spec, ctx, "targeted")
+        } else {
+            target_only
+        };
         prelude_effects.push(effect);
         push_choice(&mut merged_choices, spec);
     }
@@ -3260,6 +3636,7 @@ pub(super) fn collect_value_player_target_choices(value: &Value, choices: &mut V
             collect_object_filter_player_target_choices(filter, choices);
         }
         Value::Devotion { player, .. }
+        | Value::DevotionToColors { player, .. }
         | Value::CountPlayers(player)
         | Value::CountPlayersWithCardsInHandAtLeast(player, _)
         | Value::CountPlayersWithCardsInLibraryAtMost(player, _)
@@ -3283,6 +3660,7 @@ pub(super) fn collect_value_player_target_choices(value: &Value, choices: &mut V
         | Value::MaxCardsDrawnThisTurn(player)
         | Value::LandsEnteredBattlefieldThisTurn(player)
         | Value::MaxCardsInHand(player)
+        | Value::MaxSpeed(player)
         | Value::CardsInHand(player)
         | Value::CardsInLibrary(player)
         | Value::CardsInGraveyard(player)
@@ -3312,10 +3690,14 @@ pub(super) fn collect_value_player_target_choices(value: &Value, choices: &mut V
         }
         Value::PowerOf(spec)
         | Value::BasePowerOf(spec)
+        | Value::StationContributionOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
         | Value::ChosenColorsOf(spec)
+        | Value::NotedCreatureTypeCount(spec)
+        | Value::TypeCountOf(spec)
+        | Value::TotalToxicValueOf(spec)
         | Value::ManaSymbolsInManaCostOf { spec, .. }
         | Value::CountersOn(spec, _) => collect_choose_spec_player_target_choices(spec, choices),
         _ => {}
@@ -3401,10 +3783,14 @@ fn value_object_target_spec(value: &Value) -> Option<ChooseSpec> {
         }
         Value::PowerOf(spec)
         | Value::BasePowerOf(spec)
+        | Value::StationContributionOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
         | Value::ChosenColorsOf(spec)
+        | Value::NotedCreatureTypeCount(spec)
+        | Value::TypeCountOf(spec)
+        | Value::TotalToxicValueOf(spec)
         | Value::ManaSymbolsInManaCostOf { spec, .. }
         | Value::CountersOn(spec, _) => {
             (spec.is_target() && choose_spec_targets_object(spec)).then(|| (**spec).clone())

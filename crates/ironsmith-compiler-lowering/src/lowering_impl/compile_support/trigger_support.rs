@@ -247,6 +247,7 @@ fn describe_damage_to_object_and_player_union(
                     source,
                     target,
                     source_surface,
+                    recipient_is_source_target: false,
                 },
                 TriggerSpec::DealsDamageToPlayer {
                     source: player_source,
@@ -271,6 +272,7 @@ fn describe_damage_to_object_and_player_union(
                     source,
                     target,
                     source_surface,
+                    recipient_is_source_target: false,
                 },
             ) => (
                 source,
@@ -329,6 +331,7 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
         }
         TriggerSpec::ZoneChange(event) => Trigger::new(event),
         TriggerSpec::StateBased { display, .. } => Trigger::state_based(display),
+        TriggerSpec::StateBasedObjects { filter, display } => Trigger::state_based_objects(filter, display),
         TriggerSpec::AnyOf(branches) => {
             let play_description = match branches.as_slice() {
                 [
@@ -504,16 +507,22 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
                     .filter(crate::target::ObjectFilter::creature())
                     .this()
                     .cause_filter(Some(
-                        crate::events::cause::CauseFilter::from_cost()
-                            .with_source(
-                                crate::target::ObjectFilter::default().with_ability_marker(marker),
-                            )
-                            .with_controller(crate::events::cause::ControllerFilter::You),
+                        if marker == "craft" {
+                            crate::events::cause::CauseFilter::from_cost()
+                                .with_ability_kind(ironsmith_core::CauseAbilityKindFilter::ActivatedKeywordCost(
+                                    ironsmith_core::ActivatedAbilityKeyword::Craft))
+                                .with_controller(crate::events::cause::ControllerFilter::You)
+                        } else {
+                            crate::events::cause::CauseFilter::from_cost()
+                                .with_source(crate::target::ObjectFilter::default().with_ability_marker(marker))
+                                .with_controller(crate::events::cause::ControllerFilter::You)
+                        },
                     )),
             )
         }
         TriggerSpec::ThisLeavesBattlefield => Trigger::this_leaves_battlefield(),
         TriggerSpec::ThisPhasesOut => Trigger::this_phases_out(),
+        TriggerSpec::SourceManaAbilityResolves => Trigger::source_mana_ability_resolves(),
         TriggerSpec::PlayerAttackDeclaration {
             attacker,
             defender,
@@ -651,7 +660,14 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
             source,
             target,
             source_surface,
-        } => Trigger::deals_damage_to_with_source_surface(source, target, source_surface),
+            recipient_is_source_target,
+        } => {
+            if recipient_is_source_target {
+                Trigger::deals_damage_to_source_target(source, target)
+            } else {
+                Trigger::deals_damage_to_with_source_surface(source, target, source_surface)
+            }
+        }
         TriggerSpec::DealsDamageToPlayer {
             source,
             player,
@@ -753,6 +769,9 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
             caused_by_effect,
             source_controller_shuffles,
         } => Trigger::player_shuffles_library(player, caused_by_effect, source_controller_shuffles),
+        TriggerSpec::PlayerAddsManaFromSource { player, filter } => {
+            Trigger::player_adds_mana_from_source(player, filter)
+        }
         TriggerSpec::PlayerTapsForMana { player, filter } => {
             Trigger::player_taps_for_mana(player, filter)
         }
@@ -780,6 +799,7 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::PlayerCoinFlipResult { player, won } => {
             Trigger::player_coin_flip_result(player, won)
         }
+        TriggerSpec::StackObjectAdded => Trigger::stack_object_added(),
         TriggerSpec::AbilityActivated {
             activator,
             filter,
@@ -794,10 +814,15 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
             activation_cost_has_tap,
         ),
         TriggerSpec::AbilityTriggered {
+            caused_by_permanent_entering: true,
+            ..
+        } => Trigger::ability_triggered_by_permanent_entering(),
+        TriggerSpec::AbilityTriggered {
             another,
             source_filter,
             caused_by_source_entering,
             caused_by_source_attacking,
+            caused_by_permanent_entering: false,
         } => match source_filter {
             Some(source_filter) if caused_by_source_attacking => {
                 Trigger::ability_triggered_by_source_attacking(source_filter)
@@ -1354,10 +1379,15 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
             Trigger::beginning_of_postcombat_main_phase_with_surface(player, surface)
         }
         TriggerSpec::DayNightChanged => Trigger::day_night_changed(),
-        // Only a delayed registration links to a shield; as an ordinary
-        // triggered ability the event has no "this way" referent.
-        TriggerSpec::DamagePreventedThisWay { .. } => {
-            Trigger::state_based("Whenever damage is prevented this way")
+        TriggerSpec::DamageToPlayerPrevented(player) => {
+            Trigger::damage_to_player_prevented(player.clone())
+        }
+        // As an ordinary triggered ability "this way" names the permanent's
+        // own static prevention (Phyrexian Vindicator); delayed registrations
+        // link to their shield instead.
+        TriggerSpec::SpellCastThroughPreviousPermission => Trigger::spell_cast(None, PlayerFilter::You),
+        TriggerSpec::DamagePreventedThisWay { source_filter } => {
+            Trigger::damage_prevented_by_source(source_filter.clone())
         }
         TriggerSpec::ThisEntersBattlefield { origin_condition } => match origin_condition {
             None => Trigger::this_enters_battlefield(),
@@ -1495,6 +1525,9 @@ fn compile_trigger_spec_without_intro(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::FinalChapterAbilityResolved(filter) => {
             Trigger::final_chapter_ability_resolved(filter)
         }
+        TriggerSpec::FinalChapterAbilityTriggers(filter) => {
+            Trigger::final_chapter_ability_triggers(filter)
+        }
         TriggerSpec::HauntedCreatureDies => Trigger::custom(
             "haunted_creature_dies",
             "When the creature it haunts dies".to_string(),
@@ -1601,6 +1634,7 @@ fn trigger_binds_iterated_player(trigger: &TriggerSpec) -> bool {
         | TriggerSpec::PlayerGivesGift(_)
         | TriggerSpec::PlayerSearchesLibrary(_)
         | TriggerSpec::PlayerShufflesLibrary { .. }
+        | TriggerSpec::PlayerAddsManaFromSource { .. }
         | TriggerSpec::PlayerTapsForMana { .. }
         | TriggerSpec::PlayerRollsToVisitAttractions { .. }
         | TriggerSpec::PlayerRollsResult { .. }
@@ -1675,9 +1709,27 @@ pub fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec
         return true;
     }
     match spec {
+        EventValueSpec::ManaSpentOnKeyword { .. } => match trigger {
+            TriggerSpec::WithIntro { trigger, .. } | TriggerSpec::ConditionQualified { trigger, .. } =>
+                trigger_supports_event_value(trigger, spec),
+            TriggerSpec::KeywordActionFromSource { action, .. } => matches!(action,
+                crate::events::KeywordActionKind::CumulativeUpkeepPaid
+                | crate::events::KeywordActionKind::EchoCostPaid),
+            _ => false,
+        },
         EventValueSpec::CastSpell(quantity) => {
             ironsmith_compiler_semantic::trigger_references::trigger_cast_event_quantity(trigger) == Some(*quantity)
         }
+        EventValueSpec::LoyaltyCountersRemovedToActivate
+        | EventValueSpec::LifePaidToActivate
+        | EventValueSpec::PermanentsSacrificedToActivate => match trigger {
+            TriggerSpec::WithIntro { trigger, .. }
+            | TriggerSpec::ConditionQualified { trigger, .. } => {
+                trigger_supports_event_value(trigger, spec)
+            }
+            TriggerSpec::AbilityActivated { .. } => true,
+            _ => false,
+        },
         EventValueSpec::LifeChange {
             gained,
             for_controller,
@@ -1693,6 +1745,19 @@ pub fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec
                         && (!*for_controller || event.player == PlayerFilter::You)
                 })
         }
+        EventValueSpec::ExcessDamage => match trigger {
+            TriggerSpec::WithIntro { trigger, .. }
+            | TriggerSpec::ConditionQualified { trigger, .. } => {
+                trigger_supports_event_value(trigger, spec)
+            }
+            TriggerSpec::ThisDealsDamageTo(_)
+            | TriggerSpec::ThisDealsCombatDamageTo(_)
+            | TriggerSpec::ThisIsDealtDamage
+            | TriggerSpec::ThisIsDealtCombatDamage
+            | TriggerSpec::IsDealtDamage(_)
+            | TriggerSpec::IsDealtCombatDamage(_) => true,
+            _ => false,
+        },
         EventValueSpec::DieBatchTotal | EventValueSpec::DieResultsAtLeast(_) => {
             ironsmith_compiler_semantic::trigger_references::trigger_die_event_grouped(trigger)
                 == Some(true)
@@ -1770,6 +1835,12 @@ pub fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec
             | TriggerSpec::CounterRemovedFrom { .. }
             | TriggerSpec::TokensCreated { .. }
             | TriggerSpec::EntersBattlefieldOneOrMore { .. } => true,
+            // "Whenever damage that would be dealt to you is prevented, put
+            // that many ..." (Selfless Squire): the prevented amount.
+            TriggerSpec::DamageToPlayerPrevented(_) => matches!(spec, EventValueSpec::Amount),
+            // "Whenever a mana ability of this creature resolves, ... equal
+            // to the amount of mana this creature produced" (Tyvar).
+            TriggerSpec::SourceManaAbilityResolves => matches!(spec, EventValueSpec::Amount),
             TriggerSpec::CardsMilled { .. }
             | TriggerSpec::PlayerChangesTapState { .. }
             | TriggerSpec::PhasingChanged { .. } => matches!(spec, EventValueSpec::Amount),

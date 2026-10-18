@@ -267,7 +267,7 @@ pub fn parse_craft_line_lexed(
     Ok(Some(ParsedAbility {
         ability: Ability {
             kind: AbilityKind::Activated(ActivatedAbility {
-                keyword: None,
+                keyword: Some(ironsmith_core::ActivatedAbilityKeyword::Craft),
                 mana_cost: ironsmith_core::TotalCost::from_costs(merged_costs),
                 effects: ironsmith_core::ResolutionProgram::from_effects(vec![return_transformed]),
                 choices: Vec::new(),
@@ -403,7 +403,11 @@ pub fn parse_equip_line(tokens: &[OwnedLexToken]) -> Result<Option<ParsedAbility
             exact_mana_cost: _,
         } => {
             let total_cost = parse_compiler_activation_cost(cost_tokens)?;
-            let mut target_filter = ObjectFilter::creature().you_control();
+            let mut target_filter = if qualifier.planeswalker {
+                ObjectFilter::planeswalker().you_control()
+            } else {
+                ObjectFilter::creature().you_control()
+            };
             target_filter.subtypes = qualifier.subtypes;
             if qualifier.legendary {
                 target_filter

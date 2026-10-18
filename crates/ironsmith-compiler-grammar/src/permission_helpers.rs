@@ -121,6 +121,7 @@ struct CommandZoneFreeCastRest<'a> {
 struct PlayFromZoneRest<'a> {
     filter_tokens: &'a [OwnedLexToken],
     zone: Zone,
+    top_of_graveyard: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +184,16 @@ struct TaggedPermissionTail<'a> {
 fn tagged_permission_target_surface(
     tokens: &[OwnedLexToken],
 ) -> Option<ironsmith_core::GrantPlayTaggedObjectSurface> {
+    // "Until end of turn, you may cast the exiled card without paying its
+    // mana cost" (Djeru and Hazoret): the definite exiled-card reference is
+    // the same single tagged card as "that card" (compare "the card exiled
+    // this way").
+    if matches!(
+        token_word_refs(tokens).as_slice(),
+        ["the", "exiled", "card"]
+    ) {
+        return Some(ironsmith_core::GrantPlayTaggedObjectSurface::ThatCard);
+    }
     tagged_permission_object_surface(
         permission_tagged_facts::parse_tagged_permission_target_surface_tokens(tokens),
     )
@@ -319,6 +330,7 @@ fn parse_play_from_zone_rest_tokens<'a>(
     Some(PlayFromZoneRest {
         filter_tokens: fact.filter_tokens,
         zone: fact.zone,
+        top_of_graveyard: fact.top_of_graveyard,
     })
 }
 
@@ -611,6 +623,34 @@ fn parse_tagged_cast_or_play_target_tokens(
     ))
 }
 
+/// "the card you own exiled this way and each other card exiled this way with
+/// lesser mana value than it": a pool exiled across players (each player
+/// exiled their top card), split into the permission player's own card and
+/// every other exiled card whose mana value is less than that own card's.
+/// The comparison reads the own card's mana value from the same tagged pool
+/// when the permission resolves; with no own card nothing else qualifies.
+fn parse_owned_exiled_and_lesser_mana_value_others_tokens(
+    tokens: &[OwnedLexToken],
+) -> Option<(ObjectFilter, &[OwnedLexToken])> {
+    let ((), tail) = crate::grammar::primitives::parse_prefix(
+        tokens,
+        crate::grammar::primitives::phrase(&[
+            "the", "card", "you", "own", "exiled", "this", "way", "and", "each", "other", "card",
+            "exiled", "this", "way", "with", "lesser", "mana", "value", "than", "it",
+        ]),
+    )?;
+    let pool: TagKey = crate::tag::CompilerReferenceTag::It.bind().into();
+    let mut owned = ObjectFilter::tagged(pool).owned_by(PlayerFilter::You);
+    owned.zone = Some(Zone::Exile);
+    let mut lesser = ObjectFilter::default();
+    lesser.mana_value = Some(crate::filter::Comparison::LessThanExpr(Box::new(
+        Value::GreatestManaValue(owned),
+    )));
+    let mut filter = ObjectFilter::default();
+    filter.any_of = vec![ObjectFilter::default().owned_by(PlayerFilter::You), lesser];
+    Some((filter, tail))
+}
+
 fn parse_until_source_exiles_another_permission(tokens: &[OwnedLexToken]) -> Option<EffectAst> {
     let fact =
         permission_tagged_facts::parse_until_source_exiles_another_permission_tokens(tokens)?;
@@ -893,14 +933,47 @@ pub fn parse_unsupported_play_cast_permission_clause(
     parse_unsupported_play_cast_permission_clause_lexed(tokens)
 }
 
-fn parse_graveyard_cast_additional_cost_tokens(
+pub(crate) fn parse_graveyard_cast_additional_cost_tokens(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<crate::model::CompilerCost>>, CardTextError> {
     use crate::model::CompilerCost;
     use permission_graveyard_facts::GraveyardAdditionalCostFact;
     let Some(fact) = permission_graveyard_facts::parse_graveyard_additional_cost_tokens(tokens)
     else {
-        return Ok(None);
+        // Any other gerund payment ("removing six counters from among
+        // creatures you control", Quilled Greatwurm) reads through the
+        // ordinary activation-cost grammar once its head is imperative.
+        let mut cost_tokens = tokens.to_vec();
+        let mut converted = false;
+        for index in 0..cost_tokens.len() {
+            if index == 0 || cost_tokens[index - 1].is_word("and") {
+                for (gerund, verb) in [
+                    ("removing", "remove"),
+                    ("tapping", "tap"),
+                    ("returning", "return"),
+                    ("putting", "put"),
+                ] {
+                    if cost_tokens[index].is_word(gerund) {
+                        cost_tokens[index].replace_word(verb);
+                        converted = true;
+                    }
+                }
+            }
+        }
+        if !converted {
+            return Ok(None);
+        }
+        let Ok(cost) =
+            crate::activation_and_restrictions::activated_line_core::parse_compiler_activation_cost(
+                &cost_tokens,
+            )
+        else {
+            return Ok(None);
+        };
+        return Ok(cost
+            .as_all()
+            .filter(|costs| !costs.is_empty())
+            .map(<[CompilerCost]>::to_vec));
     };
     let cost = match fact {
         GraveyardAdditionalCostFact::Discard { count } => CompilerCost::Discard {
@@ -1044,6 +1117,64 @@ fn parse_once_each_turn_graveyard_cast_permission(
     }))
 }
 
+/// "You may cast artifact spells from your graveyard by paying 3 life in
+/// addition to paying their other costs." (Noctis, Prince of Lucis): a
+/// standing graveyard-cast permission for matching cards, each cast paying
+/// its mana cost plus the stated additional cost.
+fn parse_filtered_graveyard_cast_additional_cost_permission(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<PermissionClauseSpec>, CardTextError> {
+    let tokens = crate::util::trim_edge_punctuation_tokens(tokens);
+    let view = crate::lexer::TokenWordView::new(tokens);
+    let words = view.word_refs();
+    if !words.starts_with(&["you", "may", "cast"]) {
+        return Ok(None);
+    }
+    let Some(from) = words.windows(4).position(|window| window == ["from", "your", "graveyard", "by"])
+    else {
+        return Ok(None);
+    };
+    const SUFFIXES: &[&[&str]] = &[
+        &["in", "addition", "to", "paying", "their", "other", "costs"],
+        &["in", "addition", "to", "paying", "its", "other", "costs"],
+        // "... by paying 1 life in addition to their other costs" (Festival
+        // of Embers): the same additional cost without the repeated verb.
+        &["in", "addition", "to", "their", "other", "costs"],
+        &["in", "addition", "to", "its", "other", "costs"],
+    ];
+    let Some(suffix) = SUFFIXES.iter().find(|suffix| words.ends_with(suffix)) else {
+        return Ok(None);
+    };
+    let cost_end = words.len() - suffix.len();
+    if from <= 3 || cost_end <= from + 4 {
+        return Ok(None);
+    }
+    let starts = view.token_start_indices();
+    let subject_tokens = &tokens[starts[3]..starts[from]];
+    // A self-cast ("this card") has its own permission reader.
+    if crate::lexer::token_word_refs(subject_tokens).first() == Some(&"this") {
+        return Ok(None);
+    }
+    let cost_tokens = trim_lexed_commas(&tokens[starts[from + 4]..starts[cost_end]]);
+    let Some(filter) =
+        permission_subject_facts::parse_permission_subject_filter_tokens(subject_tokens)?
+    else {
+        return Ok(None);
+    };
+    let Some(costs) = parse_graveyard_cast_additional_cost_tokens(cost_tokens)? else {
+        return Ok(None);
+    };
+    Ok(Some(PermissionClauseSpec::GrantBySpec {
+        player: PlayerAst::You,
+        spec: crate::model::CompilerGrantSpecCore::new(
+            crate::model::CompilerGrantableCore::graveyard_cast_from_cards_mana_cost(costs, false),
+            filter,
+            Zone::Graveyard,
+        ),
+        lifetime: PermissionLifetime::Static,
+    }))
+}
+
 fn parse_once_each_turn_top_library_shared_type_cast_tokens<'a>(
     tokens: &'a [OwnedLexToken],
 ) -> Option<OnceEachTurnTopLibrarySharedTypeCast<'a>> {
@@ -1078,6 +1209,38 @@ fn parse_once_each_turn_top_library_cast_shares_source_exiled_type_permission(
         .with_top_card_only()
         .with_usage_limit(crate::grant::GrantUsageLimit::OnceEachTurn),
         lifetime: PermissionLifetime::Static,
+    })
+}
+
+/// "You may play a card from exile with a discovery counter on it this turn."
+/// (Lara Croft, Tomb Raider): one play this turn of any exiled card bearing
+/// that counter, chosen when the card is played.
+fn parse_this_turn_exiled_counter_card_play(tokens: &[OwnedLexToken]) -> Option<PermissionClauseSpec> {
+    let words = crate::lexer::TokenWordView::new(tokens).word_refs();
+    const HEAD: &[&str] = &["you", "may", "play", "a", "card", "from", "exile", "with"];
+    const TAIL: &[&str] = &["counter", "on", "it", "this", "turn"];
+    if tokens.len() != words.len()
+        || !words.starts_with(HEAD)
+        || !words.ends_with(TAIL)
+        || words.len() < HEAD.len() + TAIL.len() + 2
+        || !matches!(words[HEAD.len()], "a" | "an")
+    {
+        return None;
+    }
+    let counter_tokens = &tokens[HEAD.len() + 1..tokens.len() - TAIL.len()];
+    let counter_type = crate::grammar::filters::parse_counter_type_from_tokens(counter_tokens)?;
+    let filter = ObjectFilter::default()
+        .in_zone(Zone::Exile)
+        .with_counter_type(counter_type);
+    Some(PermissionClauseSpec::GrantBySpec {
+        player: PlayerAst::You,
+        spec: crate::model::CompilerGrantSpecCore::new(
+            crate::model::CompilerGrantableCore::play_from(),
+            filter,
+            Zone::Exile,
+        )
+        .with_usage_limit(crate::grant::GrantUsageLimit::OnceEachTurn),
+        lifetime: PermissionLifetime::ThisTurn,
     })
 }
 
@@ -1116,6 +1279,7 @@ pub fn parse_permission_clause_spec_lexed(
         return Ok(None);
     }
     if let Some(spec) = parse_this_turn_hand_free_cast(tokens)? { return Ok(Some(spec)); }
+    if let Some(spec) = parse_this_turn_exiled_counter_card_play(tokens) { return Ok(Some(spec)); }
 
     if let Some(spec) = graveyard_turn_permissions::parse_permanent_permission_rider(tokens)? {
         return Ok(Some(spec));
@@ -1129,6 +1293,11 @@ pub fn parse_permission_clause_spec_lexed(
     if let Some(spec) = filtered_zone_permissions::parse_once_per_turn_hand_free_cast(tokens)? {
         return Ok(Some(spec));
     }
+    if let Some(spec) =
+        filtered_zone_permissions::parse_once_per_turn_source_exiled_free_cast(tokens)?
+    {
+        return Ok(Some(spec));
+    }
     if let Some(spec) = filtered_zone_permissions::parse_timed_top_look_and_permission(tokens)? {
         return Ok(Some(spec));
     }
@@ -1140,6 +1309,9 @@ pub fn parse_permission_clause_spec_lexed(
     }
 
     if let Some(spec) = parse_once_each_turn_graveyard_cast_permission(tokens)? {
+        return Ok(Some(spec));
+    }
+    if let Some(spec) = parse_filtered_graveyard_cast_additional_cost_permission(tokens)? {
         return Ok(Some(spec));
     }
     if let Some(spec) =
@@ -1258,6 +1430,29 @@ pub fn parse_permission_clause_spec_lexed(
         return Ok(None);
     }
 
+    if allow_land
+        && prefixed_lifetime == Some(PermissionLifetime::UntilEndOfTurn)
+        && matches!(player, PlayerAst::Implicit | PlayerAst::You)
+        && let Some((filter, tail_tokens)) =
+            parse_owned_exiled_and_lesser_mana_value_others_tokens(rest_tokens)
+        && let Some((PermissionLifetime::UntilEndOfTurn, without_paying_mana_cost)) =
+            parse_permission_tail_tokens(tail_tokens, PermissionLifetime::UntilEndOfTurn)
+    {
+        return Ok(Some(PermissionClauseSpec::Tagged {
+            tag: crate::tag::CompilerReferenceTag::It.bind().into(),
+            player,
+            allow_land,
+            as_copy: false,
+            max_plays: None,
+            without_paying_mana_cost,
+            lifetime: PermissionLifetime::UntilEndOfTurn,
+            filter: Some(filter),
+            surface: Some(
+                ironsmith_core::GrantPlayTaggedSurface::default().with_leading_duration(true),
+            ),
+        }));
+    }
+
     let filtered_tagged_target = parse_filtered_spells_from_among_tagged_tokens(rest_tokens)?
         .map(|(target_ref, tail, filter)| (target_ref, tail, Some(filter)));
     if let Some((target_ref, tagged_tail_tokens, filter)) = filtered_tagged_target
@@ -1297,6 +1492,27 @@ pub fn parse_permission_clause_spec_lexed(
                             source: reference.surface,
                         },
                     ),
+                },
+                tail,
+                Some(ObjectFilter::default().owned_by(PlayerFilter::You)),
+            ))
+        })
+        .or_else(|| {
+            // "cards you own exiled this way" (Wheel of Potential): the
+            // collection exiled this way (each player's exiled hand),
+            // narrowed to the permission player's own cards.
+            let ((), tail) = crate::grammar::primitives::parse_prefix(
+                rest_tokens,
+                crate::grammar::primitives::phrase(&[
+                    "cards", "you", "own", "exiled", "this", "way",
+                ]),
+            )?;
+            Some((
+                TaggedPermissionTarget {
+                    tag: crate::tag::CompilerReferenceTag::It.bind().into(),
+                    as_copy: false,
+                    max_plays: None,
+                    surface: None,
                 },
                 tail,
                 Some(ObjectFilter::default().owned_by(PlayerFilter::You)),
@@ -1385,8 +1601,12 @@ pub fn parse_permission_clause_spec_lexed(
         // matching filter rather than in a modelled object surface, so the
         // compiled text can still be rebuilt without one.
         let filtered_pool_without_object_surface = filter.is_some() && target_surface.is_none();
+        // "Until end of turn, you may play one of those cards without paying
+        // its mana cost" (Fire Lord Ozai): a counted play budget over the
+        // tagged set (`max_plays`) is a supported free-play grant.
         if without_paying_mana_cost
             && !filtered_pool_without_object_surface
+            && target_ref.max_plays.is_none()
             && matches!(
                 lifetime,
                 PermissionLifetime::ThisTurn | PermissionLifetime::UntilEndOfTurn
@@ -1651,13 +1871,17 @@ pub fn parse_permission_clause_spec_lexed(
                 return Ok(None);
             };
             exclude_lands_from_spell_filter(&mut filter);
+            let mut spec = crate::model::CompilerGrantSpecCore::new(
+                crate::model::CompilerGrantableCore::play_from(),
+                filter,
+                parsed.zone,
+            );
+            if parsed.top_of_graveyard {
+                spec = spec.with_top_card_only();
+            }
             return Ok(Some(PermissionClauseSpec::GrantBySpec {
                 player,
-                spec: crate::model::CompilerGrantSpecCore::new(
-                    crate::model::CompilerGrantableCore::play_from(),
-                    filter,
-                    parsed.zone,
-                ),
+                spec,
                 lifetime: zone_grant_lifetime.unwrap_or(PermissionLifetime::Static),
             }));
         }
@@ -2048,6 +2272,16 @@ fn parse_cast_with_tagged_mana_value_limit_clause(
     {
         return Ok(None);
     }
+    // "cast up to two ... spells with total mana value 6 or less" (Invoke
+    // Calamity) is a counted selection under an aggregate cap, owned by the
+    // collection cast reading; a single matching-spell permission would drop
+    // both the count and the total.
+    if words
+        .windows(3)
+        .any(|window| window == ["total", "mana", "value"])
+    {
+        return Ok(None);
+    }
 
     parse_cast_with_tagged_mana_value_limit_clause_impl(tokens)
 }
@@ -2298,15 +2532,116 @@ pub fn parse_look_tagged_exile_permission(tokens: &[OwnedLexToken]) -> Result<Op
         }))))
 }
 
+/// "the player casts it without paying its mana cost if able" (Omen Machine,
+/// Wild Evocation) and "cast it without paying its mana cost if able": a
+/// mandatory cast of the referenced card as the instruction resolves. "If
+/// able" only excuses an impossible cast (CR 101.3), which the ordinary
+/// tagged cast already does, so no "may" wrapper is built.
+fn parse_mandatory_tagged_free_cast(tokens: &[OwnedLexToken]) -> Option<EffectAst> {
+    let trimmed = trim_commas(tokens);
+    let words = token_word_refs(&trimmed);
+    let (player, lead_len, requires_if_able) = match words.as_slice() {
+        ["that" | "the", "player", "casts", ..] => (PlayerAst::That, 3usize, false),
+        ["cast", ..] => (PlayerAst::Implicit, 1usize, true),
+        _ => return None,
+    };
+    if trimmed.len() < lead_len || trimmed[..lead_len].iter().any(|token| token.as_word().is_none()) {
+        return None;
+    }
+    let (target, rest) = parse_tagged_cast_or_play_target_tokens(&trimmed[lead_len..])?;
+    if target.as_copy || target.max_plays.is_some() {
+        return None;
+    }
+    let rest_words = token_word_refs(rest);
+    let tail = rest_words.strip_prefix(&["without", "paying", "its", "mana", "cost"][..])?;
+    match tail {
+        ["if", "able"] => {}
+        [] if !requires_if_able => {}
+        _ => return None,
+    }
+    Some(EffectAst::subject_verb_cast_tagged(
+        crate::tag::TagRef::of(target.tag),
+        player,
+        false,
+        false,
+        true,
+        None,
+    ))
+}
+
 pub fn parse_cast_or_play_tagged_clause(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<EffectAst>, CardTextError> {
+    if let Some(effect) = parse_mandatory_tagged_free_cast(tokens) { return Ok(Some(effect)); }
     if let Some(effect) = parse_bounded_filtered_exile_free_cast(tokens)? { return Ok(Some(effect)); }
     if let Some(effect) = effect_cast_prices::parse(tokens)? {
         return Ok(Some(effect));
     }
     let trimmed_tokens = trim_commas(tokens);
     let mut trimmed = strip_leading_token_words_any(&trimmed_tokens, &["then", "and"]).to_vec();
+    // "During your next turn, you may play that card." (Galvanic Relay): the
+    // same tagged next-turn permission as "Until the end of your next turn,
+    // ...", except that it cannot be used during the rest of this turn.
+    if let Some(((), rest)) = crate::grammar::primitives::parse_prefix(
+        &trimmed,
+        crate::grammar::primitives::phrase(&["during", "your", "next", "turn"]),
+    ) {
+        let mut permission_tokens = crate::lexer::synthetic_word_tokens([
+            "until", "the", "end", "of", "your", "next", "turn",
+        ]);
+        permission_tokens.push(OwnedLexToken::comma(crate::cards::TextSpan::synthetic()));
+        permission_tokens.extend(trim_commas(rest));
+        let Some(mut effect) = parse_cast_or_play_tagged_clause(&permission_tokens)? else {
+            return Ok(None);
+        };
+        let EffectAst::SubjectVerb(subject) = &mut effect else {
+            return Ok(None);
+        };
+        let SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedUntilYourNextTurn {
+            until_next_end_step: false,
+            until_next_turn_start: false,
+            during_next_turn,
+            ..
+        }) = &mut subject.action
+        else {
+            return Ok(None);
+        };
+        *during_next_turn = true;
+        return Ok(Some(effect));
+    }
+    // "Until end of combat on your next turn, you may play that card."
+    // (Brazen Cannonade): the next-turn permission, ending once that turn's
+    // combat is over.
+    if let Some(((), rest)) = crate::grammar::primitives::parse_prefix(
+        &trimmed,
+        crate::grammar::primitives::phrase(&[
+            "until", "end", "of", "combat", "on", "your", "next", "turn",
+        ]),
+    ) {
+        let mut permission_tokens = crate::lexer::synthetic_word_tokens([
+            "until", "the", "end", "of", "your", "next", "turn",
+        ]);
+        permission_tokens.push(OwnedLexToken::comma(crate::cards::TextSpan::synthetic()));
+        permission_tokens.extend(trim_commas(rest));
+        let Some(mut effect) = parse_cast_or_play_tagged_clause(&permission_tokens)? else {
+            return Ok(None);
+        };
+        let EffectAst::SubjectVerb(subject) = &mut effect else {
+            return Ok(None);
+        };
+        let SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedUntilYourNextTurn {
+            until_next_end_step: false,
+            until_next_turn_start: false,
+            during_next_turn: false,
+            until_end_of_combat_next_turn,
+            ..
+        }) = &mut subject.action
+        else {
+            return Ok(None);
+        };
+        *until_end_of_combat_next_turn = true;
+        return Ok(Some(effect));
+    }
     if let Some(((), rest)) = crate::grammar::primitives::parse_prefix(
         &trimmed,
         crate::grammar::primitives::phrase(&["you", "may", "look", "at", "and"]),
@@ -2441,13 +2776,25 @@ pub fn parse_cast_or_play_tagged_clause(
             // player may choose one card of the referenced pool as the
             // ability resolves and casts it then (CR 608.2g). Choosing up to
             // one is the "may", as for "a spell from among them".
-            if max_plays == Some(1)
-                && filter.is_none()
+            // A filtered singular pool ("you may cast a Vehicle or artifact
+            // creature spell from among them") is the same choice among the
+            // matching cards, not a cast of whichever card was tagged first.
+            let singular_filtered_pool = filter.is_some() && {
+                let words = token_word_refs(&trimmed);
+                words
+                    .iter()
+                    .position(|word| *word == "cast")
+                    .and_then(|cast| words.get(cast + 1))
+                    .is_some_and(|article| matches!(*article, "a" | "an"))
+                    && words.windows(2).any(|pair| pair == ["from", "among"])
+            };
+            if ((max_plays == Some(1) && filter.is_none()) || singular_filtered_pool)
                 && !as_copy
                 && matches!(player, PlayerAst::Implicit | PlayerAst::You)
             {
                 let chosen_tag = super::util::helper_tag_for_tokens(&trimmed, "chosen");
-                let mut pool = ObjectFilter::default();
+                let mut pool = filter.clone().unwrap_or_default();
+                pool.zone = None;
                 pool.tagged_constraints.push(TaggedObjectConstraint {
                     tag,
                     relation: TaggedOpbjectRelation::IsTaggedObject,
@@ -2479,6 +2826,56 @@ pub fn parse_cast_or_play_tagged_clause(
                                 allow_land,
                                 false,
                                 without_paying_mana_cost,
+                                None,
+                            )],
+                        }),
+                    ],
+                }));
+            }
+            // "You may cast those cards without paying their mana costs"
+            // (Jace, Architect of Thought): a plural pool cast while the
+            // ability resolves is a choice of any number of those cards, each
+            // then cast in turn (CR 608.2g), not one cast of the first card.
+            let plural_free_cast = {
+                let words = token_word_refs(&trimmed);
+                words.windows(3).any(|window| window == ["their", "mana", "costs"])
+                    && (words.windows(3).any(|window| window == ["cast", "those", "cards"])
+                        || words.windows(2).any(|window| window == ["cast", "them"]))
+            };
+            if plural_free_cast
+                && without_paying_mana_cost
+                && filter.is_none()
+                && max_plays.is_none()
+                && !as_copy
+                && !allow_land
+                && matches!(player, PlayerAst::Implicit | PlayerAst::You)
+            {
+                let chosen_tag = super::util::helper_tag_for_tokens(&trimmed, "chosen");
+                let mut pool = ObjectFilter::default();
+                pool.tagged_constraints.push(TaggedObjectConstraint {
+                    tag,
+                    relation: TaggedOpbjectRelation::IsTaggedObject,
+                });
+                pool.excluded_card_types.push(crate::types::CardType::Land);
+                return Ok(Some(EffectAst::Sequence {
+                    effects: vec![
+                        EffectAst::ObjectChoices(
+                            crate::cards::builders::ObjectChoiceEffectAst::ChooseObjects {
+                                filter: pool,
+                                count: crate::effect::ChoiceCount::any_number(),
+                                count_value: None,
+                                player: PlayerAst::You,
+                                tag: crate::tag::TagRef::of(chosen_tag.clone()),
+                            },
+                        ),
+                        EffectAst::ForEach(ForEachEffectAst::ForEachTagged {
+                            tag: crate::tag::TagRef::of(chosen_tag),
+                            effects: vec![EffectAst::subject_verb_cast_tagged(
+                                crate::tag::CompilerReferenceTag::It.bind(),
+                                PlayerAst::You,
+                                false,
+                                false,
+                                true,
                                 None,
                             )],
                         }),
@@ -2700,16 +3097,25 @@ pub fn parse_cast_or_play_tagged_clause(
             without_paying_mana_cost: false,
             lifetime: PermissionLifetime::ForAsLongAsYouControlSource,
             surface,
+            max_plays: shared_max_plays,
             ..
-        }) if player == PlayerAst::Implicit || player == PlayerAst::You => Ok(Some(
-            EffectAst::subject_verb_grant_play_tagged_for_as_long_as_you_control_source(
+        }) if player == PlayerAst::Implicit || player == PlayerAst::You => {
+            let mut effect = EffectAst::subject_verb_grant_play_tagged_for_as_long_as_you_control_source(
                 crate::tag::TagRef::of(tag),
                 PlayerAst::Implicit,
                 allow_land,
                 mana_spend_mode,
                 surface,
-            ),
-        )),
+            );
+            if let EffectAst::SubjectVerb(subject) = &mut effect
+                && let SubjectVerbActionAst::Grants(
+                    GrantActionAst::GrantPlayTaggedForAsLongAsYouControlSource { max_plays, .. },
+                ) = &mut subject.action
+            {
+                *max_plays = shared_max_plays;
+            }
+            Ok(Some(effect))
+        }
         _ => match conditional_tagged_permission {
             Some(effect) => Ok(Some(effect)),
             // "You may cast any number of spells from among cards exiled

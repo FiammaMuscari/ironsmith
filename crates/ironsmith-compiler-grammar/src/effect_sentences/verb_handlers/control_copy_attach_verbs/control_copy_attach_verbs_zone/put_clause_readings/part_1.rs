@@ -201,6 +201,52 @@ pub(super) fn read_from_among_hand_surface(
         let looked_tag = crate::util::helper_tag_for_tokens(tokens, "looked");
         let chosen_tag = crate::util::helper_tag_for_tokens(tokens, "chosen");
         if let Some(shape) = from_among_shape {
+            // "put all <filter> from among them into your hand": every
+            // matching card, no choice. Without an authored "and the rest
+            // into your graveyard", the rest stay for a following "then put
+            // the rest ..." instruction.
+            if shape.filter_tokens.first().is_some_and(|token| token.is_word("all"))
+                && shape.filter_tokens.len() > 1
+                && shape.rest_destination.is_none()
+            {
+                let filter = crate::effect_sentences::parse_looked_card_choice_filter(
+                    &shape.filter_tokens[1..],
+                )
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unable to parse from-among hand filter (clause: '{}')",
+                        clause_words.join(" ")
+                    ))
+                })?;
+                let mut effects = compose_put_all_filtered_looked_cards_to_zone(
+                    filter,
+                    (looked_tag.clone()).into(),
+                    (chosen_tag.clone()).into(),
+                    Zone::Hand,
+                );
+                // "..., then put the rest on the bottom of your library in a
+                // random order" (Depala) travels in the same clause; the
+                // remainder is every looked card that wasn't moved.
+                if crate::word_primitives::sequence_occurs(
+                    clause_words,
+                    &["then", "put", "the", "rest", "on", "the", "bottom"],
+                ) {
+                    let order = if clause_words.iter().any(|word| *word == "random") {
+                        crate::cards::builders::LibraryBottomOrderAst::Random
+                    } else {
+                        crate::cards::builders::LibraryBottomOrderAst::ChooserChooses
+                    };
+                    effects.push(
+                        EffectAst::subject_verb_put_tagged_remainder_on_bottom_of_library(
+                            crate::tag::TagRef::of(looked_tag),
+                            Some(crate::tag::TagRef::of(chosen_tag)),
+                            order,
+                            player,
+                        ),
+                    );
+                }
+                return Ok(Some(EffectAst::Sequence { effects }));
+            }
             let filter =
                 crate::effect_sentences::parse_looked_card_choice_filter(shape.filter_tokens)
                     .ok_or_else(|| {

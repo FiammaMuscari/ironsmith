@@ -176,7 +176,7 @@ fn trigger_kind(full_tokens: &[OwnedLexToken], trigger: &TriggerSpec) -> Trigger
     }
 
     match core_semantics(trigger) {
-        TriggerSpec::StateBased { .. } => TriggerKindAst::State,
+        TriggerSpec::StateBased { .. } | TriggerSpec::StateBasedObjects { .. } => TriggerKindAst::State,
         TriggerSpec::ThisDies
         | TriggerSpec::ThisDiesOrIsExiled
         | TriggerSpec::ThisDiesOrIsExiledWithSurface(_)
@@ -412,6 +412,7 @@ fn triggering_object_cardinality(trigger: &TriggerSpec) -> Option<Cardinality> {
         | TriggerSpec::PlayerBecomesMonarch(_)
         | TriggerSpec::YouDrawCard
         | TriggerSpec::DayNightChanged
+        | TriggerSpec::DamageToPlayerPrevented(_)
         | TriggerSpec::StateBased { .. } => None,
         TriggerSpec::CardsMilled { one_or_more: true, .. }
         | TriggerSpec::PhasingChanged { one_or_more: true, .. }

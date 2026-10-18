@@ -58,6 +58,7 @@ function place(dock) {
   // shows or not.
   const buttonsLeft = Math.min(...buttons.map((rect) => rect.left));
   const buttonsRight = Math.max(...buttons.map((rect) => rect.right));
+  const buttonsBottom = Math.max(...buttons.map((rect) => rect.bottom));
   const handRight = hand.getBoundingClientRect().right;
   const space = window.innerWidth - handRight;
   const room = space - MIN_GAP * 2;
@@ -71,7 +72,7 @@ function place(dock) {
     slotRight = handRight + Math.max(MIN_GAP, (space - slot) / 2) + slot;
     anchor = { viewport: window.innerWidth, slot, right: slotRight };
   }
-  const left = slotRight - (buttonsRight - dockRect.left);
+  let left = slotRight - (buttonsRight - dockRect.left);
 
   const mains = [...dock.querySelectorAll(".decision-main-button")]
     .filter((button) => button.offsetWidth > 0 && !button.closest(".decision-quick-controls"));
@@ -85,9 +86,28 @@ function place(dock) {
   const rowRect = row.getBoundingClientRect();
   const rowOffset = rowRect.top + rowRect.height / 2 - dockRect.top;
   const navRect = nav?.getBoundingClientRect();
-  const centre = navRect && navRect.height > 0
+  let centre = navRect && navRect.height > 0
     ? navRect.top + navRect.height / 2
     : rowRect.top + rowRect.height / 2;
+
+  // With », the row continues the zone chip column: » shares the chips'
+  // right edge, and the row rests on the screen's bottom edge, the same
+  // margin below it as the chips keep to the right, leaving a gap above.
+  const chips = [...document.querySelectorAll("[data-my-zone] .zone-pile--icon")]
+    .map((chip) => chip.getBoundingClientRect())
+    .filter((rect) => rect.width > 0);
+  const autoPass = dock.querySelector(".battlefield-auto-pass-toggle")?.getBoundingClientRect();
+  if (chips.length && autoPass?.width) {
+    const chipsRight = Math.max(...chips.map((rect) => rect.right));
+    const shiftedLeft = chipsRight - (autoPass.right - dockRect.left);
+    if (shiftedLeft + (buttonsLeft - dockRect.left) >= handRight + MIN_GAP) {
+      const autoPassMid = autoPass.top + autoPass.height / 2;
+      const margin = Math.max(0, window.innerWidth - chipsRight);
+      const target = window.innerHeight - margin - (buttonsBottom - autoPassMid);
+      left = shiftedLeft;
+      centre = target - autoPassMid + rowRect.top + rowRect.height / 2;
+    }
+  }
 
   setVar(dock, "--fc-dock-left", `${Math.round(left)}px`);
   setVar(dock, "--fc-dock-top", `${Math.round(centre - rowOffset)}px`);

@@ -464,6 +464,20 @@ fn discard_sequence_subject(player: &PlayerFilter) -> String {
 }
 
 pub(super) fn discard_sequence_count(discard: &crate::effects::DiscardEffect) -> String {
+    // "discards each card with the same name as a card spliced onto that
+    // spell" (Minamo's Meddling, CR 702.47): every hand card sharing a name
+    // with the captured spliced cards.
+    if !discard.any_number
+        && let (Value::Count(count_filter), Some(card_filter)) =
+            (&discard.count, discard.card_filter.as_ref())
+        && count_filter == card_filter
+        && card_filter.tagged_constraints.iter().any(|constraint| {
+            constraint.relation == crate::filter::TaggedOpbjectRelation::SameNameAsTagged
+                && crate::cards::is_sentence_helper_tag(constraint.tag.as_str(), "spliced_cards")
+        })
+    {
+        return "each card with the same name as a card spliced onto that spell".to_string();
+    }
     if discard
         .count
         .has_surface_hint(ironsmith_core::ValueSurfaceHint::AllCardsInHand)
@@ -5383,6 +5397,7 @@ pub(super) fn describe_consult_may_cast_remainder_bottom_sequence(
             "exile",
             "the exiled cards that weren't cast this way",
         ),
+        crate::effects::consult_helpers::LibraryConsultMode::Mill => return None,
     };
     let pronoun = if player == "you" { "you" } else { "they" };
     let selection = concise_triggering_spell_selection

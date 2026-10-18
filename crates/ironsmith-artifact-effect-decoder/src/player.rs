@@ -14,6 +14,9 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "AdditionalPhasesEffect" => {
             decode_as::<ironsmith_core::AdditionalPhasesEffect>(payload).map(Some)
         }
+        "AdditionalStepsEffect" => {
+            decode_as::<ironsmith_core::AdditionalStepsEffect>(payload).map(Some)
+        }
         "AscendEffect" => decode_as::<ironsmith_core::AscendEffect>(payload).map(Some),
         "BecomeMonarchEffect" => {
             decode_as::<ironsmith_core::BecomeMonarchEffect>(payload).map(Some)
@@ -77,6 +80,12 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         }
         "ExtraTurnEffect" => decode_as::<ironsmith_core::ExtraTurnEffect>(payload).map(Some),
         "FlipCoinEffect" => decode_as::<ironsmith_core::FlipCoinEffect>(payload).map(Some),
+        "CoinFlipLifeStakesEffect" => {
+            decode_as::<ironsmith_core::CoinFlipLifeStakesEffect>(payload).map(Some)
+        }
+        "RedirectEnteringSourceEffect" => {
+            decode_as::<ironsmith_core::RedirectEnteringSourceEffect>(payload).map(Some)
+        }
         "GivePlayerCountersEffect" => {
             decode_as::<ironsmith_core::GivePlayerCountersEffect>(payload).map(Some)
         }
@@ -121,6 +130,15 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "KeepGreatestManaValuePlayersEffect" => {
             decode_as::<ironsmith_core::KeepGreatestManaValuePlayersEffect>(payload).map(Some)
         }
+        "RollDieKeepHighestPlayersEffect" => {
+            decode_as::<ironsmith_core::RollDieKeepHighestPlayersEffect>(payload).map(Some)
+        }
+        "RetainSpellChoicesEffect" => {
+            decode_as::<ironsmith_core::RetainSpellChoicesEffect>(payload).map(Some)
+        }
+        "PutRetainedSpellCopyOntoStackEffect" => {
+            decode_as::<ironsmith_core::PutRetainedSpellCopyOntoStackEffect>(payload).map(Some)
+        }
         "PayEnergyEffect" => decode_as::<ironsmith_core::PayEnergyEffect>(payload).map(Some),
         "PlaySubgameEffect" => {
             decode_as::<ironsmith_core::PlaySubgameEffect<wire::WireEffect>>(payload).map(Some)
@@ -147,6 +165,13 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
             decode_as::<ironsmith_core::SkipCombatPhasesThisTurnEffect>(payload).map(Some)
         }
         "SkipDrawStepEffect" => decode_as::<ironsmith_core::SkipDrawStepEffect>(payload).map(Some),
+        "PlayWithHandRevealedEffect" => {
+            decode_as::<ironsmith_core::PlayWithHandRevealedEffect>(payload).map(Some)
+        }
+        "RevealSourceInHandUntilOwnersNextTurnEffect" => {
+            decode_as::<ironsmith_core::RevealSourceInHandUntilOwnersNextTurnEffect>(payload)
+                .map(Some)
+        }
         "SkipScheduledEffect" => decode_as::<ironsmith_core::SkipScheduledEffect>(payload).map(Some),
         "SkipMainPhasesThisTurnEffect" => {
             decode_as::<ironsmith_core::SkipMainPhasesThisTurnEffect>(payload).map(Some)
@@ -171,6 +196,23 @@ pub fn decode(kind: &str, payload: Value) -> Result<Option<ErasedPayload>, Strin
         "GrantLoyaltyActivationAllowanceEffect" => {
             decode_as::<ironsmith_core::GrantLoyaltyActivationAllowanceEffect>(payload).map(Some)
         }
+        "GrantTapUncontrolledLandsForManaEffect" => {
+            decode_as::<ironsmith_core::GrantTapUncontrolledLandsForManaEffect>(payload).map(Some)
+        }
+        "GrantPayLifeManaAbilityUntilEndOfTurnEffect" => {
+            decode_as::<ironsmith_core::GrantPayLifeManaAbilityUntilEndOfTurnEffect>(payload)
+                .map(Some)
+        }
+        "RollAndStoreDieResultsEffect" => {
+            decode_as::<ironsmith_core::RollAndStoreDieResultsEffect>(payload).map(Some)
+        }
+        "DeclareBlockersByRandomPilesThisTurnEffect" => {
+            decode_as::<ironsmith_core::DeclareBlockersByRandomPilesThisTurnEffect>(payload)
+                .map(Some)
+        }
+        "RerollStoredDieResultsEffect" => {
+            decode_as::<ironsmith_core::RerollStoredDieResultsEffect>(payload).map(Some)
+        }
         "GrantEndThisEffectPaymentEffect" => {
             decode_as::<ironsmith_core::GrantEndThisEffectPaymentEffect>(payload).map(Some)
         }
@@ -193,6 +235,10 @@ pub(super) fn map_card_ids(
         .map(Some),
         "AdditionalPhasesEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::AdditionalPhasesEffect,
+        >(payload, context)
+        .map(Some),
+        "AdditionalStepsEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::AdditionalStepsEffect,
         >(payload, context)
         .map(Some),
         "AscendEffect" => {
@@ -297,6 +343,14 @@ pub(super) fn map_card_ids(
             super::card_graph::map_payload_as::<ironsmith_core::ExtraTurnEffect>(payload, context)
                 .map(Some)
         }
+        "CoinFlipLifeStakesEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::CoinFlipLifeStakesEffect,
+        >(payload, context)
+        .map(Some),
+        "RedirectEnteringSourceEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RedirectEnteringSourceEffect,
+        >(payload, context)
+        .map(Some),
         "FlipCoinEffect" => {
             super::card_graph::map_payload_as::<ironsmith_core::FlipCoinEffect>(payload, context)
                 .map(Some)
@@ -360,6 +414,18 @@ pub(super) fn map_card_ids(
             ironsmith_core::KeepGreatestManaValuePlayersEffect,
         >(payload, context)
         .map(Some),
+        "RollDieKeepHighestPlayersEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RollDieKeepHighestPlayersEffect,
+        >(payload, context)
+        .map(Some),
+        "RetainSpellChoicesEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RetainSpellChoicesEffect,
+        >(payload, context)
+        .map(Some),
+        "PutRetainedSpellCopyOntoStackEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::PutRetainedSpellCopyOntoStackEffect,
+        >(payload, context)
+        .map(Some),
         "PayAnyLifeEffect" => {
             super::card_graph::map_payload_as::<ironsmith_core::PayAnyLifeEffect>(payload, context)
                 .map(Some)
@@ -413,6 +479,14 @@ pub(super) fn map_card_ids(
             ironsmith_core::SkipDrawStepEffect,
         >(payload, context)
         .map(Some),
+        "PlayWithHandRevealedEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::PlayWithHandRevealedEffect,
+        >(payload, context)
+        .map(Some),
+        "RevealSourceInHandUntilOwnersNextTurnEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RevealSourceInHandUntilOwnersNextTurnEffect,
+        >(payload, context)
+        .map(Some),
         "SkipMainPhasesThisTurnEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::SkipMainPhasesThisTurnEffect,
         >(payload, context)
@@ -447,6 +521,26 @@ pub(super) fn map_card_ids(
         .map(Some),
         "GrantLoyaltyActivationAllowanceEffect" => super::card_graph::map_payload_as::<
             ironsmith_core::GrantLoyaltyActivationAllowanceEffect,
+        >(payload, context)
+        .map(Some),
+        "GrantTapUncontrolledLandsForManaEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::GrantTapUncontrolledLandsForManaEffect,
+        >(payload, context)
+        .map(Some),
+        "GrantPayLifeManaAbilityUntilEndOfTurnEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::GrantPayLifeManaAbilityUntilEndOfTurnEffect,
+        >(payload, context)
+        .map(Some),
+        "RollAndStoreDieResultsEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RollAndStoreDieResultsEffect,
+        >(payload, context)
+        .map(Some),
+        "DeclareBlockersByRandomPilesThisTurnEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::DeclareBlockersByRandomPilesThisTurnEffect,
+        >(payload, context)
+        .map(Some),
+        "RerollStoredDieResultsEffect" => super::card_graph::map_payload_as::<
+            ironsmith_core::RerollStoredDieResultsEffect,
         >(payload, context)
         .map(Some),
         "GrantEndThisEffectPaymentEffect" => super::card_graph::map_payload_as::<

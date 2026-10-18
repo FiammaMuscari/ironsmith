@@ -1055,6 +1055,12 @@ fn commit_object_counter_removal(
                     "counter-removal commit disagrees with its resolved amount".into(),
                 ));
             }
+            if removed > 0
+                && let Some(source) = removal.source
+                && let Some(source) = game.counter_history_source_identity(source, ctx)
+            {
+                game.record_counter_source_history(source, target, removal.counter_type, true);
+            }
             if removal.source == Some(ctx.source)
                 && game.object(ctx.source).is_none()
                 && let Some(snapshot) = &ctx.source_snapshot
@@ -1475,7 +1481,7 @@ mod counter_removal_replacement_owner_tests {
 
 #[cfg(test)]
 mod removed_counter_removal_selected_api_tests {
-    use super::*;
+
     #[test]
     fn selected_zero_counter_removal_preserves_one_shot_until_positive_proposal() {
         let mut game = crate::tests::test_helpers::setup_two_player_game();

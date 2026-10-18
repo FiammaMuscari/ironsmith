@@ -371,6 +371,11 @@ fn damage_source_matches_filter(source: ObjectId, filter: &ObjectFilter, ctx: &c
     if filter.specific.is_some_and(|id| id != source) || (filter.source && ctx.source != Some(source)) {
         return false;
     }
+    // Shared damage-source color hook (Ghostly Flame): a colorless source of
+    // damage is matched with no colors.
+    if let Some(colorless) = ctx.game.damage_source_color_snapshot(source, ctx.event_source_snapshot) {
+        return filter.matches_snapshot(&colorless, &ctx.filter_ctx, ctx.game);
+    }
     if !ctx.game.is_phased_out(source) {
         if let Some(object) = ctx.game.object(source) {
             return filter.matches(object, &ctx.filter_ctx, ctx.game);
@@ -782,6 +787,8 @@ impl DamageSourceConstraint {
 pub enum DamageTargetConstraint {
     /// Any damage target.
     Any,
+    /// Damage is dealt to any player.
+    AnyPlayer,
     /// Damage is dealt to a specific player.
     Player(PlayerId),
     /// Damage is dealt to a specific object.
@@ -847,6 +854,11 @@ impl ReplacementMatcher for PreventableDamageConstraintMatcher {
         // Target constraint.
         match &self.target {
             DamageTargetConstraint::Any => {}
+            DamageTargetConstraint::AnyPlayer => {
+                if !matches!(damage.target, DamageTarget::Player(_)) {
+                    return false;
+                }
+            }
             DamageTargetConstraint::Player(player_id) => match damage.target {
                 DamageTarget::Player(pid) => {
                     if &pid != player_id {

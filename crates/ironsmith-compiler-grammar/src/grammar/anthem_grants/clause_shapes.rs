@@ -42,6 +42,11 @@ pub enum AnthemTailShape<'a> {
     AsLongAs {
         condition_tokens: &'a [OwnedLexToken],
     },
+    /// "unless <condition>": the modification applies only while the
+    /// condition is false (Heroic Defiance).
+    Unless {
+        condition_tokens: &'a [OwnedLexToken],
+    },
 }
 
 pub fn parse_prefix_condition_shape(
@@ -50,7 +55,13 @@ pub fn parse_prefix_condition_shape(
 ) -> Option<AnthemPrefixConditionShape> {
     let (kind, rest) = primitives::parse_prefix(tokens, parse_prefix_condition_kind)?;
     let prefix_end = tokens.len().saturating_sub(rest.len());
-    let comma_subject_start = first_comma_token(tokens.get(..action_token)?).map(|idx| idx + 1);
+    let before_action = tokens.get(..action_token)?;
+    let comma_subject_start = if kind == AnthemPrefixConditionKind::AsLongAs {
+        leading_condition_boundary_comma(before_action)
+    } else {
+        first_comma_token(before_action)
+    }
+    .map(|idx| idx + 1);
     Some(AnthemPrefixConditionShape {
         kind,
         prefix_end,
@@ -118,6 +129,12 @@ pub fn parse_tail_shape(tokens: &[OwnedLexToken]) -> Option<AnthemTailShape<'_>>
     if primitives::parse_prefix(tokens, primitives::phrase(&["where", "x", "is"])).is_some() {
         return Some(AnthemTailShape::WhereX(tokens));
     }
+    if let Some((_, condition_tokens)) =
+        primitives::parse_prefix(tokens, primitives::kw("unless"))
+    {
+        return (!condition_tokens.is_empty())
+            .then_some(AnthemTailShape::Unless { condition_tokens });
+    }
     let (_, condition_tokens) =
         primitives::parse_prefix(tokens, primitives::phrase(&["as", "long", "as"]))?;
     Some(AnthemTailShape::AsLongAs { condition_tokens })
@@ -178,6 +195,47 @@ fn parse_prefix_condition_kind(input: &mut LexStream<'_>) -> WResult<AnthemPrefi
         primitives::phrase(&["as", "long", "as"]).value(AnthemPrefixConditionKind::AsLongAs),
     ))
     .parse_next(input)
+}
+
+/// The comma that ends a leading "as long as" condition. A serial list of
+/// condition arms ("as long as Kosei is enchanted, equipped, and has a counter
+/// on it, ...") keeps its inner commas: the boundary is the comma after the
+/// arm a serial ", and" / ", or" opens. Middle arms that carry a grant verb
+/// are the body's own list, so the first comma stays the boundary there.
+pub fn leading_condition_boundary_comma(tokens: &[OwnedLexToken]) -> Option<usize> {
+    // A quoted granted ability's own commas never extend the condition.
+    let unquoted = tokens
+        .iter()
+        .position(|token| token.kind == crate::lexer::TokenKind::Quote)
+        .unwrap_or(tokens.len());
+    let first = tokens
+        .iter()
+        .position(|token| token.kind == crate::lexer::TokenKind::Comma)?;
+    let commas = tokens[..unquoted]
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.kind == crate::lexer::TokenKind::Comma)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    for (position, &comma) in commas.iter().enumerate().skip(1) {
+        let opens_last_arm = tokens
+            .get(comma + 1)
+            .is_some_and(|token| token.is_word("and") || token.is_word("or"));
+        if !opens_last_arm {
+            continue;
+        }
+        let Some(&boundary) = commas.get(position + 1) else {
+            return Some(first);
+        };
+        let middle_arms = &tokens[first + 1..comma];
+        if middle_arms.iter().any(|token| {
+            token.is_any_word(&["get", "gets", "has", "have", "can", "cant", "can't"])
+        }) {
+            return Some(first);
+        }
+        return Some(boundary);
+    }
+    Some(first)
 }
 
 fn first_comma_token(tokens: &[OwnedLexToken]) -> Option<usize> {

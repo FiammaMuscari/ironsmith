@@ -633,9 +633,26 @@ pub struct DieRollResultAdjustment {
     reroll: bool,
     once_each_turn: bool,
     display: String,
+    source_counter_cost: Option<crate::object::CounterType>,
+    exchange_with_source_base_pt: bool,
+    sides: Option<u32>,
 }
 
 impl DieRollResultAdjustment {
+    /// Pay the adjustment by removing one counter of this kind from the source.
+    pub fn with_source_counter_cost(mut self, counter_type: crate::object::CounterType) -> Self {
+        self.source_counter_cost = Some(counter_type);
+        self
+    }
+
+    /// Swap one result of each qualifying roll with the source's base power
+    /// or base toughness instead of adjusting it.
+    pub fn with_exchange_with_source_base_pt(mut self, sides: Option<u32>) -> Self {
+        self.exchange_with_source_base_pt = true;
+        self.sides = sides;
+        self
+    }
+
     pub fn new(
         player: PlayerFilter,
         life_cost: u32,
@@ -651,6 +668,9 @@ impl DieRollResultAdjustment {
             reroll: false,
             once_each_turn,
             display: display.into(),
+            source_counter_cost: None,
+            exchange_with_source_base_pt: false,
+            sides: None,
         }
     }
 
@@ -668,6 +688,9 @@ impl DieRollResultAdjustment {
             reroll: true,
             once_each_turn,
             display: display.into(),
+            source_counter_cost: None,
+            exchange_with_source_base_pt: false,
+            sides: None,
         }
     }
 }
@@ -689,6 +712,9 @@ impl StaticAbilityKind for DieRollResultAdjustment {
             amount: self.amount,
             reroll: self.reroll,
             once_each_turn: self.once_each_turn,
+            source_counter_cost: self.source_counter_cost,
+            exchange_with_source_base_pt: self.exchange_with_source_base_pt,
+            sides: self.sides,
         })
     }
 }
@@ -917,6 +943,32 @@ impl StaticAbilityKind for UntapStepLimit {
     }
 }
 
+/// "Each player chooses artifact, creature, or land during their untap step.
+/// That player can untap only permanents of the chosen type this step."
+/// (Storage Matrix): the untapping player chooses one of `card_types`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UntapStepChosenCardTypeOnly {
+    pub player: PlayerFilter,
+    pub card_types: Vec<crate::types::CardType>,
+    pub display: String,
+}
+
+impl StaticAbilityKind for UntapStepChosenCardTypeOnly {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::UntapStepChosenCardTypeOnly
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn untap_step_chosen_card_types(
+        &self,
+    ) -> Option<(&PlayerFilter, &[crate::types::CardType])> {
+        Some((&self.player, &self.card_types))
+    }
+}
+
 /// Flagbearer: opponents casting spells or activating abilities must choose
 /// at least one Flagbearer on the battlefield as a target if able. Enforced
 /// where their target requirements are specialized.
@@ -1069,6 +1121,22 @@ impl StaticAbilityKind for BoastTwiceEachTurn {
     }
 }
 
+/// "You may activate the loyalty abilities of planeswalkers you control twice
+/// each turn rather than only once." (Oath of Teferi; CR 606.3)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LoyaltyAbilitiesTwiceEachTurn;
+
+impl StaticAbilityKind for LoyaltyAbilitiesTwiceEachTurn {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::LoyaltyAbilitiesTwiceEachTurn
+    }
+
+    fn display(&self) -> String {
+        "You may activate the loyalty abilities of planeswalkers you control twice each turn rather than only once"
+            .to_string()
+    }
+}
+
 /// "You may pay {0} rather than pay the equip cost of the first equip ability
 /// you activate each turn." (Bruenor Battlehammer, Forge Anew, etc.)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1168,6 +1236,367 @@ impl StaticAbilityKind for VoteAdditionalTimeWhileVoting {
     }
 }
 
+/// "Equipped creature has all abilities of ability stickers on this
+/// Equipment." (Pin Collection): the attached object gains, in layer 6, the
+/// abilities carried by the ability stickers on this source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AttachedHasSourceAbilityStickerAbilities;
+
+impl StaticAbilityKind for AttachedHasSourceAbilityStickerAbilities {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::AttachedHasSourceAbilityStickerAbilities
+    }
+
+    fn display(&self) -> String {
+        "Equipped creature has all abilities of ability stickers on this Equipment.".to_string()
+    }
+
+    fn generate_effects(
+        &self,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        game: &crate::game_state::GameState,
+    ) -> Vec<crate::continuous::ContinuousEffect> {
+        game.ability_sticker_abilities_on_object(source)
+            .into_iter()
+            .map(|ability| {
+                crate::continuous::ContinuousEffect::new(
+                    source,
+                    controller,
+                    crate::continuous::EffectTarget::AttachedTo(source),
+                    crate::continuous::Modification::AddAbilityGeneric(ability),
+                )
+                .with_source_type(crate::continuous::EffectSourceType::StaticAbility)
+            })
+            .collect()
+    }
+}
+
+/// "This creature has all abilities of ability stickers on other permanents
+/// you own and cards in your graveyard." (Clandestine Chameleon): in layer 6
+/// the source gains the abilities carried by the ability stickers on every
+/// object matching the filter, wherever those objects are.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceHasAbilityStickerAbilitiesOf {
+    pub filter: crate::target::ObjectFilter,
+    pub display: String,
+}
+
+impl StaticAbilityKind for SourceHasAbilityStickerAbilitiesOf {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::SourceHasAbilityStickerAbilitiesOf
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn generate_effects(
+        &self,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        game: &crate::game_state::GameState,
+    ) -> Vec<crate::continuous::ContinuousEffect> {
+        let filter_ctx = game.filter_context_for(controller, Some(source));
+        let mut candidates: Vec<crate::ids::ObjectId> = game.battlefield.iter().copied().collect();
+        for player in &game.players {
+            candidates.extend(player.graveyard.iter().copied());
+            candidates.extend(player.hand.iter().copied());
+            candidates.extend(player.library.iter().copied());
+        }
+        candidates.extend(game.exile.iter().copied());
+        candidates
+            .into_iter()
+            .filter(|id| *id != source)
+            .filter(|id| {
+                game.object(*id)
+                    .is_some_and(|object| self.filter.matches(object, &filter_ctx, game))
+            })
+            .flat_map(|id| game.ability_sticker_abilities_on_object(id))
+            .map(|ability| {
+                crate::continuous::ContinuousEffect::new(
+                    source,
+                    controller,
+                    crate::continuous::EffectTarget::Specific(source),
+                    crate::continuous::Modification::AddAbilityGeneric(ability),
+                )
+                .with_source_type(crate::continuous::EffectSourceType::StaticAbility)
+            })
+            .collect()
+    }
+}
+
+/// "Equipped creature ... has all names of nonlegendary creature cards in
+/// addition to its name." (Spy Kit): no continuous effect; every name check
+/// of the object this source is attached to also matches the name of each
+/// nonlegendary creature card (see `filter::subject_names_include`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AttachedHasAllNonlegendaryCreatureCardNames;
+
+impl StaticAbilityKind for AttachedHasAllNonlegendaryCreatureCardNames {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::AttachedHasAllNonlegendaryCreatureCardNames
+    }
+
+    fn display(&self) -> String {
+        "Equipped creature has all names of nonlegendary creature cards in addition to its name."
+            .to_string()
+    }
+}
+
+/// "As this Equipment becomes attached to a creature, choose a creature card
+/// name and a creature type." (Psychic Paper): each attachment records a new
+/// name and creature type on this source; later choices replace earlier ones.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChooseCreatureCardNameAndTypeAsBecomesAttached {
+    pub display: String,
+}
+
+impl StaticAbilityKind for ChooseCreatureCardNameAndTypeAsBecomesAttached {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ChooseCreatureCardNameAndTypeAsBecomesAttached
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn creature_card_name_and_type_choice_as_becomes_attached(&self) -> bool {
+        true
+    }
+}
+
+/// "Equipped creature's name and creature type are the last chosen name and
+/// creature type." (Psychic Paper): the attached object takes this source's
+/// last chosen name (layer 3) and has exactly the last chosen creature type
+/// (layer 4; its other subtypes remain). No choice yet means no change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AttachedHasSourceChosenNameAndCreatureType;
+
+impl StaticAbilityKind for AttachedHasSourceChosenNameAndCreatureType {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::AttachedHasSourceChosenNameAndCreatureType
+    }
+
+    fn display(&self) -> String {
+        "Equipped creature's name and creature type are the last chosen name and creature type"
+            .to_string()
+    }
+
+    fn generate_effects(
+        &self,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+        game: &crate::game_state::GameState,
+    ) -> Vec<crate::continuous::ContinuousEffect> {
+        let effect = |modification| {
+            crate::continuous::ContinuousEffect::new(
+                source,
+                controller,
+                crate::continuous::EffectTarget::AttachedTo(source),
+                modification,
+            )
+            .with_source_type(crate::continuous::EffectSourceType::StaticAbility)
+        };
+        let mut effects = Vec::new();
+        if let Some(name) = game.chosen_named_option(source) {
+            effects.push(effect(crate::continuous::Modification::SetName(name.to_string())));
+        }
+        if let Some(subtype) = game.chosen_creature_type(source) {
+            effects.push(effect(
+                crate::continuous::Modification::RemoveAllSubtypesOfFamily(
+                    crate::types::SubtypeFamily::Creature,
+                ),
+            ));
+            effects.push(effect(crate::continuous::Modification::AddSubtypes(vec![subtype])));
+        }
+        effects
+    }
+}
+
+/// "If an opponent would face a villainous choice, they face that choice an
+/// additional time." (The Valeyard)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpponentsFaceVillainousChoiceAdditionalTime;
+
+impl StaticAbilityKind for OpponentsFaceVillainousChoiceAdditionalTime {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::OpponentsFaceVillainousChoiceAdditionalTime
+    }
+
+    fn display(&self) -> String {
+        "If an opponent would face a villainous choice, they face that choice an additional time."
+            .to_string()
+    }
+
+    fn additional_villainous_choices_for_opponents(&self) -> u32 {
+        1
+    }
+}
+
+/// "You may activate the loyalty abilities of Urza twice each turn rather than
+/// only once." (Urza, Planeswalker; CR 606.3): raises the source's own
+/// once-per-turn loyalty cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SourceLoyaltyAbilitiesTwiceEachTurn;
+
+impl StaticAbilityKind for SourceLoyaltyAbilitiesTwiceEachTurn {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::SourceLoyaltyAbilitiesTwiceEachTurn
+    }
+
+    fn display(&self) -> String {
+        "You may activate the loyalty abilities of this permanent twice each turn rather than only once"
+            .to_string()
+    }
+}
+
+/// "This creature attacks a player you noted for cards named <name> each
+/// combat if able." (Cogwork Tracker): one attack requirement toward each
+/// player its controller noted while drafting cards of that name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MustAttackDraftNotedPlayers {
+    pub card_name: String,
+}
+
+/// Prefix and suffix of [`MustAttackDraftNotedPlayers`]'s display, which
+/// carries its noted card family's name.
+pub(crate) const MUST_ATTACK_DRAFT_NOTED_PREFIX: &str =
+    "This creature attacks a player you noted for cards named ";
+pub(crate) const MUST_ATTACK_DRAFT_NOTED_SUFFIX: &str = " each combat if able";
+
+impl StaticAbilityKind for MustAttackDraftNotedPlayers {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MustAttackDraftNotedPlayers
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "{MUST_ATTACK_DRAFT_NOTED_PREFIX}{}{MUST_ATTACK_DRAFT_NOTED_SUFFIX}",
+            self.card_name
+        )
+    }
+}
+
+/// "You may discard this card any time you could cast an instant." (Circling
+/// Vultures): its owner may discard it from hand as a special action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MayDiscardSourceAnyTimeYouCouldCastInstant;
+
+impl StaticAbilityKind for MayDiscardSourceAnyTimeYouCouldCastInstant {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MayDiscardSourceAnyTimeYouCouldCastInstant
+    }
+
+    fn display(&self) -> String {
+        "You may discard this card any time you could cast an instant".to_string()
+    }
+}
+
+/// "You may plot nonland cards from the top of your library." (Fblthp, Lost
+/// on the Range): its controller may plot the top card of their library
+/// (CR 702.170a) when that card is nonland and has plot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MayPlotNonlandCardsFromTopOfLibrary;
+
+impl StaticAbilityKind for MayPlotNonlandCardsFromTopOfLibrary {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MayPlotNonlandCardsFromTopOfLibrary
+    }
+
+    fn display(&self) -> String {
+        "You may plot nonland cards from the top of your library".to_string()
+    }
+}
+
+/// "Each power-up ability of permanents you control can be activated an
+/// additional time." (Wonder Man, Hollywood Hero): each such permanent raises
+/// the once-per-object power-up cap by one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PowerUpAbilitiesAdditionalTime;
+
+impl StaticAbilityKind for PowerUpAbilitiesAdditionalTime {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::PowerUpAbilitiesAdditionalTime
+    }
+
+    fn display(&self) -> String {
+        "Each power-up ability of permanents you control can be activated an additional time"
+            .to_string()
+    }
+}
+
+/// "Can't be blocked unless all creatures defending player controls block it."
+/// (Tromokratis): the minimum number of blockers is every creature the
+/// defending player controls, so one that can't or doesn't block leaves this
+/// creature unblockable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantBeBlockedUnlessAllDefendingCreaturesBlock;
+
+impl StaticAbilityKind for CantBeBlockedUnlessAllDefendingCreaturesBlock {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedUnlessAllDefendingCreaturesBlock
+    }
+
+    fn display(&self) -> String {
+        "Can't be blocked unless all creatures defending player controls block it".to_string()
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+}
+
+/// "Each opponent must attack you or a planeswalker you control with at least
+/// one creature each combat if able." (Trove of Temptation): a requirement on
+/// the whole attack declaration (CR 508.1d), scored by the declaration
+/// validator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpponentsAttackYouWithAtLeastOneCreature;
+
+impl StaticAbilityKind for OpponentsAttackYouWithAtLeastOneCreature {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::OpponentsAttackYouWithAtLeastOneCreature
+    }
+
+    fn display(&self) -> String {
+        "Each opponent must attack you or a planeswalker you control with at least one creature each combat if able"
+            .to_string()
+    }
+}
+
+/// "Each opponent must attack with at least one creature each combat if
+/// able." (Seeker of Slaanesh): a requirement on the whole attack
+/// declaration (CR 508.1d) that any attacking creature obeys, scored by the
+/// declaration validator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpponentsAttackWithAtLeastOneCreature;
+
+impl StaticAbilityKind for OpponentsAttackWithAtLeastOneCreature {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::OpponentsAttackWithAtLeastOneCreature
+    }
+
+    fn display(&self) -> String {
+        "Each opponent must attack with at least one creature each combat if able".to_string()
+    }
+}
+
+/// "A player losing unspent mana causes that player to lose that much life."
+/// (Yurlok of Scorch Thrash): checked where unspent mana is lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LoseLifeForUnspentMana;
+
+impl StaticAbilityKind for LoseLifeForUnspentMana {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::LoseLifeForUnspentMana
+    }
+
+    fn display(&self) -> String {
+        "A player losing unspent mana causes that player to lose that much life.".to_string()
+    }
+}
+
 /// "While voting, you get an additional vote."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VoteAdditionalVoteWhileVoting;
@@ -1225,6 +1654,7 @@ impl StaticAbilityKind for RevealFirstCardYouDrawEachTurn {
 
     fn reveal_drawn_card_spec(&self) -> Option<crate::static_abilities::RevealDrawnCardSpec> {
         Some(crate::static_abilities::RevealDrawnCardSpec {
+            player: None,
             card_number: 1,
             optional: self.optional,
             your_turns_only: self.your_turns_only,
@@ -1268,6 +1698,26 @@ impl StaticAbilityKind for CountAsCardNamedForSpellEffect {
             spell_name: self.spell_name.clone(),
             counted_name: self.counted_name.clone(),
         })
+    }
+}
+
+/// "If you would begin your turn while this artifact is tapped, you may skip
+/// that turn instead. If you do, untap this artifact." (Time Vault).
+///
+/// CR 614.10: the replacement applies before the turn begins, so it is not a
+/// resolution-time effect. The turn runner offers it to the source's
+/// controller after the previous turn's cleanup, before the next turn is
+/// selected (see `TurnRunner` and `GameState::turn_begin_skip_offer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MaySkipTurnWhileSourceTappedThenUntap;
+
+impl StaticAbilityKind for MaySkipTurnWhileSourceTappedThenUntap {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MaySkipTurnWhileSourceTappedThenUntap
+    }
+
+    fn display(&self) -> String {
+        "If you would begin your turn while this artifact is tapped, you may skip that turn instead. If you do, untap this artifact.".to_string()
     }
 }
 
@@ -1927,6 +2377,7 @@ impl StaticAbilityKind for Bloodthirst {
             controller,
             ThisWouldEnterWithBloodthirstMatcher,
             ReplacementAction::EnterWithCounters {
+                counter_kinds_from: None,
                 counter_type: CounterType::PlusOnePlusOne,
                 count: Value::Fixed(self.amount as i32),
                 count_condition: None,
@@ -2210,6 +2661,7 @@ impl StaticAbilityKind for EntersWithCounters {
             ThisWouldEnterBattlefieldMatcher,
             ReplacementAction::EnterWithCounters {
                 counter_type: self.counter_type,
+                counter_kinds_from: None,
                 count: self.count.clone(),
                 count_condition: None,
                 otherwise_count: None,
@@ -2225,6 +2677,12 @@ impl StaticAbilityKind for EntersWithCounters {
 pub struct EntersWithCounterChoice {
     pub counter_types: Vec<CounterType>,
     pub count: Value,
+    /// How many different kinds the controller chooses ("your choice of two
+    /// different counters on it from among ...", Grimdancer).
+    pub kinds: u32,
+    /// Applies only when this entry condition holds ("escapes with your
+    /// choice of ...", Tizerus Charger).
+    pub condition: Option<(Condition, String)>,
 }
 
 impl EntersWithCounterChoice {
@@ -2232,7 +2690,19 @@ impl EntersWithCounterChoice {
         Self {
             counter_types,
             count,
+            kinds: 1,
+            condition: None,
         }
+    }
+
+    pub fn with_kinds(mut self, kinds: u32) -> Self {
+        self.kinds = kinds.max(1);
+        self
+    }
+
+    pub fn with_condition(mut self, condition: Condition, display: String) -> Self {
+        self.condition = Some((condition, display.trim().to_string()));
+        self
     }
 }
 
@@ -2263,7 +2733,36 @@ impl StaticAbilityKind for EntersWithCounterChoice {
             Value::Fixed(1) => String::new(),
             value => format!("{} ", describe_value(value)),
         };
-        format!("Enters the battlefield with your choice of {count_prefix}{choices} on it")
+        if self.kinds > 1 {
+            let kinds = match self.kinds {
+                2 => "two".to_string(),
+                3 => "three".to_string(),
+                n => n.to_string(),
+            };
+            let names = self
+                .counter_types
+                .iter()
+                .map(|counter_type| counter_type.description().to_string())
+                .collect::<Vec<_>>();
+            let among = match names.as_slice() {
+                [] => String::new(),
+                [single] => single.clone(),
+                [first, second] => format!("{first} and {second}"),
+                [head @ .., last] => format!("{}, and {last}", head.join(", ")),
+            };
+            return format!(
+                "Enters the battlefield with your choice of {kinds} different counters on it from among {among}"
+            );
+        }
+        match &self.condition {
+            Some((Condition::ThisSpellEscaped, _)) => {
+                format!("Escapes with your choice of {count_prefix}{choices} on it")
+            }
+            Some((_, display)) if !display.is_empty() => format!(
+                "Enters the battlefield with your choice of {count_prefix}{choices} on it if {display}"
+            ),
+            _ => format!("Enters the battlefield with your choice of {count_prefix}{choices} on it"),
+        }
     }
 
     fn generate_replacement_effect(
@@ -2271,14 +2770,27 @@ impl StaticAbilityKind for EntersWithCounterChoice {
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<ReplacementEffect> {
+        let action = ReplacementAction::EnterWithCounterChoice {
+            counter_types: self.counter_types.clone(),
+            count: self.count.clone(),
+            kinds: self.kinds,
+        };
+        if let Some((condition, condition_display)) = &self.condition {
+            return Some(ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterWithCountersIfConditionMatcher {
+                    condition: condition.clone(),
+                    condition_display: condition_display.clone(),
+                },
+                action,
+            ));
+        }
         Some(ReplacementEffect::with_matcher(
             source,
             controller,
             ThisWouldEnterBattlefieldMatcher,
-            ReplacementAction::EnterWithCounterChoice {
-                counter_types: self.counter_types.clone(),
-                count: self.count.clone(),
-            },
+            action,
         ))
     }
 }
@@ -2377,6 +2889,7 @@ impl StaticAbilityKind for EntersWithCountersIfCondition {
             },
             ReplacementAction::EnterWithCounters {
                 counter_type: self.counter_type,
+                counter_kinds_from: None,
                 count: self.count.clone(),
                 count_condition: None,
                 otherwise_count: None,
@@ -2883,6 +3396,8 @@ pub struct ChooseNamedOptionAsEnters {
     pub options: Vec<String>,
     pub display: String,
     pub at_random: bool,
+    /// Every player chooses; see [`ChooseNamedOptionAsEntersSpec::each_player`].
+    pub each_player: bool,
 }
 
 impl ChooseNamedOptionAsEnters {
@@ -2891,7 +3406,14 @@ impl ChooseNamedOptionAsEnters {
             options,
             display,
             at_random: false,
+            each_player: false,
         }
+    }
+
+    /// "each player chooses <A> or <B>": every player chooses.
+    pub fn each_player(mut self) -> Self {
+        self.each_player = true;
+        self
     }
 
     /// "choose 2, 3, or 4 at random": the game picks the option.
@@ -2914,6 +3436,7 @@ impl StaticAbilityKind for ChooseNamedOptionAsEnters {
         Some(ChooseNamedOptionAsEntersSpec {
             options: self.options.clone(),
             at_random: self.at_random,
+            each_player: self.each_player,
         })
     }
 }
@@ -2953,6 +3476,7 @@ impl StaticAbilityKind for ChoosePowerToughnessAsEntersOrTurnsFaceUp {
     ) -> Option<ChoosePowerToughnessAsEntersOrTurnsFaceUpSpec> {
         Some(ChoosePowerToughnessAsEntersOrTurnsFaceUpSpec {
             options: self.options.clone(),
+            at_random: false,
         })
     }
 }
@@ -3716,6 +4240,45 @@ impl StaticAbilityKind for PreventDamageToSelfPutCountersInstead {
     }
 }
 
+/// "If damage would be dealt to this creature, instead that damage is dealt,
+/// but all other damage already dealt to it is healed." The same damage event
+/// proceeds unchanged after the recipient's marked damage is removed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HealDamageBeforeDamageToSelf {
+    pub display: String,
+}
+
+impl HealDamageBeforeDamageToSelf {
+    pub fn new(display: impl Into<String>) -> Self {
+        Self {
+            display: display.into(),
+        }
+    }
+}
+
+impl StaticAbilityKind for HealDamageBeforeDamageToSelf {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::HealDamageBeforeDamageToSelf
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            crate::events::DamageToSelfMatcher::new(),
+            ReplacementAction::HealRecipientThenProceed,
+        ))
+    }
+}
+
 /// Constrained self-damage replacement that turns prevented damage into counters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreventConstrainedDamageToSelfPutCountersInstead {
@@ -4255,6 +4818,7 @@ impl StaticAbilityKind for EnterUntappedForFilter {
 pub struct EnterWithCountersForFilter {
     pub filter: ObjectFilter,
     pub counter_type: CounterType,
+    pub counter_kinds_from: Option<ChooseSpec>,
     pub count: Value,
     pub count_condition: Option<crate::ConditionExpr>,
     pub otherwise_count: Option<Value>,
@@ -4267,12 +4831,18 @@ impl EnterWithCountersForFilter {
         Self {
             filter,
             counter_type,
+            counter_kinds_from: None,
             count,
             count_condition: None,
             otherwise_count: None,
             added_subtypes: Vec::new(),
             condition: None,
         }
+    }
+
+    pub fn with_counter_kinds_from(mut self, source: ChooseSpec) -> Self {
+        self.counter_kinds_from = Some(source);
+        self
     }
 
     pub fn with_count_if_otherwise(
@@ -4379,6 +4949,13 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
 
         let counter = self.counter_type.description().into_owned();
         let counter_clause_for = |count: &Value| {
+            if self.counter_kinds_from.is_some() {
+                return match count.unhinted() {
+                    Value::Fixed(1) => format!("with a counter of that kind on {object_pronoun}"),
+                    Value::Fixed(n) => format!("with {n} counters of that kind on {object_pronoun}"),
+                    _ => format!("with a number of counters of that kind on {object_pronoun} equal to {}", describe_value(count)),
+                };
+            }
             if count.has_surface_hint(ValueSurfaceHint::ForEach)
                 && let Some(for_each_clause) =
                     describe_filtered_enters_with_counters_for_each_clause(
@@ -4458,6 +5035,22 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
                 counter_clause_for(otherwise_count)
             );
         }
+        if let Some(source) = &self.counter_kinds_from {
+            let source = match source.source_reference_surface() {
+                Some(crate::target::SourceReferenceSurface::FullName(name)
+                    | crate::target::SourceReferenceSurface::ShortName(name)
+                    | crate::target::SourceReferenceSurface::ThisPermanentType(name)) => name.clone(),
+                None => match source.base() {
+                    ChooseSpec::Source => "this permanent".to_string(),
+                    ChooseSpec::All(filter) => pluralize_filter_description(&filter.description()),
+                    ChooseSpec::Object(filter) => filter.description(),
+                    _ => "that object".to_string(),
+                },
+            };
+            let mut chars = text.chars();
+            let body = chars.next().map(|first| format!("{}{}", first.to_ascii_lowercase(), chars.as_str())).unwrap_or_default();
+            text = format!("For each kind of counter on {source}, {body}");
+        }
         let Some(condition) = &self.condition else {
             return text;
         };
@@ -4491,6 +5084,7 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
             },
             ReplacementAction::EnterWithCounters {
                 counter_type: self.counter_type,
+                counter_kinds_from: self.counter_kinds_from.clone(),
                 count: self.count.clone(),
                 count_condition: self.count_condition.clone(),
                 otherwise_count: self.otherwise_count.clone(),

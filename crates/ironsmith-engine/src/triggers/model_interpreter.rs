@@ -294,6 +294,9 @@ pub(crate) fn interpret_trigger_model(
         }
         TriggerKind::ThisLeavesBattlefield => crate::triggers::Trigger::this_leaves_battlefield(),
         TriggerKind::ThisPhasesOut => crate::triggers::Trigger::this_phases_out(),
+        TriggerKind::SourceManaAbilityResolves => {
+            crate::triggers::Trigger::source_mana_ability_resolves()
+        }
         TriggerKind::ThisMutates => crate::triggers::Trigger::this_mutates(),
         TriggerKind::PermanentMutates { filter } => crate::triggers::Trigger::permanent_mutates(filter),
         TriggerKind::PlayerTurnsFaceUp { player, filter } => crate::triggers::Trigger::player_turns_face_up(player, filter),
@@ -392,11 +395,18 @@ pub(crate) fn interpret_trigger_model(
             source,
             target,
             source_surface,
-        } => crate::triggers::Trigger::deals_damage_to_with_source_surface(
-            source,
-            target,
-            source_surface,
-        ),
+            recipient_is_source_target,
+        } => {
+            if recipient_is_source_target {
+                crate::triggers::Trigger::deals_damage_to_source_target(source, target)
+            } else {
+                crate::triggers::Trigger::deals_damage_to_with_source_surface(
+                    source,
+                    target,
+                    source_surface,
+                )
+            }
+        }
         TriggerKind::DealsDamageToPlayer {
             source,
             player,
@@ -484,6 +494,9 @@ pub(crate) fn interpret_trigger_model(
             caused_by_effect,
             source_controller_shuffles,
         ),
+        TriggerKind::PlayerAddsManaFromSource { player, filter } => {
+            crate::triggers::Trigger::player_adds_mana_from_source(player, filter)
+        }
         TriggerKind::PlayerTapsForMana { player, filter } => {
             crate::triggers::Trigger::player_taps_for_mana(player, filter)
         }
@@ -520,13 +533,19 @@ pub(crate) fn interpret_trigger_model(
             loyalty_only,
             activation_cost_has_tap,
         ),
+        TriggerKind::StateBasedObjects { filter, display } =>
+            crate::triggers::Trigger::state_based_objects(filter, display),
+        TriggerKind::StackObjectAdded => crate::triggers::Trigger::stack_object_added(),
         TriggerKind::AbilityTriggered {
             another,
             source_filter,
             caused_by_source_entering,
             caused_by_source_attacking,
+            caused_by_permanent_entering,
         } => {
-            if caused_by_source_attacking
+            if caused_by_permanent_entering {
+                crate::triggers::Trigger::ability_triggered_by_permanent_entering()
+            } else if caused_by_source_attacking
                 && let Some(source_filter) = source_filter.clone()
             {
                 crate::triggers::Trigger::ability_triggered_by_source_attacking(source_filter)
@@ -774,6 +793,12 @@ pub(crate) fn interpret_trigger_model(
             )
         }
         TriggerKind::DayNightChanged => crate::triggers::Trigger::day_night_changed(),
+        TriggerKind::DamagePreventedBySource { source_filter } => crate::triggers::Trigger::new(
+            crate::triggers::DamagePreventedBySourceTrigger { source_filter },
+        ),
+        TriggerKind::DamageToPlayerPrevented { player } => crate::triggers::Trigger::new(
+            crate::triggers::DamageToPlayerPreventedTrigger { player },
+        ),
         TriggerKind::ThisEntersBattlefield => crate::triggers::Trigger::this_enters_battlefield(),
         TriggerKind::ThisTransforms { destination_name } => {
             crate::triggers::Trigger::transforms_with_destination(destination_name)
@@ -846,6 +871,9 @@ pub(crate) fn interpret_trigger_model(
         }
         TriggerKind::FinalChapterAbilityResolved { filter } => {
             crate::triggers::Trigger::final_chapter_ability_resolved(filter)
+        }
+        TriggerKind::FinalChapterAbilityTriggers { filter } => {
+            crate::triggers::Trigger::final_chapter_ability_triggers(filter)
         }
         TriggerKind::Custom { id, label } => {
             let id: &'static str = Box::leak(id.into_boxed_str());
@@ -1143,8 +1171,14 @@ impl super::Trigger {
                 Self::deals_damage_to(source, target)
             }
             ironsmith_core::DelayedTriggerSpec::AttacksAlone(filter) => Self::attacks_alone(filter),
+            ironsmith_core::DelayedTriggerSpec::SpellCastThroughPreviousPermission => {
+                Self::new(crate::triggers::SpellCastThroughPermissionTrigger { permissions: Vec::new() })
+            }
             ironsmith_core::DelayedTriggerSpec::DamagePreventedThisWay { source_filter } => {
                 Self::new(crate::triggers::DamagePreventedThisWayTrigger { source_filter })
+            }
+            ironsmith_core::DelayedTriggerSpec::BeginningOfDeclareAttackersStep(player) => {
+                Self::new(crate::triggers::BeginningOfDeclareAttackersStepTrigger::new(player))
             }
         }
     }

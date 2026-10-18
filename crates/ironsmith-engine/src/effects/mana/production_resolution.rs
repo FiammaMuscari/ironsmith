@@ -52,6 +52,8 @@ pub(crate) fn execute_production(
 ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
     use super::choice_helpers::*;
     let resolved = production.resolve(game, ctx)?;
+    let color_choice = matches!(resolved.output, ResolvedManaOutput::Choice { .. })
+        && !matches!(menu, ManaChoiceMenu::Types);
     let symbols = match resolved.output {
         ResolvedManaOutput::Exact(symbols) => symbols,
         ResolvedManaOutput::Choice {
@@ -111,8 +113,28 @@ pub(crate) fn execute_production(
         ));
     }
     let authored_count = symbols.len() as i32;
+    // A color-choice production whose mana is all one color completes a local
+    // color decision ("Add one mana of any color. This creature becomes that
+    // color"). Mixed or colorless output records no single chosen color.
+    let chosen_color = color_choice
+        .then(|| {
+            let colors = symbols
+                .iter()
+                .map(|symbol| match symbol {
+                    ManaSymbol::White => Some(Color::White),
+                    ManaSymbol::Blue => Some(Color::Blue),
+                    ManaSymbol::Black => Some(Color::Black),
+                    ManaSymbol::Red => Some(Color::Red),
+                    ManaSymbol::Green => Some(Color::Green),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let first = *colors.first()?;
+            colors.iter().all(|color| *color == first).then_some(first)
+        })
+        .flatten();
     let receipt = credit_mana_symbols_from_context(game, resolved.player, symbols, ctx)?;
-    Ok(match projection {
+    let mut outputs = match projection {
         ManaOutputProjection::Symbols => mana_added_value_outputs(ctx, resolved.player, receipt),
         ManaOutputProjection::AuthoredCount => {
             mana_added_count_outputs(ctx, resolved.player, receipt, authored_count)
@@ -121,7 +143,13 @@ pub(crate) fn execute_production(
             let count = receipt.mana_count();
             mana_added_count_outputs(ctx, resolved.player, receipt, count)
         }
-    })
+    };
+    if let Some(color) = chosen_color {
+        outputs.outcome = outputs
+            .outcome
+            .with_execution_fact(crate::effect::ExecutionFact::ChosenColor(color));
+    }
+    Ok(outputs)
 }
 
 impl ResolvedManaOutput {
@@ -238,6 +266,8 @@ impl ManaProduction<'_> {
             | Self::ChooseColors { player, .. }
             | Self::ChosenColor { player, .. }
             | Self::CommanderIdentity { player, .. }
+            | Self::DraftChosenColors { player, .. }
+            | Self::DeckChosenColors { player, .. }
             | Self::ColorsAmong { player, .. }
             | Self::LandProducedTypes { player, .. }
             | Self::NotedType { player, .. }
@@ -301,6 +331,52 @@ impl ManaProduction<'_> {
                             .collect(),
                         count,
                         same_type: true,
+                        distinct: false,
+                    }
+                }
+            }
+            Self::DraftChosenColors {
+                amount: value,
+                card_name,
+                ..
+            } => {
+                // "any color chosen as you drafted ...": "you" is the
+                // ability's controller, not the mana's recipient.
+                let count = amount(value)?;
+                let drafted = game.draft_chosen_colors(ctx.controller, card_name);
+                let available: Vec<_> = Color::ALL
+                    .into_iter()
+                    .filter(|color| drafted.contains(*color))
+                    .map(ManaSymbol::from_color)
+                    .collect();
+                if available.is_empty() {
+                    Exact(vec![])
+                } else {
+                    Choice {
+                        available,
+                        count,
+                        same_type: false,
+                        distinct: false,
+                    }
+                }
+            }
+            Self::DeckChosenColors { amount: value, .. } => {
+                // "either of the circled colors": the colors recorded for
+                // this card (by stable identity) as its owner built the deck.
+                let count = amount(value)?;
+                let circled = game.deck_construction_chosen_colors(ctx.source);
+                let available: Vec<_> = Color::ALL
+                    .into_iter()
+                    .filter(|color| circled.contains(*color))
+                    .map(ManaSymbol::from_color)
+                    .collect();
+                if available.is_empty() {
+                    Exact(vec![])
+                } else {
+                    Choice {
+                        available,
+                        count,
+                        same_type: false,
                         distinct: false,
                     }
                 }
@@ -378,6 +454,10 @@ impl ManaProduction<'_> {
                         distinct: false,
                     }
                 }
+            }
+            Self::NotedType { use_noted_amount: true, .. } => {
+                Exact(game.noted_mana_payment_for_source(ctx.source)
+                    .map(crate::mana_payment::program::pool_symbols).unwrap_or_default())
             }
             Self::NotedType { amount: value, .. } => {
                 let count = amount(value)?;

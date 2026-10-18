@@ -109,6 +109,15 @@ impl StaticAbility {
             Some(StaticAbilityId::CantBlock) => Self::cant_block(),
             Some(StaticAbilityId::CantAttack) => Self::cant_attack(),
             Some(StaticAbilityId::CantAttackItsOwner) => Self::cant_attack_its_owner(),
+            Some(StaticAbilityId::LethalDamageMustBeFromSingleSource) => {
+                Self::lethal_damage_must_be_from_single_source()
+            }
+            Some(StaticAbilityId::CantAttackPlayerAlreadyAttackedThisTurn) => {
+                Self::cant_attack_player_already_attacked_this_turn()
+            }
+            Some(StaticAbilityId::CreaturesCantAttackPlayersInactiveLastTurn) => {
+                Self::creatures_cant_attack_players_inactive_last_turn()
+            }
             Some(StaticAbilityId::CantBeCopied) => Self::cant_be_copied(),
             Some(StaticAbilityId::CantBeCountered) => Self::cant_be_countered_ability(),
             Some(StaticAbilityId::CanBlockFlying) => Self::can_block_flying(),
@@ -131,6 +140,9 @@ impl StaticAbility {
             Some(StaticAbilityId::CantBeBlockedByLowerPowerThanSource) => {
                 Self::cant_be_blocked_by_lower_power_than_source()
             }
+            Some(StaticAbilityId::CantBeBlockedUnlessAttackingOwnerOrOwnersPermanent) => {
+                Self::cant_be_blocked_unless_attacking_owner_or_owners_permanent()
+            }
             Some(StaticAbilityId::CantBeBlockedWhileDefendingPlayerControlsMostCreatures) => {
                 Self::cant_be_blocked_while_defending_player_controls_most_creatures()
             }
@@ -138,8 +150,32 @@ impl StaticAbility {
                 Self::can_attack_as_though_no_defender()
             }
             Some(StaticAbilityId::CanAttackAsThoughHaste) => Self::can_attack_as_though_haste(),
+            Some(StaticAbilityId::CreaturesCanAttackOpponentsAsThoughHaste) => {
+                Self::creatures_can_attack_opponents_as_though_haste()
+            }
             Some(StaticAbilityId::MayAssignDamageAsUnblocked) => {
                 Self::may_assign_damage_as_unblocked()
+            }
+            Some(StaticAbilityId::AssignsDamageAsUnblocked) => {
+                Self::assigns_damage_as_unblocked()
+            }
+            Some(StaticAbilityId::MayDivideCombatDamageAmongDefendingPlayerAndCreatures) => {
+                Self::may_divide_combat_damage_among_defending_player_and_creatures()
+            }
+            Some(StaticAbilityId::MayAssignUnblockedDamageToDefendingCreature) => {
+                Self::may_assign_unblocked_damage_to_defending_creature()
+            }
+            Some(StaticAbilityId::AttachedHasSourceAbilityStickerAbilities) => {
+                Self::attached_has_source_ability_sticker_abilities()
+            }
+            Some(StaticAbilityId::AttachedHasAllNonlegendaryCreatureCardNames) => {
+                Self::attached_has_all_nonlegendary_creature_card_names()
+            }
+            Some(StaticAbilityId::MonarchControlsAttachedPermanent) => {
+                Self::monarch_controls_attached_permanent()
+            }
+            Some(StaticAbilityId::AllColorWordsBecomeChosenColor) => {
+                Self::all_color_words_become_chosen_color()
             }
             Some(StaticAbilityId::YouAssignCombatDamageOfCreaturesAttackingYou) => {
                 Self::you_assign_combat_damage_of_creatures_attacking_you()
@@ -149,6 +185,9 @@ impl StaticAbility {
             }
             Some(StaticAbilityId::DoesntUntap) => Self::doesnt_untap(),
             Some(StaticAbilityId::BoastTwiceEachTurn) => Self::boast_twice_each_turn(),
+            Some(StaticAbilityId::LoyaltyAbilitiesTwiceEachTurn) => {
+                Self::loyalty_abilities_twice_each_turn()
+            }
             Some(StaticAbilityId::EquipAbilitiesAnyTime) => Self::equip_abilities_any_time(),
             Some(StaticAbilityId::ExhaustAbilitiesAsThoughUnactivatedThisTurn) => {
                 Self::exhaust_abilities_as_though_unactivated_this_turn()
@@ -158,6 +197,37 @@ impl StaticAbility {
             }
             Some(StaticAbilityId::VoteAdditionalVoteWhileVoting) => {
                 Self::vote_additional_vote_while_voting()
+            }
+            Some(StaticAbilityId::OpponentsFaceVillainousChoiceAdditionalTime) => {
+                Self::opponents_face_villainous_choice_additional_time()
+            }
+            Some(StaticAbilityId::LoseLifeForUnspentMana) => Self::lose_life_for_unspent_mana(),
+            Some(StaticAbilityId::MustAttackDraftNotedPlayers) => {
+                Self::must_attack_draft_noted_players(label)
+            }
+            Some(StaticAbilityId::MayDiscardSourceAnyTimeYouCouldCastInstant) => {
+                Self::may_discard_source_any_time_you_could_cast_instant()
+            }
+            Some(StaticAbilityId::MayPlotNonlandCardsFromTopOfLibrary) => {
+                Self::may_plot_nonland_cards_from_top_of_library()
+            }
+            Some(StaticAbilityId::SourceLoyaltyAbilitiesTwiceEachTurn) => {
+                Self::source_loyalty_abilities_twice_each_turn()
+            }
+            Some(StaticAbilityId::PowerUpAbilitiesAdditionalTime) => {
+                Self::power_up_abilities_additional_time()
+            }
+            Some(StaticAbilityId::OpponentsAttackYouWithAtLeastOneCreature) => {
+                Self::opponents_attack_you_with_at_least_one_creature()
+            }
+            Some(StaticAbilityId::OpponentsAttackWithAtLeastOneCreature) => {
+                Self::opponents_attack_with_at_least_one_creature()
+            }
+            Some(StaticAbilityId::CantBeBlockedUnlessAllDefendingCreaturesBlock) => {
+                Self::cant_be_blocked_unless_all_defending_creatures_block()
+            }
+            Some(StaticAbilityId::MaySkipTurnWhileSourceTappedThenUntap) => {
+                Self::may_skip_turn_while_source_tapped_then_untap()
             }
             Some(StaticAbilityId::CantAttackUnlessControllerCastCreatureSpellThisTurn) => {
                 Self::cant_attack_unless_controller_cast_creature_spell_this_turn()
@@ -308,6 +378,12 @@ impl StaticAbility {
             Some(StaticAbilityId::ChooseColorAsBecomesAttached) => {
                 Self::choose_color_as_becomes_attached(label)
             }
+            Some(StaticAbilityId::ChooseCreatureCardNameAndTypeAsBecomesAttached) => {
+                Self::choose_creature_card_name_and_type_as_becomes_attached(label)
+            }
+            Some(StaticAbilityId::AttachedHasSourceChosenNameAndCreatureType) => {
+                Self::attached_has_source_chosen_name_and_creature_type()
+            }
             Some(StaticAbilityId::DiscardHandAsEnters) => Self::discard_hand_as_enters(label),
             Some(StaticAbilityId::RevealFromHandAsEnters) => Self::reveal_from_hand_as_enters(
                 crate::target::ObjectFilter::default(),
@@ -324,6 +400,9 @@ impl StaticAbility {
             }
             Some(StaticAbilityId::EffectDiscardToLibraryReplacement) => {
                 Self::effect_discard_to_library_replacement()
+            }
+            Some(StaticAbilityId::OpponentEffectDiscardToLibraryReplacement) => {
+                Self::opponent_effect_discard_to_library_replacement()
             }
             Some(StaticAbilityId::OpponentEffectDiscardThisToBattlefieldReplacement) => {
                 Self::opponent_effect_discard_this_to_battlefield_replacement()

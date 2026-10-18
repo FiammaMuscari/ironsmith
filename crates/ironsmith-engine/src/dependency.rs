@@ -228,6 +228,8 @@ fn filter_supports_chars_class_dedup(filter: &ObjectFilter) -> bool {
         && filter.no_shared_creature_types_with.is_empty()
         && filter.characteristic_relations.is_empty()
         && !filter.ring_bearer
+        && !filter.prepared
+        && filter.sector.is_none()
         && !filter.is_commander
         && !filter.noncommander
         && !filter.has_tap_activated_ability
@@ -797,7 +799,10 @@ fn evaluate_value(
             }
             ValueEval::Scalar(total)
         }
-        Value::PowerOf(target) | Value::BasePowerOf(target) | Value::ToughnessOf(target) => {
+        Value::PowerOf(target)
+        | Value::BasePowerOf(target)
+        | Value::StationContributionOf(target)
+        | Value::ToughnessOf(target) => {
             use crate::target::ChooseSpec;
             let mut values = Vec::new();
             match target.as_ref() {
@@ -808,6 +813,9 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::BasePowerOf(_) => chars.base_power,
+                            // A layer value never resolves a station
+                            // activation; read the default power axis.
+                            Value::StationContributionOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
                             _ => {
                                 unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value")
@@ -823,6 +831,9 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::BasePowerOf(_) => chars.base_power,
+                            // A layer value never resolves a station
+                            // activation; read the default power axis.
+                            Value::StationContributionOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
                             _ => {
                                 unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value")
@@ -850,6 +861,9 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::BasePowerOf(_) => chars.base_power,
+                            // A layer value never resolves a station
+                            // activation; read the default power axis.
+                            Value::StationContributionOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
                             _ => {
                                 unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value")
@@ -1046,7 +1060,7 @@ fn object_matches_filter_with_chars(
             | PlayerFilter::HasMoreLifeThanYou { .. }
             | PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
             | PlayerFilter::ControlsMost { .. }
-            | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }
+            | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. } | PlayerFilter::MostLifeTiedAmong { .. } | PlayerFilter::QuantityGreaterThanPlayer { .. }
             | PlayerFilter::OpponentOf(_)
             | PlayerFilter::PlayerToLeftOf(_)
             | PlayerFilter::MaxSpeed { .. }
@@ -1106,6 +1120,9 @@ fn object_matches_filter_with_chars(
     if filter.foretold && !game.is_foretold(object.id) {
         return false;
     }
+    if filter.warped && !game.is_warped(object.id) {
+        return false;
+    }
 
     // Read tapped state only for a filter that asks (see continuous.rs).
     if (filter.tapped || filter.untapped) && {
@@ -1142,6 +1159,9 @@ fn object_matches_filter_with_chars(
         }
     }
 
+    if let Some(budget) = &filter.mana_cost_payable_with
+        && object.mana_cost.as_deref().is_none_or(|cost| !budget.can_pay(cost))
+    { return false; }
     if let Some(required_cost) = &filter.exact_mana_cost
         && object.mana_cost.as_deref() != Some(required_cost)
     {
@@ -1577,7 +1597,10 @@ fn value_references_pt(value: &Value) -> bool {
         Value::SurfaceHinted { value, .. } => value_references_pt(value),
         // These directly reference P/T of objects
         Value::SourcePower | Value::SourceToughness => true,
-        Value::PowerOf(_) | Value::BasePowerOf(_) | Value::ToughnessOf(_) => true,
+        Value::PowerOf(_)
+        | Value::BasePowerOf(_)
+        | Value::StationContributionOf(_)
+        | Value::ToughnessOf(_) => true,
         Value::TotalPower(_)
         | Value::TotalToughness(_)
         | Value::GreatestPower(_)
@@ -1659,13 +1682,16 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::PlayersWhoControlAtLeastMoreThanYou { .. }
         | Value::PartySize(_)
         | Value::Devotion { .. }
+        | Value::DevotionToColors { .. }
         | Value::DevotionToChosenColor(_)
         | Value::ManaSpentToCastThisSpell
         | Value::ManaSymbolSpentToCastThisSpell { .. }
         | Value::ManaFromSourceSpentToCastThisSpell { .. }
         | Value::ManaSpentToCast(_)
         | Value::KicksPaidOf(_)
+        | Value::ModeSelectionsOf(_)
         | Value::ManaSpentToCastTriggeringObject
+        | Value::ColorsOfManaSpentToCastTriggeringObject
         | Value::CasterManaSpentToCastTriggeringObject
         | Value::ManaSpentOnX(_)
         | Value::UnspentMana(_)
@@ -1673,8 +1699,14 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::ManaValueOf(_)
         | Value::ColorsOf(_)
         | Value::ChosenColorsOf(_)
+        | Value::NotedCreatureTypeCount(_)
+        | Value::TypeCountOf(_)
+        | Value::TotalToxicValueOf(_)
         | Value::ManaSymbolsInManaCostOf { .. }
         | Value::NameStickerCharacterCountOnSource { .. }
+        | Value::StickersOnSource { .. }
+        | Value::StickerCharacteristicTotal { .. }
+        | Value::NameStickersOnSourceStartingWithChosenLetter { .. }
         | Value::LifeTotal(_)
         | Value::MaximumLifeTotal(_)
         | Value::CountPlayersBelowHalfStartingLifeTotal(_)
@@ -1682,6 +1714,11 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::LifeTotalAsTurnBegan(_)
         | Value::LifeTotalDifference(_)
         | Value::SourceChosenNumber { .. } | Value::LastNotedLifeTotal
+        | Value::PlayersChosenNumberExtreme { .. }
+        | Value::SpellsOrAbilitiesThatMadePilesOrGuessesThisTurn
+        | Value::GreatestEqualStoredDieResultsOnSource
+        | Value::GreatestManaValueExiledThisTurnSinceSourceEntered
+        | Value::IteratedPlayerChosenNumber
         | Value::Speed(_)
         | Value::StartingLifeTotal(_)
         | Value::HalfLifeTotalRoundedUp(_)
@@ -1701,6 +1738,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::MaxDiceRolledThisTurn(_)
         | Value::LandsEnteredBattlefieldThisTurn(_)
         | Value::MaxCardsInHand(_)
+        | Value::MaxSpeed(_)
         | Value::CardsInGraveyard(_)
         | Value::SpellsCastThisTurn(_)
         | Value::SpellsCastBeforeThisTurn(_)
@@ -1730,6 +1768,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::MagicGamesLostToOpponentsSinceLastWin
         | Value::DraftNotedHighestNumber { .. }
         | Value::DraftRemovedCardCount { .. }
+        | Value::DraftCorrectGuessCount { .. }
         | Value::TaggedCount
         | Value::EventValue(_)
         | Value::EventValueOffset(_, _)
@@ -2057,7 +2096,9 @@ pub(crate) fn condition_could_be_affected_by(
         pt_affected || modification_can_change_abilities_or_matching_characteristics(modification);
 
     match condition {
-        C::Not(inner) => condition_could_be_affected_by(inner, modification),
+        C::Not(inner) | C::TriggerEventOnly(inner) => {
+            condition_could_be_affected_by(inner, modification)
+        }
         C::And(left, right) | C::Or(left, right) => {
             condition_could_be_affected_by(left, modification)
                 || condition_could_be_affected_by(right, modification)
@@ -2091,6 +2132,10 @@ pub(crate) fn condition_could_be_affected_by(
         | C::SourceInGraveyardWithCardsAbove { filter, .. } => filters_affected(&[filter]),
         C::PlayerHasAtLeastWithDifferentPowers { filter, .. } => {
             pt_affected || filters_affected(&[filter])
+        }
+        // Reads every matching object's colors, not only the filter's terms.
+        C::SourceChosenColorMostCommonAmong { filter, .. } => {
+            any_characteristic_affected || filters_affected(&[filter])
         }
         C::CreatureDealtDamageBySourceDiedThisTurn { victim, .. } => filters_affected(&[victim]),
         C::AttachmentCount { attachment, .. } => filters_affected(&[attachment]),
@@ -2136,8 +2181,10 @@ pub(crate) fn condition_could_be_affected_by(
         | C::PlayerHasMoreLifeThanYou { .. }
         | C::PlayerHasNoOpponentWithMoreLifeThan { .. }
         | C::PlayerHasMoreLifeThanEachOtherPlayer { .. }
+        | C::PlayerHasMoreLifeThanAnotherOpponent { .. }
         | C::PlayerIsMonarch { .. }
         | C::PlayerWasMonarchAtTurnStart { .. }
+        | C::PlayerIsYou { .. }
         | C::PlayerHasInitiative { .. }
         | C::PlayerHasCitysBlessing { .. }
         | C::PlayerHasEnduringStory { .. }
@@ -2172,6 +2219,7 @@ pub(crate) fn condition_could_be_affected_by(
         | C::AttackedWithTotalPowerAtLeastThisCombat(_)
         | C::OpponentLostLifeThisTurn
         | C::AnyPlayerLostLifeThisTurnOrMore { .. }
+        | C::AnyPlayerWasDealtCombatDamageThisTurnOrMore { .. }
         | C::OpponentWasDealtDamageThisTurn
         | C::OpponentWasDealtDamageThisTurnOrMore(_)
         | C::PermanentLeftBattlefieldThisTurn
@@ -2194,6 +2242,7 @@ pub(crate) fn condition_could_be_affected_by(
         | C::TargetIsAttacking
         | C::TargetIsBlocked
         | C::TargetWasKicked
+        | C::TargetPaidLabel(_)
         | C::ThisSpellWasKicked
         | C::ThisSpellPaidLabel(_)
         | C::TargetSpellCastOrderThisTurn(_)
@@ -2205,9 +2254,14 @@ pub(crate) fn condition_could_be_affected_by(
         | C::TriggeringSpellWasKicked
         | C::ItIsNight
         | C::FirstCombatPhaseOfTurn
+        | C::FirstEndStepOfTurn
+        | C::FirstUpkeepStepOfTurn
+        | C::SecondMainPhaseOfTurn
         | C::SourceControllersMainPhase
         | C::SourceControllersCombatPhase
         | C::SourceControllersEndStep
+        | C::SourceControllersUntapStep
+        | C::SourceStartedTurnUntapped
         | C::OpponentsEndStep
         | C::SourceIsTapped
         | C::SourceIsSaddled
@@ -2216,6 +2270,7 @@ pub(crate) fn condition_could_be_affected_by(
         | C::SourceIsPrepared
         | C::SourceIsMonstrous
         | C::SourceHasDealtDamageSinceEntered
+        | C::SourceHasDealtCombatDamageSinceEntered
         | C::SourceIsRenowned
         | C::SourceIsFaceDown
         | C::SourceHasNoCounter(_)
@@ -2227,6 +2282,7 @@ pub(crate) fn condition_could_be_affected_by(
         | C::TriggeringSpellSnowManaOfAnySpellColorSpentToCast
         | C::SameColorManaSpentToCastThisSpellAtLeast(_)
         | C::ColorsOfManaSpentToCastThisSpellOrMore(_)
+        | C::ColorsOfManaSpentToActivateThisAbility { .. }
         | C::YouControlCommander
         | C::TaggedObjectIsTopOfLibrary { .. }
         | C::StableObjectIsTopOfLibrary { .. }
@@ -2247,6 +2303,11 @@ pub(crate) fn condition_could_be_affected_by(
         | C::TriggeringObjectWasEnchanted
         | C::TriggeringEventCausedBy { .. }
         | C::TriggeringObjectBecameTappedFirstTimeThisTurn
+        | C::TriggeringObjectTappedForAttack
+        | C::TriggeringObjectWasSacrificed
+        | C::TriggeringKeywordActionIs(_)
+        | C::YouCycledCardNamedThisGameAtLeast { .. }
+        | C::YouCastSpellNamedThisGameAtLeast { .. }
         | C::TriggeringObjectHadCountersPutFirstTimeThisTurn
         | C::TriggeringObjectHadToAttackThisCombat
         | C::YouWonTriggeringClash
@@ -2278,6 +2339,7 @@ pub(crate) fn condition_could_be_affected_by(
         | C::SourceCameUnderYourControlSinceYourLastUpkeep
         | C::SourceAttackedOrBlockedThisTurn
         | C::SourceAttackedOrBlockedThisCombat
+        | C::SourceAttackedThisCombat
         | C::SourceIsUntapped
         | C::SourceIsAttacking
         | C::SourceIsBlocking
@@ -2329,7 +2391,7 @@ fn anthem_count_could_be_affected_by(
 fn value_could_be_affected_by(value: &Value, modification: &Modification) -> bool {
     let pt_affected = modification.layer() == Layer::PowerToughness;
     match value {
-        Value::TaggedSnapshotCount { .. } => false,
+        Value::TaggedSnapshotCount { .. } | Value::NotedCreatureTypeCount(_) => false,
         Value::AnnouncedTargetTotal(_) => true,
         Value::SurfaceHinted { value, .. } => value_could_be_affected_by(value, modification),
         Value::Fixed(_)
@@ -2345,6 +2407,11 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
         | Value::LifeTotalAsTurnBegan(_)
         | Value::LifeTotalDifference(_)
         | Value::SourceChosenNumber { .. } | Value::LastNotedLifeTotal
+        | Value::PlayersChosenNumberExtreme { .. }
+        | Value::SpellsOrAbilitiesThatMadePilesOrGuessesThisTurn
+        | Value::GreatestEqualStoredDieResultsOnSource
+        | Value::GreatestManaValueExiledThisTurnSinceSourceEntered
+        | Value::IteratedPlayerChosenNumber
         | Value::Speed(_)
         | Value::StartingLifeTotal(_)
         | Value::HalfLifeTotalRoundedUp(_)
@@ -2364,6 +2431,7 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
         | Value::MaxDiceRolledThisTurn(_)
         | Value::LandsEnteredBattlefieldThisTurn(_)
         | Value::MaxCardsInHand(_)
+        | Value::MaxSpeed(_)
         | Value::CardsInGraveyard(_)
         | Value::SpellsCastThisTurn(_)
         | Value::SpellsCastBeforeThisTurn(_)
@@ -2385,7 +2453,9 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
         | Value::ManaFromSourceSpentToCastThisSpell { .. }
         | Value::ManaSpentToCast(_)
         | Value::KicksPaidOf(_)
+        | Value::ModeSelectionsOf(_)
         | Value::ManaSpentToCastTriggeringObject
+        | Value::ColorsOfManaSpentToCastTriggeringObject
         | Value::CasterManaSpentToCastTriggeringObject
         | Value::ManaSpentOnX(_)
         | Value::UnspentMana(_)
@@ -2405,6 +2475,7 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
         | Value::MagicGamesLostToOpponentsSinceLastWin
         | Value::DraftNotedHighestNumber { .. }
         | Value::DraftRemovedCardCount { .. }
+        | Value::DraftCorrectGuessCount { .. }
         | Value::TaggedCount
         | Value::TurnHistoryCount(_)
         | Value::EventValue(_)
@@ -2437,6 +2508,7 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
                     Value::GreatestSharedNameCount(_) | Value::DistinctNames(_)
                 )
         }
+        Value::StickerCharacteristicTotal { filter, .. } => modification_can_affect_filter(modification, filter),
         Value::TotalPower(filter)
         | Value::TotalToughness(filter)
         | Value::GreatestPower(filter)
@@ -2467,19 +2539,32 @@ fn value_could_be_affected_by(value: &Value, modification: &Modification) -> boo
             matches!(modification.layer(), Layer::Color | Layer::Copy)
                 || modification_can_affect_filter(modification, filter)
         }
-        Value::PowerOf(_) | Value::BasePowerOf(_) | Value::ToughnessOf(_) => pt_affected,
+        Value::PowerOf(_)
+        | Value::BasePowerOf(_)
+        | Value::StationContributionOf(_)
+        | Value::ToughnessOf(_) => pt_affected,
         Value::ManaValueOf(_) | Value::ManaSymbolsInManaCostOf { .. } => {
             matches!(modification.layer(), Layer::Copy)
         }
         Value::ColorsOf(_) | Value::ChosenColorsOf(_) => {
             matches!(modification.layer(), Layer::Color | Layer::Copy)
         }
-        Value::Devotion { .. } | Value::DevotionToChosenColor(_) => {
+        Value::TypeCountOf(_) => {
             matches!(modification.layer(), Layer::Copy)
                 || modification_can_change_type_characteristics(modification)
         }
+        Value::TotalToxicValueOf(_) => {
+            matches!(modification.layer(), Layer::Copy | Layer::Ability)
+        }
+        Value::Devotion { .. } | Value::DevotionToColors { .. } | Value::DevotionToChosenColor(_) => {
+            matches!(modification.layer(), Layer::Copy)
+                || matches!(modification.layer(), Layer::Control | Layer::Ability)
+                || modification_can_change_type_characteristics(modification)
+        }
         Value::PartySize(_) => modification_can_change_type_characteristics(modification),
-        Value::NameStickerCharacterCountOnSource { .. } => {
+        Value::NameStickerCharacterCountOnSource { .. }
+        | Value::StickersOnSource { .. }
+        | Value::NameStickersOnSourceStartingWithChosenLetter { .. } => {
             matches!(
                 modification,
                 Modification::SetName(_) | Modification::InsertNameWords { .. }
@@ -2677,6 +2762,7 @@ fn modification_can_affect_filter(modification: &Modification, filter: &ObjectFi
                         constraint.relation,
                         crate::filter::TaggedOpbjectRelation::SameNameAsTagged
                             | crate::filter::TaggedOpbjectRelation::DifferentNameFromTagged
+                            | crate::filter::TaggedOpbjectRelation::SameNameAsTaggedChosenByOwner
                     ))
                     || filter.characteristic_relations.iter().any(|relation| relation.characteristics.contains(&crate::ObjectCharacteristic::Name))
             }

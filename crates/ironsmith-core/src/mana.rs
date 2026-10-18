@@ -2,6 +2,8 @@ use crate::tag::TagKeyWalk;
 
 use crate::color::{Color, ColorSet};
 mod x_payment;
+mod payment_budget;
+pub use payment_budget::ManaPaymentBudget;
 mod waterbend;
 pub use waterbend::{WaterbendCapacity, WaterbendObligation, WaterbendPaymentScope};
 pub use x_payment::{XPaymentScope, XManaAllocation, ActualManaAllocation};
@@ -80,6 +82,10 @@ pub enum ManaSpendingRestriction {
     /// Only the actual mana allocated to the generic X portion is constrained.
     /// Appended to preserve existing typed-artifact enum discriminants.
     OnX { colors: ColorSet, maximum_per_color: Option<u32> },
+    /// "You can't spend mana to cast this spell." (Hogaak, Arisen
+    /// Necropolis): no actual mana unit may be spent on this cost, so every
+    /// pip is paid by non-mana means such as convoke or delve (CR 601.2h).
+    NoMana,
 }
 
 impl ManaProducerFilter {
@@ -112,6 +118,7 @@ impl ManaSpendingRestriction {
                 }
                 text
             },
+            Self::NoMana => format!("You can't spend mana to cast {scope}"),
         }
     }
 }

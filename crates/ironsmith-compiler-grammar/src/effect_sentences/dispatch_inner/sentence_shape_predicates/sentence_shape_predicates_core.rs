@@ -70,9 +70,62 @@ pub fn parse_effect_sentence_lexed(
 fn parse_effect_sentence_lexed_uncached(
     tokens: &[OwnedLexToken],
 ) -> Result<Vec<EffectAst>, CardTextError> {
+    // "Then for each card you put on top of your library, you draw a card
+    // and you lose 3 life." (Starving Revenant): the whole coordinated body
+    // repeats per card the preceding surveil kept on top. The and-split
+    // composition would otherwise read "for each card you" as a subject.
+    if tokens
+        .iter()
+        .take(2)
+        .any(|token| token.is_word("for"))
+        && let Some(effects) =
+            crate::effect_sentences::subject_verb_primitives::parse_sentence_for_each_card_kept_on_top_of_library(
+                crate::effect_sentences::SubjectVerbPrimitiveClause::new(tokens),
+            )?
+    {
+        return Ok(effects);
+    }
+    // A quantified collection and whole graveyards are operands of the
+    // same exile instruction, not independent carried-verb clauses.
+    if tokens.first().is_some_and(|token| token.is_word("exile"))
+        && let Some(effect) = crate::effect_sentences::zone_handlers::parse_exile_all_and_all_graveyards(&tokens[1..], None, false, false)?
+    {
+        return Ok(vec![effect]);
+    }
+    // A coordinated choice sentence ("choose a nonland card name and a number
+    // greater than 0") exports one result producer per choice; the generic
+    // choose-objects reading would swallow it as a single object choice.
+    if tokens.first().is_some_and(|token| token.is_word("choose"))
+        && let Some(effects) = crate::effect_sentences::bounded_number_choice::parse_sentence(tokens)?
+        && effects.len() > 1
+    {
+        return Ok(effects);
+    }
     // The second possessive axis belongs to the first subject; ordinary
     // coordination must not bind it to the revealed card used as the value.
     if tokens.first().is_some_and(|token| token.is_word("change")) {
+        // "change Halfdane's base power and toughness to the power and
+        // toughness of target creature other than Halfdane until the end of
+        // your next upkeep": the imperative form of "<subject>'s base power
+        // and toughness become <quantity>", whose become reading owns
+        // dynamic target quantities and the next-upkeep-end duration.
+        if let Some(to_idx) = tokens.windows(5).position(|words| {
+            words[0].is_word("base")
+                && words[1].is_word("power")
+                && words[2].is_word("and")
+                && words[3].is_word("toughness")
+                && words[4].is_word("to")
+        }).map(|base| base + 4)
+            && to_idx > 4
+            && crate::lexer::token_word_refs(&tokens[to_idx + 1..])
+                .starts_with(&["the", "power", "and", "toughness", "of"])
+            && let Ok(effect) = crate::effect_sentences::clause_dispatch::parse_become_clause(
+                &tokens[1..to_idx],
+                &tokens[to_idx + 1..],
+            )
+        {
+            return Ok(vec![effect]);
+        }
         if let Some(effect) = crate::effect_sentences::for_each_helpers::parse_has_base_power_toughness_clause(tokens)? {
             return Ok(vec![effect]);
         }
@@ -88,6 +141,35 @@ fn parse_effect_sentence_lexed_uncached(
         return Ok(vec![effect]);
     }
     if let Some(effects) = crate::effect_sentences::bundle_rules::parse_put_from_outside_game(tokens)? {
+        return Ok(effects);
+    }
+    // "Target opponent reveals the top three cards of their library, may put
+    // a creature card from among them onto the battlefield, then puts the
+    // rest into their graveyard." The subject player owns every member;
+    // generic coordination would hand the choice to the controller.
+    // "For as long as you control Hama, you may cast the exiled card during
+    // your turn by waterbending {X} rather than paying its mana cost, where X
+    // is its mana value." The leading duration, turn limit, price, and X
+    // binding all belong to one lasting permission.
+    if tokens.first().is_some_and(|token| token.is_word("for"))
+        && let Some(effect) =
+            crate::permission_helpers::effect_cast_prices::parse_control_source_priced_permission(tokens)?
+    {
+        return Ok(vec![effect]);
+    }
+    // "For as long as you control Kotose, you may play one of the exiled
+    // cards, and you may spend mana as though ..." is a lasting permission;
+    // the generic leading-duration reader would play the card now.
+    if tokens.first().is_some_and(|token| token.is_word("for"))
+        && let Some(effect) =
+            crate::permission_helpers::effect_cast_prices::parse_control_source_leading_permission(tokens)?
+    {
+        return Ok(vec![effect]);
+    }
+    if tokens.windows(2).any(|pair| pair[0].is_word("may") && pair[1].is_word("put"))
+        && let Some(effects) =
+            crate::effect_sentences::pair_procedure::reveal_put_rest_do_same::read_single_sentence(tokens)?
+    {
         return Ok(effects);
     }
     if let Some(effects) = crate::effect_sentences::local_self_replacement::read(tokens)? {
@@ -816,7 +898,10 @@ pub(crate) fn parse_effect_sentence_with_where_x_lexed(
             }
             TargetAst::WithCountValue(inner, _, value) => {
                 bind_dynamic_target_count(inner, replacement);
-                if matches!(value, Value::X) {
+                // The dynamic target-count prefix reads a plain "X target"
+                // as `XTimes(1)` (Mogis's Marauder, Agility Bobblehead): it is
+                // the same unbound X the where-X clause defines.
+                if matches!(value, Value::X | Value::XTimes(1)) {
                     *value = replacement.clone();
                 }
             }
@@ -1065,6 +1150,9 @@ pub(crate) fn parse_effect_sentence_with_where_x_lexed(
     let full_where_is_count_value = !where_shape.comma_tail_has_effect_clause
         && !has_semicolon_tail
         && (turn_history_where.is_some()
+            || super::super::dispatch_entry::parse_exact_where_x_value_expression(
+                where_shape.where_tokens,
+            ).is_some()
             || crate::keyword_static::parse_where_x_is_sum_of_number_of_filter_values(
                 where_shape.where_tokens,
             )
@@ -1346,10 +1434,47 @@ pub(crate) fn parse_effect_sentence_with_where_x_lexed(
         parsed
     };
     rebind_plural_create_followup_damage_source(&mut effects);
-    replace_unbound_x_in_effects_anywhere(&mut effects, &where_value, &clause_display)?;
-    for effect in &mut effects {
-        replace_search_filter_x(effect, &where_value);
-        bind_dynamic_target_counts(effect, &where_value);
+    // Coordinated scalar actions share one resolution-time X. Inlining the
+    // value into each action would recompute it after a replacement modifies
+    // the state. These actions introduce no object tags or target counts
+    // that must be established before binding.
+    fn scalar_x_action_count(effect: &EffectAst) -> Option<usize> {
+        use crate::cards::builders::LifeResourceActionAst;
+        match effect {
+            EffectAst::Sequence { effects } => effects.iter().try_fold(0, |count, effect| {
+                scalar_x_action_count(effect).map(|next| count + next)
+            }),
+            EffectAst::Coordination(coordination)
+                if coordination.kind != crate::model::CoordinationKindAst::Disjunction
+                    && coordination.boundaries.iter().all(|boundary| {
+                        boundary.ordering != crate::model::EffectOrderingAst::Alternative
+                    }) => coordination.effects().try_fold(0, |count, effect| {
+                        scalar_x_action_count(effect).map(|next| count + next)
+                    }),
+            EffectAst::SubjectVerb(subject_verb) => {
+                let value = match &subject_verb.action {
+                    SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count }) => count,
+                    SubjectVerbActionAst::LifeResources(LifeResourceActionAst::LoseLife { amount })
+                    | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::GainLife { amount }) => amount,
+                    _ => return None,
+                };
+                crate::util::value_contains_unbound_x(value).then_some(1)
+            }
+            _ => None,
+        }
+    }
+    let shared_scalar_x = !typed_where_references_target
+        && effects.iter().try_fold(0, |count, effect| {
+            scalar_x_action_count(effect).map(|next| count + next)
+        }).is_some_and(|count| count > 1);
+    if shared_scalar_x {
+        effects = vec![EffectAst::BindX { value: where_value, effects }];
+    } else {
+        replace_unbound_x_in_effects_anywhere(&mut effects, &where_value, &clause_display)?;
+        for effect in &mut effects {
+            replace_search_filter_x(effect, &where_value);
+            bind_dynamic_target_counts(effect, &where_value);
+        }
     }
     if !prelude_effects.is_empty() {
         prelude_effects.append(&mut effects);

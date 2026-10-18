@@ -9,6 +9,7 @@ mod register_future_zone_replacement;
 mod register_mana_replacement;
 mod register_mana_rewrite;
 mod register_mana_spend_permission;
+mod register_next_batch_enter_as_copy;
 mod register_next_batch_enter_with_counters;
 mod register_zone_replacement;
 mod move_replaced_object_to_library;
@@ -24,6 +25,7 @@ pub use register_future_zone_replacement::RegisterFutureZoneReplacementEffect;
 pub use register_mana_replacement::RegisterManaReplacementEffect;
 pub use register_mana_rewrite::RegisterManaRewriteEffect;
 pub use register_mana_spend_permission::RegisterManaSpendPermissionEffect;
+pub use register_next_batch_enter_as_copy::RegisterNextBatchEnterAsCopyEffect;
 pub use register_next_batch_enter_with_counters::RegisterNextBatchEnterWithCountersEffect;
 pub use register_zone_replacement::RegisterZoneReplacementEffect;
 
@@ -40,8 +42,8 @@ pub(crate) use execute_payload::{
     commit_replacement_original_with_outputs,
 };
 pub(crate) use execute_payload::{
-    execute_deferred_replacement_programs, execute_event_expansion,
-    execute_event_expansion_with_targets, execute_replacement_payload,
+    execute_deferred_replacement_programs,
+     execute_replacement_payload,
     execute_replacement_payload_with_object_tags, execute_replacement_payload_with_snapshot,
 };
 
@@ -49,17 +51,23 @@ pub(crate) use execute_payload::{
     CompletedReplacementPrograms, ReplacementProgramBindings,
     complete_bound_replacement_programs_with_outputs, complete_deferred_replacement_programs,
     complete_deferred_replacement_programs_with_bindings,
-    complete_deferred_replacement_programs_with_targets,
+
     complete_replacement_programs_with_original_outputs,
-    execute_deferred_replacement_programs_with_bindings, execute_event_expansion_with_outputs,
+     execute_event_expansion_with_outputs,
     execute_replacement_original_payload_with_outputs, execute_replacement_payload_with_outputs,
     project_replacement_original_outputs,
 };
 
 mod register_damage_addition;
 mod register_damage_multiplier;
+mod register_damage_counter_replacement;
+mod register_token_creation_multiplier;
+pub use register_token_creation_multiplier::RegisterTokenCreationMultiplierEffect;
 pub use register_damage_addition::RegisterDamageAdditionEffect;
 pub use register_damage_multiplier::RegisterDamageMultiplierEffect;
+pub use register_damage_counter_replacement::{
+    RegisterDamageCounterReplacementEffect, RegisteredReplacementExpiry,
+};
 
 mod draw_continuation;
 
@@ -77,12 +85,9 @@ pub(crate) use draw_continuation::prepare_draw_continuation_with_bindings_and_ou
 
 pub(crate) use execute_payload::with_replacement_child;
 
-pub(crate) use draw_continuation::{
-    prepare_scoped_draw_continuation, prepare_scoped_draw_continuation_with_outputs,
-};
 
 mod zone_draw_tail;
-pub(crate) use zone_draw_tail::{prepare_zone_draw_tail, prepare_zone_draw_tail_with_outputs};
+pub(crate) use zone_draw_tail::{prepare_zone_draw_tail_with_outputs};
 
 mod deferred_programs;
 pub(crate) use deferred_programs::defer_replacement_programs_with_outputs;

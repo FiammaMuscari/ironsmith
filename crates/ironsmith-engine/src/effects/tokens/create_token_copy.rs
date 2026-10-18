@@ -6,7 +6,7 @@ use crate::combat_state::AttackTarget;
 use crate::effects::composition::scoped_choice::{select_typed_option, SingleChoicePolicy};
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_for_effect, resolve_player_filter, resolve_value};
+use crate::effects::helpers::{ resolve_player_filter, resolve_value};
 use crate::effects::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
@@ -734,6 +734,20 @@ fn commit_token_copy_original(
         .or(proposal.token_preview.take())
         .ok_or_else(|| ExecutionError::InternalError("copy original lost its template".into()))?;
     let count = replacement.count as usize;
+    // CR 122.6: counters a token copy "enters with" are part of its entry
+    // event ("The token enters with half that many +1/+1 counters on it").
+    let mut initial_counters = Vec::with_capacity(effect.entry_counters.len());
+    for counter in &effect.entry_counters {
+        if counter.condition.is_some() || counter.object_filter.is_some() {
+            return Err(ExecutionError::InternalError(
+                "conditional token entry counters are not a token-creation instruction".into(),
+            ));
+        }
+        let amount = resolve_value(game, &counter.amount, ctx)?.max(0) as u32;
+        if amount > 0 {
+            initial_counters.push((counter.counter_type, amount));
+        }
+    }
     // Attack choices were retained during preparation, so entry cannot prompt
     // again or use a different destination after a sibling's original mutation.
     let entry_options = TokenEntryOptions::default();
@@ -756,8 +770,8 @@ fn commit_token_copy_original(
             ctx.cause.clone(),
             &mut ctx.decision_maker,
             effect.enters_tapped,
-            true,
-            Vec::new(),
+            !effect.suppress_aura_attachment_choice,
+            initial_counters.clone(),
         )?;
         if ctx.decision_maker.awaiting_choice() {
             return Ok(crate::effects::SimultaneousEffectCommit::finished(
@@ -823,6 +837,7 @@ fn commit_token_copy_original(
         &mut actual_creation,
         &super::lifecycle::AdditionalTokenInstructions {
             enters_tapped: effect.enters_tapped,
+            suppress_aura_attachment_choice: effect.suppress_aura_attachment_choice,
             entry: entry_options,
             prepared_attack_targets: (effect.enters_attacking
                 || proposal.configured_attack_player.is_some())
@@ -1093,7 +1108,7 @@ mod tests {
             alice,
             Zone::Battlefield,
         );
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let mut effect = CreateTokenCopyEffect::one(ChooseSpec::SpecificObject(original))
             .sacrifice_at_next_end_step(true);
         effect.must_attack_player_this_turn = Some(PlayerFilter::Specific(bob));
@@ -1339,7 +1354,7 @@ mod tests {
             ))
             .build();
         game.create_object_from_definition(&doubler, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice)
             .with_targets(vec![ResolvedTarget::Object(creature_id)]);
@@ -1370,7 +1385,7 @@ mod tests {
         );
         let source = game.new_object_id();
         game.create_object_from_definition(&xorn_definition(), alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice)
             .with_targets(vec![ResolvedTarget::Object(treasure_id)]);
@@ -1421,7 +1436,7 @@ mod tests {
             game.create_object_from_definition(&clue_token_definition(), alice, Zone::Battlefield);
         let source = game.new_object_id();
         game.create_object_from_definition(&xorn_definition(), alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice)
             .with_targets(vec![ResolvedTarget::Object(clue_id)]);
@@ -1453,7 +1468,7 @@ mod tests {
         );
         let source = game.new_object_id();
         game.create_object_from_definition(&xorn_definition(), alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice)
             .with_targets(vec![ResolvedTarget::Object(treasure_id)]);

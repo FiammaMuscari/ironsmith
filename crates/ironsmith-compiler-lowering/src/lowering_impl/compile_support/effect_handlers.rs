@@ -13,6 +13,7 @@ pub fn compile_delayed_trigger_spec(
     trigger: &TriggerSpec,
 ) -> Result<ironsmith_core::DelayedTriggerSpec, CardTextError> {
     match trigger {
+        TriggerSpec::SpellCastThroughPreviousPermission => Ok(ironsmith_core::DelayedTriggerSpec::SpellCastThroughPreviousPermission),
         TriggerSpec::ConditionQualified {
             trigger,
             condition,
@@ -736,6 +737,10 @@ fn apply_delayed_trigger_duration(
         Until::EndOfCombat => Ok(delayed.until_end_of_combat()),
         Until::YourNextTurn => Ok(delayed.until_controller_next_turn()),
         Until::YourNextTurnEnd => Ok(delayed.until_controller_next_turn_end()),
+        Until::SourceUntaps => Ok(delayed.until_source_untaps()),
+        Until::PlayersNextTurnEnd { player } => Ok(delayed
+            .until_controller_next_turn_end()
+            .with_duration_player(player.clone())),
         other => Err(CardTextError::ParseError(format!(
             "unsupported delayed-trigger duration: {other:?}"
         ))),
@@ -1292,6 +1297,27 @@ pub(super) fn try_compile_timing_and_control_effect(
             ));
             (vec![effect], choices)
         }
+        EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextDeclareAttackersStep {
+            player,
+            effects,
+            upcoming,
+        }) => {
+            let (delayed_effects, choices) =
+                compile_delayed_effects_preserving_outer_context(effects, ctx)?;
+            let delayed = crate::effects::ScheduleDelayedTriggerEffect::new(
+                ironsmith_core::DelayedTriggerSpec::BeginningOfDeclareAttackersStep(
+                    player.clone(),
+                ),
+                delayed_effects,
+                true,
+                Vec::new(),
+                PlayerFilter::You,
+            );
+            // A one-shot registration fires at the next matching step; the
+            // "on <player>'s next turn" form also waits for a later turn.
+            let effect = Effect::new(if *upcoming { delayed } else { delayed.starting_next_turn() });
+            (vec![effect], choices)
+        }
         EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextFirstMainPhase {
             player,
             effects,
@@ -1369,6 +1395,21 @@ pub(super) fn try_compile_timing_and_control_effect(
             until_end_of_combat,
             attach_to_previous_ability,
         }) => {
+            if matches!(trigger_without_intro(trigger), TriggerSpec::SpellCastThroughPreviousPermission) {
+                // The body has the ordinary cast-event reference scope; only
+                // its matcher is linked to the exact preceding permission.
+                let cast = TriggerSpec::SpellCast {
+                    filter: None, mana_source_filter: None, caster: PlayerFilter::You,
+                    timing: None, during_turn: None, min_spells_this_turn: None,
+                    exact_spells_this_turn: None, from_not_hand: false,
+                };
+                let (body, _) = compile_trigger_effects(Some(&cast), effects)?;
+                let delayed = crate::effects::ScheduleDelayedTriggerEffect::new(
+                    ironsmith_core::DelayedTriggerSpec::SpellCastThroughPreviousPermission,
+                    body, true, Vec::new(), PlayerFilter::You,
+                ).until_end_of_turn();
+                return Ok(Some((vec![Effect::new(delayed)], Vec::new())));
+            }
             // "Whenever damage is prevented this way [this turn], ..." (CR
             // 603.7, 615.5): a delayed trigger linked to the shield the
             // preceding instruction created; it resolves on the stack with
@@ -2002,6 +2043,34 @@ pub(super) fn try_compile_timing_and_control_effect(
                         (vec![effect], choices)
                     }
                 }
+                // "When you cast it this turn": the spell filter names the
+                // preceding instruction's object by stable identity; bind
+                // that pronoun to the object captured with the trigger.
+                TriggerSpec::SpellCast {
+                    filter: Some(filter),
+                    ..
+                } if filter_references_tag(
+                    filter,
+                    crate::tag::CompilerReferenceTag::It.as_str(),
+                ) =>
+                {
+                    let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+                    let mut resolved_trigger = trigger.clone();
+                    if let TriggerSpec::SpellCast { filter: slot, .. } = &mut resolved_trigger {
+                        *slot = Some(resolved_filter);
+                    }
+                    let effect = Effect::new(
+                        crate::effects::ScheduleDelayedTriggerEffect::new(
+                            compile_delayed_trigger_spec(&resolved_trigger)?,
+                            delayed_effects,
+                            *one_shot,
+                            Vec::new(),
+                            PlayerFilter::You,
+                        )
+                        .until_end_of_turn(),
+                    );
+                    (vec![effect], choices)
+                }
                 _ => {
                     let effect = Effect::new(
                         crate::effects::ScheduleDelayedTriggerEffect::new(
@@ -2397,7 +2466,16 @@ fn compile_conditional_ast(
         true_effects
     };
 
-    let conditional = if false_effects.is_empty() {
+    let conditional = if true_effects.is_empty() && false_effects.is_empty() {
+        // A bare state gate ("When this ability resolves for the third time
+        // this turn, ..." - Gimli) exists only so a later result follow-up can
+        // read whether the condition matched, even when that follow-up lowers
+        // as a separate statement.
+        Effect::new(
+            crate::effects::ConditionalEffect::if_only(condition, true_effects)
+                .with_condition_result(true),
+        )
+    } else if false_effects.is_empty() {
         Effect::conditional_only(condition, true_effects)
     } else {
         Effect::conditional(condition, true_effects, false_effects)

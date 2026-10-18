@@ -206,6 +206,9 @@ pub(crate) fn try_execute_combat_damage_step_with_dm_and_first_step_snapshot(
         game,
         dm,
         |game, dm| {
+            if !prepare_combat_damage_assigners(game, combat, first_strike, first_step_strikers, dm)? {
+                return Ok(Vec::new());
+            }
             let mut result = apply_combat_damage_step_with_dm_and_first_step_snapshot(
                 game,
                 combat,
@@ -312,6 +315,34 @@ struct PlannedCombatDamage {
     amount: u32,
     result: DamageResult,
     cause: crate::events::cause::EventCause,
+}
+
+/// Complete mandatory face-up transitions before calculating/asking for any
+/// assignment. The caller owns rollback when the decision maker suspends.
+pub(crate) fn prepare_combat_damage_assigners(
+    game: &mut GameState,
+    combat: &CombatState,
+    first_strike: bool,
+    first_step_strikers: Option<&std::collections::HashSet<ObjectId>>,
+    dm: &mut dyn crate::decision::DecisionMaker,
+) -> Result<bool, CombatDamageAssignmentError> {
+    let mut assigners = combat.attackers.iter().map(|attacker| attacker.creature)
+        .chain(combat.blockers.values().flatten().copied()).collect::<Vec<_>>();
+    assigners.sort();
+    assigners.dedup();
+    for object in assigners {
+        let assigns = game.object(object).is_some_and(|creature| {
+            !game.combat_damage_assignment_is_suppressed(object)
+        && combatant_participates_in_damage_step(game, creature, first_strike, first_step_strikers)
+        && combat_damage_stat_for_creature(game, creature).is_some_and(|power| power > 0)
+        });
+        if assigns && !game.prepare_turn_face_up_before_action(object, dm)
+            .map_err(|error| CombatDamageAssignmentError::execution(object, error))?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn combatant_participates_in_damage_step(
@@ -955,7 +986,10 @@ fn plan_unblocked_player_damage(
         let combat_stat = if toughness_sources.applies_to(attacker_id, controller) {
             characteristics.toughness.or_else(|| attacker.toughness())
         } else {
-            characteristics.power.or_else(|| attacker.power())
+            characteristics
+                .power
+                .or_else(|| attacker.power())
+                .map(|power| combat_power_as_though_positive(game, attacker_id, power))
         };
         let Some(combat_stat) = combat_stat.filter(|stat| *stat > 0) else {
             continue;
@@ -1151,7 +1185,38 @@ pub(super) fn combat_damage_stat_for_creature(
     } else {
         game.calculated_power(creature.id)
             .or_else(|| creature.power())
+            .map(|power| combat_power_as_though_positive(game, creature.id, power))
     }
+}
+
+/// "If this creature's power is negative, it assigns combat damage as though
+/// its power were positive" (Loot, the Anomaly): the creature's keyword
+/// marker makes a negative power assign its absolute value.
+pub(crate) const ASSIGNS_AS_THOUGH_POWER_POSITIVE_MARKER: &str =
+    "this creature assigns combat damage as though its power were positive";
+
+pub(super) fn combat_power_as_though_positive(game: &GameState, creature: ObjectId, power: i32) -> i32 {
+    if power >= 0 {
+        return power;
+    }
+    let abilities = game.current_abilities(creature).unwrap_or_else(|| {
+        game.object(creature)
+            .map(|object| object.abilities_vec())
+            .unwrap_or_default()
+    });
+    let positive = abilities.iter().any(|ability| match &ability.kind {
+        AbilityKind::Static(static_ability)
+            if static_ability.id() == crate::static_abilities::StaticAbilityId::KeywordMarker =>
+        {
+            static_ability
+                .display()
+                .to_ascii_lowercase()
+                .trim_end_matches('.')
+                == ASSIGNS_AS_THOUGH_POWER_POSITIVE_MARKER
+        }
+        _ => false,
+    });
+    if positive { power.saturating_neg() } else { power }
 }
 
 /// Retain the resolved life event and any replacement payload notifications.
@@ -1646,19 +1711,60 @@ pub struct CombatDamageDivision {
     /// damage to what it's attacking (CR 510.1c; never split between that and
     /// its blockers).
     pub unblocked_alternative: Option<Target>,
+    /// "If this creature is unblocked, you may have it assign its combat
+    /// damage to a creature defending player controls." (Cunning Giant): the
+    /// creatures an unblocked attacker may instead assign all of its combat
+    /// damage to (one of them, never split).
+    pub unblocked_creature_alternatives: Vec<ObjectId>,
+    /// "You may assign this creature's combat damage divided as you choose
+    /// among defending player and/or any number of creatures they control."
+    /// (Butcher Orgg): when every assigned point lands among these
+    /// recipients, the division is free (no lethal-damage ordering).
+    pub free_division_recipients: Vec<Target>,
 }
 
 impl CombatDamageDivision {
     /// Every legal recipient, in assignment order.
     pub fn targets(&self) -> Vec<Target> {
-        self.creatures
+        let mut targets: Vec<Target> = self
+            .creatures
             .iter()
             .copied()
             .chain(self.planeswalker)
             .map(Target::Object)
             .chain(self.excess_target)
             .chain(self.separate_unblocked_alternative())
-            .collect()
+            .chain(self.separate_creature_alternatives().map(Target::Object))
+            .collect();
+        for recipient in &self.free_division_recipients {
+            if !targets.contains(recipient) {
+                targets.push(*recipient);
+            }
+        }
+        targets
+    }
+
+    /// Whether every assigned point lands among the free-division recipients
+    /// (Butcher Orgg), which lifts the lethal-damage ordering.
+    fn is_free_division(&self, targets: &[Target], amounts: &[u32]) -> bool {
+        !self.free_division_recipients.is_empty()
+            && targets.iter().zip(amounts).all(|(target, amount)| {
+                *amount == 0 || self.free_division_recipients.contains(target)
+            })
+    }
+
+    /// The creatures an unblocked attacker may assign all its damage to
+    /// instead, when they aren't already recipients.
+    fn separate_creature_alternatives(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.unblocked_creature_alternatives
+            .iter()
+            .copied()
+            .filter(|creature| {
+                !self.creatures.contains(creature)
+                    && self.planeswalker != Some(*creature)
+                    && self.excess_target != Some(Target::Object(*creature))
+                    && self.unblocked_alternative != Some(Target::Object(*creature))
+            })
     }
 
     /// The "as though it weren't blocked" recipient, when it isn't already a
@@ -1860,6 +1966,47 @@ impl CombatDamageDivision {
         if self.is_all_unblocked_alternative(&targets, &amounts) {
             return Ok(targets.into_iter().zip(amounts).collect());
         }
+        if self.is_free_division(&targets, &amounts) {
+            return Ok(targets.into_iter().zip(amounts).collect());
+        }
+        // A recipient only the free division adds can't share damage with an
+        // ordinary division (e.g. a planeswalker being attacked).
+        let standard = self
+            .creatures
+            .iter()
+            .copied()
+            .chain(self.planeswalker)
+            .map(Target::Object)
+            .chain(self.excess_target)
+            .chain(self.unblocked_alternative)
+            .chain(self.unblocked_creature_alternatives.iter().copied().map(Target::Object))
+            .collect::<Vec<_>>();
+        if targets.iter().zip(&amounts).any(|(target, amount)| {
+            *amount > 0 && !standard.contains(target)
+        }) {
+            return Err((
+                CombatDamageAssignmentErrorKind::IllegalRecipient,
+                "combat damage divided among defending player and their creatures can't include other recipients"
+                    .to_string(),
+            ));
+        }
+        // Cunning Giant: all of the damage goes to one creature the defending
+        // player controls, or none of it does.
+        let alternative_creatures = self.separate_creature_alternatives().collect::<Vec<_>>();
+        if targets.iter().zip(&amounts).any(|(target, amount)| {
+            *amount > 0
+                && matches!(target, Target::Object(object) if alternative_creatures.contains(object))
+        }) {
+            let recipients = amounts.iter().filter(|amount| **amount > 0).count();
+            if recipients == 1 {
+                return Ok(targets.into_iter().zip(amounts).collect());
+            }
+            return Err((
+                CombatDamageAssignmentErrorKind::IllegalRecipient,
+                "combat damage assigned to a creature defending player controls can't be split"
+                    .to_string(),
+            ));
+        }
         if let Some(alternative) = self.separate_unblocked_alternative()
             && let Some(index) = targets.iter().position(|target| *target == alternative)
             && amounts[index] > 0
@@ -1920,7 +2067,13 @@ fn attacker_damage_division(
     let trample = over_planeswalkers
         || game.object_has_static_ability_id(attacker_id, StaticAbilityId::Trample);
     let deathtouch = game.object_has_static_ability_id(attacker_id, StaticAbilityId::Deathtouch);
-    let blocked = is_blocked(combat, attacker_id);
+    // CR 510.1c: a creature that must assign its combat damage as though it
+    // weren't blocked assigns it all to what it's attacking.
+    let blocked = is_blocked(combat, attacker_id)
+        && !game.object_has_static_ability_id(
+            attacker_id,
+            StaticAbilityId::AssignsDamageAsUnblocked,
+        );
     let creatures = if blocked {
         combat
             .blockers
@@ -1936,6 +2089,28 @@ fn attacker_damage_division(
     } else {
         Vec::new()
     };
+    // Cunning Giant: an unblocked attacker may assign all its combat damage to
+    // one creature the defending player controls.
+    let unblocked_creature_alternatives = if !is_blocked(combat, attacker_id)
+        && game.object_has_static_ability_id(
+            attacker_id,
+            StaticAbilityId::MayAssignUnblockedDamageToDefendingCreature,
+        )
+        && let Some(defender) =
+            crate::combat_state::defending_player_for_attack_target(game, &attacker_info.target)
+    {
+        game.battlefield
+            .iter()
+            .copied()
+            .filter(|id| {
+                *id != attacker_id
+                    && game.controller_of_id(*id) == Some(defender)
+                    && game.object_has_card_type(*id, crate::types::CardType::Creature)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let unblocked_alternative = (blocked
         && game.object_has_static_ability_id(
             attacker_id,
@@ -1943,18 +2118,47 @@ fn attacker_damage_division(
         ))
     .then(|| trample_excess_target(game, &attacker_info.target))
     .flatten();
+    // Butcher Orgg: the defending player and every creature they control.
+    let free_division_recipients = if game.object_has_static_ability_id(
+        attacker_id,
+        StaticAbilityId::MayDivideCombatDamageAmongDefendingPlayerAndCreatures,
+    ) && let Some(defender) =
+        crate::combat_state::defending_player_for_attack_target(game, &attacker_info.target)
+    {
+        game.player(defender)
+            .is_some_and(|player| player.is_in_game())
+            .then_some(Target::Player(defender))
+            .into_iter()
+            .chain(
+                game.battlefield
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        *id != attacker_id
+                            && game.controller_of_id(*id) == Some(defender)
+                            && game.object_has_card_type(*id, crate::types::CardType::Creature)
+                    })
+                    .map(Target::Object),
+            )
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     if blocked && !trample {
         // CR 510.1c: a blocked creature assigns damage only to its blockers,
         // unless it may assign it as though it weren't blocked.
-        return (!creatures.is_empty() || unblocked_alternative.is_some()).then_some(
-            CombatDamageDivision {
-                creatures,
-                planeswalker: None,
-                excess_target: None,
-                deathtouch,
-                unblocked_alternative,
-            },
-        );
+        return (!creatures.is_empty()
+            || unblocked_alternative.is_some()
+            || !free_division_recipients.is_empty())
+        .then_some(CombatDamageDivision {
+            creatures,
+            planeswalker: None,
+            excess_target: None,
+            deathtouch,
+            unblocked_alternative,
+            unblocked_creature_alternatives,
+            free_division_recipients,
+        });
     }
     // Unblocked (CR 510.1b), or a trampler: past its blockers (all of them
     // assigned lethal damage, or none left, CR 702.19d) to what it's attacking.
@@ -1963,7 +2167,12 @@ fn attacker_damage_division(
     } else {
         (None, trample_excess_target(game, &attacker_info.target))
     };
-    if creatures.is_empty() && planeswalker.is_none() && excess_target.is_none() {
+    if creatures.is_empty()
+        && planeswalker.is_none()
+        && excess_target.is_none()
+        && unblocked_creature_alternatives.is_empty()
+        && free_division_recipients.is_empty()
+    {
         return None;
     }
     Some(CombatDamageDivision {
@@ -1972,6 +2181,8 @@ fn attacker_damage_division(
         excess_target,
         deathtouch,
         unblocked_alternative,
+        unblocked_creature_alternatives,
+        free_division_recipients,
     })
 }
 
@@ -2105,6 +2316,8 @@ fn combat_damage_assigners(
                     crate::static_abilities::StaticAbilityId::Deathtouch,
                 ),
                 unblocked_alternative: None,
+                unblocked_creature_alternatives: Vec::new(),
+                free_division_recipients: Vec::new(),
             },
         });
     }
@@ -3357,7 +3570,7 @@ mod tests {
             }],
             ..CombatState::default()
         };
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert!(can_use_unblocked_player_damage_fast_path(&game, &combat));
         let events = execute_combat_damage_step(&mut game, &combat, false);
         assert_eq!(game.player(alice).unwrap().life, 23);
@@ -4180,7 +4393,7 @@ mod tests {
             .expect("regular striker exists")
             .abilities_mut()
             .push(Ability::static_ability(StaticAbility::first_strike()));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let regular = execute_combat_damage_step_with_first_step_snapshot(
             &mut game,

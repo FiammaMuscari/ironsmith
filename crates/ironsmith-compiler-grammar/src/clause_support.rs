@@ -48,6 +48,42 @@ const TWO_WORD_KEYWORD_ACTIONS: &[(&[&str], KeywordAction)] = &[
     ),
 ];
 
+/// "Whenever one or more <permanents> are on the battlefield, their
+/// controllers sacrifice them." (City in a Bottle): every permanent the state
+/// condition counts is sacrificed by its own controller (CR 701.21a).
+fn state_trigger_controllers_sacrifice_them(
+    predicate: &PredicateAst,
+    effects_tokens: &[OwnedLexToken],
+) -> Option<Vec<EffectAst>> {
+    let words = crate::lexer::token_word_refs(effects_tokens);
+    if words != ["their", "controllers", "sacrifice", "them"] {
+        return None;
+    }
+    let filter = match predicate {
+        PredicateAst::ValueComparison { left, .. } => match left.unhinted() {
+            Value::Count(filter) => filter.clone(),
+            _ => return None,
+        },
+        PredicateAst::CountComparison {
+            count: ironsmith_core::AnthemCountExpression::MatchingFilter(filter),
+            ..
+        } => filter.clone(),
+        _ => return None,
+    };
+    if filter.zone.is_some_and(|zone| zone != Zone::Battlefield) {
+        return None;
+    }
+    let mut owned = filter;
+    owned.zone = Some(Zone::Battlefield);
+    let owned = owned.controlled_by(PlayerFilter::IteratedPlayer);
+    Some(vec![EffectAst::ForEach(ForEachEffectAst::ForEachPlayer {
+        effects: vec![EffectAst::subject_verb_sacrifice_all(
+            crate::cards::builders::PlayerAst::That,
+            owned,
+        )],
+    })])
+}
+
 fn predicate_counts_creatures_died_this_turn(predicate: &PredicateAst) -> bool {
     matches!(
         predicate,
@@ -56,34 +92,66 @@ fn predicate_counts_creatures_died_this_turn(predicate: &PredicateAst) -> bool {
     )
 }
 
-fn bind_event_amount_to_creatures_died_this_turn(value: &mut Value) {
+/// "that many" after an intervening-if that counts something this turn:
+/// "if you gained life this turn, distribute up to that many ..." (Lathiel)
+/// reads the life gained this turn; creature deaths read the death count.
+fn condition_that_many_value(predicate: &PredicateAst) -> Option<Value> {
+    if predicate_counts_creatures_died_this_turn(predicate) {
+        return Some(Value::CreaturesDiedThisTurn);
+    }
+    match predicate {
+        PredicateAst::Player(crate::cards::builders::PlayerPredicateAst::PlayerGainedLifeThisTurnOrMore {
+            player: crate::cards::builders::PlayerAst::You,
+            ..
+        }) => Some(Value::LifeGainedThisTurn(PlayerFilter::You)),
+        _ => None,
+    }
+}
+
+/// "At the beginning of each end step, if you gained life this turn,
+/// distribute up to that many +1/+1 counters ..." (Lathiel): a triggered
+/// line whose intervening-if was split off by the document recognizer still
+/// reads "that many" as the life gained this turn.
+pub(crate) fn bind_intervening_life_gained_that_many(
+    predicate: &PredicateAst,
+    effects: &mut [EffectAst],
+) {
+    if predicate_counts_creatures_died_this_turn(predicate) {
+        return;
+    }
+    if let Some(replacement) = condition_that_many_value(predicate) {
+        bind_creatures_died_condition_amounts(effects, &replacement);
+    }
+}
+
+fn bind_event_amount_to_creatures_died_this_turn(value: &mut Value, replacement: &Value) {
     match value {
         Value::EventValue(EventValueSpec::Amount)
         | Value::EventValue(EventValueSpec::LifeAmount) => {
-            *value = Value::CreaturesDiedThisTurn;
+            *value = replacement.clone();
         }
         Value::EventValueOffset(EventValueSpec::Amount, offset)
         | Value::EventValueOffset(EventValueSpec::LifeAmount, offset) => {
             *value = Value::Add(
-                Box::new(Value::CreaturesDiedThisTurn),
+                Box::new(replacement.clone()),
                 Box::new(Value::Fixed(*offset)),
             );
         }
         Value::Add(left, right) | Value::Min(left, right) => {
-            bind_event_amount_to_creatures_died_this_turn(left);
-            bind_event_amount_to_creatures_died_this_turn(right);
+            bind_event_amount_to_creatures_died_this_turn(left, replacement);
+            bind_event_amount_to_creatures_died_this_turn(right, replacement);
         }
         Value::Scaled(inner, _)
         | Value::DividedRoundedDown(inner, _)
         | Value::HalfRoundedDown(inner)
         | Value::SurfaceHinted { value: inner, .. } => {
-            bind_event_amount_to_creatures_died_this_turn(inner);
+            bind_event_amount_to_creatures_died_this_turn(inner, replacement);
         }
         _ => {}
     }
 }
 
-fn bind_creatures_died_condition_amounts(effects: &mut [EffectAst]) {
+fn bind_creatures_died_condition_amounts(effects: &mut [EffectAst], replacement: &Value) {
     for effect in effects {
         match effect {
             EffectAst::SubjectVerb(subject_verb) => match &mut subject_verb.action {
@@ -92,7 +160,7 @@ fn bind_creatures_died_condition_amounts(effects: &mut [EffectAst]) {
                     count: amount,
                     ..
                 }) => {
-                    bind_event_amount_to_creatures_died_this_turn(amount);
+                    bind_event_amount_to_creatures_died_this_turn(amount, replacement);
                 }
                 _ => {}
             },
@@ -101,8 +169,11 @@ fn bind_creatures_died_condition_amounts(effects: &mut [EffectAst]) {
                 if_false,
                 ..
             }) => {
-                bind_creatures_died_condition_amounts(if_true);
-                bind_creatures_died_condition_amounts(if_false);
+                bind_creatures_died_condition_amounts(if_true, replacement);
+                bind_creatures_died_condition_amounts(if_false, replacement);
+            }
+            EffectAst::SourceSentence { effects, .. } | EffectAst::Sequence { effects } => {
+                bind_creatures_died_condition_amounts(effects, replacement);
             }
             _ => {}
         }
@@ -404,6 +475,7 @@ pub fn validate_protection_static_line(tokens: &[OwnedLexToken]) -> Result<(), C
             if words.get(2).is_some_and(|word| matches!(*word, "doesn't" | "doesnt"))
                 && words.get(3) == Some(&"remove")
                 && crate::grammar::keyword_static_lines::parse_static_text_marker_kind_tokens(sentence).is_none()
+                && crate::keyword_static::parse_untapped_attachment_control_protection(tokens)?.is_none()
                 && words.get(4..) != Some(&["auras", "and", "equipment", "you", "control", "that", "are", "already", "attached", "to", "it"][..])
             {
                 return Err(CardTextError::ParseError("unsupported protection attachment exception".into()));
@@ -685,6 +757,14 @@ pub(crate) fn parse_hexproof_from_chain(tokens: &[OwnedLexToken]) -> Option<Vec<
 
     if let Some(filter) = color_only_hexproof_filter_words(&words[first_word_idx + 2..]) {
         return Some(vec![KeywordAction::HexproofFrom(filter)]);
+    }
+    // "hexproof from each of its colors" (Tam, Mindful First-Year): sources
+    // sharing a color with the protected permanent itself.
+    if words[first_word_idx + 2..] == ["each", "of", "its", "colors"] {
+        return Some(vec![KeywordAction::HexproofFrom(
+            ObjectFilter::default()
+                .shares_color_with_tagged(ironsmith_core::tag::HEXPROOF_PROTECTED_OBJECT_TAG),
+        )]);
     }
     // "hexproof from monocolored/multicolored/planeswalkers" — the same
     // non-color qualities the granted-ability path accepts.
@@ -1335,8 +1415,8 @@ fn parse_triggered_line_lexed_inner(tokens: &[OwnedLexToken]) -> Result<LineAst,
             if let Ok(mut effects) =
                 parse_effect_sentences_or_single_sentence_lexed(&rewritten_effects_tokens)
             {
-                if predicate_counts_creatures_died_this_turn(&spec.predicate) {
-                    bind_creatures_died_condition_amounts(&mut effects);
+                if let Some(replacement) = condition_that_many_value(&spec.predicate) {
+                    bind_creatures_died_condition_amounts(&mut effects, &replacement);
                 }
                 let mut max_triggers_per_turn =
                     parse_triggered_times_each_turn_lexed_from_sentences(&rewritten_effects_tokens);
@@ -1665,11 +1745,28 @@ fn parse_triggered_line_lexed_inner(tokens: &[OwnedLexToken]) -> Result<LineAst,
                     .flatten()
             });
         if let Some(spec) = state_split {
-            let effects_tokens = rewrite_attached_controller_trigger_effect_tokens_lexed(
+            let mut effects_tokens = rewrite_attached_controller_trigger_effect_tokens_lexed(
                 spec.trigger_tokens,
                 spec.effects_tokens,
             );
-            let effects = parse_effect_sentences_lexed(&effects_tokens)?;
+            let leading_intro = usize::from(
+                spec.trigger_tokens
+                    .first()
+                    .is_some_and(|token| token.is_any_word(&["when", "whenever"])),
+            );
+            let condition_tokens = &spec.trigger_tokens[leading_intro..];
+            if crate::grammar::structure::is_source_controlled_by_non_owner_condition(
+                crate::lexer::trim_lexed_commas(condition_tokens),
+            ) {
+                effects_tokens = rewrite_non_owner_controller_player_tokens(&effects_tokens);
+            }
+            let effects = match state_trigger_controllers_sacrifice_them(
+                &spec.predicate,
+                &effects_tokens,
+            ) {
+                Some(effects) => effects,
+                None => parse_effect_sentences_lexed(&effects_tokens)?,
+            };
             return Ok(LineAst::Triggered {
                 trigger: TriggerSpec::StateBased {
                     condition: spec.predicate,
@@ -2028,4 +2125,38 @@ mod tests {
             "{parsed:#?}"
         );
     }
+}
+
+/// "When a player other than this creature's owner controls it, that player
+/// sacrifices it. If the player does, this creature deals 7 damage to the
+/// player." (Bronze Bombshell): the player is the source's controller, which
+/// a state trigger names as "you".
+fn rewrite_non_owner_controller_player_tokens(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut idx = 0;
+    while idx < tokens.len() {
+        if tokens[idx].is_any_word(&["that", "the"])
+            && tokens.get(idx + 1).is_some_and(|token| token.is_word("player"))
+        {
+            out.push(OwnedLexToken::word("you", tokens[idx].span));
+            idx += 2;
+            if let Some(next) = tokens.get(idx).and_then(|token| token.as_word()) {
+                let fixed = match next {
+                    "does" => Some("do".to_string()),
+                    "sacrifices" | "loses" | "gains" | "draws" | "discards" => {
+                        Some(next.trim_end_matches('s').to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(fixed) = fixed {
+                    out.push(OwnedLexToken::word(fixed, tokens[idx].span));
+                    idx += 1;
+                }
+            }
+            continue;
+        }
+        out.push(tokens[idx].clone());
+        idx += 1;
+    }
+    out
 }

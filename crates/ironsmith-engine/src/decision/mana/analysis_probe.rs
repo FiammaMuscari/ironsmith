@@ -207,7 +207,7 @@ pub(crate) fn probe_board(
     game.turn.priority_player = Some(player);
     game.turn.phase = crate::game_state::Phase::FirstMain;
     game.turn.step = None;
-    game.refresh_continuous_state();
+    game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
     ProbeBoard {
         game,
@@ -420,6 +420,7 @@ fn mono_color_board(
             mode: ironsmith_core::value_model::ManaSpendMode::AnyColor,
             mana_source_filter: None,
             any_color_mana_symbol: None,
+            mana_symbol_as: None,
             other_mana_only_as_colorless: false,
         };
         let cauldron = CardDefinitionBuilder::new(CardId::new(), "Agatha's Soul Cauldron")
@@ -452,7 +453,7 @@ fn mono_color_board(
     game.turn.priority_player = Some(player);
     game.turn.phase = crate::game_state::Phase::FirstMain;
     game.turn.step = None;
-    game.refresh_continuous_state();
+    game.refresh_continuous_state().expect("test continuous state refresh succeeds");
     (game, player, adept_id)
 }
 
@@ -610,6 +611,7 @@ fn heterogeneous_board(
             mode: ironsmith_core::value_model::ManaSpendMode::AnyColor,
             mana_source_filter: None,
             any_color_mana_symbol: None,
+            mana_symbol_as: None,
             other_mana_only_as_colorless: false,
         };
         let cauldron = CardDefinitionBuilder::new(CardId::new(), "Agatha's Soul Cauldron")
@@ -635,7 +637,7 @@ fn heterogeneous_board(
     game.turn.priority_player = Some(player);
     game.turn.phase = crate::game_state::Phase::FirstMain;
     game.turn.step = None;
-    game.refresh_continuous_state();
+    game.refresh_continuous_state().expect("test continuous state refresh succeeds");
     (game, player, adept_id)
 }
 

@@ -43,14 +43,47 @@ impl crate::effects::EffectExecutor for BidLifeEffect {
             ctx,
             || CompletedEffectOutputs::aggregate_only(EffectOutcome::count(0)),
             |game, ctx| {
-                resolve_single_object_for_effect(game, ctx, &self.target)?;
+                if let Some(target) = &self.target {
+                    resolve_single_object_for_effect(game, ctx, target)?;
+                }
 
-                let (high_bidder, high_bid) = match self.starting_bid {
-                    LifeBidStart::Fixed(amount) => {
+                // "You start the bidding with a bid of any number" (Pain's
+                // Reward): the controller names the opening bid.
+                let opening = match self.starting_bid {
+                    LifeBidStart::Fixed(amount) => amount,
+                    LifeBidStart::ControllerChooses => {
+                        let decision = NumberContext::new(
+                            ctx.controller,
+                            Some(ctx.source),
+                            0,
+                            u32::MAX,
+                            "Choose your opening life bid".to_string(),
+                        );
+                        let amount = ctx.decision_maker.decide_number(game, &decision);
+                        if ctx.decision_maker.awaiting_choice() {
+                            return Ok(CompletedEffectOutputs::aggregate_only(
+                                EffectOutcome::count(0),
+                            ));
+                        }
+                        amount
+                    }
+                };
+                let (high_bidder, high_bid) = match opening {
+                    amount => {
                         let original = ctx.controller;
                         let mut high_bidder = original;
                         let mut high_bid = amount;
-                        let players = active_players_in_turn_order(game, original);
+                        let mut players = active_players_in_turn_order(game, original);
+                        // "You and target spell's controller bid life"
+                        // (Mages' Contest): only those two bid, in turn order.
+                        if let Some(opponent) = &self.opponent {
+                            let other = crate::effects::helpers::resolve_player_filter(
+                                game, opponent, ctx,
+                            )?;
+                            players.retain(|&player_id| {
+                                player_id == original || player_id == other
+                            });
+                        }
                         if players.len() > 1 {
                             let mut index = players
                                 .iter()
@@ -122,6 +155,13 @@ impl crate::effects::EffectExecutor for BidLifeEffect {
                     ));
                 }
 
+                // "If you win the bidding, counter that spell."
+                if self.controller_must_win && high_bidder != ctx.controller {
+                    return Ok(CompletedEffectOutputs::from_children(
+                        outcomes,
+                        EffectOutcome::aggregate,
+                    ));
+                }
                 let winner_result = super::execute_with_source::with_actor_binding(
                     ctx,
                     high_bidder,
@@ -151,7 +191,7 @@ impl crate::effects::EffectExecutor for BidLifeEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        Some(&self.target)
+        self.target.as_ref()
     }
 
     fn target_description(&self) -> &'static str {

@@ -372,6 +372,11 @@ fn static_ability_has_minimum_total_spell_mana(
 }
 
 impl<'a> DerivedGameView<'a> {
+    /// The game this view derives from.
+    pub(crate) fn game_state(&self) -> &'a GameState {
+        self.game
+    }
+
     pub(crate) fn rule_maximum_blockers(&self, attacker: ObjectId) -> Option<usize> {
         self.game.effect_store.cant_effects.maximum_blockers.get(&attacker).copied()
     }
@@ -585,7 +590,7 @@ impl<'a> DerivedGameView<'a> {
         let calculated = if self.use_game_characteristics_cache {
             self.game.calculated_characteristics_arc(object_id)
         } else {
-            if self.derive_battlefield_batch_on_repeated_miss(object_id)
+            if self.derive_battlefield_batch_on_miss(object_id)
                 && let Some(cached) = self.characteristics.borrow().get(&object_id)
             {
                 return cached.clone();
@@ -600,11 +605,11 @@ impl<'a> DerivedGameView<'a> {
         calculated
     }
 
-    /// A view over a dirty state has no game cache, and computing objects one
-    /// at a time repeats the dependency sort per object. Passes that walk the
-    /// battlefield (state triggers, menus) miss repeatedly; from the second
-    /// battlefield miss, derive every remaining permanent in one batch.
-    fn derive_battlefield_batch_on_repeated_miss(&self, object_id: ObjectId) -> bool {
+    /// A view over a dirty state has no game cache, and any one permanent is
+    /// derived by a pass over the whole board. Keep every permanent that pass
+    /// produces: passes that walk the battlefield (state triggers, menus) would
+    /// otherwise repeat it per permanent.
+    fn derive_battlefield_batch_on_miss(&self, object_id: ObjectId) -> bool {
         let on_battlefield = |id: ObjectId| {
             self.game
                 .object(id)
@@ -614,12 +619,7 @@ impl<'a> DerivedGameView<'a> {
         if !on_battlefield(object_id) {
             return false;
         }
-        let misses = self.battlefield_misses.get();
-        if misses == u8::MAX {
-            return false;
-        }
-        self.battlefield_misses.set(misses + 1);
-        if misses != 1 {
+        if self.battlefield_misses.get() == u8::MAX {
             return false;
         }
         self.battlefield_misses.set(u8::MAX);
@@ -1046,7 +1046,9 @@ impl<'a> DerivedGameView<'a> {
         self.ensure_memo_context();
         self.player_can_pay_black_with_life(payer)
             && (!reason.is_cast_or_ability_payment()
-                || !self.player_cant_pay_life_to_cast_or_activate(payer))
+                || !self.player_cant_pay_life_to_cast_or_activate(payer)
+                || (reason.is_mana_ability()
+                    && !self.game.player_cant_pay_life_for_mana_abilities(payer)))
     }
 
     fn player_can_pay_black_with_life(&self, payer: PlayerId) -> bool {
@@ -1118,11 +1120,22 @@ impl<'a> DerivedGameView<'a> {
                         )
                     })
             };
+            // "you may tap lands you don't control for mana" (Piracy).
+            let via_uncontrolled_land_permission = |ability_index: &usize| {
+                !player_controls_source
+                    && abilities.get(*ability_index).is_some_and(|ability| {
+                        matches!(
+                            &ability.kind,
+                            crate::ability::AbilityKind::Activated(activated)
+                                if self.game.may_tap_uncontrolled_land_for_mana(player, perm_id, activated)
+                        )
+                    })
+            };
             let mana_ability_indices = ability_summary
                 .mana_ability_indices()
                 .iter()
                 .copied()
-                .filter(player_may_activate)
+                .filter(|index| player_may_activate(index) || via_uncontrolled_land_permission(index))
                 .collect::<Vec<_>>();
             let activated_ability_indices = ability_summary
                 .activated_ability_indices()
@@ -1154,6 +1167,11 @@ impl<'a> DerivedGameView<'a> {
                 let Some(ability) = abilities.get(ability_index) else {
                     continue;
                 };
+                // Permission activations carry the permission's spending
+                // restrictions; they always take the full activation check.
+                if !player_may_activate(&ability_index) {
+                    continue;
+                }
                 let Some(output) = crate::decision::simple_battlefield_mana_ability_output(
                     self.game,
                     player,
@@ -1178,6 +1196,39 @@ impl<'a> DerivedGameView<'a> {
             if let Some(output) = first_output {
                 analysis.first_output_by_permanent.insert(perm_id, output);
             }
+        }
+
+        // A mana ability a player has until end of turn ("any time you could
+        // activate a mana ability, you may pay 1 life. If you do, add {C}",
+        // CR 605.1a) is carried by a command-zone object it owns. It is a
+        // mana source for payment (CR 605.3a); its priority activation is
+        // already offered with the player's other non-battlefield abilities.
+        for granted in &self.game.effect_store.granted_mana_abilities {
+            let Some(carrier) = granted.carrier else {
+                continue;
+            };
+            if granted.controller != player || analysis.mana_source_ids.contains(&carrier) {
+                continue;
+            }
+            if self
+                .game
+                .object(carrier)
+                .is_none_or(|object| object.zone != Zone::Command)
+                || !self.game.can_activate_abilities_of(carrier)
+            {
+                continue;
+            }
+            let Some(ability_summary) = self.ability_index_summary(carrier) else {
+                continue;
+            };
+            let mana_ability_indices = ability_summary.mana_ability_indices().to_vec();
+            if mana_ability_indices.is_empty() {
+                continue;
+            }
+            analysis.mana_source_ids.push(carrier);
+            analysis
+                .mana_ability_indices
+                .insert(carrier, mana_ability_indices);
         }
 
         let analysis = Rc::new(analysis);

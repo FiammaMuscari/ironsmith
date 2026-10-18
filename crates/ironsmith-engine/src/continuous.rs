@@ -1144,6 +1144,24 @@ impl Modification {
         }
     }
 
+    /// "Only you may activate this ability" on a granted activated ability
+    /// (Martyrdom): "you" is the controller of the granting effect, fixed as
+    /// the grant resolves.
+    pub(crate) fn bind_granting_player_activation(self, granter: PlayerId) -> Self {
+        match self {
+            Modification::AddAbilityGeneric(mut ability) => {
+                if let crate::ability::AbilityKind::Activated(activated) = &mut ability.kind
+                    && activated.timing == crate::ability::ActivationTiming::AnyTimeByGrantingPlayer(None)
+                {
+                    activated.timing =
+                        crate::ability::ActivationTiming::AnyTimeByGrantingPlayer(Some(granter));
+                }
+                Modification::AddAbilityGeneric(ability)
+            }
+            other => other,
+        }
+    }
+
     pub fn pt_sublayer(&self) -> Option<PtSublayer> {
         match self {
             Modification::SetPower { sublayer, .. }
@@ -2475,7 +2493,7 @@ impl Drop for CharacteristicCalculationGuard<'_> {
 /// Everything a nested regeneration of the continuous effects can observe
 /// besides the (immutably borrowed) game: the layer views of calculations in
 /// progress and the condition/duration re-entry guards.
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NestedRegenerationContext {
     game: usize,
     effects_revision: u64,
@@ -2591,6 +2609,44 @@ pub(crate) fn characteristics_in_context(
         ));
     });
     chars
+}
+
+/// `characteristics_in_context` for a permanent. One board pass answers every
+/// permanent in it, so the pass's results are all memoized: a count over the
+/// battlefield ("another Dwarf you control") costs one pass, not one each.
+pub(crate) fn board_characteristics_in_context(
+    context: NestedRegenerationContext,
+    object_id: ObjectId,
+    calculate_board: impl FnOnce() -> HashMap<ObjectId, CalculatedCharacteristics>,
+) -> Option<Arc<CalculatedCharacteristics>> {
+    let cached = find_nested_result(&context, |result| match result {
+        NestedResult::Characteristics(id, chars, provisional) if *id == object_id => {
+            Some((chars.clone(), *provisional))
+        }
+        _ => None,
+    });
+    if let Some(chars) = cached {
+        return chars;
+    }
+    let before = CONDITION_REENTRY_FALLBACKS.with(std::cell::Cell::get);
+    let board = calculate_board();
+    let provisional = CONDITION_REENTRY_FALLBACKS.with(std::cell::Cell::get) != before;
+    let requested = board.get(&object_id).cloned().map(Arc::new);
+    NESTED_EFFECT_REGENERATIONS.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        for (id, chars) in board {
+            let chars = if id == object_id {
+                requested.clone()
+            } else {
+                Some(Arc::new(chars))
+            };
+            memo.push((
+                context.clone(),
+                NestedResult::Characteristics(id, chars, provisional),
+            ));
+        }
+    });
+    requested
 }
 
 /// A hit re-signals any provisional condition fallback its result depended
@@ -3158,6 +3214,25 @@ pub fn calculate_characteristics_with_effects(
     }
     let object = objects.get(&object_id)?;
 
+    // A permanent's characteristics come from one pass over the board, the
+    // same pass a clean refresh caches. Every permanent in it is an in-progress
+    // calculation, so a condition or filter read made mid-pass ("as long as you
+    // control another Dwarf") sees that permanent's current layer view. The
+    // one-object pass instead answered each such read with a full pass of its
+    // own, whose dependency baseline re-ran every permanent and re-read the same
+    // condition: a 10-permanent board took thousands of passes per action.
+    if object.zone == Zone::Battlefield && battlefield.len() > 1 {
+        return calculate_characteristics_layer_batch_with_effects(
+            &[object_id],
+            objects,
+            effects,
+            battlefield,
+            commanders,
+            game,
+        )
+        .remove(&object_id);
+    }
+
     Some(calculate_with_layers_direct_internal(
         object,
         objects,
@@ -3296,10 +3371,17 @@ fn calculate_characteristics_layer_batch_with_effects(
         }
     }
 
+    // Objects no effect can reach keep their printed characteristics in every
+    // layer, so only the requested ones among them are worth computing. Most
+    // of a real game's objects are library and hand cards.
+    let scope = baseline_scope(effects);
+    let requested: HashSet<_> = ids.iter().copied().collect();
     let mut remaining: Vec<_> = objects
-        .keys()
-        .copied()
-        .filter(|id| seen.insert(*id))
+        .iter()
+        .filter(|(id, object)| {
+            (requested.contains(id) || scope.covers(object)) && seen.insert(**id)
+        })
+        .map(|(id, _)| *id)
         .collect();
     remaining.sort_unstable();
     order.extend(remaining);
@@ -3797,7 +3879,6 @@ fn calculate_characteristics_layer_batch_with_effects(
         guards[idx].update(chars);
     }
 
-    let requested: HashSet<_> = ids.iter().copied().collect();
     let mut calculated = HashMap::with_capacity(requested.len());
     for id in requested {
         if let Some(chars) = chars_by_id.get(&id) {
@@ -4010,7 +4091,7 @@ pub(crate) fn copiable_values_with_effects(
                 continue;
             }
             mark_continuous_effect_group_started(effect, &mut started_groups);
-            apply_text_box_modification_to_chars(effect, &mut chars, unflipped.as_ref().unwrap_or(object), false);
+            apply_text_box_modification_to_chars(effect, &mut chars, unflipped.as_ref().unwrap_or(object), false, game);
             calc_guard.update(&chars);
         }
     }
@@ -4147,7 +4228,7 @@ pub fn text_box_characteristics_with_effects(
             }
 
             mark_continuous_effect_group_started(effect, &mut started_groups);
-            apply_text_box_modification_to_chars(effect, &mut chars, object, game.is_flipped(object.id));
+            apply_text_box_modification_to_chars(effect, &mut chars, object, game.is_flipped(object.id), game);
             calc_guard.update(&chars);
         }
 
@@ -4166,6 +4247,7 @@ fn apply_text_box_modification_to_chars(
     chars: &mut CalculatedCharacteristics,
     object: &Object,
     flipped: bool,
+    game: &crate::game_state::GameState,
 ) {
     chars.abilities.begin_effect(effect);
     match &effect.modification {
@@ -4194,10 +4276,10 @@ fn apply_text_box_modification_to_chars(
             }
         }
         Modification::ChangeController(new_controller) => {
-            chars.controller = *new_controller;
+            if game.control_acquisition_allowed(object.id, chars.controller, *new_controller) { chars.controller = *new_controller; }
         }
         Modification::ChangeControllerToEffectController => {
-            chars.controller = effect.controller;
+            if game.control_acquisition_allowed(object.id, chars.controller, effect.controller) { chars.controller = effect.controller; }
         }
         Modification::ChangeText { .. } => {}
         Modification::RewriteText(change) => text_changes::apply_text_change(chars, *change, object),
@@ -5269,7 +5351,7 @@ fn player_filter_source_independent(filter: &PlayerFilter) -> bool {
         // applicability cache entry across effects.
         PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } => false,
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. } | PlayerFilter::MostLifeTiedAmong { .. } | PlayerFilter::QuantityGreaterThanPlayer { .. } => false,
         PlayerFilter::Excluding { base, excluded } => {
             player_filter_source_independent(base) && player_filter_source_independent(excluded)
         }
@@ -5306,6 +5388,9 @@ fn continuous_effect_duration_is_active(
             !(game.turn.turn_number > effect.expires_end_of_turn
                 && game.is_active_player(effect.controller))
         }
+        Until::AnyPlayerCastsCreatureSpell {
+            creature_spells_observed,
+        } => creature_spells_cast_this_game(game) == creature_spells_observed,
         Until::EndOfTurnOrAnyPlayerRolls {
             result,
             matching_rolls_observed,
@@ -5467,6 +5552,11 @@ pub(crate) fn continuous_duration_predicate_matches(
                             == Some(crate::object::AttachmentTarget::Object(attached_to))
                     })
             }),
+        // Not a battlefield-visibility test: an "as this enters" copy begins
+        // while the permanent is still entering, and only turning it face
+        // down ends the duration (a zone change makes it a new object).
+        Predicate::ObjectFaceUp(object) => continuous_duration_object_id(object)
+            .is_some_and(|id| game.object(id).is_some() && !game.is_face_down(id)),
         Predicate::ObjectIsEnchanted(object) => {
             continuous_duration_object_id(object).is_some_and(|enchanted| {
                 continuous_duration_object_is_visible(game, enchanted)
@@ -5839,6 +5929,9 @@ fn filter_matches_layered_fast(
     if filter.foretold && !game.is_foretold(object.id) {
         return Some(false);
     }
+    if filter.warped && !game.is_warped(object.id) {
+        return Some(false);
+    }
     if filter.other
         && filter_ctx.target_objects.is_empty()
         && let Some(source_id) = filter_ctx.source
@@ -5876,6 +5969,9 @@ fn filter_matches_layered_fast(
             return Some(false);
         }
     }
+    if let Some(budget) = &filter.mana_cost_payable_with
+        && chars.mana_cost.as_ref().is_none_or(|cost| !budget.can_pay(cost))
+    { return Some(false); }
     if let Some(required_cost) = &filter.exact_mana_cost
         && chars.mana_cost.as_ref() != Some(required_cost)
     {
@@ -5937,6 +6033,8 @@ fn filter_requires_layered_clone_fallback(filter: &ObjectFilter) -> bool {
         || filter.colors_chosen_while_drafting_named.is_some()
         || filter.name_noted_while_drafting_named.is_some()
         || filter.creature_types_noted_while_drafting_named.is_some()
+        || filter.exiled_with_cards_named.is_some()
+        || filter.sector.is_some()
         || filter.chosen_land_type
         || filter.chosen_creature_type
         || filter.chosen_card_type
@@ -5945,6 +6043,7 @@ fn filter_requires_layered_clone_fallback(filter: &ObjectFilter) -> bool {
         || filter.sticker.is_some()
         || filter.modified
         || filter.ring_bearer
+        || filter.prepared
         || filter.attacking
         || filter.attacked_this_turn
         || filter.was_blocked_this_turn
@@ -5979,10 +6078,12 @@ fn filter_requires_layered_clone_fallback(filter: &ObjectFilter) -> bool {
         || filter.entered_graveyard_this_turn
         || filter.entered_graveyard_from_battlefield_this_turn
         || filter.entered_graveyard_from_library_this_turn
+        || filter.entered_graveyard_not_from_battlefield_this_turn
         || filter.milled_into_graveyard_this_turn
         || filter.surveilled_this_turn
         || filter.fought_this_turn
         || filter.counters_put_on_this_turn.is_some()
+        || filter.counter_source_history.is_some()
         || filter.discarded_or_cycled_this_turn_by.is_some()
         || filter.was_dealt_damage_this_turn
         || filter.dealt_damage_this_turn
@@ -6072,7 +6173,7 @@ fn bind_effect_controller_in_trigger(
     trigger.clone()
 }
 
-fn bind_effect_controller_in_ability(ability: &Ability, effect_controller: PlayerId) -> Ability {
+pub(crate) fn bind_effect_controller_in_ability(ability: &Ability, effect_controller: PlayerId) -> Ability {
     let mut bound = ability.clone();
     if let AbilityKind::Triggered(triggered) = &mut bound.kind {
         triggered.trigger =
@@ -6391,10 +6492,10 @@ fn apply_modification_to_chars(
 
         // Layer 2: Control
         Modification::ChangeController(new_controller) => {
-            chars.controller = *new_controller;
+            if game.control_acquisition_allowed(object.id, chars.controller, *new_controller) { chars.controller = *new_controller; }
         }
         Modification::ChangeControllerToEffectController => {
-            chars.controller = effect.controller;
+            if game.control_acquisition_allowed(object.id, chars.controller, effect.controller) { chars.controller = effect.controller; }
         }
         Modification::ChangeText { .. } => {
             // Legacy wire vocabulary. New instructions use RewriteText.
@@ -7160,3 +7261,12 @@ impl Modification {
 #[cfg(test)]
 #[path = "continuous/intrinsic_land_mana_tests.rs"]
 mod intrinsic_land_mana_tests;
+
+/// Creature spells all players have cast this game (CR 601.2i completed
+/// casts), for "until a player casts a creature spell".
+pub(crate) fn creature_spells_cast_this_game(game: &crate::game_state::GameState) -> u32 {
+    game.players
+        .iter()
+        .map(|player| player.creature_spells_cast_this_game)
+        .fold(0u32, u32::saturating_add)
+}

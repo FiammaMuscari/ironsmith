@@ -517,6 +517,7 @@ fn parse_exile_top_library_then_play_bundle(
         EffectAst::SubjectVerb(SubjectVerbEffectAst {
             action:
                 SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedUntilEndOfTurn {
+                spell_filter,
                     alternative_cost,
                     tag: _,
                     player,
@@ -527,6 +528,7 @@ fn parse_exile_top_library_then_play_bundle(
                     free_cast_from_current_zone,
                     until_source_exiles_another,
                     spell_cost_reduction,
+                    spell_cost_increase_unless_targets,
                     max_plays,
                     surface,
                 }),
@@ -535,6 +537,7 @@ fn parse_exile_top_library_then_play_bundle(
             SubjectVerbRoleAst::Actor,
             PlayerAst::Implicit,
             SubjectVerbActionAst::Grants(GrantActionAst::GrantPlayTaggedUntilEndOfTurn {
+                spell_filter,
                 alternative_cost,
                 tag: permission_tag,
                 player,
@@ -545,6 +548,7 @@ fn parse_exile_top_library_then_play_bundle(
                 free_cast_from_current_zone,
                 until_source_exiles_another,
                 spell_cost_reduction,
+                spell_cost_increase_unless_targets,
                 max_plays,
                 surface,
             }),
@@ -577,11 +581,34 @@ fn parse_exile_top_library_then_play_bundle(
                     spell_cost_increase,
                     lands_enter_tapped,
                     during_turns_attacked_with,
+                    during_turns_cast_another_spell,
                     ..
                 }),
             ..
         }) => {
-            if let Some(condition) = during_turns_attacked_with {
+            if during_turns_cast_another_spell {
+                // "As long as you've cast another spell this turn" keeps its
+                // turn gate when the bundle relinks the permission's tag.
+                let mut effect = EffectAst::subject_verb_grant_play_tagged_for_as_long_as_exiled(
+                    permission_tag,
+                    player,
+                    allow_land,
+                    without_paying_mana_cost,
+                    allow_any_color_for_cast,
+                    filter,
+                );
+                if let EffectAst::SubjectVerb(subject) = &mut effect
+                    && let SubjectVerbActionAst::Grants(
+                        GrantActionAst::GrantPlayTaggedForAsLongAsExiled {
+                            during_turns_cast_another_spell: gate,
+                            ..
+                        },
+                    ) = &mut subject.action
+                {
+                    *gate = true;
+                }
+                effect
+            } else if let Some(condition) = during_turns_attacked_with {
                 // "During any turn you attacked with ..." keeps its turn
                 // scope when the bundle relinks the permission's tag.
                 EffectAst::subject_verb_grant_play_tagged_during_turns_attacked_with(
@@ -1969,7 +1996,9 @@ use per_graveyard::parse_choose_each_graveyard_then_owner_shuffle_bundle;
 
 #[path = "effect_composition/delayed_collections.rs"]
 mod delayed_collections;
-use delayed_collections::parse_exile_collection_each_upkeep_return_bundle;
+use delayed_collections::{
+    parse_exile_collection_each_upkeep_return_bundle, parse_retained_spell_copy_bundle,
+};
 
 #[cfg(test)]
 #[path = "effect_composition_inline_tests.rs"]

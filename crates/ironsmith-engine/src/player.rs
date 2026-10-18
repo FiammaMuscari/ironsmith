@@ -40,6 +40,10 @@ pub struct ManaSpendPolicy {
     pub mode: ironsmith_core::value_model::ManaSpendMode,
     pub any_color_mana_symbols: Vec<ManaSymbol>,
     pub other_mana_only_as_colorless: bool,
+    /// (spent, paid) symbol conversions: "spend white mana as though it were
+    /// red mana" (Sunglasses of Urza).
+    #[cfg_attr(feature = "serialization", serde(default))]
+    pub symbol_as_symbol: Vec<(ManaSymbol, ManaSymbol)>,
 }
 
 impl ManaSpendPolicy {
@@ -67,8 +71,16 @@ impl ManaSpendPolicy {
         }
     }
 
+    pub fn add_symbol_as_symbol(&mut self, symbol: ManaSymbol, as_symbol: ManaSymbol) {
+        if !self.symbol_as_symbol.contains(&(symbol, as_symbol)) {
+            self.symbol_as_symbol.push((symbol, as_symbol));
+        }
+    }
+
     pub(crate) fn has_any_color_spending(&self) -> bool {
-        self.mode.allows_any_color() || !self.any_color_mana_symbols.is_empty()
+        self.mode.allows_any_color()
+            || !self.any_color_mana_symbols.is_empty()
+            || !self.symbol_as_symbol.is_empty()
     }
 
     fn symbol_spends_as_any_color(&self, symbol: ManaSymbol) -> bool {
@@ -96,6 +108,7 @@ impl ManaSpendPolicy {
                     && (!self.other_mana_only_as_colorless
                         || self.any_color_mana_symbols.contains(&symbol)))
                     || self.symbol_spends_as_any_color(symbol)
+                    || self.symbol_as_symbol.contains(&(symbol, required))
             }
             ManaSymbol::Colorless => self.symbol_spends_as_colorless(symbol),
             ManaSymbol::Generic(_) => matches!(
@@ -797,6 +810,14 @@ pub struct Player {
 
     // Game-scoped tracking
     pub spells_cast_this_game: u32,
+    /// Name at casting time, keyed by the exact cast spell incarnation.
+    pub spell_cast_names_this_game: std::collections::BTreeMap<ObjectId, String>,
+    /// Creature spells this player has cast this game ("until a player
+    /// casts a creature spell").
+    pub creature_spells_cast_this_game: u32,
+    /// Times this player has cycled a card with each name this game
+    /// ("if you've cycled a card named ... four or more times this game").
+    pub cycled_card_names_this_game: std::collections::BTreeMap<String, u32>,
 
     // Hand size
     pub max_hand_size: i32,
@@ -857,6 +878,9 @@ impl Player {
             lands_played_this_turn: 0,
             land_plays_per_turn: 1,
             spells_cast_this_game: 0,
+            spell_cast_names_this_game: std::collections::BTreeMap::new(),
+            creature_spells_cast_this_game: 0,
+            cycled_card_names_this_game: std::collections::BTreeMap::new(),
             max_hand_size: 7,
             has_lost: false,
             has_won: false,
@@ -1502,5 +1526,61 @@ mod tests {
         );
         assert_eq!(pool.black, 0, "Black should be consumed for X");
         assert_eq!(pool.red, 0, "Red should be consumed for X");
+    }
+}
+
+/// Retain the physical units consumed by one confirmed activation payment.
+/// Restrictions and spending conversions do not change a unit's actual type.
+pub(crate) fn activation_mana_budget_spent(before: &Player, after: &Player) -> ironsmith_core::mana::ManaPaymentBudget {
+    let mut budget = ironsmith_core::mana::ManaPaymentBudget::default();
+    let symbols = [ManaSymbol::White, ManaSymbol::Blue, ManaSymbol::Black, ManaSymbol::Red, ManaSymbol::Green, ManaSymbol::Colorless];
+    for (index, symbol) in symbols.iter().enumerate() {
+        budget.units[index] = before.mana_pool.amount(*symbol).saturating_sub(after.mana_pool.amount(*symbol));
+    }
+    let mut remaining = after.restricted_mana.clone();
+    for unit in &before.restricted_mana {
+        if let Some(index) = remaining.iter().position(|other| other == unit) { remaining.remove(index); }
+        else if let Some(index) = symbols.iter().position(|symbol| *symbol == unit.symbol) { budget.units[index] += 1; }
+    }
+    let mut consumed_provenance = [0u32; 6];
+    let mut remaining = after.mana_source_provenance.clone();
+    for unit in &before.mana_source_provenance {
+        if let Some(index) = remaining.iter().position(|other| other == unit) { remaining.remove(index); }
+        else if let Some(index) = symbols.iter().position(|symbol| *symbol == unit.symbol) {
+            consumed_provenance[index] += 1;
+            if unit.snapshot.as_ref().is_some_and(|snapshot| snapshot.supertypes.contains(&crate::types::Supertype::Snow)) { budget.snow[index] += 1; }
+        }
+    }
+    for index in 0..6 { budget.units[index] = budget.units[index].max(consumed_provenance[index]); }
+    budget
+}
+
+#[cfg(test)]
+mod sol_78_activation_budget_tests {
+    use super::*;
+    #[test]
+    fn exact_receipt_includes_restricted_mana_and_snow_provenance() {
+        let a = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(110);
+        let game = crate::game_state::GameState::new(vec!["A".into(), "B".into()], 20);
+        let object = crate::object::Object::new_hidden_card(source, a, crate::zone::Zone::Hand);
+        let mut snapshot = ObjectSnapshot::from_object(&object, &game);
+        snapshot.supertypes.push(crate::types::Supertype::Snow);
+        let mut before = Player::new(a, "A", 20);
+        before.mana_pool.add(ManaSymbol::White, 2);
+        before.restricted_mana.push(crate::ability::RestrictedManaUnit {
+            symbol: ManaSymbol::Green, source, source_chosen_creature_type: None,
+            restrictions: Vec::new(), source_controller: Some(a),
+        });
+        before.mana_source_provenance.push(ManaSourceProvenance {
+            symbol: ManaSymbol::Green, source, snapshot: Some(snapshot), restricted: true, retention: None,
+        });
+        let mut after = before.clone();
+        after.mana_pool.remove(ManaSymbol::White, 1);
+        after.restricted_mana.clear();
+        after.mana_source_provenance.clear();
+        let budget = activation_mana_budget_spent(&before, &after);
+        assert_eq!(budget.units, [1, 0, 0, 0, 1, 0]);
+        assert_eq!(budget.snow, [0, 0, 0, 0, 1, 0]);
     }
 }

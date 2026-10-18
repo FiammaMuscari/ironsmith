@@ -232,6 +232,26 @@ impl DerivedAlternativeCastRuntimeExt for DerivedAlternativeCast {
                     *exiles_after_resolution,
                 ))
             }
+            // The card's mana cost plus the permission's extra costs, cast
+            // from the permission's zone (Dawnhand Dissident, Into the Pit).
+            Self::ZoneCastFromCardManaCost {
+                zone,
+                additional_costs,
+            } => {
+                let mana_cost = card.mana_cost_owned()?;
+                if card.zone != *zone {
+                    return None;
+                }
+                let mut costs = vec![Cost::mana(mana_cost)];
+                costs.extend(additional_costs.iter().cloned());
+                Some(AlternativeCastingMethod::cast_from_zone_with_total_cost(
+                    "Cast with additional cost",
+                    *zone,
+                    TotalCost::from_costs(costs),
+                    None,
+                    false,
+                ))
+            }
             // CR 702.35a: the madness cost is the card's own mana cost. The
             // method exists wherever the card has madness; only the madness
             // trigger authorizes casting with it.
@@ -240,6 +260,33 @@ impl DerivedAlternativeCastRuntimeExt for DerivedAlternativeCast {
                 Some(AlternativeCastingMethod::Madness {
                     total_cost: TotalCost::mana(mana_cost),
                 })
+            }
+            // CR 702.143a: foretelling happens from hand; the derived cost is
+            // stamped onto the card as it is foretold.
+            Self::ForetellFromCardManaCostReducedBy { reduction } => {
+                let mana_cost = card.mana_cost_owned()?;
+                if card.zone != Zone::Hand {
+                    return None;
+                }
+                // "Each nonland card in your hand without foretell has
+                // foretell" (Bohn, Beguiling Balladeer): a card with its own
+                // foretell keeps only that one.
+                if card
+                    .alternative_casts
+                    .iter()
+                    .any(|method| matches!(method, AlternativeCastingMethod::Foretell { .. }))
+                {
+                    return None;
+                }
+                Some(AlternativeCastingMethod::Foretell {
+                    cost: mana_cost.reduce_generic(*reduction),
+                })
+            }
+            // CR 702.170a: the plot cost is the card's own mana cost; the
+            // plot special action decides where the card may be plotted from.
+            Self::PlotFromCardManaCost => {
+                let mana_cost = card.mana_cost_owned()?;
+                Some(AlternativeCastingMethod::Plot { cost: mana_cost })
             }
         }
     }

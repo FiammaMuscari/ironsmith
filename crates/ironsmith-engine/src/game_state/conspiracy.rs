@@ -17,6 +17,14 @@ pub struct DraftCard {
     pub visibility: DraftVisibility,
     /// Public information noted while this card was revealed as drafted.
     pub public_note: Option<String>,
+    /// Colors chosen as this card was drafted ("the player to your right
+    /// chooses a color, you choose another color, ..."), parsed from the
+    /// public note of a reveal-as-drafted card whose draft text chooses colors.
+    pub chosen_colors: Option<crate::color::ColorSet>,
+    /// The player who passed this card to its drafter, for a reveal-as-drafted
+    /// card that notes them ("note the player who passed it to you"). `None`
+    /// for a card picked from a freshly opened pack.
+    pub noted_player: Option<PlayerId>,
 }
 
 /// One player's simultaneous choice for a single draft step.
@@ -52,6 +60,17 @@ pub struct ConspiracyDraftState {
     next_card_id: u64,
     ordinary_pick_count: usize,
     complete: bool,
+    /// Who passed each player their current pack this round; absent for a
+    /// pack its holder just opened.
+    pack_passers: HashMap<PlayerId, PlayerId>,
+}
+
+/// "Reveal this card as you draft it and note the player who passed it to
+/// you." (Cogwork Tracker): the noted information is the passing seat itself.
+fn notes_passing_player(definition: &crate::cards::CardDefinition) -> bool {
+    draft_rule_labels(definition)
+        .iter()
+        .any(|label| label.contains("note the player who passed it to you"))
 }
 
 fn draft_rule_labels(definition: &crate::cards::CardDefinition) -> Vec<String> {
@@ -77,6 +96,49 @@ fn is_revealed_and_noted(definition: &crate::cards::CardDefinition) -> bool {
     draft_rule_labels(definition)
         .iter()
         .any(|label| label.starts_with("reveal this card as you draft it"))
+}
+
+/// How many colors a reveal-as-drafted card has players choose while it is
+/// drafted (Paliano, the High City: three, each different). Zero when the
+/// card's draft text chooses no colors.
+fn draft_color_choice_count(definition: &crate::cards::CardDefinition) -> usize {
+    draft_rule_labels(definition)
+        .iter()
+        .filter(|label| label.contains("choose"))
+        .map(|label| {
+            label
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|word| *word == "color")
+                .count()
+        })
+        .sum()
+}
+
+/// Parse the public note of a color-choosing draft card: exactly `count`
+/// different color words in choice order ("red, green, white").
+fn parse_draft_chosen_colors(note: &str, count: usize) -> Option<crate::color::ColorSet> {
+    let mut colors = Vec::new();
+    for word in note
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|word| !word.is_empty())
+    {
+        let word = word.to_ascii_lowercase();
+        if matches!(word.as_str(), "and" | "then") {
+            continue;
+        }
+        let color = crate::color::Color::from_name(&word)?;
+        if colors.contains(&color) {
+            return None;
+        }
+        colors.push(color);
+    }
+    (colors.len() == count).then(|| {
+        colors
+            .into_iter()
+            .fold(crate::color::ColorSet::COLORLESS, |set, color| {
+                set.union(crate::color::ColorSet::from_color(color))
+            })
+    })
 }
 
 fn grants_exchange_pick(definition: &crate::cards::CardDefinition) -> bool {
@@ -137,6 +199,7 @@ impl ConspiracyDraftState {
             next_card_id: 1,
             ordinary_pick_count,
             complete: false,
+            pack_passers: HashMap::new(),
         };
         state.open_round()?;
         Ok(state)
@@ -161,6 +224,8 @@ impl ConspiracyDraftState {
                     definition,
                     visibility: DraftVisibility::FaceDown,
                     public_note: None,
+                    chosen_colors: None,
+                    noted_player: None,
                 }
             })
             .collect()
@@ -173,6 +238,7 @@ impl ConspiracyDraftState {
             return Ok(());
         }
         self.current_packs.clear();
+        self.pack_passers.clear();
         for player in self.players.clone() {
             let definitions = self
                 .unopened
@@ -288,11 +354,23 @@ impl ConspiracyDraftState {
                 let mut returned = drafted.remove(index);
                 returned.visibility = DraftVisibility::FaceDown;
                 returned.public_note = None;
+                returned.chosen_colors = None;
+                returned.noted_player = None;
                 pack.push(returned);
             }
 
             for mut card in picked {
-                if is_revealed_and_noted(&card.definition) {
+                if is_revealed_and_noted(&card.definition)
+                    && notes_passing_player(&card.definition)
+                {
+                    // The noted information is determined by the draft, not
+                    // chosen: the seat that passed this pack (if any).
+                    card.noted_player = self.pack_passers.get(&selection.player).copied();
+                    card.public_note = card
+                        .noted_player
+                        .map(|passer| format!("passed by player {}", passer.0 + 1));
+                    card.visibility = DraftVisibility::FaceDown;
+                } else if is_revealed_and_noted(&card.definition) {
                     let note = selection
                         .public_notes
                         .get(&card.id)
@@ -301,6 +379,16 @@ impl ConspiracyDraftState {
                         .ok_or_else(|| {
                             format!("draft card {} requires public noted information", card.id)
                         })?;
+                    let color_choices = draft_color_choice_count(&card.definition);
+                    if color_choices > 0 {
+                        let colors = parse_draft_chosen_colors(note, color_choices).ok_or_else(|| {
+                            format!(
+                                "draft card {} requires {color_choices} different chosen colors",
+                                card.id
+                            )
+                        })?;
+                        card.chosen_colors = Some(colors);
+                    }
                     card.public_note = Some(note.to_string());
                     card.visibility = DraftVisibility::FaceDown;
                 } else if selection.public_notes.contains_key(&card.id) {
@@ -324,6 +412,7 @@ impl ConspiracyDraftState {
 
         let pass_left = self.round == 1 || self.round == 3;
         let mut passed = HashMap::new();
+        let mut passers = HashMap::new();
         let player_count = self.players.len();
         for (index, holder) in self.players.iter().copied().enumerate() {
             let destination_index = if pass_left {
@@ -334,8 +423,10 @@ impl ConspiracyDraftState {
             let destination = self.players[destination_index];
             let pack = self.current_packs.remove(&holder).unwrap_or_default();
             passed.insert(destination, pack);
+            passers.insert(destination, holder);
         }
         self.current_packs = passed;
+        self.pack_passers = passers;
         Ok(())
     }
 
@@ -369,6 +460,23 @@ impl ConspiracyDraftState {
                 public_note: card.public_note.clone(),
             })
             .collect()
+    }
+
+    /// Colors `player` chose as they drafted cards named `card_name`, over
+    /// every such card in their drafted pile.
+    pub fn draft_chosen_colors(
+        &self,
+        player: PlayerId,
+        card_name: &str,
+    ) -> crate::color::ColorSet {
+        let wanted = super::normalize_draft_note_card_name(card_name);
+        self.drafted
+            .get(&player)
+            .into_iter()
+            .flatten()
+            .filter(|card| super::normalize_draft_note_card_name(card.definition.name()) == wanted)
+            .filter_map(|card| card.chosen_colors)
+            .fold(crate::color::ColorSet::COLORLESS, crate::color::ColorSet::union)
     }
 
     /// Return a player's limited card pool after all three rounds finish.
@@ -452,7 +560,138 @@ fn agenda_name_count(definition: &crate::cards::CardDefinition) -> usize {
     count
 }
 
+/// How many colors a card has its owner circle as they build their deck
+/// ("As you create your deck, circle two of the colors below.", Cryptic
+/// Spires), read from its deck-construction rule text. `None` when the card
+/// makes no such choice.
+pub fn deck_construction_color_choice_count(abilities: &[crate::ability::Ability]) -> Option<usize> {
+    abilities.iter().find_map(|ability| {
+        let AbilityKind::Static(ability) = &ability.kind else {
+            return None;
+        };
+        if ability.id() != StaticAbilityId::DeckConstructionRuleText {
+            return None;
+        }
+        let label = ability.display().to_ascii_lowercase();
+        let words: Vec<&str> = label
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .collect();
+        if !words.windows(2).any(|pair| matches!(pair, ["your", "deck"])) {
+            return None;
+        }
+        let circle = words
+            .iter()
+            .position(|word| matches!(*word, "circle" | "choose"))?;
+        if !words[circle..].contains(&"colors") {
+            return None;
+        }
+        match *words.get(circle + 1)? {
+            "one" | "1" => Some(1),
+            "two" | "2" => Some(2),
+            "three" | "3" => Some(3),
+            "four" | "4" => Some(4),
+            "five" | "5" => Some(5),
+            _ => None,
+        }
+    })
+}
+
+/// The deterministic choice used when no deck-construction note was recorded
+/// for a card: the first `count` colors in WUBRG order.
+fn default_deck_construction_colors(count: usize) -> crate::color::ColorSet {
+    crate::color::Color::ALL
+        .into_iter()
+        .take(count)
+        .collect()
+}
+
 impl GameState {
+
+    /// Record the colors chosen for one card as its owner built their deck
+    /// (a deck-construction note, CR 100.2-style pregame information). The
+    /// choice is keyed by the card's stable identity and lasts the game.
+    pub fn set_deck_construction_chosen_colors(
+        &mut self,
+        card: StableId,
+        colors: crate::color::ColorSet,
+    ) {
+        self.auxiliary_tracking_mut()
+            .deck_construction_chosen_colors
+            .insert(card, colors);
+        self.bump_mutation_revision();
+        self.mark_continuous_state_dirty();
+    }
+
+    /// Record a deck-construction note for `card` ("red, green"): exactly as
+    /// many different color words as its deck-construction rule chooses.
+    /// Intended for deck/pregame setup, before the opening shuffle.
+    pub fn record_deck_construction_note(
+        &mut self,
+        card: ObjectId,
+        note: &str,
+    ) -> Result<(), String> {
+        let object = self
+            .object(card)
+            .ok_or_else(|| format!("deck-construction note for unknown card {card:?}"))?;
+        let count = deck_construction_color_choice_count(&object.abilities).ok_or_else(|| {
+            format!("card {card:?} makes no deck-construction color choice")
+        })?;
+        let stable_id = object.stable_id;
+        let colors = parse_draft_chosen_colors(note, count)
+            .ok_or_else(|| format!("card {card:?} requires {count} different chosen colors"))?;
+        self.set_deck_construction_chosen_colors(stable_id, colors);
+        Ok(())
+    }
+
+    /// The colors chosen at deck construction for the card `source` is
+    /// (looked up by stable identity, so any zone and any incarnation). With
+    /// no recorded note, the card's rule falls back to the deterministic
+    /// default: the first N colors in WUBRG order. A card with no such rule
+    /// (e.g. a copy without it) has no colors.
+    pub fn deck_construction_chosen_colors(&self, source: ObjectId) -> crate::color::ColorSet {
+        let Some(object) = self.object(source) else {
+            return crate::color::ColorSet::COLORLESS;
+        };
+        if let Some(colors) = self
+            .auxiliary_tracking
+            .deck_construction_chosen_colors
+            .get(&object.stable_id)
+        {
+            return *colors;
+        }
+        deck_construction_color_choice_count(&object.abilities)
+            .map_or(crate::color::ColorSet::COLORLESS, default_deck_construction_colors)
+    }
+
+    /// Carry the draft's structured records into the game that follows it,
+    /// keyed by drafter and card name: colors chosen as cards were drafted
+    /// (read by "any color chosen as you drafted cards named ..."). Players
+    /// are matched by seat id; seats absent from this game are ignored.
+    pub fn record_conspiracy_draft_choices(&mut self, draft: &ConspiracyDraftState) {
+        let mut chosen = Vec::new();
+        let mut noted_players = Vec::new();
+        for (player, cards) in &draft.drafted {
+            if self.player(*player).is_none() {
+                continue;
+            }
+            for card in cards {
+                if let Some(colors) = card.chosen_colors {
+                    chosen.push((*player, card.definition.name().to_string(), colors));
+                }
+                if let Some(noted) = card.noted_player {
+                    noted_players.push((*player, card.definition.name().to_string(), noted));
+                }
+            }
+        }
+        for (player, card_name, noted) in noted_players {
+            self.record_draft_noted_player(player, card_name, noted);
+        }
+        for (player, card_name, colors) in chosen {
+            let combined = self.draft_chosen_colors(player, &card_name).union(colors);
+            self.set_draft_chosen_colors(player, card_name, combined);
+        }
+    }
 
     /// Enable the post-draft Conspiracy game and put the selected sideboard
     /// conspiracies into command before libraries are shuffled.

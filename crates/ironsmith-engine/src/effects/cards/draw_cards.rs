@@ -6,8 +6,6 @@ use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::effects::{ExecutionContext, ExecutionError};
-#[cfg(test)]
-use crate::events::CardRevealedEvent;
 use crate::events::processing::{
     ReplacementEventContext, TraitEventResult, process_trait_event_with_execution_context,
 };
@@ -109,18 +107,15 @@ pub(crate) fn collect_automatic_draw_reveal_candidates(
 ) -> Result<Vec<AutomaticDrawRevealCandidate>, ExecutionError> {
     let view = crate::derived_view::DerivedGameView::from_refreshed_state(game);
     let mut candidates = Vec::new();
-    let draws_after = draws_before.saturating_add(drawn.len() as u32);
 
     for &source_id in &game.battlefield {
+        if game.is_phased_out(source_id) { continue; }
         let Some(source_obj) = game.object(source_id) else {
             continue;
         };
         let Some(characteristics) = view.calculated_characteristics_arc(source_id) else {
             continue;
         };
-        if characteristics.controller != player_id {
-            continue;
-        }
         for (ability_index, ability) in characteristics.abilities.iter().enumerate() {
             let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
                 continue;
@@ -131,18 +126,17 @@ pub(crate) fn collect_automatic_draw_reveal_candidates(
             let Some(spec) = static_ability.reveal_drawn_card_spec() else {
                 continue;
             };
+            let filter_ctx = crate::filter::FilterContext::new(characteristics.controller)
+                .with_source(source_id).with_chosen_player(game.chosen_player(source_id));
+            let matches_player = spec.player.as_ref().map_or(characteristics.controller == player_id,
+                |filter| crate::filter::player_filter_matches_game(filter, player_id, game, &filter_ctx));
+            if !matches_player { continue; }
             if spec.your_turns_only && !game.is_active_player(player_id) {
                 continue;
             }
-            let draw_number = spec.card_number;
-            if draw_number == 0 || draws_before >= draw_number || draw_number > draws_after {
-                continue;
-            }
-
-            let drawn_index = (draw_number - draws_before - 1) as usize;
-            let Some(&card_id) = drawn.get(drawn_index) else {
-                continue;
-            };
+            for (drawn_index, &card_id) in drawn.iter().enumerate() {
+            let draw_number = draws_before.saturating_add(drawn_index as u32).saturating_add(1);
+            if spec.card_number != 0 && spec.card_number != draw_number { continue; }
 
             let object = game
                 .object(card_id)
@@ -182,6 +176,7 @@ pub(crate) fn collect_automatic_draw_reveal_candidates(
                 source_snapshot,
                 occurrence,
             });
+            }
         }
     }
 
@@ -807,6 +802,39 @@ pub(crate) fn execute_prepared_draw_instruction(
     .map(crate::effects::CompletedEffectOutputs::into_outcome)
 }
 
+/// The activated ability whose resolution is executing this draw instruction:
+/// its source as last known on the stack and its keyword (cycling, ...).
+/// Replacement and triggered programs run without an ability index, so only
+/// the resolving activated ability's own instructions carry a cause.
+fn resolving_activated_ability_draw_cause(
+    game: &GameState,
+    ctx: &ExecutionContext,
+) -> Option<crate::events::DrawCauseAbility> {
+    let ability_index = ctx.ability_index?;
+    let source_snapshot = ctx
+        .source_snapshot
+        .as_ref()
+        .filter(|snapshot| snapshot.object_id == ctx.source)
+        .cloned()
+        .or_else(|| {
+            game.object(ctx.source).map(|object| {
+                ObjectSnapshot::from_object_with_calculated_characteristics(object, game)
+            })
+        })
+        .or_else(|| game.source_last_known_snapshot(ctx.source).cloned());
+    let keyword = source_snapshot.as_ref().and_then(|snapshot| {
+        match &snapshot.abilities.get(ability_index)?.kind {
+            crate::ability::AbilityKind::Activated(activated) => activated.keyword,
+            _ => None,
+        }
+    });
+    Some(crate::events::DrawCauseAbility {
+        source: ctx.source,
+        keyword,
+        source_snapshot,
+    })
+}
+
 fn execute_prepared_draw_cards(
     prepared: PreparedDrawInstruction,
     game: &mut GameState,
@@ -836,6 +864,7 @@ fn execute_prepared_draw_cards(
     // CR 121.2: each card is a separate draw, so the one-card limit is
     // checked per card below. A replaced draw (dredge) isn't a draw.
     let count = requested_count;
+    let cause_ability = resolving_activated_ability_draw_cause(game, ctx);
 
     let mut total_drawn: i64 = 0;
     let mut replacement_count = 0;
@@ -870,7 +899,7 @@ fn execute_prepared_draw_cards(
         }
         let (is_during_players_draw_step, cards_previously_drawn_this_draw_step) =
             game.draw_step_context_for_player(player_id);
-        let draw_event = Event::draw_in_instruction(
+        let draw_event = Event::draw_in_instruction_with_cause(
             player_id,
             1,
             is_first,
@@ -880,6 +909,7 @@ fn execute_prepared_draw_cards(
             is_during_players_draw_step
                 && cards_previously_drawn_this_draw_step == 0
                 && direct_drawn.is_empty(),
+            cause_ability.clone(),
         );
         let processed = process_trait_event_with_execution_context(
             game,
@@ -1246,6 +1276,25 @@ mod tests {
             .abilities_mut()
             .push(crate::ability::Ability::static_ability(ability));
         source
+    }
+
+    #[test]
+    fn chosen_player_reveals_every_card_in_later_draw_batches() {
+        let mut game = setup_game();
+        let a = PlayerId::from_index(0); let b = PlayerId::from_index(1);
+        let ability = crate::static_abilities::StaticAbility::from_model(
+            ironsmith_core::StaticAbility::reveal_cards_drawn(
+                crate::target::PlayerFilter::ChosenPlayer, "The chosen player reveals each card they draw.",
+            ));
+        let source = add_static_source(&mut game, a, "Public draw rule", ability);
+        game.set_chosen_player(source, b);
+        let card = CardBuilder::new(CardId::new(), "Drawn card").card_types(vec![CardType::Instant]).build();
+        let first = game.create_object_from_card(&card, b, Zone::Hand);
+        let second = game.create_object_from_card(&card, b, Zone::Hand);
+        let candidates = collect_automatic_draw_reveal_candidates(&game, b, &[first, second], 10).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.iter().map(|candidate| candidate.player_id).collect::<Vec<_>>(), vec![b, b]);
+        assert!(collect_automatic_draw_reveal_candidates(&game, a, &[first, second], 10).unwrap().is_empty());
     }
 
     fn empty_library_draw_win_ability() -> crate::static_abilities::StaticAbility {
@@ -2149,7 +2198,7 @@ mod removed_draw_selected_api_tests {
 mod checked_first_draw_producer_tests {
     use super::*;
     use crate::card::CardBuilder;
-    use crate::effects::{CostExecutableEffect, CostValidationError, SequenceEffect, execute_effect};
+    use crate::effects::{ CostValidationError, SequenceEffect, execute_effect};
     use crate::ids::CardId;
     use crate::types::CardType;
 

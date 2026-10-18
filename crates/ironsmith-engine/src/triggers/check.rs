@@ -345,6 +345,7 @@ pub struct TriggerIdentity(pub u64);
 pub struct ActiveStateTriggerKey {
     pub source_stable_id: StableId,
     pub trigger_identity: TriggerIdentity,
+    pub watched_object: Option<ObjectId>,
 }
 
 /// A triggered ability that needs to go on the stack.
@@ -430,6 +431,9 @@ pub struct DelayedTrigger {
     pub bound_extra_turn_index: Option<usize>,
     /// Collection-scoped lifetime captured when the trigger was registered.
     pub while_any_tagged_object_in_zone: Option<(crate::tag::TagKey, crate::zone::Zone)>,
+    /// "For as long as this creature remains tapped": the registration ends
+    /// once this permanent untaps or leaves the battlefield (CR 611.2b).
+    pub while_source_tapped: Option<ObjectId>,
     /// Specific objects this trigger targets.
     pub target_objects: Vec<ObjectId>,
     /// Optional source object to use for the triggered ability when it fires.
@@ -457,6 +461,28 @@ pub struct DelayedTrigger {
     /// Prevention shield whose accumulated prevented damage supplies the
     /// numeric value for this delayed ability.
     pub prevention_shield: Option<crate::prevention::PreventionShieldId>,
+}
+
+/// Whether a "for as long as this permanent remains tapped" delayed
+/// registration is still live: the same object is on the battlefield, not
+/// phased out, and tapped.
+pub(crate) fn delayed_source_remains_tapped(game: &GameState, source: ObjectId) -> bool {
+    game.object(source)
+        .is_some_and(|object| object.zone == crate::zone::Zone::Battlefield)
+        && !game.is_phased_out(source)
+        && game.is_tapped(source)
+}
+
+impl DelayedTrigger {
+    /// The player whose turns bound this registration's next-turn duration:
+    /// a resolved `duration_player` (exposed as the delayed duration player
+    /// tag) or else its controller.
+    pub fn duration_owner(&self) -> PlayerId {
+        self.tagged_players
+            .get(ironsmith_core::DELAYED_DURATION_PLAYER_TAG)
+            .and_then(|players| players.first().copied())
+            .unwrap_or(self.controller)
+    }
 }
 
 /// Queue of triggered abilities waiting to be put on the stack.
@@ -930,6 +956,16 @@ fn trigger_is_suppressed(
     view: &crate::derived_view::DerivedGameView<'_>,
     entry: &TriggeredAbilityEntry,
 ) -> bool {
+    // "Changing targets this way doesn't trigger abilities of permanents
+    // named <name>" (Psychic Battle).
+    if let Some(targeted) = entry
+        .triggering_event
+        .downcast::<crate::events::spells::BecomesTargetedEvent>()
+        && let Some(name) = targeted.untriggered_source_name.as_deref()
+        && entry.source_name.eq_ignore_ascii_case(name)
+    {
+        return true;
+    }
     for &obj_id in &game.battlefield {
         if game.is_phased_out(obj_id) {
             continue;
@@ -1610,6 +1646,7 @@ pub(crate) fn check_triggers_batch(
                     | EventKind::BeginningOfDrawStep
                     | EventKind::BeginningOfPrecombatMainPhase
                     | EventKind::BeginningOfCombat
+                    | EventKind::BeginningOfDeclareAttackersStep
                     | EventKind::BeginningOfPostcombatMainPhase
                     | EventKind::BeginningOfEndStep
                     | EventKind::BeginningOfCleanupStep
@@ -3634,33 +3671,31 @@ fn collect_state_triggers_for_object(
         if !ability.functions_in(&obj.zone) {
             continue;
         }
-        if trigger_ability
-            .trigger
-            .downcast_ref::<crate::triggers::StateTrigger>()
-            .is_none()
-        {
-            continue;
-        }
-        let Some(condition) = trigger_ability.intervening_if.as_ref() else {
+        let Some(state) = trigger_ability.trigger.downcast_ref::<crate::triggers::StateTrigger>() else {
             continue;
         };
-
+        let candidates: Vec<Option<ObjectId>> = if let Some(filter) = &state.objects {
+            let filter_ctx = game.filter_context_for(controller, Some(obj.id));
+            game.battlefield.iter().copied().filter(|id|
+                game.object(*id).is_some_and(|candidate| filter.matches(candidate, &filter_ctx, game)))
+                .map(Some).collect()
+        } else { vec![None] };
         let trigger_identity = compute_trigger_identity(trigger_ability);
+        for watched_object in candidates {
         let key = ActiveStateTriggerKey {
             source_stable_id: obj.stable_id,
             trigger_identity,
+            watched_object,
         };
-        let trigger_event = state_trigger_event(obj.id);
-        if !verify_intervening_if(
-            game,
-            condition,
-            controller,
-            &trigger_event,
-            obj.id,
-            Some(trigger_identity),
-            None,
-        ) {
-            continue;
+        let mut event = crate::events::StateTriggerEvent::new(obj.id);
+        event.watched_object = watched_object;
+        event.snapshot = watched_object.and_then(|id| game.object(id))
+            .map(|candidate| game.cached_object_snapshot_with_calculated_characteristics(candidate));
+        let trigger_event = TriggerEvent::new_with_provenance(event, Default::default());
+        if state.objects.is_none() {
+            let Some(condition) = trigger_ability.intervening_if.as_ref() else { continue; };
+            if !verify_intervening_if(game, condition, controller, &trigger_event,
+                obj.id, Some(trigger_identity), None) { continue; }
         }
 
         active.insert(key);
@@ -3701,6 +3736,7 @@ fn collect_state_triggers_for_object(
             source_kind: TriggeredAbilitySourceKind::Object,
             trigger_identity,
         });
+        }
     }
 }
 
@@ -3709,20 +3745,16 @@ fn state_trigger_instance_pending(
     pending: &[TriggeredAbilityEntry],
     key: ActiveStateTriggerKey,
 ) -> bool {
-    let matches = |stable_id: StableId, identity: TriggerIdentity| {
+    let matches = |stable_id: StableId, identity: TriggerIdentity, event: Option<&TriggerEvent>| {
         stable_id == key.source_stable_id && identity == key.trigger_identity
+            && event.and_then(|event| event.downcast::<crate::events::StateTriggerEvent>())
+                .and_then(|event| event.watched_object) == key.watched_object
     };
-    pending
-        .iter()
-        .chain(game.effect_store.pending_trigger_entries.iter())
-        .any(|entry| matches(entry.source_stable_id, entry.trigger_identity))
-        || game.stack.iter().any(|entry| {
-            entry.is_ability
-                && entry
-                    .source_stable_id
-                    .zip(entry.trigger_identity)
-                    .is_some_and(|(stable_id, identity)| matches(stable_id, identity))
-        })
+    pending.iter().chain(game.effect_store.pending_trigger_entries.iter())
+        .any(|entry| matches(entry.source_stable_id, entry.trigger_identity, Some(&entry.triggering_event)))
+        || game.stack.iter().any(|entry| entry.is_ability
+            && entry.source_stable_id.zip(entry.trigger_identity)
+                .is_some_and(|(stable_id, identity)| matches(stable_id, identity, entry.triggering_event.as_ref())))
 }
 
 /// Check all current state-triggered abilities and return newly-triggered entries plus
@@ -3830,7 +3862,7 @@ pub(crate) fn take_delayed_untap_step_actions(
             || delayed
                 .expires_before_controller_turn_after
                 .is_some_and(|anchor| {
-                    game.turn.turn_number > anchor && game.is_active_player(delayed.controller)
+                    game.turn.turn_number > anchor && game.is_active_player(delayed.duration_owner())
                 })
         {
             to_remove.push(idx);
@@ -3843,6 +3875,13 @@ pub(crate) fn take_delayed_untap_step_actions(
                 tag,
                 *zone,
             )
+        {
+            to_remove.push(idx);
+            continue;
+        }
+        if delayed
+            .while_source_tapped
+            .is_some_and(|source| !delayed_source_remains_tapped(game, source))
         {
             to_remove.push(idx);
             continue;
@@ -3958,7 +3997,7 @@ pub fn check_delayed_triggers_for_simultaneous_events(
         if delayed
             .expires_before_controller_turn_after
             .is_some_and(|anchor| {
-                game.turn.turn_number > anchor && game.is_active_player(delayed.controller)
+                game.turn.turn_number > anchor && game.is_active_player(delayed.duration_owner())
             })
         {
             to_remove.push(idx);
@@ -3979,6 +4018,13 @@ pub fn check_delayed_triggers_for_simultaneous_events(
                 tag,
                 *zone,
             )
+        {
+            to_remove.push(idx);
+            continue;
+        }
+        if delayed
+            .while_source_tapped
+            .is_some_and(|source| !delayed_source_remains_tapped(game, source))
         {
             to_remove.push(idx);
             continue;
@@ -4437,7 +4483,7 @@ pub fn player_filter_matches_with_context(
         }
         PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } => {
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. } | PlayerFilter::MostLifeTiedAmong { .. } | PlayerFilter::QuantityGreaterThanPlayer { .. } => {
             let mut filter_ctx = game.filter_context_for(controller, None);
             filter_ctx.defending_player = defending_player;
             player_filter_matches_game(spec, player, game, &filter_ctx)
@@ -4555,8 +4601,8 @@ pub fn generate_step_trigger_events(game: &GameState) -> Option<TriggerEvent> {
 /// without an active-player parameter (currently end of combat) remain single.
 pub fn generate_step_trigger_events_for_active_players(game: &GameState) -> Vec<TriggerEvent> {
     use crate::events::phase::{
-        BeginningOfCleanupStepEvent, BeginningOfCombatEvent, BeginningOfDrawStepEvent,
-        BeginningOfEndStepEvent, BeginningOfPostcombatMainPhaseEvent,
+        BeginningOfCleanupStepEvent, BeginningOfCombatEvent, BeginningOfDeclareAttackersStepEvent,
+        BeginningOfDrawStepEvent, BeginningOfEndStepEvent, BeginningOfPostcombatMainPhaseEvent,
         BeginningOfPrecombatMainPhaseEvent, BeginningOfUpkeepEvent, EndOfCombatEvent,
     };
 
@@ -4595,6 +4641,12 @@ pub fn generate_step_trigger_events_for_active_players(game: &GameState) -> Vec<
         (Phase::Combat, Some(Step::BeginCombat)) => events(|active| {
             TriggerEvent::new_with_provenance(
                 BeginningOfCombatEvent::new(active),
+                crate::provenance::ProvNodeId::default(),
+            )
+        }),
+        (Phase::Combat, Some(Step::DeclareAttackers)) => events(|active| {
+            TriggerEvent::new_with_provenance(
+                BeginningOfDeclareAttackersStepEvent::new(active),
                 crate::provenance::ProvNodeId::default(),
             )
         }),
@@ -5094,7 +5146,7 @@ mod tests {
                     StaticAbility::flanking(),
                 ));
         }
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let triggered = check_triggers(
             &game,
@@ -5135,7 +5187,7 @@ mod tests {
             .push(crate::ability::Ability::static_ability(
                 StaticAbility::flanking(),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let event = creature_blocked_event_with_current_snapshots(&game, blocker, attacker);
 
         game.object_mut(blocker)
@@ -5144,7 +5196,7 @@ mod tests {
             .push(crate::ability::Ability::static_ability(
                 StaticAbility::flanking(),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         assert_eq!(
             check_triggers(&game, &event).len(),
@@ -5164,7 +5216,7 @@ mod tests {
                         if static_ability.id() == StaticAbilityId::Flanking
                 )
             });
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         assert!(
             check_triggers(&game, &event_with_flanking).is_empty(),
@@ -5187,7 +5239,7 @@ mod tests {
                     StaticAbility::flanking(),
                 ));
         }
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let event = creature_blocked_event_with_current_snapshots(&game, blocker, attacker);
         let triggered = check_triggers(&game, &event);
         assert_eq!(triggered.len(), 2);
@@ -5238,7 +5290,7 @@ mod tests {
         game.create_object_from_definition(&master, alice, Zone::Battlefield);
         let attacker = game.create_object_from_definition(&cavalry, alice, Zone::Battlefield);
         let blocker = make_battlefield_creature(&mut game, bob, "Ordinary Blocker");
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let view = crate::derived_view::DerivedGameView::from_refreshed_state(&game);
         let flanking = view
@@ -5275,7 +5327,7 @@ mod tests {
                 crate::continuous::EffectTarget::AllCreatures,
                 crate::continuous::Modification::AddAbility(StaticAbility::flying()),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert!(game.effect_store.delayed_triggers.is_empty());
 
         let event = TriggerEvent::new_with_provenance(
@@ -5388,7 +5440,7 @@ mod tests {
             )
             .expect("Dungeon Delver should parse");
         game.create_object_from_definition(&dungeon_delver, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         (game, alice, commander)
     }
@@ -5799,7 +5851,7 @@ mod tests {
             add_battlefield_trigger(&mut game, source, Trigger::this_attacks());
         }
         let victim = make_battlefield_creature(&mut game, alice, "Departing Creature");
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let victim_snapshot =
             ObjectSnapshot::from_object(game.object(victim).expect("victim exists"), &game);
         let event = TriggerEvent::new_with_provenance(
@@ -6137,7 +6189,7 @@ mod tests {
                 crate::continuous::EffectTarget::AttachedTo(aura),
                 crate::continuous::Modification::ChangeController(alice),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let spell = CardBuilder::new(CardId::new(), "Lightning Bolt")
             .card_types(vec![CardType::Instant])
@@ -6255,7 +6307,7 @@ mod tests {
             treachery_id,
             crate::object::AttachmentTarget::Object(voice_id),
         ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(game.controller_of_id(voice_id), Some(alice));
 
         let spell_id = game.create_object_from_definition(&bolt, bob, Zone::Stack);
@@ -6560,7 +6612,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         });
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let events = attackers
             .iter()
             .map(|source| {
@@ -6708,7 +6760,7 @@ mod tests {
                     ),
                 ),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         game.mark_continuous_state_dirty();
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::with_total_attackers(
@@ -6743,7 +6795,7 @@ mod tests {
             alice,
             crate::ConditionExpr::SourceIsAttacking,
         );
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let event = || {
             TriggerEvent::new_with_provenance(
@@ -6769,7 +6821,7 @@ mod tests {
             ..Default::default()
         });
         game.mark_continuous_state_dirty();
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let triggered = check_triggers(&game, &event());
         assert_eq!(triggered.len(), 1);
@@ -6789,7 +6841,7 @@ mod tests {
             crate::ConditionExpr::YourTurn,
         );
         game.turn.active_player = bob;
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let event = || {
             TriggerEvent::new_with_provenance(

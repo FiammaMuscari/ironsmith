@@ -308,6 +308,9 @@ pub struct ManaExecutionContext {
     pub retention: Option<ironsmith_core::ManaRetentionDuration>,
     /// Mana spent on the activation cost of the resolving ability.
     pub activation_payment: crate::player::ManaPool,
+    pub activation_mana_budget: ironsmith_core::mana::ManaPaymentBudget,
+    /// Cumulative receipt of actual mana spent by PayMana in this execution.
+    pub effect_payment: crate::player::ManaPool,
     /// More specific purpose for mana payments nested inside this effect.
     pub payment_reason: Option<crate::costs::PaymentReason>,
 }
@@ -333,6 +336,9 @@ pub struct ReplacementExecutionContext {
     /// parts of one simultaneous event (for example, a lethal Exquisite
     /// Archangel whose lose-game replacement also tries to exile itself).
     pub simultaneous_zone_destinations: HashMap<ObjectId, crate::zone::Zone>,
+    /// Set by an entry program that puts the entering object into another
+    /// zone instead of onto the battlefield (Frankenstein's Monster).
+    pub entry_redirect: Option<crate::zone::Zone>,
 }
 
 impl Default for ReplacementExecutionContext {
@@ -346,6 +352,7 @@ impl Default for ReplacementExecutionContext {
             suppressed_replacement_effects: HashSet::new(),
             suppressed_replacement_effect_keys: HashSet::new(),
             simultaneous_zone_destinations: HashMap::new(),
+            entry_redirect: None,
         }
     }
 }
@@ -464,6 +471,7 @@ pub struct ExecutionContext<'a> {
     /// Delayed effects that explicitly reference damage "prevented this way"
     /// capture this stable identity when they are scheduled.
     pub last_prevention_shield: Option<crate::prevention::PreventionShieldId>,
+    pub last_play_permissions: Vec<crate::grant_registry::GrantPermissionIdentity>,
     /// Structural identity of the resolving triggered ability, when available.
     pub trigger_identity: Option<crate::triggers::TriggerIdentity>,
     /// "Do this only once each turn" gate for the resolving triggered ability.
@@ -624,6 +632,7 @@ execution_context_checkpoint! {
     triggering_event: Option<crate::triggers::TriggerEvent>,
     event_value_amount: Option<i32>,
     last_prevention_shield: Option<crate::prevention::PreventionShieldId>,
+    last_play_permissions: Vec<crate::grant_registry::GrantPermissionIdentity>,
     trigger_identity: Option<crate::triggers::TriggerIdentity>,
     do_this_limit: Option<DoThisLimit>,
     ability_index: Option<usize>,
@@ -692,6 +701,7 @@ payment_execution_inputs! {
         activation_values: Vec<(crate::effect::Value, Option<i32>)>,
         event_value_amount: Option<i32>,
         last_prevention_shield: Option<crate::prevention::PreventionShieldId>,
+        last_play_permissions: Vec<crate::grant_registry::GrantPermissionIdentity>,
         trigger_identity: Option<crate::triggers::TriggerIdentity>,
         ability_index: Option<usize>,
         mana: ManaExecutionContext,
@@ -816,6 +826,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: None,
             event_value_amount: None,
             last_prevention_shield: None,
+            last_play_permissions: Vec::new(),
             trigger_identity: None,
             do_this_limit: None,
             ability_index: None,
@@ -886,6 +897,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: None,
             event_value_amount: None,
             last_prevention_shield: None,
+            last_play_permissions: Vec::new(),
             trigger_identity: None,
             do_this_limit: None,
             ability_index: None,
@@ -946,6 +958,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: self.triggering_event,
             event_value_amount: self.event_value_amount,
             last_prevention_shield: self.last_prevention_shield,
+            last_play_permissions: self.last_play_permissions,
             trigger_identity: self.trigger_identity,
             do_this_limit: self.do_this_limit,
             ability_index: self.ability_index,
@@ -1941,6 +1954,40 @@ impl<'a> ExecutionContext<'a> {
             ironsmith_core::tag::CURRENT_PLAYERS_ATTACKING_EVENT_DEFENDER_TAG.into(),
             attacking,
         );
+        // "Whenever one or more Devils you control attack one or more players,
+        // you and those players each ...": the players directly attacked by
+        // the trigger's matched attacking group in that declaration.
+        if let Some(attacked) = self
+            .triggering_event
+            .as_ref()
+            .and_then(|event| event.downcast::<crate::events::combat::CreatureAttackedEvent>())
+            && let Some(group) =
+                tagged_objects.get(&TagKey::from(ironsmith_core::ATTACKING_GROUP_TAG))
+        {
+            let group_ids: Vec<_> = group.iter().map(|snapshot| snapshot.object_id).collect();
+            let mut defenders = Vec::new();
+            match attacked.declared_attackers.as_deref() {
+                Some(declared) => {
+                    for info in declared {
+                        if group_ids.contains(&info.creature)
+                            && let crate::combat_state::AttackTarget::Player(player) = &info.target
+                            && !defenders.contains(player)
+                        {
+                            defenders.push(*player);
+                        }
+                    }
+                }
+                None => {
+                    if let crate::triggers::AttackEventTarget::Player(player) = &attacked.target {
+                        defenders.push(*player);
+                    }
+                }
+            }
+            tagged_players.insert(
+                ironsmith_core::tag::ATTACKING_GROUP_DEFENDERS_TAG.into(),
+                defenders,
+            );
+        }
         let linked = match &self.linked_exile_owner {
             Some(owner) => match game.linked_exile_pair_members(owner) {
                 Ok(members) => members,

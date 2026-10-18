@@ -25,6 +25,33 @@ pub fn parse_sacrifice(
             .unwrap_or(clause_shape.body_tokens),
     );
     let normalized_words = crate::lexer::token_word_refs(tokens);
+    // Capture the explicitly named object before its controller sacrifices it.
+    // In a granted ability the named source is the granting attachment, while
+    // "you" still denotes the controller of the permanent with the ability.
+    // A captured object also keeps its controller available to a later draw
+    // after the sacrifice moves it off the battlefield.
+    if normalized_words.as_slice() == ["it"]
+        && matches!(subject, Some(SubjectAst::Player(PlayerAst::ItsController)))
+        && let Some(TargetAst::Object(filter, ..)) = target.as_ref()
+        && filter.source
+        && filter.source_surface.is_some()
+    {
+        let tag = crate::util::helper_tag_for_tokens(tokens, "sacrifice_subject");
+        return Ok(EffectAst::Sequence {
+            effects: vec![
+                EffectAst::TagAffected {
+                    tag: tag.clone().into(),
+                    effect: Box::new(EffectAst::subject_verb_target_only(target.clone().unwrap())),
+                },
+                EffectAst::subject_verb_sacrifice(
+                    PlayerAst::ItsController,
+                    ObjectFilter::default(),
+                    1,
+                    Some(TargetAst::Tagged(tag.into(), None)),
+                ),
+            ],
+        });
+    }
     let unless_escaped = matches!(
         clause_shape.unless_kind,
         sacrifice_discard_grammar::SacrificeUnlessKind::Escaped
@@ -86,7 +113,16 @@ pub fn parse_sacrifice(
             )));
         }
     }
-    if clause_shape.has_graveyard_history {
+    // "sacrifices a creature for each creature put into your graveyard from
+    // the battlefield this turn" (Urborg Justice): a counted turn-history
+    // suffix is the ordinary for-each count read below.
+    let graveyard_history_count = grammar::find_prefix(tokens, || grammar::phrase(&["for", "each"]))
+        .and_then(|(idx, _, _)| {
+            crate::grammar::shared_util::value_semantics::parse_turn_history_count_value(
+                &tokens[idx..],
+            )
+        });
+    if clause_shape.has_graveyard_history && graveyard_history_count.is_none() {
         return Err(CardTextError::ParseError(format!(
             "unsupported graveyard-history sacrifice clause (clause: '{}')",
             normalized_words.join(" ")
@@ -103,6 +139,62 @@ pub fn parse_sacrifice(
         let target = parse_target_phrase(tokens)?;
         return Ok(wrap_unless_escaped(
             EffectAst::subject_verb_sacrifice(player, ObjectFilter::default(), 1, Some(target)),
+            unless_escaped,
+        ));
+    }
+
+    // "that player sacrifices all but that many permanents of their choice"
+    // (Choice of Damnations): the player chooses that many matching
+    // permanents to keep, then sacrifices every other one.
+    if tokens.first().is_some_and(|token| token.is_word("all"))
+        && tokens.get(1).is_some_and(|token| token.is_word("but"))
+    {
+        let rest = &tokens[2..];
+        let (keep, used) = if rest.len() > 2 && rest[0].is_word("that") && rest[1].is_word("many")
+        {
+            (
+                Value::PendingPriorEffectMetric(
+                    ironsmith_core::PriorEffectMetricQuery::new(
+                        ironsmith_core::EffectMetricSource::Outcome,
+                        ironsmith_core::EffectMetric::Count,
+                    )
+                    .with_action(ironsmith_core::PriorEffectAction::ChosenNumber),
+                ),
+                2,
+            )
+        } else if let Some((amount, used)) = crate::util::parse_number(rest)
+            && used < rest.len()
+        {
+            (Value::Fixed(i32::try_from(amount).unwrap_or(i32::MAX)), used)
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported all-but sacrifice count (clause: '{}')",
+                normalized_words.join(" ")
+            )));
+        };
+        let mut filter = parse_object_filter_lexed(&rest[used..], false)?;
+        filter.zone = Some(Zone::Battlefield);
+        if filter.controller.is_none() {
+            filter.controller = controller_filter_for_token_player(player);
+        }
+        let tag = crate::util::helper_tag_for_tokens(tokens, "kept");
+        let sacrificed = filter.clone().not_tagged(tag.clone());
+        return Ok(wrap_unless_escaped(
+            EffectAst::Sequence {
+                effects: vec![
+                    EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjects {
+                        filter,
+                        count: crate::effect::ChoiceCount::dynamic_x(),
+                        count_value: Some(keep),
+                        player,
+                        tag,
+                    }),
+                    EffectAst::subject_verb_sacrifice_all(
+                        sacrificing_player_for_chooser(player),
+                        sacrificed,
+                    ),
+                ],
+            },
             unless_escaped,
         ));
     }

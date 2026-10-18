@@ -70,6 +70,23 @@ pub fn preserve_triggered_source_zone_alternatives(ability: &mut Ability) {
     }
 }
 
+/// "This ability triggers only if C": after the source-zone alternatives are
+/// read from `C`, mark it as checked only when the trigger event happens, so
+/// it is not rechecked like an intervening "if" when the ability resolves.
+pub fn mark_trigger_only_intervening_if(ability: &mut Ability, trigger_only: bool) {
+    if !trigger_only {
+        return;
+    }
+    if let AbilityKind::Triggered(triggered) = &mut ability.kind
+        && let Some(condition) = triggered.intervening_if.take()
+    {
+        triggered.intervening_if = Some(match condition {
+            already @ crate::effect::Condition::TriggerEventOnly(_) => already,
+            condition => crate::effect::Condition::TriggerEventOnly(Box::new(condition)),
+        });
+    }
+}
+
 fn trigger_references_attached_object(trigger: &TriggerSpec) -> bool {
     match trigger {
         TriggerSpec::WithIntro { trigger, .. } => trigger_references_attached_object(trigger),
@@ -934,6 +951,11 @@ fn rest_complement_producer(earlier: &[crate::effect::Effect]) -> Option<crate::
     fn contains_exile(effect: &crate::effect::Effect) -> bool {
         if effect.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>().is_some()
             || effect.downcast_ref::<crate::effects::ExileEffect>().is_some()
+            // "Search your library for ... cards and exile them": the
+            // searched cards are moved to exile one by one.
+            || effect
+                .downcast_ref::<crate::effects::MoveToZoneEffect>()
+                .is_some_and(|mv| mv.zone == Zone::Exile)
         {
             return true;
         }
@@ -1699,11 +1721,62 @@ fn finalize_program_references(program: &mut crate::resolution::ResolutionProgra
         }
         crate::compile_support::link_unproduced_result_references_in_program(program);
         bind_unproduced_rest_complement(program);
+        bind_this_mana_retention_to_prior_production(program);
     };
     for segment in &mut program.segments {
         for_each_scheduled_delayed_program(&mut segment.default_effects, &mut pass);
     }
     pass(program);
+}
+
+/// A following "you don't lose this mana" refers to the preceding production,
+/// rather than every mana unit the player already has or produces later.
+fn bind_this_mana_retention_to_prior_production(program: &mut crate::resolution::ResolutionProgram) {
+    fn produces_only_for_you(effect: &crate::effect::Effect) -> bool {
+        if effect.directly_produces_mana() {
+            return effect.downcast_ref::<crate::effects::AddManaEffect>()
+                .is_some_and(|add| add.player == PlayerFilter::You)
+                || effect.downcast_ref::<crate::effects::mana::AddScaledManaEffect>()
+                    .is_some_and(|add| add.player == PlayerFilter::You);
+        }
+        let mut matches = true;
+        effect.visit_resolution_child_effects(&mut |child| {
+            matches &= produces_only_for_you(child);
+        });
+        matches
+    }
+    let mut changed = false;
+    for index in 1..program.segments.len() {
+        let current = &program.segments[index];
+        if current.default_effects.len() != 1 || !current.self_replacements.is_empty() {
+            continue;
+        }
+        let Some(retain) = current.default_effects[0]
+            .downcast_ref::<crate::effects::RetainManaUntilEndOfTurnEffect>() else { continue };
+        if retain.player != PlayerFilter::You || retain.color.is_some() {
+            continue;
+        }
+        let duration = if retain.until_end_of_combat {
+            ironsmith_core::ManaRetentionDuration::EndOfCombat
+        } else {
+            ironsmith_core::ManaRetentionDuration::EndOfTurn
+        };
+        let previous = &mut program.segments[index - 1];
+        if !previous.self_replacements.is_empty()
+            || !previous.default_effects.iter().any(|effect| effect.contains_mana_production())
+            || !previous.default_effects.iter().all(produces_only_for_you)
+        {
+            continue;
+        }
+        let production = std::mem::take(&mut previous.default_effects);
+        previous.default_effects.push(crate::effect::Effect::mana_retained(production, duration));
+        program.segments[index].default_effects.clear();
+        changed = true;
+    }
+    if changed {
+        let segments = std::mem::take(&mut program.segments);
+        program.replace_segments(segments);
+    }
 }
 
 /// The same repairs for a bare instruction list (an opening-hand action's
@@ -2011,14 +2084,34 @@ fn correlate_additional_cost_chosen_type_search_destination(
     else {
         return;
     };
-    if !conditional.if_false.is_empty()
-        || conditional.if_true.len() != 1
-        || !matches!(
-            &conditional.condition,
+    let paid_additional = |condition: &crate::effect::Condition| {
+        matches!(
+            condition,
             crate::effect::Condition::ThisSpellPaidLabel(label)
                 if label.kind == crate::cost::OptionalCostKind::Additional
         )
-    {
+    };
+    // "If this spell's additional cost was paid and the revealed card is the
+    // chosen type" (Celestial Reunion): the chosen-type test on the searched
+    // card is exactly the replacement's chosen-creature-type filter below,
+    // so only the paid-cost half remains the branch condition.
+    let tests_chosen_type = |condition: &crate::effect::Condition| match condition {
+        crate::effect::Condition::TaggedObjectMatches(_, filter)
+        | crate::effect::Condition::TargetMatches(filter) => {
+            filter.chosen_creature_type || filter.chosen_card_type
+        }
+        _ => false,
+    };
+    let branch_condition = match &conditional.condition {
+        condition if paid_additional(condition) => condition.clone(),
+        crate::effect::Condition::And(left, right)
+            if paid_additional(left) && tests_chosen_type(right) =>
+        {
+            left.as_ref().clone()
+        }
+        _ => return,
+    };
+    if !conditional.if_false.is_empty() || conditional.if_true.len() != 1 {
         return;
     }
     let Some(tagged_move) = conditional.if_true[0].downcast_ref::<crate::effects::TaggedEffect>()
@@ -2064,7 +2157,7 @@ fn correlate_additional_cost_chosen_type_search_destination(
     segment
         .self_replacements
         .push(crate::resolution::SelfReplacementBranch::new(
-            conditional.condition.clone(),
+            branch_condition,
             vec![rewritten_search],
         ));
     *program = crate::resolution::ResolutionProgram::new(vec![segment]);
@@ -2476,7 +2569,19 @@ fn link_alternative_cast_condition_references(builder: &mut CardDefinitionBuilde
                 }
                 link_program(&mut activated.effects, method_name, mana_cost, header_matched);
             }
-            _ => {}
+            // "If Scarlet Spider was cast using web-slinging, he enters with X
+            // +1/+1 counters on him": an entry replacement keyed to the card's
+            // own alternative casting method.
+            crate::ability::AbilityKind::Static(static_ability) => {
+                if let crate::static_abilities::StaticAbilityPayload::EntersWithCountersIfCondition {
+                    condition,
+                    ..
+                } = &mut static_ability.payload
+                    && let Some(linked) = link_condition(condition, method_name, mana_cost, false)
+                {
+                    *condition = linked;
+                }
+            }
         }
     }
 }

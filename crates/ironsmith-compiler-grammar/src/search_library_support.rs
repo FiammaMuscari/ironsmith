@@ -42,9 +42,56 @@ fn card_type_set_includes(card_types: &[CardType], expected: CardType) -> bool {
     false
 }
 
+/// "a basic, Sphere, or Locus land card" (Monument to Perfection): a list of
+/// land qualities (the basic supertype or land subtypes) sharing one
+/// "land card" noun; each arm is a land with that quality.
+pub(crate) fn parse_land_quality_union_filter(tokens: &[OwnedLexToken]) -> Option<ObjectFilter> {
+    let words = token_word_refs(tokens);
+    let words = match words.as_slice() {
+        ["a" | "an", rest @ ..] => rest,
+        rest => rest,
+    };
+    let qualities = words
+        .strip_suffix(&["land", "card"][..])
+        .or_else(|| words.strip_suffix(&["land", "cards"][..]))
+        .or_else(|| words.strip_suffix(&["lands"][..]))?;
+    let mut arms = Vec::new();
+    let mut saw_connective = false;
+    for word in qualities {
+        if matches!(*word, "or" | "and/or" | "and") {
+            saw_connective = true;
+            continue;
+        }
+        let mut arm = ObjectFilter::default().with_type(crate::types::CardType::Land);
+        if *word == "basic" {
+            arm = arm.with_supertype(crate::types::Supertype::Basic);
+        } else {
+            // The shared "land card" head makes each listed word a land
+            // subtype, so English-noun subtypes ("Sphere") keep their Magic
+            // meaning here like on a type line.
+            let subtype = crate::util::parse_subtype_word(word)
+                .or_else(|| crate::grammar::leaf::classify_token_definition_subtype(word))?;
+            if !subtype.is_land_subtype() {
+                return None;
+            }
+            arm.subtypes.push(subtype);
+        }
+        arms.push(arm);
+    }
+    if arms.len() < 2 || !saw_connective {
+        return None;
+    }
+    let mut filter = ObjectFilter::default();
+    filter.any_of = arms;
+    Some(filter)
+}
+
 pub fn parse_search_library_disjunction_filter(
     filter_tokens: &[OwnedLexToken],
 ) -> Option<ObjectFilter> {
+    if let Some(filter) = parse_land_quality_union_filter(filter_tokens) {
+        return Some(filter);
+    }
     let uses_and_or = filter_tokens.iter().any(|token| token.is_word("and/or"));
     let segments = if uses_and_or {
         let mut segments = Vec::new();
@@ -447,6 +494,13 @@ pub fn split_search_different_name_reference_filter(
         &["that", "don't", "have", "the", "same", "name", "as"],
         &["that", "dont", "have", "the", "same", "name", "as"],
         &["that", "do", "not", "have", "the", "same", "name", "as"],
+        // "an Aura card with mana value ... and with a different name than
+        // each Aura you control" (Light-Paws): the reference set is every
+        // matching permanent (tagged all at once), so "each" is dropped.
+        &["and", "with", "a", "different", "name", "than", "each"],
+        &["with", "a", "different", "name", "than", "each"],
+        &["and", "with", "a", "different", "name", "from", "each"],
+        &["with", "a", "different", "name", "from", "each"],
         &["with", "a", "different", "name", "from"],
         &["with", "different", "name", "from"],
     ];

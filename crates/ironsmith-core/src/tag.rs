@@ -14,6 +14,9 @@ use std::fmt;
 
 /// Runtime tag for cards linked as "exiled with this source object".
 pub const SOURCE_EXILED_TAG: &str = "__source_exiled__";
+/// Cards milled to pay an activation cost ("Mill a card: ... the milled
+/// card", Charmed Pendant), exposed to the ability's effects.
+pub const COST_MILLED_TAG: &str = "__cost_milled__";
 
 /// Exact retained result of an instruction or cost that exiles its source.
 /// A changed/prevented action retains its receipt-result/original incarnation;
@@ -52,6 +55,17 @@ pub const COST_EXILED_TAG: &str = "__cost_exiled__";
 /// its owner controlled when it left the battlefield ("cards you exiled").
 /// Evaluated directly from the exile links rather than captured.
 pub const EXILED_BY_YOU_TAG: &str = "__exiled_by_you__";
+
+/// Runtime tag for cards linked as exiled with the filter's source whose
+/// recorded exiler is "you", the filter context's player ("cards they exiled
+/// with this enchantment", Shared Fate). A permission evaluated per
+/// beneficiary therefore covers exactly the cards that player exiled.
+/// Evaluated from the exile links and per-card exiler records, never captured.
+pub const SOURCE_EXILED_BY_YOU_TAG: &str = "__source_exiled_by_you__";
+
+/// [`SOURCE_EXILED_BY_YOU_TAG`] narrowed to cards exiled during the current
+/// turn ("cards they exiled with this artifact this turn", Uba Mask).
+pub const SOURCE_EXILED_BY_YOU_THIS_TURN_TAG: &str = "__source_exiled_by_you_this_turn__";
 
 /// Runtime tag for the card on top of the filter context player's library
 /// ("that card" after "as long as the top card of your library is ...").
@@ -206,6 +220,20 @@ pub const EXPLOITER_TAG: &str = "exploiter";
 /// Runtime tag for cards seen by a surveil action this turn.
 pub const SURVEILLED_THIS_TURN_TAG: &str = "__surveilled_this_turn__";
 
+/// The permanent whose "hexproof from" is being checked. Targeting legality
+/// populates it, so "hexproof from each of its colors" (Tam, Mindful
+/// First-Year) is a filter sharing a color with this protected object.
+pub const HEXPROOF_PROTECTED_OBJECT_TAG: &str = "__hexproof_protected_object__";
+
+/// Runtime resolution tag for the cards the latest surveil kept on top of
+/// its player's library ("for each card you put on top of your library").
+pub const SURVEIL_KEPT_ON_TOP_TAG: &str = "__surveil_kept_on_top__";
+
+/// Runtime resolution tag for the cards the latest surveil put into a
+/// graveyard, as their new graveyard objects ("If you put a card ... into
+/// your graveyard this way, put that card into your hand").
+pub const SURVEIL_PUT_INTO_GRAVEYARD_TAG: &str = "__surveil_put_into_graveyard__";
+
 /// Runtime action-event tag for the card put into a graveyard while
 /// performing the manifest-dread keyword action.
 pub const MANIFEST_DREAD_GRAVEYARD_TAG: &str = "__manifest_dread_graveyard__";
@@ -244,6 +272,11 @@ pub const DAMAGE_SOURCE_CONTROLLER_TAG: &str = "__damage_source_controller__";
 /// Live controllers attacking the event's frozen defender when an effect
 /// constructs its filter context (CR 508.6), not the declaration's old actors.
 pub const CURRENT_PLAYERS_ATTACKING_EVENT_DEFENDER_TAG: &str = "__current_players_attacking_event_defender__";
+/// The players directly attacked by the matched group of a "whenever one or
+/// more <creatures> attack one or more players" trigger ("you and those
+/// players each draw a card", Zurzoth). Runtime filter contexts derive it
+/// from the triggering declaration and the trigger's attacking-group tag.
+pub const ATTACKING_GROUP_DEFENDERS_TAG: &str = "__attacking_group_defenders__";
 
 /// The players a source chose ("As this enters, choose two players", Sower of
 /// Discord). Runtime filter contexts populate this system tag from the
@@ -280,6 +313,8 @@ pub const WELL_KNOWN_TAGS: &[&str] = &[
     SOURCE_EXILED_SELF_TAG,
     SOURCE_EXILED_THIS_RESOLUTION_TAG,
     EXILED_BY_YOU_TAG,
+    SOURCE_EXILED_BY_YOU_TAG,
+    SOURCE_EXILED_BY_YOU_THIS_TURN_TAG,
     ZONE_REPLACEMENT_OBJECT_TAG,
     PRIOR_EXILED_CARD_TAG,
     REVEALED_THIS_WAY_TAG,
@@ -293,16 +328,21 @@ pub const WELL_KNOWN_TAGS: &[&str] = &[
     EXPLOITED_TAG,
     EXPLOITER_TAG,
     SURVEILLED_THIS_TURN_TAG,
+    SURVEIL_KEPT_ON_TOP_TAG,
+    SURVEIL_PUT_INTO_GRAVEYARD_TAG,
+    HEXPROOF_PROTECTED_OBJECT_TAG,
     MANIFEST_DREAD_GRAVEYARD_TAG,
     ATTACKING_GROUP_TAG,
     COMBAT_DAMAGE_GROUP_TAG,
     ZONE_CHANGE_GROUP_TAG,
     TAP_STATE_GROUP_TAG,
     PHASING_GROUP_TAG,
+    TRIGGER_ATTACHMENT_TAG,
     ATTACK_DECLARATION_ACTOR_TAG,
     ATTACK_DECLARATION_DEFENDER_TAG,
     DAMAGE_SOURCE_CONTROLLER_TAG,
     CURRENT_PLAYERS_ATTACKING_EVENT_DEFENDER_TAG,
+    ATTACKING_GROUP_DEFENDERS_TAG,
     INITIATIVE_HOLDER_TAG,
     PREVIOUS_ITERATED_OBJECTS_TAG,
     CAST_MODIFIED_CREATURES_TAG,
@@ -378,3 +418,6 @@ impl From<&String> for TagKey {
 pub fn optional_cost_sacrifice_receipt(reference: &crate::cost_model::OptionalCostRef) -> TagKey {
     TagKey::new(format!("__optional_cost_sacrifice:{:?}:{:?}", reference.kind, reference.discriminator))
 }
+
+/// Resolve to the last source-linked exiled incarnation when mana is produced.
+pub const LAST_SOURCE_EXILED_AT_PRODUCTION_TAG: &str = "__last_source_exiled_at_production__";

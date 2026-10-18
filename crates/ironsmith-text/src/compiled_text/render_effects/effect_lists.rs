@@ -6238,6 +6238,7 @@ pub(super) fn describe_choose_top_exile_then_play_structural(effects: &[Effect])
         || grant.while_on_top_of_library
         || grant.filter.is_some()
         || grant.cast_pool_is_plural
+        || grant.during_turns_cast_another_spell
     {
         return None;
     }
@@ -6264,6 +6265,12 @@ pub(super) fn describe_choose_top_exile_then_play_structural(effects: &[Effect])
             }
             crate::effects::GrantPlayTaggedDuration::UntilYourNextEndStep => {
                 format!("You may {verb} that card until your next end step{mana_suffix}")
+            }
+            crate::effects::GrantPlayTaggedDuration::DuringYourNextTurn => {
+                format!("During your next turn, you may {verb} that card{mana_suffix}")
+            }
+            crate::effects::GrantPlayTaggedDuration::UntilEndOfCombatOnYourNextTurn => {
+                format!("Until end of combat on your next turn, you may {verb} that card{mana_suffix}")
             }
             _ => return None,
         }
@@ -13295,7 +13302,7 @@ pub(in crate::compiled_text) fn describe_fixed_counter_and_counter_choice_same_t
         || choice.mode_point_costs.iter().any(|cost| *cost != 1)
         || choice.disallow_previously_chosen_modes
         || choice.disallow_previously_chosen_modes_this_turn
-        || choice.distinct_player_targets_per_mode
+        || choice.distinct_player_targets_per_mode || choice.optional_choice
         || choice.conditional_mode_range.is_some()
         || choice.modes.len() < 2
     {
@@ -13358,7 +13365,7 @@ pub(super) fn describe_target_base_stat_choice_inline(effects: &[Effect]) -> Opt
         || choice.mode_point_costs != [1, 1]
         || choice.disallow_previously_chosen_modes
         || choice.disallow_previously_chosen_modes_this_turn
-        || choice.distinct_player_targets_per_mode
+        || choice.distinct_player_targets_per_mode || choice.optional_choice
         || choice.conditional_mode_range.is_some()
         || choice.presentation_label.is_some()
         || choice.modes.len() != 2
@@ -13462,7 +13469,7 @@ fn describe_target_ability_removal_choice_inline(effects: &[Effect]) -> Option<S
         || choice.mode_point_costs != [1, 1]
         || choice.disallow_previously_chosen_modes
         || choice.disallow_previously_chosen_modes_this_turn
-        || choice.distinct_player_targets_per_mode
+        || choice.distinct_player_targets_per_mode || choice.optional_choice
         || choice.conditional_mode_range.is_some()
         || choice.presentation_label.is_some()
         || choice.modes.len() != 2
@@ -15122,7 +15129,304 @@ pub(in crate::compiled_text) fn refer_back_to_declared_any_target(
     )
 }
 
+/// Space sculptor sector instructions (CR 702.158): "... in the sector of
+/// your choice" (a sector named-option choice followed by the instruction
+/// reading the chosen sector), and the per-sector blocking restriction triple
+/// "<creatures> in each sector can be blocked this turn only by <creatures>
+/// in the same sector".
+fn describe_space_sculptor_sector_effects(effects: &[Effect]) -> Option<String> {
+    use ironsmith_core::filter_model::{SectorName, SectorPredicate};
+    if let [choose_effect, rest @ ..] = effects
+        && !rest.is_empty()
+        && let Some(choose) = structural_unwrap_render_wrappers(choose_effect)
+            .downcast_ref::<crate::effects::ChooseNamedOptionEffect>()
+        && choose.chooser == PlayerFilter::You
+        && choose
+            .options
+            .iter()
+            .map(String::as_str)
+            .eq(SectorName::ALL.iter().map(|sector| sector.word()))
+    {
+        let body = describe_effect_list_inner(rest);
+        if body.contains("in the chosen sector") {
+            return Some(body.replacen("in the chosen sector", "in the sector of your choice", 1));
+        }
+        return None;
+    }
+    if effects.len() != SectorName::ALL.len() {
+        return None;
+    }
+    let mut nouns: Option<(ObjectFilter, ObjectFilter)> = None;
+    for (effect, sector) in effects.iter().zip(SectorName::ALL) {
+        let cant = structural_unwrap_render_wrappers(effect)
+            .downcast_ref::<crate::effects::CantEffect>()?;
+        let crate::effect::Restriction::BlockSpecificAttacker { blockers, attacker } =
+            &cant.restriction
+        else {
+            return None;
+        };
+        if cant.duration != Until::EndOfTurn
+            || attacker.sector != Some(SectorPredicate::In(sector))
+            || blockers.sector != Some(SectorPredicate::NotIn(sector))
+        {
+            return None;
+        }
+        let mut attacker_noun = attacker.clone();
+        attacker_noun.sector = None;
+        let mut blocker_noun = blockers.clone();
+        blocker_noun.sector = None;
+        match &nouns {
+            Some((attackers, blockers)) => {
+                if attackers != &attacker_noun || blockers != &blocker_noun {
+                    return None;
+                }
+            }
+            None => nouns = Some((attacker_noun, blocker_noun)),
+        }
+    }
+    let (attackers, blockers) = nouns?;
+    let plural = |filter: &ObjectFilter| {
+        pluralize_noun_phrase(strip_indefinite_article(&filter.description()))
+    };
+    let mut attackers_text = plural(&attackers);
+    if let Some(first) = attackers_text.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    Some(format!(
+        "{attackers_text} in each sector can be blocked this turn only by {} in the same sector",
+        plural(&blockers)
+    ))
+}
+
+/// "..., where X is the mana value of a commander you own on the battlefield
+/// or in the command zone" (Stinging Study): lowering chooses the commander
+/// first, then the X-consuming actions read that choice's mana value.
+fn describe_where_x_commander_mana_value_choice(effects: &[Effect]) -> Option<String> {
+    let (choose, rest) = effects.split_first()?;
+    let choose = choose.downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
+    if choose.tag.as_str() != "__where_x_commander_mana_value"
+        || choose.chooser != PlayerFilter::You
+        || !choose.filter.is_commander
+        || choose.filter.owner != Some(PlayerFilter::You)
+        || rest.is_empty()
+    {
+        return None;
+    }
+    let text = describe_effect_list_inner(rest);
+    let chosen = "the chosen commander's mana value";
+    if !text.contains(chosen) {
+        return None;
+    }
+    Some(text.replacen(
+        chosen,
+        "the mana value of a commander you own on the battlefield or in the command zone",
+        1,
+    ))
+}
+
+/// "Each player rolls a d20. If one or more opponents had the highest result,
+/// this creature can't attack those players or planeswalkers they control
+/// this combat." (Chaos Dragon): the roll tags the highest rollers matching
+/// the kept group, and the restriction is applied for each of them.
+fn describe_highest_roll_attack_restriction(effects: &[Effect]) -> Option<String> {
+    // The participant declaration is executable setup, and belongs to this
+    // same roll program. Admit it only when it names exactly all players and
+    // the following roll consumes that exact tag.
+    let effects = if let [tag_players, roll, ..] = effects
+        && let Some(tag_players) = structural_unwrap_render_wrappers(tag_players)
+            .downcast_ref::<crate::effects::TagPlayersEffect>()
+        && let Some(roll) = structural_unwrap_render_wrappers(roll)
+            .downcast_ref::<crate::effects::RollDieKeepHighestPlayersEffect>()
+    {
+        if tag_players.filter != PlayerFilter::Any || tag_players.tag != roll.players_tag {
+            return None;
+        }
+        &effects[1..]
+    } else { effects };
+    let [roll, for_each, rest @ ..] = effects else {
+        return None;
+    };
+    let roll = structural_unwrap_render_wrappers(roll)
+        .downcast_ref::<crate::effects::RollDieKeepHighestPlayersEffect>()?;
+    let for_each = structural_unwrap_render_wrappers(for_each)
+        .downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()?;
+    if for_each.tag != roll.players_tag {
+        return None;
+    }
+    let [cant] = for_each.effects.as_slice() else {
+        return None;
+    };
+    let cant = structural_unwrap_render_wrappers(cant).downcast_ref::<crate::effects::CantEffect>()?;
+    let crate::effect::Restriction::AttackPlayerOrPlaneswalkersControlledBy { attackers, player } =
+        &cant.restriction
+    else {
+        return None;
+    };
+    if *player != PlayerFilter::IteratedPlayer || !attackers.source {
+        return None;
+    }
+    let group = match roll.keep {
+        PlayerFilter::Opponent => "opponents",
+        PlayerFilter::Any => "players",
+        _ => return None,
+    };
+    let period = match cant.duration {
+        Until::EndOfCombat => "combat",
+        Until::EndOfTurn => "turn",
+        _ => return None,
+    };
+    let mut text = format!(
+        "Each player rolls a d{}. If one or more {group} had the highest result, this creature can't attack those players or planeswalkers they control this {period}",
+        roll.sides
+    );
+    if !rest.is_empty() {
+        let tail = describe_effect_list_inner(rest);
+        let tail = tail.trim().trim_end_matches('.');
+        if !tail.is_empty() {
+            text.push_str(". ");
+            text.push_str(&capitalize_first(tail));
+        }
+    }
+    Some(text)
+}
+
+/// "..., then choose land or nonland. An opponent guesses whether the top card
+/// of your library is the chosen kind. Reveal that card. If they guessed
+/// right, <right>. Otherwise, <wrong>." (Gollum, Scheming Guide): the kind
+/// choice and the guess lower to nested public mode choices whose leaves
+/// reveal the top card and branch on its kind.
+fn describe_guessed_top_card_kind(effects: &[Effect]) -> Option<String> {
+    let (choice, prefix) = effects.split_last()?;
+    let choice = structural_unwrap_render_wrappers(choice)
+        .downcast_ref::<crate::effects::ChooseModeEffect>()?;
+    let [land, nonland] = choice.modes.as_slice() else {
+        return None;
+    };
+    if land.source_text != "Land" || nonland.source_text != "Nonland" {
+        return None;
+    }
+    let [guess] = land.effects.as_slice() else {
+        return None;
+    };
+    let guess =
+        structural_unwrap_render_wrappers(guess).downcast_ref::<crate::effects::ChooseModeEffect>()?;
+    let [right_guess, wrong_guess] = guess.modes.as_slice() else {
+        return None;
+    };
+    if right_guess.source_text != "It's Land" || wrong_guess.source_text != "It isn't Land" {
+        return None;
+    }
+    // The leaf reveals the top card, then branches on its kind.
+    let [_reveal, .., branch] = right_guess.effects.as_slice() else {
+        return None;
+    };
+    let branch = structural_unwrap_render_wrappers(branch)
+        .downcast_ref::<crate::effects::ConditionalEffect>()?;
+    let clause = |effects: &[Effect]| {
+        let text = describe_effect_list(effects);
+        lowercase_first(text.trim().trim_end_matches('.'))
+    };
+    let right = clause(&branch.if_true);
+    let wrong = clause(&branch.if_false);
+    if right.is_empty() || wrong.is_empty() {
+        return None;
+    }
+    let lead = if prefix.is_empty() {
+        "Choose land or nonland".to_string()
+    } else {
+        let setup = describe_effect_list_inner(prefix);
+        format!("{}, then choose land or nonland", setup.trim().trim_end_matches('.'))
+    };
+    Some(format!(
+        "{lead}. An opponent guesses whether the top card of your library is the chosen kind. Reveal that card. If they guessed right, {right}. Otherwise, {wrong}"
+    ))
+}
+
+/// "Each player secretly chooses a creature they control and a creature they
+/// don't control. Then those choices are revealed. Destroy each creature
+/// chosen this way." (Call to the Void): two participant-relative hidden
+/// object selections (the first stays hidden until the second is made) and
+/// one destruction over both result sets.
+fn describe_secret_own_and_other_choice_then_destroy(effects: &[Effect]) -> Option<String> {
+    let [own, other, destroy] = effects else {
+        return None;
+    };
+    fn secret(effect: &Effect) -> Option<&ironsmith_core::SecretObjectChoice> {
+        let choice = structural_unwrap_render_wrappers(effect)
+            .downcast_ref::<crate::effects::SecretChoiceEffect>()?;
+        if !choice.options.is_empty()
+            || choice.participants.as_slice() != [PlayerFilter::Any].as_slice()
+        {
+            return None;
+        }
+        choice.object_choice.as_ref()
+    }
+    let own = secret(own)?;
+    let other = secret(other)?;
+    let excluded_iterated = PlayerFilter::Excluding {
+        base: Box::new(PlayerFilter::Any),
+        excluded: Box::new(PlayerFilter::IteratedPlayer),
+    };
+    if own.filter.controller != Some(PlayerFilter::IteratedPlayer)
+        || other.filter.controller.as_ref() != Some(&excluded_iterated)
+        || own.reveal_after_choice
+        || !other.reveal_after_choice
+        || own.count != crate::effect::ChoiceCount::exactly(1)
+        || other.count != crate::effect::ChoiceCount::exactly(1)
+        || own.filter.card_types != other.filter.card_types
+    {
+        return None;
+    }
+    let destroy = structural_unwrap_render_wrappers(destroy)
+        .downcast_ref::<crate::effects::DestroyEffect>()?;
+    let destroyed = match destroy.spec.base() {
+        ChooseSpec::All(filter) | ChooseSpec::Object(filter) => filter,
+        _ => return None,
+    };
+    let names_tag = |tag: &crate::tag::TagKey| {
+        destroyed.any_of.iter().any(|branch| {
+            branch.tagged_constraints.iter().any(|constraint| &constraint.tag == tag)
+        })
+    };
+    if !names_tag(&own.tag) || !names_tag(&other.tag) {
+        return None;
+    }
+    let noun = if own.filter.card_types.as_slice() == [CardType::Creature] {
+        "creature"
+    } else if own.filter.card_types.is_empty() {
+        "permanent"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "Each player secretly chooses a {noun} they control and a {noun} they don't control. Then those choices are revealed. Destroy each {noun} chosen this way"
+    ))
+}
+
 fn describe_effect_list_inner(effects: &[Effect]) -> String {
+    // Divvy programs append a textless `GroupIntoPiles` keyword-action record
+    // (CR 700.3 turn-history instrumentation). Every pile bundle matches the
+    // program topology without it, so render the list as if it were absent.
+    if let Some((last, rest)) = effects.split_last()
+        && !rest.is_empty()
+        && last
+            .downcast_ref::<crate::effects::EmitKeywordActionEffect>()
+            .is_some_and(|emit| emit.action == crate::events::KeywordActionKind::GroupIntoPiles)
+    {
+        return describe_effect_list_inner(rest);
+    }
+    if let Some(text) = describe_highest_roll_attack_restriction(effects) {
+        return text;
+    }
+    if let Some(text) = describe_guessed_top_card_kind(effects) {
+        return text;
+    }
+    if let Some(text) = describe_secret_own_and_other_choice_then_destroy(effects) {
+        return text;
+    }
+    if let Some(text) = describe_where_x_commander_mana_value_choice(effects) {
+        return text;
+    }
     if let Some(text) = describe_choose_land_of_each_basic_land_type(effects) {
         return text;
     }
@@ -15688,6 +15992,9 @@ fn describe_effect_list_inner(effects: &[Effect]) -> String {
         return compact;
     }
     if let Some(compact) = describe_land_or_nonland_chosen_kind_consult(effects) {
+        return compact;
+    }
+    if let Some(compact) = describe_space_sculptor_sector_effects(effects) {
         return compact;
     }
     if let [consult, move_matches, bottom] = effects
@@ -16940,7 +17247,7 @@ fn describe_linked_exile_top_play_parts(
         .mana_spend_cast_suffix(spell_reference)
         .unwrap_or_default();
 
-    if grant_play.during_turns_attacked_with.is_some() {
+    if grant_play.during_turns_attacked_with.is_some() || grant_play.during_turns_cast_another_spell {
         return None;
     }
     let permission = if let Some(counter_type) = grant_play.during_turns_counter_put_on_source {
@@ -21528,7 +21835,7 @@ mod typed_attack_tax_compile_tests {
             } else {
                 AttackTarget::Player(bob)
             };
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
             let mut combat = CombatState::default();
             let result = crate::game_loop::apply_attacker_declarations(
                 &mut game,
@@ -21628,7 +21935,7 @@ mod base_characteristic_choice_tests {
             game.object_mut(target)
                 .unwrap()
                 .add_counters(CounterType::PlusOnePlusOne, 1);
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
             assert_eq!(
                 (game.current_power(target), game.current_toughness(target)),
                 (Some(6), Some(8))

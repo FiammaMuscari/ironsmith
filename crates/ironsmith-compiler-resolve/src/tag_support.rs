@@ -44,6 +44,21 @@ pub fn is_sentence_helper_consult_match_tag(tag: &TagKey) -> bool {
 pub fn player_loop_exported_exile_collection(effects: &[EffectAst]) -> Option<TagKey> {
     let mut found: Option<TagKey> = None;
     for effect in effects {
+        // "each opponent who has three or more poison counters exiles ..."
+        // (Ixhel): the accumulating exile sits inside the member's condition.
+        if let EffectAst::Conditionals(ConditionalEffectAst::Conditional {
+            if_true, if_false, ..
+        }) = effect
+        {
+            for branch in [if_true, if_false] {
+                if let Some(key) = player_loop_exported_exile_collection(branch)
+                    && found.replace(key).is_some()
+                {
+                    return None;
+                }
+            }
+            continue;
+        }
         if let EffectAst::SubjectVerb(SubjectVerbEffectAst {
             action:
                 SubjectVerbActionAst::Library(LibraryActionAst::ExileTopOfLibrary {
@@ -197,10 +212,12 @@ fn collect_effect_produced_tags(effect: &EffectAst, tags: &mut Vec<TagKey>) {
             SubjectVerbActionAst::Library(LibraryActionAst::ConsultTopOfLibrary {
                 all_tag,
                 match_tag,
+                accumulated_match_tag,
                 ..
             }) => {
                 push_unique_tag(tags, all_tag);
                 push_unique_tag(tags, match_tag);
+                if let Some(tag) = accumulated_match_tag { push_unique_tag(tags, tag); }
             }
             SubjectVerbActionAst::Stack(StackActionAst::CopySpell { .. })
             | SubjectVerbActionAst::Stack(StackActionAst::CopySpellForEachTarget { .. }) => {
@@ -246,6 +263,12 @@ pub fn effects_reference_tag_in_object_position(effects: &[EffectAst], tag: &str
 
 fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetAst)) {
     assert_effect_ast_variant_coverage(effect);
+    // "If each of those creatures could block ..." (Sorrow's Path): the
+    // exchanged pair is the earlier declared target set, so that declaration
+    // must be tagged for this back-reference.
+    if let EffectAst::ExchangeBlocks { blockers, .. } = effect {
+        visit(blockers);
+    }
     if let EffectAst::SubjectVerb(subject_verb) = effect {
         match &subject_verb.action {
             SubjectVerbActionAst::Damage(DamageActionAst::DealDamageBySources {
@@ -313,6 +336,7 @@ fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetA
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Detain { target })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Goad { target, .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomePlotted { target })
+            | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomeForetold { target, .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Prepare { target, .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Suspect { target })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ClearSuspected { target: Some(target) })
@@ -421,6 +445,7 @@ fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetA
                 ..
             })
             | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfChosenKind { target })
+            | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfRandomKind { target, .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfKindChosenFrom {
                 target: Some(target),
                 ..
@@ -995,6 +1020,13 @@ pub fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
     if direct_effect_targets_reference_tag(effect, tag) {
         return true;
     }
+    // "any other player may pay ..." (Ice Cave): the offered players exclude
+    // the triggering spell's controller, so that object must be tagged.
+    if let EffectAst::Permissions(PermissionEffectAst::AnyPlayerMay { players, .. }) = effect
+        && player_filter_references_tag(players, tag)
+    {
+        return true;
+    }
     if let EffectAst::SubjectVerb(SubjectVerbEffectAst {
         action:
             SubjectVerbActionAst::Control(ControlActionAst::GainControl {
@@ -1177,6 +1209,7 @@ pub fn value_references_tag(value: &Value, tag: &str) -> bool {
         | Value::GreatestSharedCreatureTypeCount(filter)
         | Value::TotalPower(filter)
         | Value::TotalToughness(filter)
+        | Value::StickerCharacteristicTotal { filter, .. }
         | Value::TotalManaValue(filter)
         | Value::GreatestPower(filter)
         | Value::GreatestToughness(filter)
@@ -1195,14 +1228,21 @@ pub fn value_references_tag(value: &Value, tag: &str) -> bool {
         | Value::UnlockedDoorsAmong(filter)
         | Value::DistinctPowers(filter) => filter_references_tag(filter, tag),
         Value::StaticAbilitiesAmong { filter, .. } => filter_references_tag(filter, tag),
-        Value::PowerOf(spec) | Value::BasePowerOf(spec) | Value::ToughnessOf(spec) => {
+        Value::PowerOf(spec)
+        | Value::BasePowerOf(spec)
+        | Value::StationContributionOf(spec)
+        | Value::ToughnessOf(spec) => {
             choose_spec_references_tag(spec, tag)
         }
         Value::ManaSpentToCast(spec)
         | Value::KicksPaidOf(spec)
+        | Value::ModeSelectionsOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
         | Value::ChosenColorsOf(spec)
+        | Value::NotedCreatureTypeCount(spec)
+        | Value::TypeCountOf(spec)
+        | Value::TotalToxicValueOf(spec)
         | Value::ManaSymbolsInManaCostOf { spec, .. } => choose_spec_references_tag(spec, tag),
         Value::CountersOn(spec, _) => choose_spec_references_tag(spec, tag),
         Value::DamageDealtThisTurnByTaggedSpellCast(t) => t.as_str() == tag,
@@ -1294,8 +1334,10 @@ pub fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
         ChooseSpec::Tagged(t) => t.as_str() == tag,
         ChooseSpec::SurfaceHinted { spec: inner, .. }
         | ChooseSpec::Target(inner)
-        | ChooseSpec::WithCount(inner, _)
-        | ChooseSpec::WithCountValue(inner, _, _) => choose_spec_references_tag(inner, tag),
+        | ChooseSpec::WithCount(inner, _) => choose_spec_references_tag(inner, tag),
+        ChooseSpec::WithCountValue(inner, _, value) => {
+            choose_spec_references_tag(inner, tag) || value_references_tag(value, tag)
+        }
         ChooseSpec::Object(filter) | ChooseSpec::All(filter) => filter
             .tagged_constraints
             .iter()
@@ -1330,10 +1372,14 @@ pub fn object_ref_references_tag(reference: &ObjectRef, tag: &str) -> bool {
 
 pub fn player_filter_references_tag(filter: &PlayerFilter, tag: &str) -> bool {
     match filter {
+        PlayerFilter::QuantityGreaterThanPlayer { base, other, .. } => {
+            player_filter_references_tag(base, tag) || player_filter_references_tag(other, tag)
+        }
         PlayerFilter::Target(inner)
         | PlayerFilter::AliasedTarget(inner)
         | PlayerFilter::CardsInHandAtLeastMoreThanYou { base: inner, .. }
         | PlayerFilter::HasMoreLifeThanYou { base: inner }
+        | PlayerFilter::MostLifeTiedAmong { base: inner }
         | PlayerFilter::OpponentOf(inner)
         | PlayerFilter::PlayerToLeftOf(inner)
         | PlayerFilter::MaxSpeed { base: inner, .. }
@@ -1366,8 +1412,9 @@ pub fn target_references_tag(target: &TargetAst, tag: &str) -> bool {
         TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) => {
             player_filter_references_tag(filter, tag)
         }
-        TargetAst::WithCount(inner, _) | TargetAst::WithCountValue(inner, _, _) => {
-            target_references_tag(inner, tag)
+        TargetAst::WithCount(inner, _) => target_references_tag(inner, tag),
+        TargetAst::WithCountValue(inner, _, value) => {
+            target_references_tag(inner, tag) || value_references_tag(value, tag)
         }
         TargetAst::AttackedPlayerOrPlaneswalker(_) => false,
         TargetAst::Source(_)
@@ -1421,7 +1468,12 @@ fn comparison_references_event_derived_amount(comparison: &crate::filter::Compar
 }
 
 fn filter_references_event_derived_amount(filter: &ObjectFilter) -> bool {
+    // "cards with total mana value X or less ..., where X is the result"
     filter
+        .target_set_aggregate_constraint
+        .as_ref()
+        .is_some_and(|constraint| value_references_event_derived_amount(&constraint.maximum))
+        || filter
         .power
         .as_ref()
         .is_some_and(comparison_references_event_derived_amount)
@@ -1471,6 +1523,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
     match action {
         SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { .. }) => None,
         SubjectVerbActionAst::Random(RandomActionAst::FlipCoins { count_value, .. }) => count_value.as_ref(),
+        SubjectVerbActionAst::Random(RandomActionAst::RollDiceTotal { count, .. }) => Some(count),
         SubjectVerbActionAst::Random(RandomActionAst::RollDie { result_modifier, .. }) => result_modifier.as_ref().map(|modifier| modifier.value()),
         SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterDamageAddition {
             spec,
@@ -1546,14 +1599,18 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::Counters(CounterActionAst::TicketCounters { count: amount })
         | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayEnergy { amount })
         | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::SetLifeTotal { amount })
+        | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ReduceSpeed { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaScaled { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColor { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { amount })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount, .. })
+        | SubjectVerbActionAst::Mana(ManaActionAst::AddManaLostThisWay { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
             amount, ..
         })
+        | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColorAmong { amount, .. })
+        | SubjectVerbActionAst::Mana(ManaActionAst::AddManaDraftChosenColors { amount, .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount })
         | SubjectVerbActionAst::DamagePrevention(
             DamagePreventionActionAst::RedirectNextDamageFromSourceToTarget { amount, .. },
@@ -1567,6 +1624,10 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
             ..
         })
         | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::AdditionalLandPlays {
+            count: amount,
+            ..
+        })
+        | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::AdditionalSteps {
             count: amount,
             ..
         })
@@ -1603,6 +1664,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ConniveIterated)
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::OpenAttraction { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollToVisitAttractions)
+        | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollPlanarDie)
         | SubjectVerbActionAst::Library(LibraryActionAst::ManifestTopCardOfLibrary)
         | SubjectVerbActionAst::Library(LibraryActionAst::CloakTopCardOfLibrary)
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ManifestCardFromHand)
@@ -1622,6 +1684,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         )
         | SubjectVerbActionAst::Library(LibraryActionAst::ShuffleGraveyardIntoLibrary { .. })
         | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyard)
+        | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyardAtRandom)
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseColor)
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardType { .. })
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseNamedOption { .. })
@@ -1631,6 +1694,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardName { .. })
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChoosePlayer { .. })
         | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::NoteLifeTotal)
+        | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::RedistributeLifeTotals)
         | SubjectVerbActionAst::Mana(ManaActionAst::AddMana { .. })
         | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeLifeTotals { .. })
         | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeTextBoxes { .. })
@@ -1652,13 +1716,16 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         })
         | SubjectVerbActionAst::Stack(StackActionAst::ScaleXValue { .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaColorsAmong { .. })
+        | SubjectVerbActionAst::Mana(ManaActionAst::AddManaEqualToManaCost { .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddOneManaAnyColorAmong { .. })
         | SubjectVerbActionAst::Mana(ManaActionAst::AddManaImprintedColors)
         | SubjectVerbActionAst::Mana(ManaActionAst::DoubleManaPool)
         | SubjectVerbActionAst::Mana(ManaActionAst::EmptyManaPool)
+        | SubjectVerbActionAst::Mana(ManaActionAst::ActivateManaAbilityOfEachLand)
         | SubjectVerbActionAst::Game(GameActionAst::EndTurn)
         | SubjectVerbActionAst::Game(GameActionAst::EndCombatPhase)
             | SubjectVerbActionAst::Game(GameActionAst::DrawGame)
+            | SubjectVerbActionAst::Game(GameActionAst::RedirectEnteringSource { .. })
         | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipTurn)
         | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipCombatPhases)
         | SubjectVerbActionAst::TurnStructure(
@@ -1694,6 +1761,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::MustAttackPlayerThisTurn { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::UnlockTargetRoomDoor { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomePlotted { .. })
+        | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomeForetold { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Prepare { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Suspect { .. })
         | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ClearSuspected { .. })
@@ -1735,6 +1803,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
             ..
         })
         | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfChosenKind { .. })
+        | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfRandomKind { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfKindChosenFrom { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::NextAdaptIgnoresCounters { .. })
         | SubjectVerbActionAst::Counters(CounterActionAst::DoubleCountersOnTarget { .. })
@@ -1937,6 +2006,7 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         | SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterDamageMultiplier {
             ..
         })
+        | SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterTokenCreationMultiplier { .. })
         | SubjectVerbActionAst::Replacements(
             ReplacementActionAst::RegisterDamagedBySourceZoneReplacement { .. },
         )
@@ -1951,6 +2021,9 @@ fn subject_verb_action_value(action: &SubjectVerbActionAst) -> Option<&Value> {
         )
         | SubjectVerbActionAst::Replacements(
             ReplacementActionAst::RegisterNextBatchEnterWithCounters { .. },
+        )
+        | SubjectVerbActionAst::Replacements(
+            ReplacementActionAst::RegisterNextBatchEnterAsCopy { .. },
         )
         | SubjectVerbActionAst::Control(ControlActionAst::Enchant { .. })
         | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseSpellCastHistory { .. })
@@ -2025,6 +2098,13 @@ pub fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
     match effect {
         EffectAst::ForEach(ForEachEffectAst::RepeatEffects { count, effects }) => {
             value_references_event_derived_amount(count)
+                || effects.iter().any(effect_references_event_derived_amount)
+        }
+        // "You draw X cards and you lose X life, where X is the greatest mana
+        // value among cards exiled this way" (The Kenriths' Royal Funeral):
+        // the binding's value reads the earlier producer.
+        EffectAst::BindX { value, effects } => {
+            value_references_event_derived_amount(value)
                 || effects.iter().any(effect_references_event_derived_amount)
         }
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjects {
@@ -2150,7 +2230,14 @@ pub fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
                     })
                     | SubjectVerbActionAst::StatChanges(
                         StatChangeActionAst::RemoveAbilitiesAll { filter, .. },
-                    ) => filter_references_event_derived_amount(filter),
+                    )
+                    // "Search ... for a creature card with mana value less
+                    // than or equal to the number of creatures sacrificed
+                    // this way" (The Hunger Tide Rises).
+                    | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::SearchLibrary {
+                        filter,
+                        ..
+                    }) => filter_references_event_derived_amount(filter),
                     SubjectVerbActionAst::PermanentState(PermanentStateActionAst::PhaseInAll {
                         filter,
                         simultaneous_phase_out,
@@ -2477,7 +2564,9 @@ pub fn effect_references_it_tag(effect: &EffectAst) -> bool {
                 filter,
                 ..
             })
-            | SubjectVerbActionAst::Stack(StackActionAst::FreeCastNextSpellThisTurn { filter })
+            | SubjectVerbActionAst::Stack(StackActionAst::FreeCastNextSpellThisTurn {
+                filter, ..
+            })
             | SubjectVerbActionAst::Stack(StackActionAst::ReduceMatchingSpellCostThisTurn {
                 filter,
                 ..
@@ -2780,20 +2869,42 @@ fn predicate_uses_implicit_it_reference(predicate: &PredicateAst) -> bool {
 pub fn restriction_references_tag(restriction: &crate::effect::Restriction, tag: &str) -> bool {
     use crate::effect::Restriction;
 
-    if let Restriction::BeSacrificedByCause { filter, cause } = restriction {
+    if let Restriction::BeSacrificedByCause { filter, cause }
+    | Restriction::BeExiledByCause { filter, cause } = restriction
+    {
         return std::iter::once(filter)
             .chain(cause.source_filter.iter())
             .any(|filter| {
                 restriction_references_tag(&Restriction::BeSacrificed(filter.clone()), tag)
             });
     }
+    if let Restriction::BeCounteredFrom(targets, sources) = restriction {
+        return [targets, sources].into_iter().any(|filter| filter.tagged_constraints.iter().any(|constraint| constraint.tag.as_str() == tag));
+    }
+    if let Restriction::PreventDamageFromTo {
+        sources,
+        recipients,
+        ..
+    } = restriction
+    {
+        return [sources, recipients].into_iter().any(|filter| {
+            filter
+                .tagged_constraints
+                .iter()
+                .any(|constraint| constraint.tag.as_str() == tag)
+        });
+    }
     let maybe_filter = match restriction {
         Restriction::PreventDamageFrom {
             sources: filter, ..
         }
+        | Restriction::PreventDamageTo {
+            recipients: filter, ..
+        }
         | Restriction::PlayLandsMatching(_, filter)
         | Restriction::CastSpellsMatching(_, filter)
         | Restriction::ActivateLoyaltyAbilitiesOf(filter)
+        | Restriction::ActivateKeywordAbilitiesOf { filter, .. }
         | Restriction::Attack(filter)
         | Restriction::Block(filter)
         | Restriction::MustBeBlocked(filter)
@@ -2810,6 +2921,8 @@ pub fn restriction_references_tag(restriction: &crate::effect::Restriction, tag:
         | Restriction::MaximumBlockers { filter, .. }
         | Restriction::HaveCountersPlaced(filter)
         | Restriction::HaveCounterTypePlaced(filter, _)
+        | Restriction::HaveCounterTypeRemoved(filter, _)
+        | Restriction::DamageSourcesAreColorless(filter)
         | Restriction::BeTargeted(filter)
         | Restriction::BeCountered(filter)
         | Restriction::TurnFaceUp(filter)

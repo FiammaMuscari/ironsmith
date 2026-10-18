@@ -26,9 +26,9 @@ pub(crate) mod movement_instruction;
 mod prepared_move;
 pub use entry_observation::battlefield_entry_observation;
 pub(crate) use prepared_move::{
-    PreparedZoneMove, commit_exact_zone_moves_before_completion, commit_zone_moves, commit_zone_moves_with_completion,
-    complete_movement_batch, execute_battlefield_entries, execute_battlefield_entries_with_outputs,
-    execute_zone_moves, execute_zone_moves_with_outputs, group_zone_move_observations,
+    PreparedZoneMove, commit_exact_zone_moves_before_completion,  commit_zone_moves_with_completion,
+      execute_battlefield_entries_with_outputs,
+     execute_zone_moves_with_outputs, group_zone_move_observations,
     observe_zone_move_originals, observe_zone_move_originals_with_cause, prepare_zone_moves,
     resolve_zone_move_objects,
 };
@@ -38,7 +38,7 @@ pub(crate) use continuation::{
     ZoneInstructionDraws, complete_zone_instruction, prepare_zone_instruction_completion,
 };
 mod become_plotted;
-pub use become_plotted::BecomePlottedEffect;
+pub use become_plotted::{BecomePlottedEffect, BecomeForetoldEffect};
 mod destroy;
 pub(crate) use destroy::execute_resolved_destroy_with_outputs;
 mod destroy_no_regen;
@@ -1127,7 +1127,7 @@ pub(crate) fn finish_zone_change_receipts_frozen_with_outputs<
 
 pub(crate) use battlefield_entry::{
     BattlefieldEntryOptions, BattlefieldEntryOutcome, BattlefieldEntryReceipt,
-    PreparedBattlefieldEntryBatch, finish_battlefield_entry_receipts,
+    PreparedBattlefieldEntryBatch,
     finish_battlefield_entry_receipts_with_outputs, move_to_battlefield_batch_with_companions,
     move_to_battlefield_batch_with_options, move_to_battlefield_with_options,
     prepare_battlefield_entry_batch, resolve_battlefield_entry_counters,

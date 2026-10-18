@@ -13,6 +13,10 @@ pub enum AlternativeCastKeyword {
     /// CR 702.190a sneak, a named alternative cost; appended for wire
     /// compatibility.
     Sneak,
+    /// CR 702.140a mutate, cast for its mutate cost; appended for wire
+    /// compatibility ("You may cast this card from your graveyard using its
+    /// mutate ability", Brokkos).
+    Mutate,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -84,6 +88,12 @@ where
         serializer,
     )
 }
+
+/// Name of a printed free alternative cost that also casts the spell as
+/// though it had flash: "you may cast this creature without paying its mana
+/// cost and as though it had flash" (Qasali Ambusher). The timing permission
+/// belongs to this casting method only (CR 601.3e).
+pub const FREE_CAST_AS_THOUGH_FLASH_METHOD: &str = "Free cast as though it had flash";
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, TagKeyWalk)]
@@ -205,6 +215,12 @@ where
     Cond: Clone,
 {
     /// Alternative casting instructions which use the linked back face.
+    /// This casting method itself permits casting at instant timing.
+    pub fn grants_instant_timing(&self) -> bool {
+        matches!(self, Self::Composed { name, .. }
+            if name.eq_ignore_ascii_case(FREE_CAST_AS_THOUGH_FLASH_METHOD))
+    }
+
     pub fn casts_transformed(&self) -> bool {
         matches!(self, Self::Disturb { .. })
             || matches!(self, Self::Composed { name, .. } if name.eq_ignore_ascii_case("More than meets the eye"))
@@ -247,6 +263,7 @@ where
             Self::Bestow { .. } => Some(AlternativeCastKeyword::Bestow),
             Self::Blitz { .. } => Some(AlternativeCastKeyword::Blitz),
             Self::Warp { .. } => Some(AlternativeCastKeyword::Warp),
+            Self::Mutate { .. } => Some(AlternativeCastKeyword::Mutate),
             // Sneak is a named composed alternative cost; its timing and
             // resolution are keyed to the same method name.
             Self::Composed { .. } if self.name().eq_ignore_ascii_case("Sneak") => {

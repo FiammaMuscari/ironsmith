@@ -173,10 +173,17 @@ fn apply_activation_cost_default_battlefield_scope(filter: &mut ObjectFilter) {
 pub fn materialize_compiler_total_cost(
     cost: &CompilerTotalCost,
 ) -> Result<TotalCost, CardTextError> {
+    materialize_compiler_total_cost_with(cost, false)
+}
+
+fn materialize_compiler_total_cost_with(
+    cost: &CompilerTotalCost,
+    defer_unbound_it: bool,
+) -> Result<TotalCost, CardTextError> {
     let mut materialized = Vec::with_capacity(cost.branches.len());
     for branch in &cost.branches {
         let segments = branch.iter().map(materialization_cost).collect::<Vec<_>>();
-        materialized.push(lower_materialization_costs(&segments)?);
+        materialized.push(lower_materialization_costs_with(&segments, defer_unbound_it)?);
     }
     match materialized.len() {
         0 => Ok(TotalCost::from_costs(Vec::new())),
@@ -241,14 +248,33 @@ fn identity_aware_activation_cost_scope(filter: &ObjectFilter) -> ObjectFilter {
 pub fn materialize_compiler_core_total_cost(
     cost: &ironsmith_core::TotalCost<CompilerCost>,
 ) -> Result<TotalCost, CardTextError> {
+    materialize_compiler_core_total_cost_with(cost, false)
+}
+
+/// A resolution-time payment ("sacrifice it unless you pay its mana cost
+/// reduced by {2}", Flash): an `it` mana-cost reference with no preceding
+/// cost-object choice names the instruction's own antecedent. It stays the
+/// `it` tag here and the caller binds it with the effect's reference frame
+/// (`resolve_total_cost_it_tags`).
+pub fn materialize_compiler_core_payment_cost(
+    cost: &ironsmith_core::TotalCost<CompilerCost>,
+) -> Result<TotalCost, CardTextError> {
+    materialize_compiler_core_total_cost_with(cost, true)
+}
+
+fn materialize_compiler_core_total_cost_with(
+    cost: &ironsmith_core::TotalCost<CompilerCost>,
+    defer_unbound_it: bool,
+) -> Result<TotalCost, CardTextError> {
     match cost.kind() {
-        ironsmith_core::TotalCostKind::All(components) => {
-            materialize_compiler_total_cost(&CompilerTotalCost::ordered(components.clone()))
-        }
+        ironsmith_core::TotalCostKind::All(components) => materialize_compiler_total_cost_with(
+            &CompilerTotalCost::ordered(components.clone()),
+            defer_unbound_it,
+        ),
         ironsmith_core::TotalCostKind::OneOf(branches) => {
             let branches = branches
                 .iter()
-                .map(materialize_compiler_core_total_cost)
+                .map(|branch| materialize_compiler_core_total_cost_with(branch, defer_unbound_it))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(TotalCost::one_of(branches))
         }
@@ -505,6 +531,13 @@ fn materialization_cost(cost: &CompilerCost) -> MaterializationCost {
 fn lower_materialization_costs(
     segments: &[MaterializationCost],
 ) -> Result<TotalCost, CardTextError> {
+    lower_materialization_costs_with(segments, false)
+}
+
+fn lower_materialization_costs_with(
+    segments: &[MaterializationCost],
+    defer_unbound_it: bool,
+) -> Result<TotalCost, CardTextError> {
     fn flush_pending_mana(costs: &mut Vec<Cost>, pending: &mut ManaCost) {
         if pending.is_empty() {
             return;
@@ -539,9 +572,20 @@ fn lower_materialization_costs(
                     // declaration, not a source-name or a guessed graveyard card.
                     let tag = costs.iter().rev().filter_map(|component| component.effect_ref())
                         .find_map(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
-                        .map(|choose| choose.tag.clone())
-                        .ok_or_else(|| CardTextError::ParseError("referenced mana cost has no preceding cost-object choice".into()))?;
-                    cost.mana_cost_of = Some(Box::new(crate::target::ChooseSpec::tagged(tag)));
+                        .map(|choose| choose.tag.clone());
+                    match tag {
+                        Some(tag) => {
+                            cost.mana_cost_of =
+                                Some(Box::new(crate::target::ChooseSpec::tagged(tag)));
+                        }
+                        // A resolution-time payment binds `it` afterwards.
+                        None if defer_unbound_it => {}
+                        None => {
+                            return Err(CardTextError::ParseError(
+                                "referenced mana cost has no preceding cost-object choice".into(),
+                            ));
+                        }
+                    }
                 }
                 costs.push(Cost::dynamic_mana(cost));
             }
@@ -683,7 +727,15 @@ fn lower_materialization_costs(
             }
             MaterializationCost::Behold { subtype, count } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
-                costs.push(Cost::validated_effect(Effect::behold(*subtype, *count)));
+                // The beheld object stays available to the spell or ability
+                // ("the power of that card or creature", Dragon's Fire) under
+                // the same cost tag the behold-and-exile cost uses.
+                costs.push(Cost::validated_effect(
+                    Effect::behold(*subtype, *count).tag(
+                        ironsmith_compiler_semantic::tag::CompilerReferenceTag::BeheldCost0
+                            .as_str(),
+                    ),
+                ));
             }
             MaterializationCost::Blight { count, x } => {
                 flush_pending_mana(&mut costs, &mut pending_mana_pips);
@@ -1267,6 +1319,20 @@ pub fn materialize_compiler_activation_total_cost(cost: &ironsmith_core::TotalCo
     -> Result<TotalCost, CardTextError>
 {
     let lowered = materialize_compiler_core_total_cost(cost)?;
+    if let Some(result_id) = crate::model::costs::unique_activation_result_cost(cost) {
+        // The paid die roll retains its outcome for the resolving ability.
+        let components = lowered.as_all().ok_or_else(|| CardTextError::InvariantViolation("die-roll producer lost ordinary cost branch".into()))?;
+        let mut count = 0;
+        let components = components.iter().map(|component| match component {
+            Cost::Effect(effect) if effect.downcast_ref::<crate::effects::RollDieEffect>().is_some() => {
+                count += 1;
+                Cost::validated_effect(Effect::with_id(result_id.0, effect.clone()))
+            }
+            _ => component.clone(),
+        }).collect();
+        if count != 1 { return Err(CardTextError::InvariantViolation("die-roll producer must materialize exactly once".into())); }
+        return Ok(TotalCost::from_costs(components));
+    }
     let Some(producer) = crate::model::costs::unique_counter_removal_cost(cost) else { return Ok(lowered); };
     let components = lowered.as_all().ok_or_else(|| CardTextError::InvariantViolation("counter producer lost ordinary cost branch".into()))?;
     let mut count = 0;

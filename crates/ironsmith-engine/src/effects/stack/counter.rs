@@ -90,8 +90,25 @@ fn counter_one_stack_object_of_kind_inner(
     {
         return Ok(commit_countered_ability(game, index));
     }
+    // "counter that ability" after "... causes a triggered ability to
+    // trigger": the ability-triggered event names the exact triggered
+    // ability by its source and structural identity (CR 603.2).
+    if let Some(triggered) = ctx
+        .triggering_event
+        .as_ref()
+        .and_then(|event| event.downcast::<crate::events::AbilityTriggeredEvent>())
+        && triggered.source == target_id
+        && let Some(index) = game.stack.iter().rposition(|entry| {
+            entry.is_ability
+                && entry.object_id == target_id
+                && entry.trigger_identity == Some(triggered.trigger_identity)
+        })
+    {
+        return Ok(commit_countered_ability(game, index));
+    }
 
-    if !game.can_be_countered(target_id) {
+    if !game.can_be_countered_from_source(target_id, ctx.source, ctx.controller,
+        ctx.source_snapshot.as_ref(), ctx.cause.resolving_spell == Some(ctx.source)) {
         return Ok(EffectOutcome::protected());
     }
 
@@ -182,7 +199,12 @@ fn counter_one_stack_object_of_kind_inner(
                                 | crate::types::CardType::Battle | crate::types::CardType::Creature
                                 | crate::types::CardType::Enchantment | crate::types::CardType::Planeswalker))),
                 }
-            });
+            })
+            // "If a spell or ability you control would counter a spell,
+            // instead exile that spell and you may play that card without
+            // paying its mana cost." (Guile): the counter's controller's
+            // static replaces this spell counter the same way.
+            .or_else(|| controller_counter_exile_permission(game, ctx.controller));
             let mut additional_effects = ctx.additional_replacement_effects_snapshot();
             if eligible_permission.is_some() {
                 // This replacement exists only during this one counter event.
@@ -292,6 +314,36 @@ fn counter_one_stack_object_of_kind_inner(
             EffectOutcome::target_invalid()
         },
     )
+}
+
+/// A battlefield static of `controller`'s that replaces every spell counter
+/// performed by a spell or ability they control with exile plus a free play
+/// permission (Guile).
+fn controller_counter_exile_permission(
+    game: &GameState,
+    controller: crate::ids::PlayerId,
+) -> Option<ironsmith_core::CounterExilePermission> {
+    game.battlefield.iter().find_map(|id| {
+        let object = game.object(*id)?;
+        if game.controller_of(object) != controller {
+            return None;
+        }
+        let abilities = game
+            .current_abilities(*id)
+            .unwrap_or_else(|| object.abilities_vec());
+        abilities.iter().find_map(|ability| {
+            let AbilityKind::Static(ability) = &ability.kind else {
+                return None;
+            };
+            match &ability.compiled_model()?.payload {
+                ironsmith_core::StaticAbilityPayload::ControllerCounterExilePermission {
+                    permission,
+                    ..
+                } => Some(*permission),
+                _ => None,
+            }
+        })
+    })
 }
 
 /// Consume only the committed original counter arrival, before receipt
@@ -854,7 +906,7 @@ mod tests {
                 ]),
             );
         game.stack.push(StackEntry::new(target_spell, bob));
-        game.update_replacement_effects();
+        game.update_replacement_effects().expect("test replacement effect discovery succeeds");
 
         let counter_source = create_instant(&mut game, alice, Zone::Stack, "Counter Source");
         let mut dm = SelectFirstDecisionMaker;
@@ -1172,3 +1224,39 @@ mod tests {
 #[cfg(test)]
 #[path = "counter_exile_permission_tests.rs"]
 mod exile_permission_tests;
+
+#[cfg(test)]
+mod source_filtered_counter_tests {
+    #[test]
+    fn source_filtered_counter_matches_retained_role_controller_and_exact_lki() {
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::color::ColorSet;
+        use crate::ids::{CardId, PlayerId};
+        use crate::target::{ObjectFilter, PlayerFilter};
+        use crate::types::CardType;
+        use crate::zone::Zone;
+        let alice = PlayerId::from_index(0); let bob = PlayerId::from_index(1);
+        let mut game = crate::GameState::new(vec!["Alice".into(), "Bob".into()], 20);
+        let victim = CardBuilder::new(CardId::new(), "Protected spell").card_types(vec![CardType::Creature]).power_toughness(PowerToughness::fixed(2, 2)).build();
+        let victim = game.create_object_from_card(&victim, alice, Zone::Stack);
+        let card = CardBuilder::new(CardId::new(), "Costless counter source").card_types(vec![CardType::Instant]).color_indicator(ColorSet::BLUE).build();
+        let source = game.create_object_from_card(&card, bob, Zone::Stack);
+        game.set_current_controller(source, alice).unwrap();
+        let snapshot = crate::snapshot::ObjectSnapshot::from_object_id(&game, source).unwrap();
+        let mut filter = ObjectFilter::spell(); filter.colors = Some(ColorSet::BLUE); filter.controller = Some(PlayerFilter::Opponent);
+        game.effect_store.cant_effects.cant_be_countered_from.push((victim, filter, alice));
+        assert!(!game.can_be_countered_from_source(victim, source, bob, None, true), "spell role and retained controller outweigh current source control and absent mana cost");
+        assert!(game.can_be_countered_from_source(victim, source, alice, None, true));
+        assert!(game.can_be_countered_from_source(victim, source, bob, None, false), "a blue ability is not a blue spell");
+        game.move_object_by_effect(source, Zone::Exile).unwrap();
+        // Zone moves invalidate the derived cache. Re-establish only this native fixture rule.
+        let mut filter = ObjectFilter::spell(); filter.colors = Some(ColorSet::BLUE); filter.controller = Some(PlayerFilter::Opponent);
+        game.effect_store.cant_effects.cant_be_countered_from.push((victim, filter, alice));
+        assert!(!game.can_be_countered_from_source(victim, source, bob, Some(&snapshot), true));
+        assert!(game.can_be_countered_from_source(victim, source, bob, None, true), "an unknown source must not acquire a color");
+        let mut unrelated = snapshot.clone(); unrelated.object_id = crate::ids::ObjectId::from_raw(987654);
+        assert!(game.can_be_countered_from_source(victim, source, bob, Some(&unrelated), true), "LKI belongs to the exact source incarnation");
+        game.effect_store.cant_effects.cant_be_countered.insert(victim);
+        assert!(!game.can_be_countered_from_source(victim, source, alice, None, false), "legacy unconditional protection is retained");
+    }
+}

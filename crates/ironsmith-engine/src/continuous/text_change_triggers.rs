@@ -39,7 +39,7 @@ fn rewrite_cause_words(cause: &mut Option<ironsmith_core::CauseFilter>, change: 
     -> Result<(), Error>
 {
     if let Some(ironsmith_core::CauseFilter {
-        cause_type: _, source_filter, controller_filter: _,
+        cause_type: _, source_filter, controller_filter: _, ability_kind: _,
     }) = cause {
         rewrite_optional_filter(source_filter, change)?;
     }
@@ -93,6 +93,8 @@ fn rewrite_trigger_model_words(original: &model::Trigger, change: TextChange)
     // are explicitly bound to `_`: they are identities, references, flags,
     // fixed quantities, or presentation, rather than literal word predicates.
     match &mut rewritten.kind {
+        K::StackObjectAdded => {}
+        K::StateBasedObjects { filter, .. } => { *filter = rewrite_filter_words(filter, change)?; }
         K::StateBased { display: _ } | K::Custom { id: _, label: _ } => {
             return Err(Error::TriggeredAbility);
         }
@@ -134,6 +136,7 @@ fn rewrite_trigger_model_words(original: &model::Trigger, change: TextChange)
         | K::Dies { filter } | K::PutIntoGraveyard { filter }
         | K::CardsLeaveYourGraveyard { filter, one_or_more: _, during_your_turn: _ }
         | K::PermanentTransforms { filter } | K::FinalChapterAbilityResolved { filter }
+        | K::FinalChapterAbilityTriggers { filter }
         | K::NthCounterPutOn { filter, counter_type: _, counter_number: _ }
         | K::PhasingChanged { filter, phased_in: _, one_or_more: _ }
         | K::PermanentMutates { filter } | K::AttacksPlayerAlone { filter }
@@ -170,7 +173,7 @@ fn rewrite_trigger_model_words(original: &model::Trigger, change: TextChange)
         }
         K::BecomesTargetedObjectByStackObject { target, source }
         | K::BecomesTargetedByAbilitySource { target, source }
-        | K::DealsDamageTo { source, target, source_surface: _ }
+        | K::DealsDamageTo { source, target, source_surface: _, recipient_is_source_target: _ }
         | K::DealsCombatDamageTo { source, target } => {
             *source = rewrite_filter_words(source, change)?;
             *target = rewrite_filter_words(target, change)?;
@@ -233,7 +236,7 @@ fn rewrite_trigger_model_words(original: &model::Trigger, change: TextChange)
             *player = rewrite_player_filter_words(player, change)?;
             rewrite_optional_player(during_turn, change)?;
         }
-        K::PlayerPlaysLand { player, filter } | K::PlayerTapsForMana { player, filter }
+        K::PlayerPlaysLand { player, filter } | K::PlayerTapsForMana { player, filter } | K::PlayerAddsManaFromSource { player, filter }
         | K::PlayerRevealsCard { player, filter, from_source: _, first_draw_pair: _ }
         | K::PlayerSacrifices { player, filter, one_or_more_surface: _ }
         | K::TokensCreated { player, filter, one_or_more: _ }
@@ -395,11 +398,13 @@ fn rewrite_trigger_model_words(original: &model::Trigger, change: TextChange)
         | K::ThisIsTurnedFaceUp | K::BecomesTargeted | K::ThisDealsDamage
         | K::ThisDealsCombatDamage | K::YouGainLife | K::OpponentsEachLoseExactLife { amount: _ }
         | K::YouDrawCard | K::Miracle | K::NthSpellOfTurnCast { spell_number: _ }
-        | K::EndOfCombat | K::DayNightChanged | K::ThisEntersBattlefield
+        | K::EndOfCombat | K::DayNightChanged | K::DamageToPlayerPrevented { player: _ }
+        | K::DamagePreventedBySource { source_filter: _ }
+        | K::ThisEntersBattlefield
         | K::ThisTransforms { destination_name: _ }
         | K::ThisTransformsWithSurface { surface: _, destination_name: _ }
         | K::YouCastThisSpell | K::SagaChapter { chapters: _ }
-        | K::DungeonRoom { room: _, leads_to: _ } => {}
+        | K::DungeonRoom { room: _, leads_to: _ } | K::SourceManaAbilityResolves => {}
     }
     Ok(rewritten)
 }
@@ -626,6 +631,7 @@ fn native_kind(trigger: &Trigger) -> Result<model::TriggerKind, Error> {
     } else {
         K::DealsDamageTo {
             source: n.source_filter.clone(), target: n.target_filter.clone(), source_surface: n.source_surface,
+            recipient_is_source_target: n.recipient_is_source_target,
         }
     });
     exact!(DealsExactDamageToObjectOrPlayerTrigger, n, K::DealsExactDamageToObjectOrPlayer {
@@ -665,6 +671,7 @@ fn native_kind(trigger: &Trigger) -> Result<model::TriggerKind, Error> {
     exact!(AbilityTriggeredTrigger, n, K::AbilityTriggered {
         another: n.another, source_filter: n.source_filter.clone(), caused_by_source_entering: n.caused_by_source_entering,
         caused_by_source_attacking: n.caused_by_source_attacking,
+        caused_by_permanent_entering: n.caused_by_permanent_entering,
     });
     exact!(IsDealtDamageTrigger, n, K::IsDealtDamage {
         target: n.target.clone(), combat_only: n.combat_only, noncombat_only: n.noncombat_only,
@@ -700,6 +707,12 @@ fn native_kind(trigger: &Trigger) -> Result<model::TriggerKind, Error> {
     exact!(PermanentSacrificedTrigger, n, K::PermanentSacrificed { filter: n.filter.clone() });
     exact!(PermanentDestroyedTrigger, n, K::PermanentDestroyed { filter: n.filter.clone() });
     exact!(FinalChapterAbilityResolvedTrigger, n, K::FinalChapterAbilityResolved { filter: n.filter.clone() });
+    exact!(FinalChapterAbilityTriggersTrigger, n, K::FinalChapterAbilityTriggers { filter: n.filter.clone() });
+    exact!(StackObjectAddedTrigger, n, K::StackObjectAdded);
+    if let Some(n) = trigger.downcast_ref::<native::StateTrigger>()
+        && let Some(filter) = &n.objects {
+        return exact_native_kind(n, K::StateBasedObjects { filter: filter.clone(), display: n.description.clone() });
+    }
     exact!(PermanentMutatesTrigger, n, K::PermanentMutates { filter: n.filter.clone() });
     exact!(DiesDamagedByFilteredSourceThisTurnTrigger, n, K::DiesCreatureDealtDamageByFilteredSourceThisTurn {
         victim: n.victim.clone(), damager_filter: n.damager_filter.clone(),

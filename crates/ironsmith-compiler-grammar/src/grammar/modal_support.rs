@@ -38,6 +38,29 @@ type ModalHeader = ParsedModalHeader;
 type ModalActivatedHeader = ParsedModalActivatedHeader;
 type ModalGate = ParsedModalGate;
 
+/// The comma that ends a modal trigger's event. A serial comma inside the
+/// event's characteristic list ("a spell with power, toughness, or mana value
+/// 4", The Fantastic Four) continues the trigger, so a comma followed by
+/// another characteristic of that list is skipped.
+fn first_trigger_boundary_comma(tokens: &[OwnedLexToken], choose_idx: usize) -> Option<usize> {
+    let continues_characteristic_list = |rest: &[OwnedLexToken]| {
+        let words = crate::lexer::token_word_refs(rest);
+        let words = match words.as_slice() {
+            ["or" | "and" | "and/or", tail @ ..] => tail,
+            all => all,
+        };
+        matches!(words, ["power" | "toughness", ..] | ["mana", "value", ..])
+    };
+    tokens
+        .iter()
+        .enumerate()
+        .take(choose_idx)
+        .filter(|(_, token)| token.kind == TokenKind::Comma)
+        .map(|(idx, _)| idx)
+        .find(|idx| !continues_characteristic_list(&tokens[idx + 1..]))
+        .or_else(|| locate_token_index(tokens, |token| token.kind == TokenKind::Comma))
+}
+
 fn locate_token_index(
     tokens: &[OwnedLexToken],
     mut predicate: impl FnMut(&OwnedLexToken) -> bool,
@@ -242,17 +265,18 @@ pub fn parse_modal_header(
     }
 
     if activated.is_none()
-        && let Some(comma_idx) = locate_token_index(tokens, |token| token.kind == TokenKind::Comma)
+        && let Some(comma_idx) = first_trigger_boundary_comma(tokens, choose_idx)
         && choose_idx > comma_idx
     {
-        let start_idx = if effect_start_idx > 0 {
-            effect_start_idx
-        } else if tokens.first().is_some_and(|token| {
+        // An ability-word label ("Trick Arrows — Whenever ...") moves the
+        // start past its dash; the trigger keyword still has to be skipped
+        // there, or the trigger subject absorbs it.
+        let start_idx = if tokens.get(effect_start_idx).is_some_and(|token| {
             token.is_word("whenever") || token.is_word("when") || token.is_word("at")
         }) {
-            1
+            effect_start_idx + 1
         } else {
-            0
+            effect_start_idx
         };
         if comma_idx > start_idx {
             let trigger_tokens = &tokens[start_idx..comma_idx];
@@ -268,6 +292,17 @@ pub fn parse_modal_header(
         &[]
     } else {
         trim_lexed_commas(&tokens[effect_start_idx..choose_idx])
+    };
+    // "you may choose two" (CR 700.2): the choice itself is optional, so
+    // choosing no modes is also legal. It is not a "may" effect before the
+    // choice.
+    let optional_choice = prechoose_tokens.len() >= 2
+        && prechoose_tokens[prechoose_tokens.len() - 2].is_word("you")
+        && prechoose_tokens[prechoose_tokens.len() - 1].is_word("may");
+    let prechoose_tokens = if optional_choice {
+        trim_lexed_commas(&prechoose_tokens[..prechoose_tokens.len() - 2])
+    } else {
+        prechoose_tokens
     };
     let (intervening_if, prechoose_tokens) =
         split_modal_trigger_intervening_if(trigger.is_some(), prechoose_tokens);
@@ -303,6 +338,7 @@ pub fn parse_modal_header(
         common_suffix_effects_ast,
         modal_gate,
         cast_chooser,
+        optional_choice,
     }))
 }
 
@@ -604,15 +640,19 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::SetLifeTotal {
                 amount,
             })
+            | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ReduceSpeed { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaScaled { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColor { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { amount })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount, .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaLostThisWay { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
                 amount,
                 ..
             })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColorAmong { amount, .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaDraftChosenColors { amount, .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { amount })
             | SubjectVerbActionAst::DamagePrevention(
                 DamagePreventionActionAst::RedirectNextDamageFromSourceToTarget { amount, .. },
@@ -626,6 +666,10 @@ fn replace_modal_header_x_in_effect_ast(
                 ..
             })
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::AdditionalLandPlays {
+                count: amount,
+                ..
+            })
+            | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::AdditionalSteps {
                 count: amount,
                 ..
             })
@@ -712,6 +756,7 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ConniveIterated)
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::OpenAttraction { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollToVisitAttractions)
+            | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollPlanarDie)
             | SubjectVerbActionAst::Library(LibraryActionAst::ManifestTopCardOfLibrary)
             | SubjectVerbActionAst::Library(LibraryActionAst::CloakTopCardOfLibrary)
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ManifestCardFromHand)
@@ -727,7 +772,7 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::Random(RandomActionAst::FlipCoins { .. })
             | SubjectVerbActionAst::Random(RandomActionAst::RollDie { .. })
             | SubjectVerbActionAst::Random(RandomActionAst::ChooseNumberAtRandom { .. })
-            | SubjectVerbActionAst::Random(RandomActionAst::RollDiceChooseResult { .. })
+            | SubjectVerbActionAst::Random(RandomActionAst::RollDiceChooseResult { .. } | RandomActionAst::RollDiceTotal { .. })
             | SubjectVerbActionAst::Library(LibraryActionAst::ShuffleHandAndGraveyardIntoLibrary)
             | SubjectVerbActionAst::Library(
                 LibraryActionAst::ShuffleHandGraveyardAndOwnedPermanentsIntoLibrary,
@@ -736,6 +781,7 @@ fn replace_modal_header_x_in_effect_ast(
                 ..
             })
             | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyard)
+            | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyardAtRandom)
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseColor)
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardType { .. })
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseNamedOption { .. })
@@ -745,6 +791,7 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardName { .. })
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChoosePlayer { .. })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::NoteLifeTotal)
+            | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::RedistributeLifeTotals)
             | SubjectVerbActionAst::Mana(ManaActionAst::AddMana { .. })
             | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeLifeTotals { .. })
             | SubjectVerbActionAst::Exchanges(ExchangeActionAst::ExchangeTextBoxes { .. })
@@ -764,13 +811,16 @@ fn replace_modal_header_x_in_effect_ast(
                 PermanentStateActionAst::SwitchPowerToughness { .. },
             )
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaColorsAmong { .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaEqualToManaCost { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddOneManaAnyColorAmong { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaImprintedColors)
             | SubjectVerbActionAst::Mana(ManaActionAst::DoubleManaPool)
             | SubjectVerbActionAst::Mana(ManaActionAst::EmptyManaPool)
+            | SubjectVerbActionAst::Mana(ManaActionAst::ActivateManaAbilityOfEachLand)
             | SubjectVerbActionAst::Game(GameActionAst::EndTurn)
             | SubjectVerbActionAst::Game(GameActionAst::EndCombatPhase)
             | SubjectVerbActionAst::Game(GameActionAst::DrawGame)
+            | SubjectVerbActionAst::Game(GameActionAst::RedirectEnteringSource { .. })
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipTurn)
             | SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::SkipCombatPhases)
             | SubjectVerbActionAst::TurnStructure(
@@ -819,6 +869,7 @@ fn replace_modal_header_x_in_effect_ast(
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::MustAttackPlayerThisTurn { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::UnlockTargetRoomDoor { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomePlotted { .. })
+            | SubjectVerbActionAst::KeywordActions(KeywordActionAst::BecomeForetold { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Prepare { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Suspect { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::ClearSuspected { .. })
@@ -877,6 +928,7 @@ fn replace_modal_header_x_in_effect_ast(
                 ..
             })
             | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfChosenKind { .. })
+            | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfRandomKind { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::PutCounterOfKindChosenFrom { .. })
             | SubjectVerbActionAst::Counters(CounterActionAst::NextAdaptIgnoresCounters {
                 ..
@@ -987,7 +1039,8 @@ fn replace_modal_header_x_in_effect_ast(
             )
             | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterDamageMultiplier { .. }
-                | ReplacementActionAst::RegisterDamageAddition { .. },
+                | ReplacementActionAst::RegisterDamageAddition { .. }
+                | ReplacementActionAst::RegisterTokenCreationMultiplier { .. },
             )
             | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterDamagedBySourceZoneReplacement { .. },
@@ -1003,6 +1056,9 @@ fn replace_modal_header_x_in_effect_ast(
             )
             | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterNextBatchEnterWithCounters { .. },
+            )
+            | SubjectVerbActionAst::Replacements(
+                ReplacementActionAst::RegisterNextBatchEnterAsCopy { .. },
             )
             | SubjectVerbActionAst::Control(ControlActionAst::Enchant { .. })
             | SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseSpellCastHistory { .. })

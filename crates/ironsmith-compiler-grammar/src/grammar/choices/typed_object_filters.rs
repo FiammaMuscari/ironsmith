@@ -73,8 +73,63 @@ fn parse_typed_choice_filter_words(
         filter.chosen_color = true;
         return Ok(filter);
     }
+    if let Some(filter) = parse_choice_source_filter_words(words)? {
+        return Ok(filter);
+    }
     crate::object_filters::parse_object_filter_words(words, false)
         .map_err(|_| ChoiceObjectClauseSyntaxError::UnsupportedFilter)
+}
+
+/// "choose a source you control" / "choose a red source": a source is any
+/// object that can deal damage (CR 120.1, 609.7a) — a permanent on the
+/// battlefield or a spell on the stack — so the choice spans both zones as a
+/// zone union. `None` when the chosen noun is not "source".
+fn parse_choice_source_filter_words(
+    words: &[&str],
+) -> Result<Option<ObjectFilter>, ChoiceObjectClauseSyntaxError> {
+    let Some(noun) = words
+        .iter()
+        .position(|word| matches!(*word, "source" | "sources"))
+    else {
+        return Ok(None);
+    };
+    let (descriptor, tail) = (&words[..noun], &words[noun + 1..]);
+    let controller = match tail {
+        [] => None,
+        ["you", "control"] => Some(crate::target::PlayerFilter::You),
+        ["you", "don't" | "dont", "control"] => Some(crate::target::PlayerFilter::NotYou),
+        ["an", "opponent", "controls"] | ["your", "opponents", "control"] => {
+            Some(crate::target::PlayerFilter::Opponent)
+        }
+        _ => return Ok(None),
+    };
+    let mut filter = if descriptor.is_empty() {
+        ObjectFilter::default()
+    } else {
+        let Ok(mut filter) = crate::object_filters::parse_object_filter_words(descriptor, false)
+        else {
+            return Ok(None);
+        };
+        if !filter.any_of.is_empty() {
+            return Ok(None);
+        }
+        filter.zone = None;
+        filter
+    };
+    if controller.is_some() {
+        filter.controller = controller;
+    }
+    filter.any_of = vec![
+        ObjectFilter {
+            zone: Some(Zone::Battlefield),
+            ..ObjectFilter::default()
+        },
+        ObjectFilter {
+            zone: Some(Zone::Stack),
+            ..ObjectFilter::default()
+        },
+    ];
+    Ok(Some(filter))
 }
 
 pub fn parse_typed_target_player_choice_tokens(
@@ -140,7 +195,24 @@ pub fn parse_typed_choice_object_clause_tokens(
         filter.could_be_enchanted_by_source = true;
     }
     if references_it {
-        if (shape.references.explicit_container_reference
+        // A "card" noun names a card wherever the group went; a default
+        // battlefield zone from the type word must not pin it there.
+        let names_card_noun = filter_words
+            .iter()
+            .any(|word| matches!(*word, "card" | "cards"));
+        if shape.references.references_object_group
+            && names_card_noun
+            && filter.zone == Some(Zone::Battlefield)
+        {
+            filter.zone = None;
+        }
+        if shape.references.references_object_group && filter.zone.is_none() {
+            // "choose a creature card from among them" (Kaya, Spirits'
+            // Justice; "Mill three cards. ... from among them"): the chosen
+            // object is a member of the referenced group wherever that group
+            // went, not a card in the chooser's hand. A zone-less tagged pool
+            // lowers to a choice across the collection zones.
+        } else if (shape.references.explicit_container_reference
             && matches!(filter.zone, None | Some(Zone::Battlefield)))
             || (shape.references.references_container_it && filter.zone.is_none())
         {

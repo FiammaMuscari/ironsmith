@@ -32,7 +32,8 @@ use crate::object::CounterType;
 pub use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 use crate::target::{ChooseSpec, ObjectFilter, ObjectRef, PlayerFilter};
-use crate::types::{CardType, Subtype};
+#[cfg(test)]
+use crate::types::CardType;
 use crate::zone::Zone;
 pub use ironsmith_core::effect::{
     ChoiceAggregateConstraint, ChoiceAggregateMetric, ChoiceCount, EffectId,
@@ -1456,6 +1457,27 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::ReduceMaximumHandSize(filter, amount) => {
+                let affected_players: Vec<_> = game
+                    .players
+                    .iter()
+                    .filter(|player| {
+                        player.is_in_game() && player_matches_restriction_filter(player.id, filter)
+                    })
+                    .map(|player| player.id)
+                    .collect();
+                let reduction = (*amount).min(i32::MAX as u32) as i32;
+                for player_id in affected_players {
+                    if let Some(player) = game
+                        .players
+                        .get_mut_for_derived_update()
+                        .get_mut(player_id.index())
+                        && player.max_hand_size != i32::MAX
+                    {
+                        player.max_hand_size = player.max_hand_size.saturating_sub(reduction);
+                    }
+                }
+            }
             Restriction::AttackPermanents {
                 attackers,
                 permanents,
@@ -1525,11 +1547,12 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
-            Restriction::CastOrActivatePayments { player: filter, pay_life, sacrifice } => {
+            Restriction::CastOrActivatePayments { player: filter, pay_life, sacrifice, exempt_mana_abilities } => {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
                         tracker.cast_or_activate_payment_restrictions.push(crate::game_state::ScopedCastOrActivatePaymentRestriction {
                             iterated_player, payer: player.id, controller, source, pay_life: *pay_life,
+                            exempt_mana_abilities: *exempt_mana_abilities,
                             sacrifice: sacrifice.clone(), tagged_objects: tagged_objects.clone(),
                         });
                     }
@@ -1641,6 +1664,16 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::ActivateKeywordAbilitiesOf { filter, keyword } => {
+                for &id in &game.battlefield {
+                    if let Some(object) = game.object(id)
+                        && !game.is_phased_out(id)
+                        && filter.matches(object, &ctx, game)
+                    {
+                        tracker.cant_activate_keyword_abilities_of.insert((id, *keyword));
+                    }
+                }
+            }
             Restriction::CastSpellsOnlyAsSorcery(filter) => {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
@@ -1652,6 +1685,22 @@ impl RestrictionExt for Restriction {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
                         tracker.cant_activate_non_mana_abilities.insert(player.id);
+                    }
+                }
+            }
+            Restriction::DamageAsThoughInfect(filter) => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker.damage_as_though_infect.insert(player.id);
+                    }
+                }
+            }
+            Restriction::ActivateNonManaNonLoyaltyAbilities(filter) => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker
+                            .cant_activate_non_mana_non_loyalty_abilities
+                            .insert(player.id);
                     }
                 }
             }
@@ -1704,6 +1753,7 @@ impl RestrictionExt for Restriction {
                 player: filter,
                 spells,
                 maximum,
+                ..
             } => {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
@@ -1732,6 +1782,29 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::GetCounters(filter) => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker.cant_get_counters.insert(player.id);
+                    }
+                }
+            }
+            Restriction::RadiationGainsLife(filter) => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker.radiation_gains_life.insert(player.id);
+                    }
+                }
+            }
+            Restriction::DiscardByCause { player: filter, cause } => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        tracker
+                            .cant_discard_by_cause
+                            .push((player.id, cause.clone(), controller));
+                    }
+                }
+            }
             Restriction::LoseLife(filter) => {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
@@ -1750,6 +1823,14 @@ impl RestrictionExt for Restriction {
                 for player in &game.players {
                     if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
                         tracker.damage_cant_reduce_life_below_one.insert(player.id);
+                    }
+                }
+            }
+            Restriction::DamageReduceLifeBelow { player: filter, floor } => {
+                for player in &game.players {
+                    if player.is_in_game() && player_matches_restriction_filter(player.id, filter) {
+                        let entry = tracker.damage_life_floor.entry(player.id).or_insert(0);
+                        *entry = (*entry).max(*floor);
                     }
                 }
             }
@@ -1814,14 +1895,71 @@ impl RestrictionExt for Restriction {
                         controller,
                         iterated_player,
                         tagged_objects: tagged_objects.clone(),
+                        recipients: None,
+                        or_redirected: false,
                     },
                 );
+            }
+            // Source- and recipient-keyed (Lava Burst): the pair is checked
+            // as each damage event is proposed, so the rule keeps both
+            // filters rather than a recipient set.
+            Restriction::PreventDamageFromTo {
+                sources,
+                recipients,
+                or_redirected,
+            } => {
+                tracker.source_damage_cant_be_prevented.push(
+                    crate::game_state::SourceDamagePreventionProhibition {
+                        sources: sources.clone(),
+                        combat_only: false,
+                        host: source,
+                        controller,
+                        iterated_player,
+                        tagged_objects: tagged_objects.clone(),
+                        recipients: Some(recipients.clone()),
+                        or_redirected: *or_redirected,
+                    },
+                );
+            }
+            // Ghostly Flame: matching permanents and spells are colorless as
+            // sources of damage; read through `damage_source_is_colorless`.
+            Restriction::DamageSourcesAreColorless(sources) => {
+                tracker.colorless_damage_sources.push(
+                    crate::game_state::SourceDamagePreventionProhibition {
+                        sources: sources.clone(),
+                        combat_only: false,
+                        host: source,
+                        controller,
+                        iterated_player,
+                        tagged_objects: tagged_objects.clone(),
+                        recipients: None,
+                        or_redirected: false,
+                    },
+                );
+            }
+            Restriction::PreventDamageTo {
+                recipients,
+                or_redirected,
+            } => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && recipients.matches(obj, &ctx, game)
+                    {
+                        tracker.damage_to_cant_be_prevented.insert(obj_id);
+                        if *or_redirected {
+                            tracker.damage_to_cant_be_redirected.insert(obj_id);
+                        }
+                    }
+                }
             }
             Restriction::PreventDamage => {
                 tracker.damage_cant_be_prevented = true;
             }
             Restriction::PreventCombatDamage => {
                 tracker.combat_damage_cant_be_prevented = true;
+            }
+            Restriction::AllDamageAsThoughWither => {
+                tracker.all_damage_as_though_wither = true;
             }
             Restriction::Attack(filter) => {
                 for &obj_id in &game.battlefield {
@@ -1887,6 +2025,67 @@ impl RestrictionExt for Restriction {
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.cant_attack_alone.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::AttackOnlyNearestOpponentInChosenDirection { attackers } => {
+                let Some(option) = source.and_then(|source| game.chosen_named_option(source)) else {
+                    return;
+                };
+                let leftward = if option.eq_ignore_ascii_case("left") {
+                    true
+                } else if option.eq_ignore_ascii_case("right") {
+                    false
+                } else {
+                    return;
+                };
+                let seats = game
+                    .players
+                    .iter()
+                    .filter(|player| player.is_in_game())
+                    .map(|player| player.id)
+                    .collect::<Vec<_>>();
+                let len = seats.len();
+                for &obj_id in &game.battlefield {
+                    let Some(obj) = game.object(obj_id) else {
+                        continue;
+                    };
+                    if !attackers.matches(obj, &ctx, game) {
+                        continue;
+                    }
+                    let attacker = game.controller_of(obj);
+                    let Some(start) = seats.iter().position(|player| *player == attacker) else {
+                        continue;
+                    };
+                    let nearest = (1..len)
+                        .map(|offset| {
+                            if leftward {
+                                seats[(start + offset) % len]
+                            } else {
+                                seats[(start + len - offset) % len]
+                            }
+                        })
+                        .find(|player| game.are_opponents(attacker, *player));
+                    let banned = seats
+                        .iter()
+                        .copied()
+                        .filter(|player| {
+                            *player != attacker
+                                && Some(*player) != nearest
+                                && game.are_opponents(attacker, *player)
+                        })
+                        .collect::<Vec<_>>();
+                    if !banned.is_empty() {
+                        tracker.add_cant_attack_defenders(obj_id, banned.into_iter());
+                    }
+                }
+            }
+            Restriction::AttackOnlyAlone(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.attack_only_alone.insert(obj_id);
                     }
                 }
             }
@@ -2011,6 +2210,37 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::MustAttackPermanents {
+                attackers,
+                permanents,
+            } => {
+                let required = game
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        !game.is_phased_out(id)
+                            && game
+                                .object(id)
+                                .is_some_and(|object| permanents.matches(object, &ctx, game))
+                    })
+                    .collect::<Vec<_>>();
+                if required.is_empty() {
+                    return;
+                }
+                for &object in &game.battlefield {
+                    if !game.is_phased_out(object)
+                        && let Some(object) = game.object(object)
+                        && attackers.matches(object, &ctx, game)
+                    {
+                        tracker
+                            .must_attack_permanents
+                            .entry(object.id)
+                            .or_default()
+                            .extend(required.iter().copied());
+                    }
+                }
+            }
             Restriction::MustBeBlockedBy { attacker, blockers } => {
                 let matching = game.battlefield.iter().copied().filter(|&id| {
                     !game.is_phased_out(id) && game.object(id).is_some_and(|obj| blockers.matches(obj, &ctx, game))
@@ -2027,6 +2257,19 @@ impl RestrictionExt for Restriction {
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.must_be_blocked.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::MustBeBlockedByAtLeast { attacker, minimum } => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && attacker.matches(obj, &ctx, game)
+                    {
+                        tracker
+                            .must_be_blocked_by_at_least
+                            .entry(obj_id)
+                            .or_default()
+                            .push(*minimum);
                     }
                 }
             }
@@ -2048,12 +2291,22 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
-            Restriction::BeAttachedBy(hosts, attachments) => {
+            Restriction::GainControl(objects, players) => {
+                let forbidden = game.players.iter().filter(|player| players.matches_player(player.id, &ctx))
+                    .map(|player| player.id).collect::<std::collections::HashSet<_>>();
+                for &id in &game.battlefield {
+                    if game.object(id).is_some_and(|object| objects.matches(object, &ctx, game)) {
+                        tracker.cant_gain_control.entry(id).or_default().extend(forbidden.iter().copied());
+                    }
+                }
+            }
+            Restriction::BeAttachedBy(hosts, attachments) | Restriction::BeAttachedByNew(hosts, attachments) => {
                 for &obj_id in &game.battlefield {
                     if let Some(obj) = game.object(obj_id)
                         && hosts.matches(obj, &ctx, game)
                     {
                         tracker.cant_be_attached_by.push(crate::game_state::CantBeAttachedBy {
+                            only_new: matches!(self, Restriction::BeAttachedByNew(..)),
                             host: obj_id,
                             attachments: attachments.clone(),
                             controller,
@@ -2122,6 +2375,19 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::BeExiledByCause { filter, cause } => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_be_exiled_by_cause.push((
+                            obj_id,
+                            cause.clone(),
+                            controller,
+                        ));
+                    }
+                }
+            }
             Restriction::EnterBattlefield(filter) => {
                 let restriction = crate::game_state::CastRestrictionFilter {
                     source_number_owner: None,
@@ -2166,6 +2432,17 @@ impl RestrictionExt for Restriction {
                     }
                 }
             }
+            Restriction::HaveCounterTypeRemoved(filter, counter_type) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker
+                            .cant_have_counter_types_removed
+                            .insert((obj_id, *counter_type));
+                    }
+                }
+            }
             Restriction::HaveCountersPlaced(filter) => {
                 for &obj_id in &game.battlefield {
                     if let Some(obj) = game.object(obj_id)
@@ -2191,6 +2468,20 @@ impl RestrictionExt for Restriction {
                             crate::game_state::ObjectCantBeTargetedFrom {
                                 object: obj_id,
                                 source_filter: source_filter.clone(),
+                                controller,
+                            },
+                        );
+                    }
+                }
+            }
+            Restriction::BeTargetedByRequirementsLimitedTo(filter, requirement_scope) => {
+                for obj in game.objects_in_deterministic_order() {
+                    let obj_id = obj.id;
+                    if filter.matches(obj, &ctx, game) {
+                        tracker.cant_be_targeted_by_limited_requirements.push(
+                            crate::game_state::ObjectCantBeTargetedByLimitedRequirement {
+                                object: obj_id,
+                                requirement_scope: requirement_scope.clone(),
                                 controller,
                             },
                         );
@@ -2250,6 +2541,15 @@ impl RestrictionExt for Restriction {
                                 controller,
                             },
                         );
+                    }
+                }
+            }
+            Restriction::BeCounteredFrom(filter, sources) => {
+                for entry in &game.stack {
+                    if !entry.is_ability && let Some(object) = game.object(entry.object_id)
+                        && filter.matches(object, &ctx, game)
+                    {
+                        tracker.cant_be_countered_from.push((entry.object_id, sources.clone(), controller));
                     }
                 }
             }
@@ -2355,6 +2655,10 @@ struct TextChangeCache {
             Result<Effect, crate::continuous::text_changes::TextChangeDomainError>,
         >,
     >,
+    /// Directed changes whose source word provably has no occurrence in this
+    /// executor's structural image (CR 612.2: nothing to change). Kept apart
+    /// from `values`, which must not hold a clone of the owning effect.
+    unaffected: std::sync::Mutex<Vec<ironsmith_core::TextChange>>,
 }
 
 /// The canonical executable model belongs to this exact immutable executor.
@@ -2438,6 +2742,7 @@ impl Effect {
         let cache = TextChangeCache {
             executor: Arc::downgrade(&executor),
             values: std::sync::Mutex::new(std::collections::HashMap::new()),
+            unaffected: std::sync::Mutex::new(Vec::new()),
         };
         Effect(executor, None, Arc::new(cache))
     }
@@ -2464,11 +2769,41 @@ impl Effect {
             {
                 return value;
             }
+            if self
+                .2
+                .unaffected
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .contains(&change)
+            {
+                return Ok(self.clone());
+            }
         }
         let value =
             match crate::continuous::text_change_programs::rewrite_effect_words(self, change) {
                 Ok(None) => return Ok(self.clone()),
                 Ok(Some(value)) => Ok(value),
+                // An executor outside the typed word domain is still within
+                // the rules when its complete structural image cannot hold
+                // the source word: the change has nothing to replace there.
+                Err(_)
+                    if !crate::continuous::text_changes::structural_image_may_hold_source_word(
+                        &format!("{:?}", self.0),
+                        change,
+                    ) =>
+                {
+                    if valid_cache {
+                        let mut unaffected = self
+                            .2
+                            .unaffected
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner());
+                        if !unaffected.contains(&change) {
+                            unaffected.push(change);
+                        }
+                    }
+                    return Ok(self.clone());
+                }
                 Err(error) => Err(error),
             };
         if valid_cache {
@@ -2489,6 +2824,7 @@ impl Effect {
         let cache = TextChangeCache {
             executor: Arc::downgrade(&executor),
             values: std::sync::Mutex::new(std::collections::HashMap::new()),
+            unaffected: std::sync::Mutex::new(Vec::new()),
         };
         Effect(executor, None, Arc::new(cache))
     }
@@ -3108,6 +3444,11 @@ impl Effect {
     pub fn double_mana_pool_player(player: PlayerFilter) -> Self {
         use crate::effects::DoubleManaPoolEffect;
         Self::new(DoubleManaPoolEffect::new(player))
+    }
+
+    /// "<player> activates a mana ability of each land they control".
+    pub fn activate_mana_ability_of_each_land_player(player: PlayerFilter) -> Self {
+        Self::new(crate::effects::ActivateManaAbilityOfEachLandEffect::new(player))
     }
 
     /// Create an effect that empties all unspent mana from a player's mana pool.

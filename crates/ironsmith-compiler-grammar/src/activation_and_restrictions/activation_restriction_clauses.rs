@@ -89,6 +89,62 @@ fn simple_negated_object_restriction(
     })
 }
 
+/// "be the target of spells or abilities that can target only Walls" /
+/// "be the target of spells that can target only Walls or of abilities that
+/// can target only Walls" (Wall of Shadows): the restriction reads each
+/// target requirement's own filter, whatever spell or ability holds it.
+fn limited_requirement_target_restriction(
+    tokens: &[OwnedLexToken],
+    target_filter: &ObjectFilter,
+) -> Result<Option<crate::effect::Restriction>, CardTextError> {
+    let tokens = crate::util::trim_edge_punctuation(tokens);
+    let words = crate::lexer::token_word_refs(&tokens);
+    if words.len() != tokens.len() {
+        return Ok(None);
+    }
+    let limit: &[&str] = &["that", "can", "target", "only"];
+    let Some(rest) = words
+        .strip_prefix(&["be", "the", "target", "of"][..])
+        .or_else(|| words.strip_prefix(&["be", "the", "targets", "of"][..]))
+    else {
+        return Ok(None);
+    };
+    let offset = words.len() - rest.len();
+    let scope_range = if let Some(after) = rest.strip_prefix(&["spells", "or", "abilities"][..])
+        && after.starts_with(limit)
+        && after.len() > limit.len()
+    {
+        let start = offset + 3 + limit.len();
+        start..words.len()
+    } else if let Some(after) = rest.strip_prefix(&["spells"][..])
+        && after.starts_with(limit)
+    {
+        let scope_start = offset + 1 + limit.len();
+        let tail = ["or", "of", "abilities", "that", "can", "target", "only"];
+        let Some(split) = (scope_start + 1..words.len())
+            .find(|index| words[*index..].starts_with(&tail[..]))
+        else {
+            return Ok(None);
+        };
+        let first = &words[scope_start..split];
+        let second = &words[split + tail.len()..];
+        if first.is_empty() || first != second {
+            return Ok(None);
+        }
+        scope_start..split
+    } else {
+        return Ok(None);
+    };
+    let scope = parse_object_filter(&tokens[scope_range], false)?;
+    if scope.subtypes.is_empty() && scope.card_types.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(crate::effect::Restriction::be_targeted_by_requirements_limited_to(
+        target_filter.clone(),
+        scope,
+    )))
+}
+
 fn source_filtered_target_restriction(
     tokens: &[OwnedLexToken],
     target_filter: &ObjectFilter,
@@ -233,6 +289,50 @@ fn player_negated_restriction_from_tail(
 ) -> Option<crate::effect::Restriction> {
     use crate::effect::Restriction;
 
+    // "You can't attack that player this turn" (Call for Aid): creatures
+    // the restricted player controls can't attack the discourse player
+    // (lowering binds IteratedPlayer to it); planeswalkers stay attackable.
+    if matches!(words, ["attack", "that", "player" | "opponent"]) {
+        return Some(Restriction::attack_player(
+            ObjectFilter::creature().controlled_by(player),
+            PlayerFilter::IteratedPlayer,
+        ));
+    }
+    // "You can't sacrifice those creatures this turn" (Call for Aid): the
+    // referenced objects can't be sacrificed (only their controller could).
+    if matches!(
+        words,
+        ["sacrifice", "those", "creatures" | "permanents"]
+            | ["sacrifice", "them"]
+            | ["sacrifice", "it"]
+            | ["sacrifice", "that", "creature" | "permanent"]
+    ) {
+        return Some(Restriction::be_sacrificed(ObjectFilter::tagged(
+            crate::tag::CompilerReferenceTag::It.bind(),
+        )));
+    }
+
+    // "Players can't pay life to cast spells or to activate abilities that
+    // aren't mana abilities." (Karn's Sylex): a life-payment prohibition on
+    // casting and non-mana activation (CR 119.4, 605).
+    if let ["pay", "life", "to", "cast", "spells", "or", rest @ ..] = words
+        && let Some(exempt_mana_abilities) =
+            match rest.strip_prefix(&["to"][..]).unwrap_or(rest) {
+                ["activate", "abilities"] => Some(false),
+                ["activate", "abilities", "that", "aren't" | "arent", "mana", "abilities"] => {
+                    Some(true)
+                }
+                _ => None,
+            }
+    {
+        return Some(Restriction::CastOrActivatePayments {
+            player,
+            pay_life: true,
+            sacrifice: None,
+            exempt_mana_abilities,
+        });
+    }
+
     if let Some(spell_filter) = parse_cast_restriction_tail_filter(words) {
         Some(Restriction::cast_spells_matching(player, spell_filter))
     } else {
@@ -253,6 +353,7 @@ fn player_negated_restriction_from_tail(
                 PlayerRestrictionTailKind::DrawCards => Restriction::draw_cards(player),
                 PlayerRestrictionTailKind::DrawExtraCards => Restriction::draw_extra_cards(player),
                 PlayerRestrictionTailKind::PoisonCounters => Restriction::poison_counters(player),
+                PlayerRestrictionTailKind::GetCounters => Restriction::get_counters(player),
                 PlayerRestrictionTailKind::CastMoreThanOneSpellEachTurn => {
                     Restriction::cast_more_than_one_spell_each_turn(player)
                 }
@@ -262,6 +363,47 @@ fn player_negated_restriction_from_tail(
             },
         )
     }
+}
+
+/// "<player> can't be attacked except by creatures with flying and/or
+/// islandwalk" (Island Sanctuary): creatures lacking every listed keyword
+/// can't attack that player (CR 508.1b); planeswalkers stay attackable.
+fn player_be_attacked_except_by_restriction(
+    words: &[&str],
+    player: PlayerFilter,
+) -> Option<crate::effect::Restriction> {
+    use crate::grammar::filters::FilterTailDecoration as Decoration;
+    let rest = words.strip_prefix(&["be", "attacked", "except", "by"][..])?;
+    // "with A and/or B" admits a creature with either keyword.
+    let mut normalized: Vec<&str> = Vec::with_capacity(rest.len());
+    let mut idx = 0usize;
+    while idx < rest.len() {
+        if rest[idx] == "and/or" {
+            normalized.push("or");
+            idx += 1;
+        } else if rest[idx] == "and" && rest.get(idx + 1) == Some(&"or") {
+            normalized.push("or");
+            idx += 2;
+        } else {
+            normalized.push(rest[idx]);
+            idx += 1;
+        }
+    }
+    let split = crate::grammar::filters::parse_filter_tail_decoration_split_words(&normalized)?;
+    if !matches!(split.base_words, ["creatures"] | ["creature"]) {
+        return None;
+    }
+    let disallowed = match split.decoration {
+        Decoration::WithKeyword(keyword) => Decoration::WithoutKeyword(keyword),
+        Decoration::WithEitherKeyword(first, second) => {
+            Decoration::WithoutEitherKeyword(first, second)
+        }
+        Decoration::WithAnyKeyword(keywords) => Decoration::WithoutAnyKeyword(keywords),
+        _ => return None,
+    };
+    let mut attackers = ObjectFilter::creature();
+    crate::grammar::filters::apply_filter_tail_decoration(&mut attackers, disallowed);
+    Some(crate::effect::Restriction::attack_player(attackers, player))
 }
 
 fn damage_cause_life_loss_restriction_from_tail(
@@ -519,6 +661,10 @@ pub fn parse_cant_restriction_clause(
 
     let restriction = if let Some(parsed) = parse_cant_cast_restriction_words(&normalized) {
         parsed
+    } else if let Some(lands) =
+        restriction_grammar::parse_land_subject_cant_be_played_filter_words(&normalized)
+    {
+        Restriction::PlayLandsMatching(PlayerFilter::Any, lands)
     } else if let Some(fact) = restriction_grammar::parse_global_cant_restriction_words(&normalized)
     {
         use restriction_grammar::GlobalCantRestrictionFact;
@@ -721,6 +867,9 @@ fn restriction_from_player_action_fact(
         PlayerActivationRestrictionTailFact::ActivateNonManaAbilities => {
             Restriction::activate_non_mana_abilities(player)
         }
+        PlayerActivationRestrictionTailFact::ActivateNonManaNonLoyaltyAbilities => {
+            Restriction::activate_non_mana_non_loyalty_abilities(player)
+        }
         PlayerActivationRestrictionTailFact::ActivateAbilitiesOf {
             mut filter,
             non_mana_only,
@@ -738,6 +887,10 @@ fn restriction_from_player_action_fact(
         PlayerActivationRestrictionTailFact::VentureMoreThanOnceEachTurn => {
             Restriction::venture_more_than_once_each_turn(player)
         }
+        PlayerActivationRestrictionTailFact::GetCounters => Restriction::get_counters(player),
+        PlayerActivationRestrictionTailFact::ActivateAbilities => {
+            Restriction::activate_abilities(player)
+        }
     }
 }
 
@@ -745,6 +898,13 @@ pub fn parse_player_restriction_subject(
     subject_tokens: &[OwnedLexToken],
 ) -> Result<Option<(PlayerFilter, Option<TargetAst>)>, CardTextError> {
     if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    // "that player's life total can't change": the subject is a life total,
+    // which the global life-total restriction owns, not a restricted player.
+    if crate::lexer::parser_token_word_refs(subject_tokens)
+        .ends_with(&["life", "total"])
+    {
         return Ok(None);
     }
 
@@ -766,6 +926,33 @@ pub fn parse_player_restriction_subject(
         .collect::<Vec<_>>();
     if let Some(player) = restriction_grammar::parse_player_restriction_subject_words(&normalized) {
         return Ok(Some((player, None)));
+    }
+
+    // "A player who controls more permanents than each other player can't
+    // ..." (Damping Engine): the unique player with strictly the most
+    // matching permanents; nobody while the lead is tied.
+    {
+        let positions = crate::lexer::parser_token_word_positions(subject_tokens);
+        let words = positions.iter().map(|(_, word)| *word).collect::<Vec<_>>();
+        const HEAD: &[&str] = &["a", "player", "who", "controls", "more"];
+        const TAIL: &[&str] = &["than", "each", "other", "player"];
+        if words.len() > HEAD.len() + TAIL.len()
+            && words.starts_with(HEAD)
+            && words.ends_with(TAIL)
+        {
+            let start = positions[HEAD.len()].0;
+            let end = positions[words.len() - TAIL.len()].0;
+            if start < end {
+                let mut filter = parse_object_filter(&subject_tokens[start..end], false)?;
+                filter.zone.get_or_insert(crate::zone::Zone::Battlefield);
+                return Ok(Some((
+                    PlayerFilter::ControlsMost {
+                        filter: Box::new(filter),
+                    },
+                    None,
+                )));
+            }
+        }
     }
 
     // "Enchanted creature's controller can't cast creature spells." (Brand of
@@ -1147,6 +1334,32 @@ pub fn parse_negated_object_restriction_clause(
             target: None,
         }));
     }
+    if let Some(shape) = restriction_grammar::parse_recipient_unpreventability(tokens) {
+        let recipient_words = crate::lexer::token_word_refs(shape.recipients);
+        // "that creature" back-references the object a prior clause named
+        // (Whippoorwill's target), never a filter over every creature.
+        let recipients = if crate::word_primitives::parse_any_sequence_complete(
+            &recipient_words,
+            &[
+                &["it"],
+                &["that", "creature"],
+                &["that", "permanent"],
+                &["them"],
+                &["those", "creatures"],
+            ],
+        ) {
+            ObjectFilter::tagged(crate::tag::CompilerReferenceTag::It.bind())
+        } else {
+            parse_object_filter_lexed(shape.recipients, false)?
+        };
+        return Ok(Some(ParsedCantRestriction {
+            restriction: Restriction::PreventDamageTo {
+                recipients,
+                or_redirected: shape.or_redirected,
+            },
+            target: None,
+        }));
+    }
 
     let words = crate::lexer::token_word_refs(tokens);
     if restriction_grammar::parse_mana_retention_negated_clause_words(&words).is_some() {
@@ -1169,6 +1382,66 @@ pub fn parse_negated_object_restriction_clause(
     .is_some_and(|shape| shape.bare_other_reference);
     if restriction_grammar::parse_leading_if_restriction_subject_words(&subject_words).is_some() {
         return Ok(None);
+    }
+
+    // "Power-up abilities can't be activated" (Kang the Conqueror): every
+    // permanent's activated abilities with that keyword (CR 602.5).
+    if crate::lexer::token_word_refs(&trim_commas(&tokens[neg_end..])) == ["be", "activated"] {
+        let keyword = match crate::lexer::token_word_refs(&subject_tokens).as_slice() {
+            ["power-up", "abilities"] | ["power", "up", "abilities"] => {
+                Some(ironsmith_core::ActivatedAbilityKeyword::PowerUp)
+            }
+            ["boast", "abilities"] => Some(ironsmith_core::ActivatedAbilityKeyword::Boast),
+            ["equip", "abilities"] => Some(ironsmith_core::ActivatedAbilityKeyword::Equip),
+            ["exhaust", "abilities"] => Some(ironsmith_core::ActivatedAbilityKeyword::Exhaust),
+            _ => None,
+        };
+        if let Some(keyword) = keyword {
+            return Ok(Some(ParsedCantRestriction {
+                restriction: Restriction::activate_keyword_abilities_of(
+                    ObjectFilter::default(),
+                    keyword,
+                ),
+                target: None,
+            }));
+        }
+    }
+    // "Counters can't be put on artifacts, creatures, enchantments, or lands."
+    // (Solemnity): the counters are the grammatical subject; the permanents
+    // after "put on" are what the restriction protects.
+    if subject_words.as_slice() == ["counters"] {
+        let tail_tokens = trim_commas(&tokens[neg_end..]);
+        let tail_words = crate::lexer::token_word_refs(&tail_tokens);
+        if tail_words.len() > 3
+            && matches!(tail_words.as_slice(), ["be", "put" | "placed", "on", ..])
+            && !matches!(tail_words.as_slice(), ["be", _, "on", "this", ..])
+        {
+            let protected = parse_object_filter(&tail_tokens[3..], false)?;
+            return Ok(Some(ParsedCantRestriction {
+                restriction: Restriction::have_counters_placed(protected),
+                target: None,
+            }));
+        }
+    }
+    // "Stun counters can't be removed from permanents your opponents
+    // control." (Fear of Sleep Paralysis): the counters of one kind are the
+    // subject; the permanents after "removed from" keep them (CR 122.1).
+    if subject_words.len() >= 2
+        && subject_words.last() == Some(&"counters")
+        && let Some(counter_type) = crate::grammar::filters::parse_counter_type_words(&subject_words)
+    {
+        let tail_tokens = trim_commas(&tokens[neg_end..]);
+        let tail_words = crate::lexer::token_word_refs(&tail_tokens);
+        if tail_words.len() > 3 && matches!(tail_words.as_slice(), ["be", "removed", "from", ..]) {
+            let mut protected = parse_object_filter(&tail_tokens[3..], false)?;
+            if protected.zone.is_none() {
+                protected.zone = Some(crate::zone::Zone::Battlefield);
+            }
+            return Ok(Some(ParsedCantRestriction {
+                restriction: Restriction::have_counter_type_removed(protected, counter_type),
+                target: None,
+            }));
+        }
     }
 
     let (mut filter, mut target, ability_scope) =
@@ -1309,7 +1582,34 @@ pub fn parse_negated_object_restriction_clause(
         if remainder_words.starts_with(&["untap", "more", "than"]) {
             return Ok(None);
         }
-        let Some(restriction) = player_negated_restriction_from_tail(&remainder_words, player)
+        if let Some(restriction) =
+            player_be_attacked_except_by_restriction(&remainder_words, player.clone())
+        {
+            return Ok(Some(ParsedCantRestriction {
+                restriction,
+                target: None,
+            }));
+        }
+        // "Enchanted player can't activate abilities that aren't mana
+        // abilities or loyalty abilities." (Overwhelming Splendor): the
+        // activation-ban tails are the same facts the player activation
+        // clause reads; that clause's subject grammar has no attached-player
+        // subject, so read the two whole-player activation bans here too.
+        let activation_ban = || {
+            use restriction_grammar::PlayerActivationRestrictionTailFact as Fact;
+            match restriction_grammar::parse_player_activation_restriction_tail_words(
+                &remainder_words,
+            )? {
+                fact @ (Fact::ActivateNonManaAbilities
+                | Fact::ActivateNonManaNonLoyaltyAbilities) => {
+                    Some(restriction_from_player_action_fact(player.clone(), fact))
+                }
+                _ => None,
+            }
+        };
+        let Some(restriction) =
+            player_negated_restriction_from_tail(&remainder_words, player.clone())
+                .or_else(activation_ban)
         else {
             return Err(CardTextError::ParseError(format!(
                 "unsupported player negated restriction tail (clause: '{}')",
@@ -1353,6 +1653,20 @@ pub fn parse_negated_object_restriction_clause(
             target,
         }));
     }
+    if let ["be", "countered", "by", source_words @ ..] = remainder_words.as_slice()
+        && !source_words.is_empty()
+    {
+        let sources = parse_object_filter(&remainder_tokens[3..], false)?;
+        return Ok(Some(ParsedCantRestriction {
+            restriction: Restriction::be_countered_from(filter, sources), target,
+        }));
+    }
+    if let Some(restriction) = limited_requirement_target_restriction(&remainder_tokens, &filter)? {
+        return Ok(Some(ParsedCantRestriction {
+            restriction,
+            target,
+        }));
+    }
     if let Some(restriction) = source_filtered_target_restriction(&remainder_tokens, &filter)? {
         return Ok(Some(ParsedCantRestriction {
             restriction,
@@ -1378,6 +1692,14 @@ pub fn parse_negated_object_restriction_clause(
         }));
     }
 
+    // "The Aetherspark can't be attacked": no creature may choose the
+    // restricted permanent as the object it attacks (CR 508.1b).
+    if remainder_words.as_slice() == ["be", "attacked"] {
+        return Ok(Some(ParsedCantRestriction {
+            restriction: Restriction::attack_permanents(ObjectFilter::creature(), filter),
+            target,
+        }));
+    }
     use restriction_grammar::NegatedObjectTailShape;
     let tail_shape = restriction_grammar::parse_negated_object_tail_words(&remainder_words);
     let restriction = match tail_shape {

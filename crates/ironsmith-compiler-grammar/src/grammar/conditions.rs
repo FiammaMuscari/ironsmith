@@ -297,6 +297,9 @@ pub enum PlayerLifeRelationAst {
     HasLessLifeThanYou,
     HasNoOpponentWithMoreLifeThan,
     HasMoreLifeThanEachOtherPlayer,
+    /// "that opponent has more life than another of your opponents"
+    /// (Breena, the Demagogue): some other opponent of yours has less life.
+    HasMoreLifeThanAnotherOpponent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1360,6 +1363,31 @@ pub fn parse_player_has_quantity_object_condition(
         .then_some(PlayerHasQuantityObjectConditionAst { player, comparison })
 }
 
+/// A life relation whose subject is "that player or that planeswalker's
+/// controller" has no player-predicate form; read it as a life-total
+/// comparison against your life total.
+pub fn target_or_controller_life_relation_predicate(
+    relation: &PlayerLifeRelationConditionAst,
+) -> Option<PredicateAst> {
+    if relation.player != PlayerFilter::TargetPlayerOrControllerOfTarget {
+        return None;
+    }
+    let operator = match relation.relation {
+        PlayerLifeRelationAst::HasMoreLifeThanYou => {
+            crate::effect::ValueComparisonOperator::GreaterThan
+        }
+        PlayerLifeRelationAst::HasLessLifeThanYou => {
+            crate::effect::ValueComparisonOperator::LessThan
+        }
+        _ => return None,
+    };
+    Some(PredicateAst::ValueComparison {
+        left: crate::effect::Value::LifeTotal(PlayerFilter::TargetPlayerOrControllerOfTarget),
+        operator,
+        right: crate::effect::Value::LifeTotal(PlayerFilter::You),
+    })
+}
+
 pub fn parse_player_life_relation_condition(
     tokens: &[OwnedLexToken],
 ) -> Option<PlayerLifeRelationConditionAst> {
@@ -1383,6 +1411,19 @@ fn parse_player_life_relation_shape(
     }
     if let Some(condition) = parse_no_opponent_more_life_than_shape(tokens) {
         return Some(condition);
+    }
+    // "that opponent has more life than another of your opponents" (Breena,
+    // the Demagogue): in an attack trigger, "that opponent" is the attacked
+    // (defending) player.
+    if matches!(
+        words.as_slice(),
+        ["that", "opponent", "has", "more", "life", "than", "another", "of", "your", "opponents"]
+            | ["that", "opponent", "has", "more", "life", "than", "another", "opponent"]
+    ) {
+        return Some(PlayerLifeRelationConditionAst {
+            player: PlayerFilter::Defending,
+            relation: PlayerLifeRelationAst::HasMoreLifeThanAnotherOpponent,
+        });
     }
 
     let relation = parse_has_relation_clauses(tokens)?;
@@ -1919,6 +1960,16 @@ fn parse_player_has_quantity_subject_clause(clause: LexedClause<'_>) -> Option<P
 }
 
 fn parse_life_relation_player_subject_clause(clause: LexedClause<'_>) -> Option<PlayerFilter> {
+    // "that player or that planeswalker's controller" (Pulse of the Forge):
+    // the player a "target player or planeswalker" names, or the controller of
+    // the planeswalker it names.
+    if matches!(
+        crate::lexer::token_word_refs(clause.tokens()).as_slice(),
+        ["that", "player", "or", "that", "planeswalker's" | "planeswalkers", "controller"]
+            | ["that", "player", "or", "that", "planeswalker", "s", "controller"]
+    ) {
+        return Some(PlayerFilter::TargetPlayerOrControllerOfTarget);
+    }
     let reference = parse_leaf_player_reference_tokens(
         clause.tokens(),
         LeafPlayerReferenceMode::LifeRelationSubject,

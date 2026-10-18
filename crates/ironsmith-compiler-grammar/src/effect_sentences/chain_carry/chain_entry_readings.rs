@@ -104,6 +104,12 @@ const READINGS: &[Reading] = &[
         read: |input| input.outcome(read_atomic_put_counter_for_each(input)),
     },
     Reading {
+        id: RuleId::new("atomic-permanent-and-suspended-counters"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| input.outcome(read_atomic_permanent_and_suspended_counters(input)),
+    },
+    Reading {
         id: RuleId::new("atomic-token-copy-exception"),
         head: HeadDiscriminator::Any,
         admits: |_| true,
@@ -187,6 +193,12 @@ const READINGS: &[Reading] = &[
         head: HeadDiscriminator::Any,
         admits: |_| true,
         read: |input| input.outcome(read_conditional_become_pair(input)),
+    },
+    Reading {
+        id: RuleId::new("until-turned-face-down-become"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| input.outcome(read_until_turned_face_down_become(input)),
     },
     Reading {
         id: RuleId::new("for-each-object-effect-chain"),
@@ -362,6 +374,12 @@ fn read_atomic_put_counter_for_each(
         ]));
     }
     Ok(None)
+}
+fn read_atomic_permanent_and_suspended_counters(
+    input: &ChainEntry<'_>,
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    Ok(parse_atomic_permanent_and_suspended_counter_sentence(input.tokens)?
+        .map(|effect| vec![effect]))
 }
 fn read_atomic_token_copy_exception(
     input: &ChainEntry<'_>,
@@ -587,6 +605,31 @@ fn read_conditional_become_pair(
         return Ok(Some(vec![effect]));
     }
     Ok(None)
+}
+/// "until this creature is turned face down, it becomes a copy of that
+/// creature, except ..." (Vesuvan Shapeshifter): the leading face-down
+/// duration, its pronoun subject and the become clause are one instruction;
+/// the comma must not split the duration off as an orphan clause. The become
+/// owner binds "it" to this permanent and the duration to ObjectFaceUp.
+fn read_until_turned_face_down_become(
+    input: &ChainEntry<'_>,
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let tokens = input.tokens;
+    let words = crate::lexer::parser_token_word_refs(tokens);
+    if !matches!(
+        words.as_slice(),
+        ["until", "this", _, "is", "turned", "face", "down", "it", "becomes", ..]
+    ) {
+        return Ok(None);
+    }
+    let Some(becomes_idx) = tokens.iter().position(|token| token.is_word("becomes")) else {
+        return Ok(None);
+    };
+    super::super::clause_dispatch::parse_become_clause(
+        &tokens[..becomes_idx],
+        &tokens[becomes_idx + 1..],
+    )
+    .map(|effect| Some(vec![effect]))
 }
 fn read_for_each_object_effect_chain(
     input: &ChainEntry<'_>,

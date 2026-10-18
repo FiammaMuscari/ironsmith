@@ -671,7 +671,7 @@ fn describe_choose_card_type_reveal_partition(
         || !choice.mode_additional_mana_costs.is_empty()
         || choice.disallow_previously_chosen_modes
         || choice.disallow_previously_chosen_modes_this_turn
-        || choice.distinct_player_targets_per_mode
+        || choice.distinct_player_targets_per_mode || choice.optional_choice
         || choice.conditional_mode_range.is_some()
         || choice.modes.len() != expected_modes.len()
         || choice.mode_point_costs.iter().any(|cost| *cost != 1)
@@ -887,6 +887,7 @@ fn describe_may_single_hand_move_with_entry_grant(
         || grant.lock_filter_at_resolution
         || grant.resolve_set_pt_values_at_resolution
         || grant.require_creature_target
+        || grant.grant_only_if_absent
         || !apply_continuous_targets_tag(grant, moved_tag)
     {
         return None;
@@ -1095,6 +1096,9 @@ pub(crate) fn describe_activation_timing_clause(timing: &ActivationTiming) -> Op
         ActivationTiming::AnyTimeByOpponents => {
             Some("Only your opponents may activate this ability")
         }
+        ActivationTiming::AnyTimeBySourceOwner => {
+            Some("Only this creature's owner may activate this ability")
+        }
         ActivationTiming::SorcerySpeedByOpponents => {
             Some("Only your opponents may activate this ability and only as a sorcery")
         }
@@ -1130,6 +1134,9 @@ pub(crate) fn describe_activation_timing_clause(timing: &ActivationTiming) -> Op
         }
         ActivationTiming::BeforeEndOfCombatStep => {
             Some("Activate only before the end of combat step")
+        }
+        ActivationTiming::AnyTimeByGrantingPlayer(_) => {
+            Some("Only you may activate this ability")
         }
     }
 }
@@ -1402,10 +1409,13 @@ pub(super) fn describe_mana_usage_restriction(
             let pluralize_origin_spell = activated
                 .and_then(activated_mana_output_amount)
                 .is_some_and(|amount| amount > 1);
-            let spell_text = describe_mana_usage_spell_filter_target_with_options(
-                filter,
-                pluralize_origin_spell,
-            )?;
+            let spell_text = if filter.tagged_constraints.iter().any(|constraint|
+                constraint.tag.as_str() == ironsmith_core::tag::LAST_SOURCE_EXILED_AT_PRODUCTION_TAG)
+            {
+                "the last card exiled with this permanent".to_string()
+            } else {
+                describe_mana_usage_spell_filter_target_with_options(filter, pluralize_origin_spell)?
+            };
             let mut line = if *restrict_to_matching_spell {
                 format!("Spend this mana only to cast {spell_text}")
             } else if !*grant_uncounterable
@@ -1453,6 +1463,7 @@ pub(super) fn describe_mana_usage_restriction(
             enters_with_counters,
             granted_abilities,
             granted_keywords,
+            enters_with_counter_values,
         } => {
             let spell_text = describe_mana_usage_spell_filter_target_with_options(filter, false)?;
             let mut line = match condition {
@@ -1491,7 +1502,15 @@ pub(super) fn describe_mana_usage_restriction(
                     rendered
                 }
             }));
-            let has_prior_permanent_bonus = !enters_with_counters.is_empty();
+            for (counter_type, count) in enters_with_counter_values {
+                bonuses.push(format!(
+                    "it enters with a number of additional {} counters on it equal to {}",
+                    counter_type.description(),
+                    describe_value(count)
+                ));
+            }
+            let has_prior_permanent_bonus =
+                !enters_with_counters.is_empty() || !enters_with_counter_values.is_empty();
             for (ability, duration) in granted_abilities {
                 let rendered = match (ability, duration) {
                     (
@@ -1717,6 +1736,21 @@ pub(super) fn describe_mana_usage_restriction(
                 }
             } else if copy_spell_from_effect(effect).is_some() {
                 "copy that spell and you may choose new targets for the copy".to_string()
+            } else if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>()
+                && let [inner] = may.effects.as_slice()
+                && let Some(replacement) =
+                    inner.downcast_ref::<crate::effects::RegisterFutureZoneReplacementEffect>()
+                && replacement.from_zone == Some(Zone::Stack)
+                && replacement.to_zone == Some(Zone::Graveyard)
+                && replacement.replacement_zone == Zone::Exile
+            {
+                // "When you spend this mana to cast an instant or sorcery
+                // spell with mana value 3 or less, you may exile that spell
+                // instead of putting it into its owner's graveyard as it
+                // resolves." (Forger's Foundry)
+                return Some(format!(
+                    "When you spend this mana to cast {spell_text}, you may exile that spell instead of putting it into its owner's graveyard as it resolves"
+                ));
             } else {
                 return None;
             };
@@ -3887,6 +3921,17 @@ pub(super) fn cumulative_upkeep_payment_text(payment: &[Effect]) -> Option<Strin
         if let Some(add) = effect.downcast_ref::<crate::effects::AddManaEffect>() {
             if add.player != PlayerFilter::You { return None; }
             parts.push(format!("Add {}", crate::mana::ManaCost::from_symbols(add.mana.clone()).to_oracle()));
+        } else if let Some(flip) = effect.downcast_ref::<crate::effects::FlipCoinEffect>() {
+            // "Cumulative upkeep—Flip a coin." (Karplusan Minotaur)
+            if flip.player != PlayerFilter::You
+                || flip.count != 1
+                || flip.count_value.is_some()
+                || flip.repeat_until_loss
+                || flip.opponent_results.is_some()
+            {
+                return None;
+            }
+            parts.push("Flip a coin".to_string());
         } else if let Some(draw) = effect.downcast_ref::<crate::effects::DrawCardsEffect>() {
             if draw.player != PlayerFilter::You { return None; }
             parts.push(if draw.count == Value::Fixed(1) { "Draw a card".to_string() }
@@ -6171,6 +6216,7 @@ fn describe_payment_action_predicate(
             ironsmith_core::ActivatedAbilityKeyword::Ninjutsu => "activate ninjutsu abilities",
             ironsmith_core::ActivatedAbilityKeyword::Boast => "activate boast abilities",
             ironsmith_core::ActivatedAbilityKeyword::Exhaust => "activate exhaust abilities",
+            ironsmith_core::ActivatedAbilityKeyword::Craft => "activate craft abilities",
         }.to_string()),
         P::DisturbCost => Some("pay a disturb cost".to_string()),
         P::Purpose(Purpose::Foretell) => Some("foretell cards".to_string()),

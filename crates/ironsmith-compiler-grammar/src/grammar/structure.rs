@@ -722,16 +722,69 @@ fn contains_characteristic_equal_to_shape(tokens: &[OwnedLexToken]) -> bool {
         || primitives::has_phrase(tokens, &["toughness", "is", "equal", "to"])
 }
 
+/// "a player other than this creature's owner controls it" (Bronze
+/// Bombshell): the source's controller isn't its owner. State triggers read
+/// "you" as the source's controller, so this is "you don't own the source".
+pub(crate) fn is_source_controlled_by_non_owner_condition(tokens: &[OwnedLexToken]) -> bool {
+    let words = crate::lexer::token_word_refs(tokens);
+    let words = match words.as_slice() {
+        ["when" | "whenever", rest @ ..] => rest,
+        all => all,
+    };
+    let ["a", "player", "other", "than", after_than @ ..] = words else {
+        return false;
+    };
+    let Some(owner_idx) = after_than
+        .windows(2)
+        .position(|pair| pair == ["owner", "controls"])
+    else {
+        return false;
+    };
+    let possessive = &after_than[..owner_idx];
+    let object = &after_than[owner_idx + 2..];
+    let Some((last, head)) = possessive.split_last() else {
+        return false;
+    };
+    let Some(noun) = last.strip_suffix("'s") else {
+        return false;
+    };
+    let mut source_words = head.to_vec();
+    source_words.push(noun);
+    let names_source = |words: &[&str]| {
+        crate::util::is_source_reference_words(words)
+            || crate::util::source_reference_surface_for_words(words).is_some()
+    };
+    names_source(&source_words) && (object == ["it"] || names_source(object))
+}
+
 pub(crate) fn parse_modeled_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
+    if is_source_controlled_by_non_owner_condition(tokens) {
+        return Some(PredicateAst::Source(
+            crate::cards::builders::SourcePredicateAst::SourceMatches(
+                crate::target::ObjectFilter::source().owned_by(PlayerFilter::NotYou),
+            ),
+        ));
+    }
+    if let Some(predicate) =
+        crate::grammar::anthem_grants::parse_chosen_color_most_common_predicate(tokens)
+    {
+        return Some(predicate);
+    }
     fn life_relation_predicate(tokens: &[OwnedLexToken]) -> Option<PredicateAst> {
         use crate::grammar::conditions::PlayerLifeRelationAst;
 
         let relation = crate::grammar::conditions::parse_player_life_relation_condition(tokens)?;
+        if let Some(predicate) =
+            crate::grammar::conditions::target_or_controller_life_relation_predicate(&relation)
+        {
+            return Some(predicate);
+        }
         let player = match relation.player {
             PlayerFilter::You => PlayerAst::You,
             PlayerFilter::Opponent => PlayerAst::Opponent,
             PlayerFilter::Any => PlayerAst::Any,
             PlayerFilter::IteratedPlayer => PlayerAst::That,
+            PlayerFilter::Defending => PlayerAst::Defending,
             _ => return None,
         };
         match relation.relation {
@@ -746,6 +799,9 @@ pub(crate) fn parse_modeled_predicate(tokens: &[OwnedLexToken]) -> Option<Predic
             )),
             PlayerLifeRelationAst::HasMoreLifeThanEachOtherPlayer => Some(PredicateAst::Player(
                 PlayerPredicateAst::PlayerHasMoreLifeThanEachOtherPlayer { player },
+            )),
+            PlayerLifeRelationAst::HasMoreLifeThanAnotherOpponent => Some(PredicateAst::Player(
+                PlayerPredicateAst::PlayerHasMoreLifeThanAnotherOpponent { player },
             )),
         }
     }
@@ -1056,7 +1112,13 @@ pub fn split_leading_result_prefix_lexed<'a>(
     if predicate_tokens.is_empty() {
         return None;
     }
-    let predicate = parse_if_result_predicate(predicate_tokens)?;
+    let predicate = match parse_if_result_predicate(predicate_tokens) {
+        Some(predicate) => predicate,
+        None if kind == LeadingResultPrefixKind::When => {
+            super::modal_results::parse_put_onto_battlefield_this_way_result(predicate_tokens)?
+        }
+        None => return None,
+    };
 
     let trailing_tokens = trim_lexed_commas(&trimmed[comma_idx + 1..]);
     if trailing_tokens.is_empty() {

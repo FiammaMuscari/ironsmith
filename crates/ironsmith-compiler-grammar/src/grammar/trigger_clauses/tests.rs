@@ -1167,6 +1167,7 @@ fn another_ability_trigger_reaches_typed_model() {
             source_filter: None,
             caused_by_source_entering: false,
             caused_by_source_attacking: false,
+            caused_by_permanent_entering: false,
         }
     );
     let lowered = crate::compile_support::compile_trigger_spec(parsed);
@@ -1178,6 +1179,7 @@ fn another_ability_trigger_reaches_typed_model() {
             source_filter: None,
             caused_by_source_entering: false,
             caused_by_source_attacking: false,
+            caused_by_permanent_entering: false,
         }
     ));
 }
@@ -1315,6 +1317,7 @@ fn parses_and_or_player_object_damage_recipients_as_both_trigger_branches() {
         source,
         target,
         source_surface,
+        ..
     } = *object
     else {
         panic!("expected object damage branch");

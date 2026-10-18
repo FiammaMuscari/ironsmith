@@ -50,6 +50,14 @@ pub(super) const REGISTRY: RuleId = RuleId::new("static-compound-line-registry")
 /// The readings, in the order they were ranked.
 const READINGS: &[Reading] = &[
     Reading {
+        id: RuleId::new("as-long-as-attached-otherwise-source-keyword-line"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| {
+            input.outcome(parse_as_long_as_attached_otherwise_source_keyword_line(input.tokens))
+        },
+    },
+    Reading {
         id: RuleId::new("graveyard-cast-linked-exile-replacement-line"),
         head: HeadDiscriminator::Any,
         admits: |_| true,
@@ -164,6 +172,28 @@ const READINGS: &[Reading] = &[
         read: |input| input.outcome(read_conditional_anthem_otherwise_line(input)),
     },
     Reading {
+        id: RuleId::new("as-long-as-otherwise-static-line"),
+        head: HeadDiscriminator::Any,
+        admits: |input| {
+            !declines_1(input)
+                && !matches!(
+                    parse_conditional_anthem_otherwise_line(input.tokens),
+                    Ok(Some(_))
+                )
+                && !matches!(
+                    parse_attached_conditional_keyword_otherwise_line(input.tokens),
+                    Ok(Some(_))
+                )
+                && !matches!(
+                    parse_attached_conditional_anthem_otherwise_base_and_restriction_line(
+                        input.tokens
+                    ),
+                    Ok(Some(_))
+                )
+        },
+        read: |input| input.outcome(parse_as_long_as_otherwise_static_line(input.tokens)),
+    },
+    Reading {
         id: RuleId::new("carried-conditional-anthem-grant-line"),
         head: HeadDiscriminator::Any,
         admits: |input| !declines_1(input),
@@ -186,6 +216,16 @@ const READINGS: &[Reading] = &[
         head: HeadDiscriminator::Any,
         admits: |input| !declines_1(input),
         read: |input| input.outcome(read_players_cant_search_with_any_player_ignore_line(input)),
+    },
+    Reading {
+        id: RuleId::new("player-restriction-with-sacrifice-ignore-line"),
+        head: HeadDiscriminator::Any,
+        admits: |input| !declines_1(input),
+        read: |input| {
+            input.outcome(super::parse_player_restriction_with_sacrifice_ignore_line(
+                input.tokens,
+            ))
+        },
     },
     Reading {
         id: RuleId::new("attached-restrictions-with-ignore-special-action-line"),

@@ -162,6 +162,9 @@ const READINGS: &[Reading] = &[
                 // "At end of combat, ..." inside a resolving effect schedules
                 // a delayed trigger for this combat.
                 && !leading_end_of_combat_delay(tokens)
+                // "<trigger> for the rest of the game, ..." registers a
+                // repeating delayed trigger.
+                && rest_of_game_delayed_trigger_parts(tokens).is_none()
         },
         read: |input| input.outcome(read_trigger_line_sentence(input)),
     },
@@ -170,6 +173,16 @@ const READINGS: &[Reading] = &[
         head: HeadDiscriminator::Any,
         admits: |_| true,
         read: |input| input.outcome(read_zone_replacement(input)),
+    },
+    Reading {
+        id: RuleId::new("top-of-target-graveyard-conditional-move"),
+        head: HeadDiscriminator::words(&["if"]),
+        admits: |input| input.sentences.len() == 1,
+        read: |input| {
+            input.outcome(Ok(input.sentences.first().and_then(|sentence| {
+                crate::effect_sentences::top_of_target_graveyard::parse(sentence)
+            })))
+        },
     },
     Reading {
         id: RuleId::new("conditional-sentence-family"),
@@ -182,7 +195,16 @@ const READINGS: &[Reading] = &[
                     && words.contains(&"until");
             // A replacement ("if ... would ..., ... instead") is the zone-replacement reading's.
             let replacement = words.contains(&"would") && words.contains(&"instead");
-            !consult && !replacement
+            // "If the top card of target player's graveyard is a creature
+            // card, put that card on top of that player's library." (Guiding
+            // Spirit) is the top-of-target-graveyard reading's; a generic
+            // conditional would let its quality select a deeper card.
+            let top_of_target_graveyard = input.sentences.len() == 1
+                && words.first() == Some(&"if")
+                && input.sentences.first().is_some_and(|sentence| {
+                    crate::effect_sentences::top_of_target_graveyard::parse(sentence).is_some()
+                });
+            !consult && !replacement && !top_of_target_graveyard
         },
         read: |input| input.outcome(read_conditional_sentence_family(input)),
     },
@@ -523,11 +545,150 @@ fn read_become_rest(input: &LegacyDocument<'_>) -> Result<Option<Vec<EffectAst>>
     }
     Ok(None)
 }
+/// "For as long as this creature remains tapped, target tapped creature
+/// doesn't untap during its controller's untap step, and at the beginning of
+/// each of your draw steps, put a -1/-1 counter on that creature." (Giant
+/// Oyster): one leading duration scopes both the restriction and a repeating
+/// delayed trigger the effect registers (CR 603.7, 611.2b).
+fn leading_duration_with_recurring_delayed_trigger(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(first_comma) = tokens.iter().position(OwnedLexToken::is_comma) else {
+        return Ok(None);
+    };
+    let duration = match crate::grammar::leaf::parse_leaf_conditional_duration_kind_tokens(
+        &tokens[..first_comma],
+    ) {
+        Some(crate::grammar::leaf::LeafConditionalDurationKind::SourceRemainsTapped) => {
+            crate::effect::Until::SourceUntaps
+        }
+        _ => return Ok(None),
+    };
+    if !crate::lexer::parser_token_word_refs(&tokens[..first_comma])
+        .starts_with(&["for", "as", "long", "as"])
+    {
+        return Ok(None);
+    }
+    // ", and at the beginning of each of your <steps>, <body>"
+    let Some(split) = (first_comma + 1..tokens.len()).find(|&index| {
+        tokens[index].is_comma()
+            && crate::lexer::parser_token_word_refs(&tokens[index + 1..]).starts_with(&[
+                "and", "at", "the", "beginning", "of", "each", "of", "your",
+            ])
+    }) else {
+        return Ok(None);
+    };
+    let delayed_tokens = &tokens[split + 2..];
+    let Some(trigger_comma) = delayed_tokens.iter().position(OwnedLexToken::is_comma) else {
+        return Ok(None);
+    };
+    let trigger_words = crate::lexer::parser_token_word_refs(&delayed_tokens[..trigger_comma]);
+    let ["at", "the", "beginning", "of", "each", "of", "your", step @ ..] =
+        trigger_words.as_slice()
+    else {
+        return Ok(None);
+    };
+    let Some((last, before)) = step.split_last() else {
+        return Ok(None);
+    };
+    let Some(singular) = last.strip_suffix('s') else {
+        return Ok(None);
+    };
+    let body = &delayed_tokens[trigger_comma + 1..];
+    if crate::lexer::parser_token_word_refs(body).is_empty() {
+        return Ok(None);
+    }
+    let span = delayed_tokens[0].span;
+    let mut line = Vec::with_capacity(delayed_tokens.len());
+    for word in ["at", "the", "beginning", "of", "your"] {
+        line.push(OwnedLexToken::word(word.to_string(), span));
+    }
+    for word in before {
+        line.push(OwnedLexToken::word((*word).to_string(), span));
+    }
+    line.push(OwnedLexToken::word(singular.to_string(), span));
+    line.push(OwnedLexToken::comma(span));
+    line.extend_from_slice(body);
+    let Ok(crate::cards::builders::LineAst::Triggered {
+        trigger,
+        effects: delayed_effects,
+        max_triggers_per_turn: None,
+    }) = super::super::super::clause_support::parse_triggered_line_lexed(&line)
+    else {
+        return Ok(None);
+    };
+    if delayed_effects.is_empty() {
+        return Ok(None);
+    }
+    // "..., put a -1/-1 counter on that creature" (Giant Oyster): parsed as a
+    // standalone triggered line, the delayed body's anaphor has no antecedent
+    // and fell back to the source. It names the restriction's one target.
+    let mut delayed_effects = delayed_effects;
+    if tokens[..split].iter().any(|token| token.is_word("target")) {
+        use ironsmith_core::tag::TagKeyWalk;
+        let it = crate::tag::CompilerReferenceTag::It.as_str();
+        let targeted = crate::tag::CompilerReferenceTag::Targeted0.key();
+        for effect in &mut delayed_effects {
+            effect.map_tag_keys(&mut |key| {
+                if key.as_str() == it {
+                    *key = targeted.clone();
+                }
+            });
+        }
+    }
+    // The restriction keeps its own leading duration surface.
+    let mut effects = super::super::parse_effect_sentences_lexed(&tokens[..split])?;
+    if effects.is_empty() {
+        return Ok(None);
+    }
+    effects.push(EffectAst::Delayed(DelayedEffectAst::DelayedTriggerForDuration {
+        trigger,
+        effects: delayed_effects,
+        one_shot: false,
+        duration,
+        either_of_watched_objects: false,
+        while_any_tagged_object_in_zone: None,
+    }));
+    Ok(Some(effects))
+}
+
 fn read_leading_duration_sentence(
     input: &LegacyDocument<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
     let sentences = input.sentences;
+    if sentences.len() == 1
+        && let Some(effects) = leading_duration_with_recurring_delayed_trigger(tokens)?
+    {
+        return Ok(Some(effects));
+    }
+    // "... put a -1/-1 counter on that creature. When this creature leaves
+    // the battlefield or becomes untapped, remove all -1/-1 counters from the
+    // creature." (Giant Oyster): the cleanup is a delayed trigger watching the
+    // source, and "the creature" is the same targeted creature.
+    if let [duration_sentence, cleanup_sentence] = sentences
+        && cleanup_sentence.first().is_some_and(|token| token.is_word("when"))
+        && let Some(mut effects) =
+            leading_duration_with_recurring_delayed_trigger(duration_sentence)?
+        && let Some(mut cleanup) =
+            crate::effect_sentences::dispatch_inner::parse_sentence_delayed_trigger_this_turn(cleanup_sentence)?
+        && cleanup
+            .iter()
+            .all(|effect| matches!(effect, EffectAst::Delayed(_)))
+    {
+        use ironsmith_core::tag::TagKeyWalk;
+        let it = crate::tag::CompilerReferenceTag::It.as_str();
+        let targeted = crate::tag::CompilerReferenceTag::Targeted0.key();
+        for effect in &mut cleanup {
+            effect.map_tag_keys(&mut |key| {
+                if key.as_str() == it {
+                    *key = targeted.clone();
+                }
+            });
+        }
+        effects.append(&mut cleanup);
+        return Ok(Some(effects));
+    }
     let source_words = crate::lexer::parser_token_word_refs(tokens);
     // A leading duration and its dynamic base-P/T clause are one typed
     // control-flow program. The broad sentence dispatcher can independently
@@ -615,6 +776,11 @@ fn read_delayed_schedule_sentence(
         )]));
     }
     if sentences.len() == 1
+        && let Some(delayed) = rest_of_game_delayed_trigger(tokens)?
+    {
+        return Ok(Some(vec![delayed]));
+    }
+    if sentences.len() == 1
         && (effect_grammar::delayed_sentence_shapes::parse_delayed_schedule_sentence_shape(tokens)
             .is_some()
             || effect_grammar::delayed_sentence_shapes::parse_delayed_this_turn_shape(tokens)
@@ -624,6 +790,83 @@ fn read_delayed_schedule_sentence(
     }
     Ok(None)
 }
+/// The `<trigger> for the rest of the game` header of a resolving effect's
+/// repeating delayed trigger, split from its body at the first comma.
+fn rest_of_game_delayed_trigger_parts(
+    tokens: &[OwnedLexToken],
+) -> Option<(&[OwnedLexToken], &[OwnedLexToken])> {
+    const SUFFIX: [&str; 6] = ["for", "the", "rest", "of", "the", "game"];
+    let comma = tokens.iter().position(OwnedLexToken::is_comma)?;
+    let header = &tokens[..comma];
+    let body = &tokens[comma + 1..];
+    if header.len() <= SUFFIX.len()
+        || crate::lexer::parser_token_word_refs(body).is_empty()
+        || !header
+            .first()
+            .is_some_and(|token| token.is_any_word(&["at", "when", "whenever"]))
+    {
+        return None;
+    }
+    let trigger_len = header.len() - SUFFIX.len();
+    header[trigger_len..]
+        .iter()
+        .zip(SUFFIX)
+        .all(|(token, word)| token.is_word(word))
+        .then_some((&header[..trigger_len], body))
+}
+
+/// "At the beginning of each of your upkeeps for the rest of the game,
+/// <effect>" inside a resolving effect (Cyclopean Tomb): a delayed trigger
+/// that repeats with no expiry (CR 603.7), registered when the effect
+/// resolves. "each of your upkeeps" reads as the ordinary "your upkeep"
+/// trigger.
+fn rest_of_game_delayed_trigger(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let Some((trigger_tokens, body)) = rest_of_game_delayed_trigger_parts(tokens) else {
+        return Ok(None);
+    };
+    let span = trigger_tokens[0].span;
+    let mut line = Vec::with_capacity(tokens.len());
+    let trigger_words = crate::lexer::parser_token_word_refs(trigger_tokens);
+    if let ["at", "the", "beginning", "of", "each", "of", "your", step @ ..] =
+        trigger_words.as_slice()
+        && let Some((last, before)) = step.split_last()
+        && let Some(singular) = last.strip_suffix('s')
+    {
+        for word in ["at", "the", "beginning", "of", "your"] {
+            line.push(OwnedLexToken::word(word.to_string(), span));
+        }
+        for word in before {
+            line.push(OwnedLexToken::word((*word).to_string(), span));
+        }
+        line.push(OwnedLexToken::word(singular.to_string(), span));
+    } else {
+        line.extend_from_slice(trigger_tokens);
+    }
+    line.push(OwnedLexToken::comma(span));
+    line.extend_from_slice(body);
+    let Ok(crate::cards::builders::LineAst::Triggered {
+        trigger,
+        effects,
+        max_triggers_per_turn: None,
+    }) = super::super::super::clause_support::parse_triggered_line_lexed(&line)
+    else {
+        return Ok(None);
+    };
+    if effects.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(EffectAst::Delayed(DelayedEffectAst::DelayedTriggerForDuration {
+        trigger,
+        effects,
+        one_shot: false,
+        duration: crate::effect::Until::Forever,
+        either_of_watched_objects: false,
+        while_any_tagged_object_in_zone: None,
+    })))
+}
+
 fn read_generic_consult_reveal_until_battlefield_bottom(
     input: &LegacyDocument<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -687,6 +930,14 @@ fn read_zone_replacement(
     {
         return Ok(Some(vec![effect]));
     }
+    // "If a spell or ability that targets that creature would cause a source
+    // to deal damage to that creature this turn, prevent that damage." is a
+    // prevention shield, not a runtime-gated conditional (CR 615.1).
+    if sentences.len() == 1
+        && let Some(effect) = super::targeting_cause_prevention_from_tokens(tokens)
+    {
+        return Ok(Some(vec![effect]));
+    }
     Ok(None)
 }
 fn read_conditional_sentence_family(
@@ -694,6 +945,27 @@ fn read_conditional_sentence_family(
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
     let sentences = input.sentences;
+    // "If you lose the flip, the next time that creature would deal combat
+    // damage this turn, prevent that damage." (Impulsive Maneuvers): the
+    // body is a whole next-time prevention sentence, which the clause chain
+    // would split at its comma into a bogus damage clause.
+    if sentences.len() == 1
+        && let Some(prefix) = crate::grammar::structure::split_leading_result_prefix_lexed(tokens)
+        && prefix.kind == crate::grammar::structure::LeadingResultPrefixKind::If
+        && crate::lexer::token_word_refs(prefix.trailing_tokens)
+            .starts_with(&["the", "next", "time"])
+        && let Some(body) =
+            crate::effect_sentences::clause_pattern_helpers::parse_prevent_next_time_damage_sentence(
+                prefix.trailing_tokens,
+            )?
+    {
+        return Ok(Some(vec![EffectAst::Conditionals(
+            crate::cards::builders::ConditionalEffectAst::IfResult {
+                predicate: prefix.predicate,
+                effects: body,
+            },
+        )]));
+    }
     if sentences.len() == 1
         && let Some(effects) = effect_grammar::parse_conditional_sentence_family_lexed(
             tokens,
@@ -827,7 +1099,14 @@ pub(crate) fn parse_owned_exile_free_cast(tokens: &[OwnedLexToken]) -> Option<Ve
         }
         _ => (None, rest),
     };
-    let Some(rest) = rest.strip_prefix(POOL_WORDS) else {
+    // "from among cards in exile with page counters on them" (Tasha, the
+    // Witch Queen): any owner's exiled cards marked by the counter kind.
+    const ANY_OWNER_POOL_WORDS: &[&str] = &["spell", "from", "among", "cards", "in", "exile"];
+    let (owned, rest) = if let Some(rest) = rest.strip_prefix(POOL_WORDS) {
+        (true, rest)
+    } else if let Some(rest) = rest.strip_prefix(ANY_OWNER_POOL_WORDS) {
+        (false, rest)
+    } else {
         return None;
     };
     let (counter_type, rest) = match rest {
@@ -841,13 +1120,14 @@ pub(crate) fn parse_owned_exile_free_cast(tokens: &[OwnedLexToken]) -> Option<Ve
         }
         _ => (None, rest),
     };
-    if rest != FREE_WORDS {
+    if rest != FREE_WORDS || (!owned && counter_type.is_none()) {
         return None;
     }
     let tag = crate::tag::CompilerReferenceTag::ChosenCounteredExileSpell.bind();
-    let mut filter = ObjectFilter::default()
-        .owned_by(PlayerFilter::You)
-        .in_zone(Zone::Exile);
+    let mut filter = ObjectFilter::default().in_zone(Zone::Exile);
+    if owned {
+        filter = filter.owned_by(PlayerFilter::You);
+    }
     if let Some(card_type) = spell_type {
         filter = filter.with_type(card_type);
     }

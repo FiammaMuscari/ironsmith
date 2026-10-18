@@ -232,6 +232,10 @@ macro_rules! nested_effects_variants {
                 ..
             })
             | EffectAst::Delayed(DelayedEffectAst::DelayedUntilEndOfCombat { effects: $effects })
+            | EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextDeclareAttackersStep {
+                effects: $effects,
+                ..
+            })
             | EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
                 effects: $effects,
                 ..
@@ -269,13 +273,38 @@ pub fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::SubjectVerb(_) => {}
         EffectAst::SolveCase => {}
         EffectAst::GreatestManaValueTieBreakExile { .. } => {}
+        EffectAst::RollDieKeepHighestPlayers { .. } => {}
+        EffectAst::GrantPlayTaggedUntilPlayerNextEndStep { .. } => {}
         EffectAst::SetDayNight(_) => {}
         EffectAst::ChoosePlayerOption(_) => {}
+        EffectAst::TagSplicedCards { .. } => {}
+        EffectAst::ExchangeBlocks { .. } => {}
+        EffectAst::CoinFlipLifeStakes { .. } => {}
+        EffectAst::UnblockSoleBlockedAttackers(_) => {}
+        EffectAst::GrantPayLifeManaAbilityUntilEndOfTurn(_) => {}
+        EffectAst::RollAndStoreDieResults(_) => {}
+        EffectAst::RerollStoredDieResults(_) => {}
+        EffectAst::DeclareBlockersByRandomPilesThisTurn => {}
+        EffectAst::UnblockSoleBlockedAttackersOf { .. } => {}
+        EffectAst::BlockAttackerOfChoice { .. } => {}
+        EffectAst::PlayWithHandRevealed(_) => {}
+        EffectAst::RevealSourceInHandUntilOwnersNextTurn(_) => {}
+        EffectAst::TagLastDamageSource(_) => {}
         EffectAst::ControlVotesThisTurn => {}
         EffectAst::ResolvesDespiteIllegalTargets => {}
-        EffectAst::NoteActivationManaType => {}
+        EffectAst::NoteActivationManaType | EffectAst::NoteActivationManaPayment => {}
+        EffectAst::CastFaceDownUsingActivationMana { .. } => {}
+        EffectAst::RegisterExtraDieReplacement { .. } => {}
+        EffectAst::NoteTriggeringCreatureType => {}
+        EffectAst::NoteCounters { .. } => {}
+        EffectAst::PutTriggeringCounterKind { .. } => {}
+        EffectAst::RetainSpellChoices { .. } => {}
+        EffectAst::PutRetainedSpellCopyOntoStack { .. } => {}
+        EffectAst::RegisterDamageCounterReplacement { .. } => {}
         EffectAst::ChooseFriendsOrFoes { .. } => {}
         EffectAst::GrantLoyaltyActivationAllowance { .. } => {}
+        EffectAst::GrantTapUncontrolledLandsForMana => {}
+        EffectAst::RevealContestWinnerMayChangeTriggeringTargets { .. } => {}
         EffectAst::PayToEndThisEffect { .. } => {}
         EffectAst::LookAtTopCardsAsViewer { .. } => {}
         EffectAst::PlayerLooksAtTopCardsOfLibrary { .. } => {}
@@ -299,6 +328,7 @@ pub fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextFirstMainPhase { .. }) => {}
         EffectAst::Delayed(DelayedEffectAst::DelayedUntilEndStepOfExtraTurn { .. }) => {}
         EffectAst::Delayed(DelayedEffectAst::DelayedUntilEndOfCombat { .. }) => {}
+        EffectAst::Delayed(DelayedEffectAst::DelayedUntilNextDeclareAttackersStep { .. }) => {}
         EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn { .. }) => {}
         EffectAst::Delayed(DelayedEffectAst::DelayedTriggerForDuration { .. }) => {}
         EffectAst::Delayed(DelayedEffectAst::DelayedWhenLastObjectDiesThisTurn { .. }) => {}
@@ -320,6 +350,7 @@ pub fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseObjectsAcrossZones { .. }) => {}
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { .. }) => {}
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { .. }) => {}
+        EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { .. }) => {}
         EffectAst::Conditionals(ConditionalEffectAst::IfEffectDidNotHappen { .. }) => {}
         EffectAst::Conditionals(ConditionalEffectAst::IfEffectResult { .. }) => {}
         EffectAst::TagAffected { .. } | EffectAst::TagReferenced { .. } => {}
@@ -385,7 +416,8 @@ pub fn for_each_nested_effects(
             visit(if_false);
         }
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { modes, .. })
-        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. }) => {
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. })
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { modes, .. }) => {
             for mode in modes {
                 visit(&mode.effects);
             }
@@ -456,7 +488,8 @@ pub fn for_each_nested_effects_mut(
             visit(if_false);
         }
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { modes, .. })
-        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. }) => {
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. })
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { modes, .. }) => {
             for mode in modes {
                 visit(&mut mode.effects);
             }
@@ -540,7 +573,8 @@ pub fn for_each_nested_effect_vec_mut(
                 visit(if_false);
             }
             EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { modes, .. })
-            | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. }) => {
+            | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. })
+            | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { modes, .. }) => {
                 for mode in modes {
                     visit(&mut mode.effects);
                 }
@@ -616,7 +650,8 @@ pub fn try_for_each_nested_effects_mut<E>(
             visit(if_false)?;
         }
         EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOf { modes, .. })
-        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. }) => {
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::VillainousChoice { modes, .. })
+        | EffectAst::ObjectChoices(ObjectChoiceEffectAst::ChooseOneOfAtRandom { modes, .. }) => {
             for mode in modes {
                 visit(&mut mode.effects)?;
             }

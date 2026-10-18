@@ -17,6 +17,9 @@ pub struct BecomesTargetedEvent {
     pub source_controller: PlayerId,
     /// Whether the source was an ability (`true`) or spell (`false`).
     pub by_ability: bool,
+    /// Exact stack kind frozen when targets are announced. Legacy events
+    /// without a stack entry retain None and cannot match a narrower kind.
+    pub stack_kind: Option<ironsmith_core::filter_model::StackObjectKind>,
     /// The targeting ability's own stack id, when it is an ability on the
     /// stack. An ability exists independently of its source (CR 113.7a), and
     /// one source can have several abilities on the stack, so "that spell or
@@ -27,6 +30,10 @@ pub struct BecomesTargetedEvent {
     /// Physical ability-source characteristics, separate from its stack proxy
     /// and the independently controlled spell/ability on the stack.
     pub physical_source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
+    /// A target change made by an effect that "doesn't trigger abilities of
+    /// permanents named <name>" (Psychic Battle): sources with this name
+    /// don't trigger on this event.
+    pub untriggered_source_name: Option<String>,
 }
 
 impl BecomesTargetedEvent {
@@ -50,9 +57,17 @@ impl BecomesTargetedEvent {
             source: Self::source_for_stack_entry(entry),
             source_controller: entry.controller,
             by_ability: entry.is_ability,
+            stack_kind: Some(if !entry.is_ability {
+                ironsmith_core::filter_model::StackObjectKind::Spell
+            } else if entry.triggering_event.is_some() {
+                ironsmith_core::filter_model::StackObjectKind::TriggeredAbility
+            } else {
+                ironsmith_core::filter_model::StackObjectKind::ActivatedAbility
+            }),
             stack_ability: entry.is_ability.then(|| entry.target_id()),
             target_snapshot: None,
             physical_source_snapshot: None,
+            untriggered_source_name: None,
         }
     }
 
@@ -103,9 +118,11 @@ impl BecomesTargetedEvent {
             source,
             source_controller,
             by_ability,
+            stack_kind: None,
             stack_ability: None,
             target_snapshot: None,
             physical_source_snapshot: None,
+            untriggered_source_name: None,
         }
     }
 
@@ -121,9 +138,11 @@ impl BecomesTargetedEvent {
             source,
             source_controller,
             by_ability,
+            stack_kind: None,
             stack_ability: None,
             target_snapshot: None,
             physical_source_snapshot: None,
+            untriggered_source_name: None,
         }
     }
 
@@ -139,15 +158,23 @@ impl BecomesTargetedEvent {
             source,
             source_controller,
             by_ability,
+            stack_kind: None,
             stack_ability: None,
             target_snapshot: None,
             physical_source_snapshot: None,
+            untriggered_source_name: None,
         }
     }
 
     /// Name the targeting ability's stack entry.
     pub fn with_stack_ability(mut self, stack_ability: Option<ObjectId>) -> Self {
         self.stack_ability = stack_ability;
+        self
+    }
+
+    /// Mark a target change that doesn't trigger sources with this name.
+    pub fn with_untriggered_source_name(mut self, name: Option<String>) -> Self {
+        self.untriggered_source_name = name;
         self
     }
 
@@ -190,9 +217,11 @@ impl GameEventType for BecomesTargetedEvent {
             source: self.source,
             source_controller: self.source_controller,
             by_ability: self.by_ability,
+            stack_kind: self.stack_kind,
             stack_ability: self.stack_ability,
             target_snapshot: None,
             physical_source_snapshot: self.physical_source_snapshot.clone(),
+            untriggered_source_name: self.untriggered_source_name.clone(),
         }))
     }
 

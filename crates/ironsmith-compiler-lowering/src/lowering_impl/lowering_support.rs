@@ -230,6 +230,7 @@ fn replace_creature_death_event_amounts(effects: &mut [EffectAst]) {
                 | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::SetLifeTotal {
                     amount: count,
                 })
+                | SubjectVerbActionAst::Characteristics(CharacteristicActionAst::ReduceSpeed { amount: count, .. })
                 | SubjectVerbActionAst::Mana(ManaActionAst::AddManaScaled {
                     amount: count, ..
                 })
@@ -242,11 +243,14 @@ fn replace_creature_death_event_amounts(effects: &mut [EffectAst]) {
                     amount: count,
                     ..
                 })
-                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount: count })
+                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount: count, .. })
+                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaLostThisWay { amount: count })
                 | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce {
                     amount: count,
                     ..
                 })
+                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColorAmong { amount: count, .. })
+                | SubjectVerbActionAst::Mana(ManaActionAst::AddManaDraftChosenColors { amount: count, .. })
                 | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity {
                     amount: count,
                 })
@@ -266,6 +270,9 @@ fn replace_creature_death_event_amounts(effects: &mut [EffectAst]) {
                 })
                 | SubjectVerbActionAst::TurnStructure(
                     TurnStructureActionAst::AdditionalLandPlays { count, .. },
+                )
+                | SubjectVerbActionAst::TurnStructure(
+                    TurnStructureActionAst::AdditionalSteps { count, .. },
                 )
                 | SubjectVerbActionAst::Damage(DamageActionAst::HealDamage {
                     amount: Some(count),
@@ -1493,7 +1500,8 @@ fn spell_cast_trigger_targets_source(trigger: &TriggerSpec) -> bool {
 fn trigger_is_spell_cast(trigger: &TriggerSpec) -> bool {
     match trigger {
         TriggerSpec::WithIntro { trigger, .. } => trigger_is_spell_cast(trigger),
-        TriggerSpec::SpellCast { .. }
+        TriggerSpec::SpellCastThroughPreviousPermission
+        | TriggerSpec::SpellCast { .. }
         | TriggerSpec::SpellCastSameNameCardInZone { .. }
         | TriggerSpec::NthSpellOfTurnCast { .. } => true,
         _ => false,
@@ -1505,11 +1513,13 @@ fn triggering_stack_object_kind(trigger: &TriggerSpec) -> Option<crate::filter::
 
     match trigger {
         TriggerSpec::WithIntro { trigger, .. } => triggering_stack_object_kind(trigger),
-        TriggerSpec::SpellCast { .. }
+        TriggerSpec::SpellCastThroughPreviousPermission
+        | TriggerSpec::SpellCast { .. }
         | TriggerSpec::SpellCastSameNameCardInZone { .. }
         | TriggerSpec::NthSpellOfTurnCast { .. }
         | TriggerSpec::SpellCopied { .. }
         | TriggerSpec::SpellCountered { .. } => Some(StackObjectKind::Spell),
+        TriggerSpec::StackObjectAdded => Some(StackObjectKind::SpellOrAbility),
         TriggerSpec::AbilityActivated { .. } | TriggerSpec::AbilityTriggered { .. } => {
             Some(StackObjectKind::Ability)
         }
@@ -2504,6 +2514,8 @@ fn bind_aggregate_source_exiled_returns(effects: &mut [EffectAst]) {
                     count_value,
                     as_aura,
                     top_only,
+                    as_non_aura: false,
+                    tapped_if: None,
                     ..
                 }) if tagged_target_key(target).is_some_and(|target_tag| {
                     target_tag.as_str() == crate::tag::CompilerReferenceTag::SourceExiled.as_str()
@@ -2521,6 +2533,7 @@ fn bind_aggregate_source_exiled_returns(effects: &mut [EffectAst]) {
                             face_down: false,
                             controller: *controller,
                             verb_surface: ironsmith_core::MoveToZoneVerbSurface::Return,
+                            aura_attachment_filter: None,
                         },
                     ))
                 }
@@ -3277,11 +3290,33 @@ pub fn stage_statement_effects_for_lowering(
     effects: &[EffectAst],
     imports: impl Into<ReferenceImports>,
 ) -> Result<PreparedEffectsForLowering, CardTextError> {
+    stage_statement_effects_with_followup_for_lowering(effects, imports, &[])
+}
+
+/// [`stage_statement_effects_for_lowering`] with the next source statement
+/// visible. When that followup reads an action-typed prior-effect metric
+/// ("permanents destroyed this way") that only this statement's terminal
+/// effect can supply, the terminal effect also exports its result ID. This
+/// only adds an export: statements without such a followup allocate exactly
+/// the IDs they did before.
+pub fn stage_statement_effects_with_followup_for_lowering(
+    effects: &[EffectAst],
+    imports: impl Into<ReferenceImports>,
+    followup: &[EffectAst],
+) -> Result<PreparedEffectsForLowering, CardTextError> {
     let imports = imports.into();
     let normalized = normalize_effects_ast(effects);
-    let force_export_last_memory_effect_id = normalized
-        .last()
-        .is_some_and(statement_terminal_needs_participant_result_export)
+    let followup_needs_terminal_result = !followup.is_empty()
+        && normalized.last().is_some_and(|producer| {
+            super::reference_resolution::statement_terminal_supplies_followup_metric(
+                producer,
+                &normalize_effects_ast(followup),
+            )
+        });
+    let force_export_last_memory_effect_id = followup_needs_terminal_result
+        || normalized
+            .last()
+            .is_some_and(statement_terminal_needs_participant_result_export)
         || normalized
             .iter()
             .enumerate()
@@ -3692,6 +3727,40 @@ pub fn stage_owned_triggered_effects_for_lowering(
         }
     }
 
+    /// "Whenever Kotis deals combat damage to a player, exile the top X cards
+    /// of their library": when this source damaged a player, "their" cannot
+    /// name the source's own controller (that would be "your library"); it
+    /// names the damaged player. The grammar's library-owner default for a
+    /// bare "their" is the triggering object's controller, which here is the
+    /// source itself, so rebind it to the event's player.
+    fn bind_damaged_player_library_owner(trigger: &TriggerSpec, effects: &mut [EffectAst]) {
+        match trigger {
+            TriggerSpec::WithIntro { trigger, .. } => {
+                return bind_damaged_player_library_owner(trigger, effects);
+            }
+            TriggerSpec::ThisDealsCombatDamageToPlayer { .. }
+            | TriggerSpec::ThisDealsDamageToPlayer { .. } => {}
+            _ => return,
+        }
+        for effect in effects {
+            match effect {
+                EffectAst::Sequence { effects } => {
+                    bind_damaged_player_library_owner(trigger, effects);
+                }
+                EffectAst::SubjectVerb(subject_verb)
+                    if matches!(
+                        subject_verb.action,
+                        SubjectVerbActionAst::Library(LibraryActionAst::ExileTopOfLibrary { .. })
+                    ) && subject_verb.subject.player
+                        == crate::cards::builders::PlayerAst::ItsController =>
+                {
+                    subject_verb.subject.player = crate::cards::builders::PlayerAst::That;
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn bind_exact_damage_recipient_followup(trigger: &TriggerSpec, effects: &mut [EffectAst]) {
         let (trigger_object, trigger_player) = match trigger {
             TriggerSpec::DealsExactDamageToObjectOrPlayer { object, player, .. } => {
@@ -3899,6 +3968,7 @@ pub fn stage_owned_triggered_effects_for_lowering(
     if !promote_body_condition {
         bind_exact_damage_recipient_followup(&trigger, &mut body_effects);
     }
+    bind_damaged_player_library_owner(&trigger, &mut body_effects);
     if let Some(predicate) = intervening_if.take() {
         intervening_if = Some(link_spell_cast_mana_spent_predicate(&trigger, predicate));
     }
@@ -3988,6 +4058,16 @@ pub fn stage_owned_triggered_effects_for_lowering(
             &mut body_effects,
             predicate,
         );
+        if !trigger_supports_event_value(&trigger, &EventValueSpec::Amount) {
+            crate::condition_antecedent::bind_triggering_had_counters_that_many_in_effects(
+                &mut body_effects,
+                predicate,
+            );
+            crate::condition_antecedent::bind_activation_life_that_much_in_effects(
+                &mut body_effects,
+                predicate,
+            );
+        }
     }
     if phase_step_trigger_has_no_object_reference(&trigger) && !has_phase_step_it_prelude {
         resolve_phase_step_it_targets_to_source(&mut body_effects);
@@ -4602,6 +4682,7 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         | KeywordAction::MobilizeValue { .. }
         | KeywordAction::Outlast(_)
         | KeywordAction::Unearth(_)
+        | KeywordAction::UnearthTotalCost(_)
         | KeywordAction::Encore(_)
         | KeywordAction::Eternalize(_)
         | KeywordAction::Ninjutsu(_)
@@ -4712,7 +4793,7 @@ pub fn runtime_static_ability_for_keyword_action(action: KeywordAction) -> Optio
         )),
         KeywordAction::Unblockable => Some(StaticAbility::unblockable()),
         KeywordAction::Devoid => Some(StaticAbility::make_colorless(ObjectFilter::source())),
-        KeywordAction::Annihilator(_) => None,
+        KeywordAction::Annihilator(_) | KeywordAction::AnnihilatorValue(_) => None,
         KeywordAction::Dredge(amount) => Some(StaticAbility::dredge(amount)),
         KeywordAction::StaticMarker(name) => Some(StaticAbility::keyword_marker(name)),
         KeywordAction::StaticMarkerText(text) => Some(StaticAbility::keyword_marker(text)),
@@ -4913,6 +4994,7 @@ fn preserve_named_granting_source_in_effect(effect: Effect) -> Effect {
             .into_iter()
             .map(preserve_named_granting_source_in_effect)
             .collect();
+        rebind_draw_after_granting_source_sacrifice(&mut sequence.effects);
         return Effect::new(sequence);
     }
 
@@ -4976,6 +5058,48 @@ fn preserve_named_granting_source_in_effect(effect: Effect) -> Effect {
 /// object recorded under `GRANTING_SOURCE_TAG` when the granted ability is
 /// activated or triggers (the Equipment in `Equipped creature has "...
 /// Shuriken deals 2 damage ..."`), keeping the authored name's surface.
+/// "Hold for Ransom's controller sacrifices it and draws a card": once the
+/// named sacrifice is scoped to the granting Aura (and performed by that
+/// Aura's controller), the coordinated draw shares the same subject, the
+/// granting object's controller, not the controller of the creature that
+/// has the ability. The granting object is recorded under
+/// `GRANTING_SOURCE_TAG` when the granted ability is activated.
+fn rebind_draw_after_granting_source_sacrifice(effects: &mut [Effect]) {
+    fn is_granting_source_sacrifice(effect: &Effect) -> bool {
+        let Some(with_source) = effect.downcast_ref::<crate::effects::ExecuteWithSourceEffect>()
+        else {
+            return false;
+        };
+        matches!(
+            with_source.source.base(),
+            ChooseSpec::Tagged(tag)
+                if *tag == crate::tag::CompilerReferenceTag::GrantingSource.key()
+        ) && with_source
+            .effect
+            .downcast_ref::<crate::effects::SacrificeTargetEffect>()
+            .is_some_and(|sacrifice| sacrifice.player.is_none())
+    }
+    let mut after_sacrifice = false;
+    for effect in effects.iter_mut() {
+        if is_granting_source_sacrifice(effect) {
+            after_sacrifice = true;
+            continue;
+        }
+        if !after_sacrifice {
+            continue;
+        }
+        if let Some(draw) = effect.downcast_ref::<crate::effects::DrawCardsEffect>()
+            && matches!(draw.player, PlayerFilter::ControllerOf(_))
+        {
+            let mut draw = draw.clone();
+            draw.player = PlayerFilter::ControllerOf(ObjectRef::tagged(
+                crate::tag::CompilerReferenceTag::GrantingSource.key(),
+            ));
+            *effect = Effect::new(draw);
+        }
+    }
+}
+
 fn granting_source_scope_spec(named: &ChooseSpec) -> ChooseSpec {
     ChooseSpec::Tagged(crate::tag::CompilerReferenceTag::GrantingSource.key())
         .with_surface_hints(named.surface_hints().iter().cloned())
@@ -5033,9 +5157,10 @@ fn bind_granting_source_unattach_costs(
 /// concrete attachment object when it generates its continuous effect.
 fn preserve_named_granting_source(mut ability: Ability) -> Ability {
     fn wrap_effects(effects: &mut [Effect]) {
-        for effect in effects {
+        for effect in effects.iter_mut() {
             *effect = preserve_named_granting_source_in_effect(effect.clone());
         }
+        rebind_draw_after_granting_source_sacrifice(effects);
     }
 
     if let AbilityKind::Activated(activated) = &mut ability.kind
@@ -5578,6 +5703,23 @@ pub fn lower_static_ability_ast(ability: StaticAbilityAst) -> Result<StaticAbili
             let lowered = lower_parsed_ability(ability)?;
             Ok(StaticAbility::soulbond_shared_object_ability(lowered))
         }
+        StaticAbilityAst::SourceHasFullTextOfTopGraveyardCard {
+            filter,
+            abilities,
+            ability_labels,
+            display,
+        } => {
+            let mut lowered = Vec::with_capacity(abilities.len());
+            for ability in abilities {
+                lowered.push(lower_parsed_ability(ability)?);
+            }
+            Ok(StaticAbility::source_has_full_text_of_top_graveyard_card(
+                filter,
+                lowered,
+                ability_labels,
+                display,
+            ))
+        }
         StaticAbilityAst::AttachmentRestriction { filter, .. } => {
             Ok(StaticAbility::enchant(filter))
         }
@@ -5628,6 +5770,7 @@ pub(crate) fn lower_compiler_static_ability_core(
             replacement_effects,
             optional,
             display,
+            except_first_of_draw_step,
         } => {
             let mut replacement_effects = replacement_effects;
             crate::effect_ast_normalization::normalize_effects_ast_in_place(
@@ -5652,6 +5795,7 @@ pub(crate) fn lower_compiler_static_ability_core(
                         replacement_effects,
                         optional,
                         display,
+                        except_first_of_draw_step,
                     },
             })
         }
@@ -5660,6 +5804,7 @@ pub(crate) fn lower_compiler_static_ability_core(
             except_first_of_draw_step,
             replacement_effects,
             display,
+            cycling_source,
         } => {
             // The replacement sentences form one resolution program: "they
             // draw a card and reveal it. If it's a creature card, that player
@@ -5676,12 +5821,22 @@ pub(crate) fn lower_compiler_static_ability_core(
             // independently of the replacement ability's controller ("you").
             ctx.iterated_player = true;
             ctx.last_player_filter = Some(PlayerFilter::IteratedPlayer);
-            let (replacement_effects, choices) =
+            let (mut replacement_effects, choices) =
                 crate::compile_support::compile_effects(&replacement_effects, &mut ctx)?;
             if !choices.is_empty() {
                 return Err(CardTextError::InvariantViolation(
                     "draw replacement cannot announce targets".into(),
                 ));
+            }
+            if cycling_source.is_some() {
+                // "the cycled card" is the source of the cycling ability whose
+                // draw is replaced; the replaced draw event carries it.
+                replacement_effects.insert(
+                    0,
+                    Effect::tag_triggering_source(
+                        crate::tag::CompilerReferenceTag::TriggeringSource.as_str(),
+                    ),
+                );
             }
             Ok(StaticAbility {
                 id,
@@ -5692,6 +5847,7 @@ pub(crate) fn lower_compiler_static_ability_core(
                         except_first_of_draw_step,
                         replacement_effects,
                         display,
+                        cycling_source,
                     },
             })
         }
@@ -6619,7 +6775,14 @@ fn validate_effect_for_iterated_player(
                 )?;
             }
         }
-        return validate_effects_for_iterated_player(&schedule_delayed.effects, false, context);
+        // A player bound while scheduling remains "that player" for the
+        // delayed ability: registration captures it under the `__it__` player
+        // tag, which `IteratedPlayer` resolves through when no loop binds it.
+        return validate_effects_for_iterated_player(
+            &schedule_delayed.effects,
+            iterated_player_bound,
+            context,
+        );
     }
     if let Some(schedule_when_leaves) =
         effect.downcast_ref::<crate::effects::ScheduleEffectsWhenTaggedLeavesEffect>()

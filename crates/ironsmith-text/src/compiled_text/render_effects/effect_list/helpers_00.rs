@@ -1526,6 +1526,7 @@ pub(crate) fn describe_tagged_pump_then_conditional_keyword(effects: &[&Effect])
         .downcast_ref::<crate::effects::BecomeColorChoiceEffect>()
     {
         if become_color.duration != pump.until
+            || become_color.color_from.is_some()
             || !target_specs_select_same_objects(target_spec, &become_color.target)
         {
             return None;
@@ -2239,6 +2240,7 @@ pub(crate) fn describe_consult_reveal_put_battlefield_then_bottom(
         crate::effects::consult_helpers::LibraryConsultMode::Exile => {
             (player_verb(&player, "exile", "exiles"), "exile")
         }
+        crate::effects::consult_helpers::LibraryConsultMode::Mill => return None,
     };
     let put_verb = player_verb(&player, "put", "puts");
     let pronoun = if player == "you" { "you" } else { "they" };
@@ -4237,6 +4239,11 @@ pub(crate) fn describe_target_players_each_effects(effects: &[&Effect]) -> Optio
     };
 
     let mut clauses = Vec::new();
+    // "<targets> each mill two cards. If you're the monarch, each of those
+    // players mills ten cards instead." (Court of Cunning): a per-player
+    // Conditional(cond, replacement, base) keeps its replacement sentence.
+    let mut instead_suffix: Option<String> = None;
+    let single_per_player_effect = per_player_effects.len() == 1;
     for effect in per_player_effects {
         let for_players =
             unwrap_basic_tag_wrappers(effect).downcast_ref::<crate::effects::ForPlayersEffect>()?;
@@ -4273,6 +4280,29 @@ pub(crate) fn describe_target_players_each_effects(effects: &[&Effect]) -> Optio
                 member_texts.push(compact.trim_end_matches('.').to_string());
                 member_idx += 2;
                 continue;
+            }
+            if single_per_player_effect
+                && members.len() == 1
+                && instead_suffix.is_none()
+                && let Some(conditional) = structural_unwrap_render_wrappers(members[member_idx])
+                    .downcast_ref::<crate::effects::ConditionalEffect>()
+                && let [if_true] = conditional.if_true.as_slice()
+                && let [if_false] = conditional.if_false.as_slice()
+            {
+                let replacement = describe_effect(if_true);
+                let replacement = replacement.trim().trim_end_matches('.');
+                if let Some(action) = replacement
+                    .strip_prefix("that player ")
+                    .or_else(|| replacement.strip_prefix("That player "))
+                {
+                    instead_suffix = Some(format!(
+                        "If {}, each of those players {action} instead",
+                        describe_condition(&conditional.condition)
+                    ));
+                    member_texts.push(describe_effect(if_false));
+                    member_idx += 1;
+                    continue;
+                }
             }
             member_texts.push(describe_effect(members[member_idx]));
             member_idx += 1;
@@ -4327,7 +4357,10 @@ pub(crate) fn describe_target_players_each_effects(effects: &[&Effect]) -> Optio
         subject = subject.replace(&excluded_surface, "that player");
         joined = joined.replace(&excluded_surface, "that player");
     }
-    Some(format!("{subject} each {joined}"))
+    match instead_suffix {
+        Some(suffix) => Some(format!("{subject} each {joined}. {suffix}")),
+        None => Some(format!("{subject} each {joined}")),
+    }
 }
 
 pub(crate) fn describe_destroy_all_then_target_players_each(effects: &[&Effect]) -> Option<String> {

@@ -237,7 +237,17 @@ pub(super) fn read_leading_player_may(
     // "you may" in its mana-spending rider. Preserve that complete typed
     // permission before generic chain splitting treats the rider as an
     // unrelated `spend` action.
+    if let Some(offer) =
+        crate::effect_sentences::chain_carry::parse_any_other_player_may_pay_lexed(tokens)?
+    {
+        return Ok(Some(vec![offer]));
+    }
     if super::super::super::super::parse_leading_player_may_lexed(tokens).is_some() {
+        // Bind the trailing value before the optional-action chain consumes
+        // the sentence and loses the definition of X inside its payload.
+        if sentence_shapes::parse_where_x_sentence_tokens(tokens).is_some() {
+            return parse_effect_sentence_with_where_x_lexed(tokens).map(Some);
+        }
         if let Some(spec) = parse_may_cast_it_sentence(tokens) {
             return Ok(Some(vec![build_may_cast_tagged_effect(&spec)]));
         }
@@ -329,6 +339,38 @@ pub(super) fn read_delayed_schedule_sentence(
     input: &Sentence<'_>,
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
+    // "If you control a Wizard, add ... at the beginning of your next main
+    // phase" (Mana Sculpt): the leading condition is checked as the spell
+    // resolves and wraps the schedule; only the consequent is delayed.
+    if tokens.first().is_some_and(|token| token.is_word("if"))
+        && effect_grammar::delayed_sentence_shapes::parse_delayed_schedule_sentence_shape(tokens)
+            .is_some()
+        && let Some(effects) = parse_conditional_sentence_family_lexed(
+            tokens,
+            parse_trailing_delayed_schedule_consequent,
+        )?
+    {
+        return Ok(Some(effects));
+    }
+    delayed_schedule_sentence_from_tokens(tokens)
+}
+
+/// The consequent of a leading-if sentence whose body carries a trailing
+/// main-phase delay: the schedule reading owns it when it matches.
+fn parse_trailing_delayed_schedule_consequent(
+    tokens: &[OwnedLexToken],
+) -> Result<Vec<EffectAst>, CardTextError> {
+    if !tokens.first().is_some_and(|token| token.is_word("if"))
+        && let Some(effects) = delayed_schedule_sentence_from_tokens(tokens)?
+    {
+        return Ok(effects);
+    }
+    parse_effect_chain_lexed(tokens)
+}
+
+fn delayed_schedule_sentence_from_tokens(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     if let Some(schedule) =
         effect_grammar::delayed_sentence_shapes::parse_delayed_schedule_sentence_shape(tokens)
     {
@@ -361,7 +403,11 @@ pub(super) fn read_delayed_schedule_sentence(
             effect_grammar::delayed_sentence_shapes::DelayedScheduleStep::MainPhaseThisTurn => {
                 EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
                     trigger: crate::cards::builders::TriggerSpec::BeginningOfMainPhase {
-                        player: PlayerFilter::Any,
+                        player: if schedule.player == PlayerAst::You {
+                            PlayerFilter::You
+                        } else {
+                            PlayerFilter::Any
+                        },
                         surface: ironsmith_core::trigger_model::MainPhaseSurface::MainPhase,
                     },
                     effects,

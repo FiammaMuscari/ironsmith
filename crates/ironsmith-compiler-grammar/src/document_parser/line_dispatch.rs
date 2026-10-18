@@ -111,7 +111,15 @@ const LINE_FAMILY_RULES: [LineFamilyRuleDef; 32] = [
     },
     LineFamilyRuleDef {
         id: RuleId::new("draft-rule-line"),
-        head: HeadDiscriminator::words(&["draft", "reveal", "as", "during", "immediately", "each"]),
+        head: HeadDiscriminator::words(&[
+            "draft",
+            "reveal",
+            "as",
+            "during",
+            "immediately",
+            "each",
+            "instead",
+        ]),
         run: run_draft_rule_line_family,
     },
     LineFamilyRuleDef {
@@ -797,6 +805,7 @@ pub(super) fn attach_compiler_trigger_facts(
                                 filter: Box::new(crate::ObjectFilter::land()),
                                 fewer: false,
                                 as_you_activate: false,
+                                minimum_difference: 0,
                             },
                             Some(crate::TextSpan::synthetic()),
                         ),
@@ -846,6 +855,7 @@ pub(super) fn attach_compiler_trigger_facts(
                                     filter: Box::new(crate::ObjectFilter::creature()),
                                     fewer: false,
                                     as_you_activate: false,
+                                    minimum_difference: 0,
                                 },
                                 Some(crate::TextSpan::synthetic()),
                             ),
@@ -1005,6 +1015,7 @@ pub(super) fn attach_compiler_trigger_facts(
                                     filter: Box::new(graveyard_creatures),
                                     fewer: true,
                                     as_you_activate: false,
+                                    minimum_difference: 0,
                                 },
                                 Some(crate::TextSpan::synthetic()),
                             ),
@@ -1019,6 +1030,17 @@ pub(super) fn attach_compiler_trigger_facts(
                         }),
                     ],
                 ))
+            }
+            Some(
+                program @ (semantic_grammar::SpecialTriggeredProgram::OpponentLifeMajorityDamage
+                | semantic_grammar::SpecialTriggeredProgram::OpponentHandMajorityRedraw),
+            ) => {
+                let trigger = super::super::activation_and_restrictions::parse_trigger_clause_lexed_with_context(
+                    context,
+                    &triggered.trigger_parse_tokens,
+                )?;
+                semantic_grammar::oath_opponent_majority_effects(program)
+                    .map(|effects| (trigger, effects))
             }
             _ => None,
         };
@@ -1103,6 +1125,12 @@ pub(super) fn attach_compiler_trigger_facts(
                     &triggered.effect_parse_tokens,
                 ))
                 .or_else(|| crate::semantic_line_parsing::exact_target_graveyard_any_type_may_cast_bundle(
+                    &triggered.effect_parse_tokens,
+                ))
+                .or_else(|| crate::semantic_line_parsing::exact_target_same_name_graveyard_may_cast_bundle(
+                    &triggered.effect_parse_tokens,
+                ))
+                .or_else(|| crate::semantic_line_parsing::exact_each_other_player_copies_triggering_spell_bundle(
                     &triggered.effect_parse_tokens,
                 ))
                 .map(Ok)

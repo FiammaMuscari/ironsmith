@@ -821,7 +821,12 @@ pub(super) fn compute_spell_cast_x_bounds_with_reduction(
     non_mana_costs.extend(spell.additional_non_mana_costs());
 
     let costs_need_x = non_mana_costs.iter().any(cost_references_x);
-    let needs_x = printed_has_x || pay_has_x || costs_need_x;
+    // "As an additional cost to cast this spell, choose a number between 0
+    // and 5" (Liquid Fire): a bounded number announced while casting is an X
+    // announcement (CR 601.2b) even with no X in any cost; its bounds are the
+    // spell's own X maximum/minimum statics.
+    let announces_bounded_number = max_x_from_static_abilities(game, caster, stack_id).is_some();
+    let needs_x = printed_has_x || pay_has_x || costs_need_x || announces_bounded_number;
     if !needs_x {
         return (false, 0, 0);
     }
@@ -1753,6 +1758,44 @@ pub(crate) fn cast_spell_from_resolving_effect_with_price_and_outputs(
     provenance: ProvNodeId,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<Option<EffectDrivenCastOutputs>, GameLoopError> {
+    cast_spell_from_resolving_effect_with_price_lock_and_outputs(
+        game,
+        spell_id,
+        from_zone,
+        caster,
+        casting_method,
+        base_mana_cost_waived,
+        alternative_cost,
+        mana_cost_reduction,
+        additional_mana_cost,
+        mana_spend_mode,
+        false,
+        tagged_objects,
+        provenance,
+        decision_maker,
+    )
+}
+
+/// As [`cast_spell_from_resolving_effect_with_price_and_outputs`], with the
+/// instruction's payment lock: when `land_mana_abilities_only`, the caster
+/// may activate only mana abilities of lands they control while paying.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cast_spell_from_resolving_effect_with_price_lock_and_outputs(
+    game: &mut GameState,
+    spell_id: ObjectId,
+    from_zone: Zone,
+    caster: PlayerId,
+    casting_method: &CastingMethod,
+    base_mana_cost_waived: bool,
+    alternative_cost: Option<&crate::cost::TotalCost>,
+    mana_cost_reduction: Option<&crate::mana::ManaCost>,
+    additional_mana_cost: Option<&crate::mana::ManaCost>,
+    mana_spend_mode: ironsmith_core::value_model::ManaSpendMode,
+    land_mana_abilities_only: bool,
+    tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
+    provenance: ProvNodeId,
+    decision_maker: &mut impl DecisionMaker,
+) -> Result<Option<EffectDrivenCastOutputs>, GameLoopError> {
     cast_spell_from_resolving_effect_with_captured_price_and_outputs(
         game,
         spell_id,
@@ -1765,6 +1808,7 @@ pub(crate) fn cast_spell_from_resolving_effect_with_price_and_outputs(
         mana_cost_reduction,
         additional_mana_cost,
         mana_spend_mode,
+        land_mana_abilities_only,
         tagged_objects,
         provenance,
         decision_maker,
@@ -1811,6 +1855,7 @@ pub(crate) fn cast_spell_from_revealed_miracle_with_outputs(
         None,
         None,
         Default::default(),
+        false,
         Default::default(),
         provenance,
         decision_maker,
@@ -1853,6 +1898,7 @@ fn cast_spell_from_resolving_effect_with_captured_price(
         mana_cost_reduction,
         additional_mana_cost,
         mana_spend_mode,
+        false,
         tagged_objects,
         provenance,
         decision_maker,
@@ -1873,6 +1919,7 @@ fn cast_spell_from_resolving_effect_with_captured_price_and_outputs(
     mana_cost_reduction: Option<&crate::mana::ManaCost>,
     additional_mana_cost: Option<&crate::mana::ManaCost>,
     mana_spend_mode: ironsmith_core::value_model::ManaSpendMode,
+    land_mana_abilities_only: bool,
     tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
     provenance: ProvNodeId,
     decision_maker: &mut impl DecisionMaker,
@@ -2137,6 +2184,7 @@ fn cast_spell_from_resolving_effect_with_captured_price_and_outputs(
     pending.effect_mana_cost_reduction = mana_cost_reduction.cloned();
     pending.effect_additional_mana_cost = additional_mana_cost.cloned();
     pending.effect_mana_spend_mode = mana_spend_mode;
+    pending.effect_land_mana_abilities_only = land_mana_abilities_only;
     pending.tagged_objects = tagged_objects;
     pending.effect_driven = true;
 
@@ -3336,8 +3384,8 @@ pub(super) fn check_x_or_continue(
     if ((pending.base_mana_cost_waived
         && pending.effect_alternative_cost.as_ref().is_none_or(|cost| {
             !cost.costs().iter().any(|component| {
-                (component.mana_cost_ref().is_some_and(|mana| mana.has_x())
-                    || cost_references_x(component))
+                component.mana_cost_ref().is_some_and(|mana| mana.has_x())
+                    || cost_references_x(component)
             })
         }))
         || game.object(pending.spell_id).is_some_and(|spell| {
@@ -4850,6 +4898,20 @@ pub(super) fn spell_mana_payment_request(
     {
         request.reserved_permanent_sources.push(resource);
     }
+    if pending.effect_land_mana_abilities_only {
+        // Only mana abilities of lands the caster controls may fund this
+        // cast; every other permanent's mana abilities stay unavailable for
+        // the whole payment, including nested land-ability costs.
+        request.activation_excluded_sources.extend(
+            game.battlefield.iter().copied().filter(|&id| {
+                !game.object(id).is_some_and(|object| {
+                    object.is_land() && game.controller_of(object) == pending.caster
+                })
+            }),
+        );
+        request.activation_excluded_sources.sort_unstable();
+        request.activation_excluded_sources.dedup();
+    }
     Ok(request)
 }
 
@@ -5675,6 +5737,19 @@ pub(super) fn continue_to_mana_payment(
             if surcharge > 0 {
                 append_activation_cost_steps_from_components(
                     &[crate::costs::Cost::life(surcharge)],
+                    &mut pending.remaining_cost_steps,
+                );
+            }
+            // "Spells cost an additional \"Sacrifice a Swamp\" ... for each
+            // black mana symbol in their mana costs." (Drought)
+            let sacrifices = crate::decision::battlefield_sacrifice_surcharges_for_mana_cost(
+                game,
+                false,
+                spell.mana_cost_owned().as_ref(),
+            );
+            if !sacrifices.is_empty() {
+                append_activation_cost_steps_from_components(
+                    &sacrifices,
                     &mut pending.remaining_cost_steps,
                 );
             }
@@ -8411,7 +8486,8 @@ pub(super) fn finalize_pending_activation_with_outputs(
             .with_loyalty_ability(pending.is_loyalty_ability)
             .with_activation_cost_has_x(pending.activation_cost_has_x)
             .with_activation_cost_has_tap(pending.activation_cost_has_tap)
-            .with_stack_entry_provenance(Some(pending.provenance)),
+            .with_stack_entry_provenance(Some(pending.provenance))
+            .with_targets(pending.chosen_targets.clone()),
         Err(error) => {
             state.rollback_action(game);
             return Err(GameLoopError::ExecutionFailed(error));
@@ -8448,6 +8524,7 @@ pub(super) fn finalize_pending_activation_with_outputs(
         )
         .with_tagged_objects(pending.tagged_objects.clone())
         .with_effect_outcomes(pending.effect_outcomes.clone());
+    entry.activation_mana_budget = pending.activation_mana_budget.clone();
     entry.linked_exile_owner = crate::linked_exile::LinkedExileOwner::capture(
         pending.source,
         pending.effects.linked_exile_pair,
@@ -8467,7 +8544,7 @@ pub(super) fn finalize_pending_activation_with_outputs(
     }
 
     entry.ability_id = pending.announced_stack_ability;
-    game.push_to_stack(entry);
+    game.try_push_to_stack(entry).map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
     game.finish_library_top_announcement(crate::game_state::LibraryTopAnnouncement::Activation(
         pending.provenance,
     ));

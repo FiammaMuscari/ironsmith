@@ -1281,6 +1281,14 @@ pub(crate) fn describe_create_for_each_count(value: &Value) -> Option<String> {
     if value.has_surface_hint(ValueSurfaceHint::EqualTo) || value_prefers_where_x(value) {
         return None;
     }
+    if let Value::EventValue(EventValueSpec::ManaSpentOnKeyword { colors }) = value.unhinted() {
+        let symbols = [(crate::color::Color::White, "{W}"), (crate::color::Color::Blue, "{U}"),
+            (crate::color::Color::Black, "{B}"), (crate::color::Color::Red, "{R}"),
+            (crate::color::Color::Green, "{G}")].into_iter()
+            .filter(|(color, _)| colors.contains(*color)).map(|(_, symbol)| symbol)
+            .collect::<Vec<_>>().join(" or ");
+        return Some(format!("{symbols} spent this way"));
+    }
     if let Some(counters) = describe_counters_among_players_and_permanents(value) {
         return Some(counters);
     }
@@ -1417,6 +1425,21 @@ pub(crate) fn describe_create_for_each_count(value: &Value) -> Option<String> {
         }
         // "for each of the chosen colors it is"
         Value::ChosenColorsOf(_) => Some("of the chosen colors it is".to_string()),
+        // "for each creature type noted for target permanent ..."
+        Value::NotedCreatureTypeCount(spec) => {
+            Some(format!("creature type noted for {}", describe_choose_spec(spec)))
+        }
+        // "for each supertype, card type, and subtype it has" (Embiggen)
+        Value::TypeCountOf(spec) => {
+            if matches!(spec.base(), ChooseSpec::Tagged(_)) {
+                Some("supertype, card type, and subtype it has".to_string())
+            } else {
+                Some(format!(
+                    "supertype, card type, and subtype {} has",
+                    describe_choose_spec(spec)
+                ))
+            }
+        }
         // "for each of that spell's colors"
         Value::ColorsOf(spec) => {
             let owner = if let ChooseSpec::Tagged(tag) = spec.base()
@@ -1580,6 +1603,10 @@ pub(crate) fn describe_create_for_each_count(value: &Value) -> Option<String> {
             Some(format!("{prefix}{described} {tail}"))
         }
         Value::SourceRegeneratedThisTurnCount => Some("time it regenerated this turn".to_string()),
+        Value::SpellsOrAbilitiesThatMadePilesOrGuessesThisTurn => Some(
+            "spell or ability that caused one or more players to guess or to group cards or permanents into a pile this turn"
+                .to_string(),
+        ),
         Value::SourceDevouredCreatureCount => Some("creature it devoured".to_string()),
         Value::Add(inner, offset)
             if matches!(offset.unhinted(), Value::Fixed(-1))
@@ -2513,8 +2540,21 @@ pub(crate) fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEf
             crate::effect::ChoiceAggregateMetric::Toughness => "toughness",
             crate::effect::ChoiceAggregateMetric::ManaValue => "mana value",
             crate::effect::ChoiceAggregateMetric::DistinctCardTypes => "distinct card types",
+            crate::effect::ChoiceAggregateMetric::ManaSymbolsOfColor(_) => "mana symbols",
         };
-        if constraint.metric == crate::effect::ChoiceAggregateMetric::DistinctCardTypes
+        if let crate::effect::ChoiceAggregateMetric::ManaSymbolsOfColor(color) = constraint.metric
+            && let Some(minimum) = constraint.minimum.as_ref()
+        {
+            // "with fifteen or more black mana symbols among their mana costs"
+            let minimum = match minimum.unhinted() {
+                Value::Fixed(minimum) => number_word(*minimum).unwrap_or_else(|| minimum.to_string()),
+                _ => describe_value(minimum),
+            };
+            selection.push_str(&format!(
+                " with {minimum} or more {} mana symbols among their mana costs",
+                color.name()
+            ));
+        } else if constraint.metric == crate::effect::ChoiceAggregateMetric::DistinctCardTypes
             && let Some(Value::Fixed(minimum)) = constraint.minimum.as_ref().map(Value::unhinted)
         {
             // CR 205.2a phrasing: "with four or more card types among them".
@@ -4874,6 +4914,10 @@ pub(super) fn describe_exile_top_then_play(
             "Until the end of your next turn"
         }
         crate::effects::GrantPlayTaggedDuration::UntilYourNextEndStep => "Until your next end step",
+        crate::effects::GrantPlayTaggedDuration::DuringYourNextTurn => "During your next turn",
+        crate::effects::GrantPlayTaggedDuration::UntilEndOfCombatOnYourNextTurn => {
+            "Until end of combat on your next turn"
+        }
         _ => return None,
     };
 
@@ -5677,7 +5721,20 @@ pub(super) fn describe_choice_aggregate_constraint_suffix(
         crate::effect::ChoiceAggregateMetric::Toughness => "toughness",
         crate::effect::ChoiceAggregateMetric::ManaValue => "mana value",
         crate::effect::ChoiceAggregateMetric::DistinctCardTypes => "distinct card types",
+        crate::effect::ChoiceAggregateMetric::ManaSymbolsOfColor(_) => "mana symbols",
     };
+    if let crate::effect::ChoiceAggregateMetric::ManaSymbolsOfColor(color) = constraint.metric
+        && let Some(minimum) = constraint.minimum.as_ref()
+    {
+        let minimum = match minimum.unhinted() {
+            Value::Fixed(minimum) => number_word(*minimum).unwrap_or_else(|| minimum.to_string()),
+            _ => describe_value(minimum),
+        };
+        return format!(
+            " with {minimum} or more {} mana symbols among their mana costs",
+            color.name()
+        );
+    }
     if constraint.metric == crate::effect::ChoiceAggregateMetric::DistinctCardTypes
         && let Some(Value::Fixed(minimum)) = constraint.minimum.as_ref().map(Value::unhinted)
     {

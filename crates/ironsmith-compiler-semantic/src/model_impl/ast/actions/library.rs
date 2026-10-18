@@ -16,6 +16,8 @@ pub enum LibraryActionAst {
         explicit_all_cards_from: bool,
     },
     ReorderGraveyard,
+    /// "Reorder your graveyard at random" (Search for Survivors).
+    ReorderGraveyardAtRandom,
     PutRestOnBottomOfLibrary,
     ExileTopOfLibrary {
         count: Value,
@@ -61,6 +63,7 @@ pub enum LibraryActionAst {
         top_position: u32,
     },
     ConsultTopOfLibrary {
+        accumulated_match_tag: Option<TagRef>,
         player: PlayerAst,
         mode: LibraryConsultModeAst,
         filter: ObjectFilter,

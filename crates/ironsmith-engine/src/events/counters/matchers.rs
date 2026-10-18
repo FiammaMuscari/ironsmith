@@ -1,6 +1,7 @@
 //! Counter replacement effect matchers.
 
 use crate::events::cause::{CauseFilter, CauseFilterRuntimeExt as _};
+#[cfg(test)]
 use crate::events::context::EventContext;
 use crate::events::traits::{EventKind, GameEventType, ReplacementMatcher, downcast_event};
 use crate::filter::ObjectFilterExt as _;
@@ -270,6 +271,7 @@ mod tests {
             cause_type: Some(CauseTypeFilter::Exact(CauseType::Effect)),
             source_filter: None,
             controller_filter: None,
+            ability_kind: None,
         });
 
         let event = PutCountersEvent::with_cause(

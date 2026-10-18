@@ -1,6 +1,143 @@
 use super::*;
 
 pub fn parse_for_each_count_value_words(words: &[&str]) -> Option<(Value, usize)> {
+    // "for each color of mana spent to cast that spell" (Magmablood
+    // Archaic): the distinct colors paid for the spell whose cast triggered
+    // this ability, not the colors paid for the ability's source.
+    if let ["for", "each", "color", "of", "mana", "spent" | "used", "to", "cast", "that", "spell", ..] =
+        words
+    {
+        return Some((
+            Value::ColorsOfManaSpentToCastTriggeringObject
+                .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+            11,
+        ));
+    }
+    // "for each 1 damage dealt to you this turn" (Discordant Spirit): the
+    // total damage dealt to that player this turn, one per point.
+    if let ["for", "each", "1", "damage", "dealt", "to", recipient @ .., "this", "turn"] = words {
+        let players = match recipient {
+            ["you"] => Some(crate::target::PlayerFilter::You),
+            ["your", "opponents"] => Some(crate::target::PlayerFilter::Opponent),
+            _ => None,
+        };
+        if let Some(players) = players {
+            return Some((
+                Value::DamageDealtToPlayersThisTurn(players)
+                    .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+                words.len(),
+            ));
+        }
+    }
+    // "for each spell or ability that caused one or more players to guess or
+    // to group cards or permanents into a pile this turn" (The Celestial
+    // Toymaker): distinct resolving spells/abilities recorded by the guess and
+    // pile programs (CR 700.3).
+    if let ["for", "each", "spell", "or", "ability", "that", "caused", "one", "or", "more", "players", "to", activities @ .., "this", "turn"] =
+        words
+        && matches!(
+            activities,
+            ["guess", "or", "to", "group", "cards", "or", "permanents", "into", "a", "pile"]
+                | ["group", "cards", "or", "permanents", "into", "a", "pile", "or", "to", "guess"]
+        )
+    {
+        return Some((
+            Value::SpellsOrAbilitiesThatMadePilesOrGuessesThisTurn,
+            words.len(),
+        ));
+    }
+    // "for each name sticker on it that begins with the chosen letter"
+    // (_____ _____ Rocketship): name stickers on the source whose name starts
+    // with the source's chosen letter.
+    if let ["for", "each", "name", "sticker", "on", source @ .., "that", "begins" | "begin", "with", "the", "chosen", "letter"] =
+        words
+        && (source == ["it"] || crate::util::is_source_reference_words(source))
+    {
+        return Some((
+            Value::NameStickersOnSourceStartingWithChosenLetter {
+                surface: crate::util::source_reference_surface_for_words(source),
+            }
+            .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+            words.len(),
+        ));
+    }
+    // "for each {E} you've paid or lost this turn" (Blaster Hulk): energy
+    // removed from you this turn, whether paid or lost.
+    if let ["for", "each", "e", "youve" | "you've", "paid" | "lost", rest @ ..] = words
+        && matches!(rest, ["or", "lost" | "paid", "this", "turn"] | ["this", "turn"])
+    {
+        return Some((
+            Value::TurnHistoryCount(ironsmith_core::TurnHistoryCount::PlayerCountersRemoved {
+                player: PlayerFilter::You,
+                counter_type: Some(crate::object::CounterType::Energy),
+            })
+            .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+            words.len(),
+        ));
+    }
+    // "for each kind of counter on it" (Blitzball Stadium's granted trigger):
+    // the number of distinct counter kinds on the source object.
+    if let ["for", "each", "kind", "of", "counter", "on", source @ ..] = words
+        && !source.is_empty()
+        && (source == ["it"] || crate::util::is_source_reference_words(source))
+    {
+        return Some((
+            Value::DistinctCounterTypesAmong(ObjectFilter::source())
+                .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+            words.len(),
+        ));
+    }
+    // "for each name sticker on it" (_____ _____ _____ Trespasser): stickers
+    // of one kind on the source object.
+    if let ["for", "each", tail @ ..] = words
+        && let Some(sticker_idx) = tail.iter().position(|word| *word == "sticker")
+        && sticker_idx <= 1
+        && tail.get(sticker_idx + 1) == Some(&"on")
+        && tail.len() > sticker_idx + 2
+        && (tail[sticker_idx + 2..] == ["it"]
+            || crate::util::is_source_reference_words(&tail[sticker_idx + 2..]))
+    {
+        let source = &tail[sticker_idx + 2..];
+        let kind = &tail[..sticker_idx];
+        let action = match kind {
+            [] => Some(crate::events::KeywordActionKind::Sticker),
+            ["name"] => Some(crate::events::KeywordActionKind::NameSticker),
+            ["art"] => Some(crate::events::KeywordActionKind::ArtSticker),
+            ["ability"] => Some(crate::events::KeywordActionKind::AbilitySticker),
+            _ => None,
+        };
+        if let Some(action) = action {
+            return Some((
+                Value::StickersOnSource {
+                    action,
+                    surface: crate::util::source_reference_surface_for_words(source),
+                }
+                .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+                words.len(),
+            ));
+        }
+    }
+    // "for each poison counter its controller has" (Phyresis Outbreak): the
+    // counters on the controller of the object an enclosing per-object
+    // effect is iterating (bound to the `it` reference).
+    if let ["for", "each", counter_words @ .., "counter", "its", "controller", "has"] = words
+        && !counter_words.is_empty()
+    {
+        let mut kind_words = counter_words.to_vec();
+        kind_words.push("counter");
+        if let Some(counter_type) = crate::grammar::filters::parse_counter_type_words(&kind_words) {
+            return Some((
+                Value::PlayerCounters(
+                    PlayerFilter::ControllerOf(crate::filter::ObjectRef::Tagged(
+                        crate::tag::CompilerReferenceTag::It.bind().into(),
+                    )),
+                    counter_type,
+                )
+                .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+                words.len(),
+            ));
+        }
+    }
     if let Some(tail) = words.strip_prefix(&["for", "each", "additional"])
         && let Some(mana_words) = tail.strip_suffix(&["you", "paid"])
         && !mana_words.is_empty()
@@ -19,6 +156,18 @@ pub fn parse_for_each_count_value_words(words: &[&str]) -> Option<(Value, usize)
         return Some((Value::TurnHistoryCount(
             ironsmith_core::TurnHistoryCount::PlayersAttackedThisCombat(PlayerFilter::You),
         ).with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach), words.len()));
+    }
+    // "Whenever one or more Pirates you control deal damage to your
+    // opponents, you create a Treasure token for each opponent dealt damage"
+    // (Malcolm, Keen-Eyed Navigator): with no "this turn", the players the
+    // triggering damage was dealt to. Each damaged opponent is its own
+    // trigger occurrence, so this counts that occurrence's damaged player.
+    if matches!(words, ["for", "each", "opponent" | "player", "dealt", "damage"]) {
+        return Some((
+            Value::CountPlayers(PlayerFilter::DamagedPlayer)
+                .with_surface_hint(ironsmith_core::ValueSurfaceHint::ForEach),
+            words.len(),
+        ));
     }
     // "for each of the chosen colors it is" (Tablet of the Guilds): the
     // referenced object's colors among the source's chosen colors.
@@ -109,6 +258,23 @@ pub fn parse_for_each_count_value_words(words: &[&str]) -> Option<(Value, usize)
     }
     let head = parse_for_each_head(words)?;
     let idx = head.item_start;
+
+    // A surviving reference reads the exact current object incarnations,
+    // rather than the captured characteristics of the original result set.
+    for suffix in [
+        &["that", "are", "still", "exiled"][..],
+        &["that", "is", "still", "exiled"][..],
+    ] {
+        if let Some(subject) = words[idx..].strip_suffix(suffix)
+            && matches!(subject.first(), Some(&"those" | &"that"))
+            && subject.len() > 1
+            && let Some(mut filter) = parse_for_each_object_filter_words(subject, head.other)
+        {
+            filter.zone = Some(crate::zone::Zone::Exile);
+            filter.match_current_state = true;
+            return Some((Value::Count(filter), words.len()));
+        }
+    }
 
     // "for each creature put into your graveyard from the battlefield this
     // turn" (Asmira, Fresh Meat) and "for each creature that left the
@@ -1054,5 +1220,25 @@ mod players_being_attacked_tests {
             players_being_attacked_len(&["for", "each", "player", "being", "attacked", "by", "it"])
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod surviving_count_tests {
+    use super::*;
+    #[test]
+    fn surviving_exile_count_requires_current_exact_objects() {
+        for words in [
+            vec!["for", "each", "of", "those", "cards", "that", "are", "still", "exiled"],
+            vec!["for", "each", "of", "that", "card", "that", "is", "still", "exiled"],
+        ] {
+            let (Value::Count(filter), used) = parse_for_each_count_value_words(&words).unwrap() else { panic!("missing count"); };
+            assert_eq!(used, words.len());
+            assert_eq!(filter.zone, Some(crate::zone::Zone::Exile));
+            assert!(filter.match_current_state);
+            assert!(filter.tagged_constraints.iter().any(|constraint| constraint.relation == TaggedOpbjectRelation::IsTaggedObject));
+        }
+        let (Value::Count(filter), _) = parse_for_each_count_value_words(&["for", "each", "of", "those", "cards"]).unwrap() else { panic!("historical count"); };
+        assert!(!filter.match_current_state, "unqualified historical result counts retain their existing meaning");
     }
 }

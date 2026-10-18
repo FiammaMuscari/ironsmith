@@ -247,6 +247,20 @@ fn prepare_token_proposal(
         })?;
     }
     materialize_named_creator_source_in_token(&mut resolved_token, ctx.source);
+    // CR 122.6: counters a token "enters with" are part of its entry event;
+    // their amounts are fixed as the instruction resolves.
+    let mut initial_counters = Vec::with_capacity(effect.entry_counters.len());
+    for counter in &effect.entry_counters {
+        if counter.condition.is_some() || counter.object_filter.is_some() {
+            return Err(ExecutionError::InternalError(
+                "conditional token entry counters are not a token-creation instruction".into(),
+            ));
+        }
+        let amount = resolve_value(game, &counter.amount, ctx)?.max(0) as u32;
+        if amount > 0 {
+            initial_counters.push((counter.counter_type, amount));
+        }
+    }
     let token_preview = crate::object::Object::from_token_definition(
         ObjectId::from_raw(0),
         &resolved_token,
@@ -255,7 +269,7 @@ fn prepare_token_proposal(
     Ok(TokenProposal {
         effect: effect.clone(),
         resolved_token,
-        initial_counters: Vec::new(),
+        initial_counters,
         completion: None,
         token_preview: Some(token_preview),
         controller: controller_id,
@@ -329,7 +343,7 @@ pub(crate) fn create_tokens_with_entry_counters_with_outputs(
     completion: Option<(crate::events::KeywordActionKind, u32)>,
 ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
     let mut proposal = prepare_token_proposal(effect, game, ctx)?;
-    proposal.initial_counters = counters;
+    proposal.initial_counters.extend(counters);
     proposal.completion = completion;
     complete_token_proposal(proposal, game, ctx)
 }
@@ -1179,13 +1193,13 @@ mod tests {
             panic!("expected exactly one created token: {ids:#?}");
         };
 
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(game.current_power(*token_id), Some(2));
         assert_eq!(game.current_toughness(*token_id), Some(2));
 
         game.add_counters(other_creator, slime, 4)
             .expect("unrelated permanent should receive slime counters");
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(
             game.current_power(*token_id),
             Some(2),
@@ -1194,7 +1208,7 @@ mod tests {
 
         game.add_counters(creator, slime, 1)
             .expect("creator should receive another slime counter");
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(game.current_power(*token_id), Some(3));
         assert_eq!(game.current_toughness(*token_id), Some(3));
 
@@ -1268,7 +1282,7 @@ mod tests {
             panic!("expected exactly one created token: {ids:#?}");
         };
 
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(
             game.current_power(*token_id),
             Some(0),
@@ -1276,7 +1290,7 @@ mod tests {
         );
         game.add_counters(*token_id, CounterType::Charge, 1)
             .expect("token should receive a charge counter");
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(game.current_power(*token_id), Some(1));
         assert_eq!(game.current_toughness(*token_id), Some(1));
     }
@@ -1318,7 +1332,7 @@ mod tests {
             ))
             .build();
         game.create_object_from_definition(&doubler, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result = CreateTokenEffect::one(soldier_token())
@@ -1351,7 +1365,7 @@ mod tests {
             ))
             .build();
         game.create_object_from_definition(&doubler, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result = CreateTokenEffect::new(soldier_token(), 1, PlayerFilter::Specific(bob))
@@ -1373,7 +1387,7 @@ mod tests {
         let source = game.new_object_id();
         let xorn = xorn_definition();
         game.create_object_from_definition(&xorn, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result = CreateTokenEffect::you(fancy_treasure_token(), 2)
@@ -1416,7 +1430,7 @@ mod tests {
         let source = game.new_object_id();
         let xorn = xorn_definition();
         game.create_object_from_definition(&xorn, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result = CreateTokenEffect::you(soldier_token(), 2)
@@ -1437,7 +1451,7 @@ mod tests {
         let source = game.new_object_id();
         let xorn = xorn_definition();
         game.create_object_from_definition(&xorn, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let result =
@@ -1583,7 +1597,7 @@ mod tests {
 
         let _tayam =
             game.create_object_from_definition(&tayam_luminous_enigma(), alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
         let mut ctx = ExecutionContext::new_default(source, alice);
         let effect = CreateTokenEffect::one(soldier_token());
@@ -1971,7 +1985,7 @@ mod replacement_token_entry_owner_contract_tests {
     use crate::object::{CounterType, ObjectKind};
     use crate::replacement::{ReplacementAction, ReplacementEffect};
     use crate::snapshot::ObjectSnapshot;
-    use crate::target::{ObjectFilter, PlayerFilter};
+    use crate::target::{ObjectFilter, };
     use crate::types::CardType;
     struct Answers {
         pause: bool,

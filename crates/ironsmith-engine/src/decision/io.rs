@@ -2821,7 +2821,7 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
         }
         LegalAction::TurnFaceUp {
             creature_id,
-            method,
+            method: _,
         } => {
             let name = game
                 .object(*creature_id)
@@ -2839,8 +2839,8 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
                 "Play land".to_string()
             }
             crate::special_actions::SpecialAction::TurnFaceUp {
-                permanent_id,
-                method,
+                permanent_id: _,
+                method: _,
             } => {
                 let cost_prefix =
                     face_up_cost
@@ -2874,9 +2874,24 @@ pub(crate) fn format_action_short(game: &GameState, action: &LegalAction, face_u
                     .unwrap_or("companion");
                 format!("{{3}}: Put {name} into your hand")
             }
-            crate::special_actions::SpecialAction::IgnoreAttachedRestriction { .. } => {
-                "Sacrifice a permanent: Ignore this effect until end of turn".to_string()
+            crate::special_actions::SpecialAction::DiscardFromHand { card_id } => {
+                let name = game
+                    .object(*card_id)
+                    .map(|object| object.name.as_str())
+                    .unwrap_or("this card");
+                format!("Discard {name}")
             }
+            crate::special_actions::SpecialAction::IgnoreAttachedRestriction {
+                source_id,
+                ability_index,
+            } => format!(
+                "{}: Ignore this effect until end of turn",
+                crate::special_actions::ignore_attached_restriction_cost_display(
+                    game,
+                    *source_id,
+                    *ability_index,
+                )
+            ),
             crate::special_actions::SpecialAction::IgnoreSourceEffect {
                 source_id,
                 ability_index,

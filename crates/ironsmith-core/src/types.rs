@@ -665,6 +665,8 @@ pub enum Subtype {
     Llama,
     // CR 205.3m; append to preserve serialized variant ordinals.
     Orb,
+    // CR 205.3m (Tetravus's Tetravite tokens); appended for ordinal stability.
+    Tetravite,
 }
 
 impl Subtype {
@@ -810,6 +812,7 @@ impl Subtype {
             Subtype::Mercenary,
             Subtype::Merfolk,
             Subtype::Minion,
+            Subtype::Mite,
             Subtype::Minotaur,
             Subtype::Mole,
             Subtype::Monk,
@@ -889,6 +892,7 @@ impl Subtype {
             Subtype::Starfish,
             Subtype::Surrakar,
             Subtype::Survivor,
+            Subtype::Tetravite,
             Subtype::Thopter,
             Subtype::Thrull,
             Subtype::Tiefling,

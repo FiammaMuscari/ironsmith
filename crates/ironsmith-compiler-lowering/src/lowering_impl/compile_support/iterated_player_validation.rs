@@ -229,10 +229,14 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
         }
         Value::PowerOf(spec)
         | Value::BasePowerOf(spec)
+        | Value::StationContributionOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
         | Value::ChosenColorsOf(spec)
+        | Value::NotedCreatureTypeCount(spec)
+        | Value::TypeCountOf(spec)
+        | Value::TotalToxicValueOf(spec)
         | Value::ManaSymbolsInManaCostOf { spec, .. }
         | Value::CountersOn(spec, _) => choose_spec_mentions_iterated_player(spec),
         Value::CreaturesDiedThisTurnControlledBy(player)
@@ -267,6 +271,7 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
         | Value::MaxDiceRolledThisTurn(player)
         | Value::LandsEnteredBattlefieldThisTurn(player)
         | Value::MaxCardsInHand(player)
+        | Value::MaxSpeed(player)
         | Value::CardsInGraveyard(player)
         | Value::SpellsCastThisTurn(player)
         | Value::SpellsCastBeforeThisTurn(player)
@@ -275,7 +280,8 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
         | Value::PlayerCounters(player, _)
         | Value::PlayerVoteCount(player) => player.mentions_iterated_player(),
         Value::NoncombatDamageDealtBySourcesControlledThisTurn { player, .. }
-        | Value::Devotion { player, .. } => player.mentions_iterated_player(),
+        | Value::Devotion { player, .. }
+        | Value::DevotionToColors { player, .. } => player.mentions_iterated_player(),
         Value::SpellsCastThisTurnMatching { player, filter, .. }
         | Value::TotalManaValueOfSpellsCastThisTurnMatching { player, filter, .. } => {
             player.mentions_iterated_player() || object_filter_mentions_iterated_player(filter)
@@ -286,6 +292,7 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
             match query {
                 TurnHistoryCount::Died { filter, .. }
                 | TurnHistoryCount::EnteredBattlefield(filter)
+                | TurnHistoryCount::DealtExcessDamage(filter)
                 | TurnHistoryCount::MovedZones { filter, .. }
                 | TurnHistoryCount::CountersRemovedFrom { filter, .. } => {
                     object_filter_mentions_iterated_player(filter)
@@ -310,6 +317,7 @@ pub fn value_mentions_iterated_player(value: &Value) -> bool {
                 | TurnHistoryCount::DiscardedOrCycled(player)
                 | TurnHistoryCount::Cycled(player)
                 | TurnHistoryCount::LandsPlayed(player)
+                | TurnHistoryCount::PlayerCountersRemoved { player, .. }
                 | TurnHistoryCount::KeywordActionsPerformed { player, .. }
                 | TurnHistoryCount::CardsDrawn(player)
                 | TurnHistoryCount::PlayersLostLife(player)
@@ -424,10 +432,14 @@ pub fn value_contains_pending_effect_metric(value: &Value) -> bool {
         }
         Value::PowerOf(spec)
         | Value::BasePowerOf(spec)
+        | Value::StationContributionOf(spec)
         | Value::ToughnessOf(spec)
         | Value::ManaValueOf(spec)
         | Value::ColorsOf(spec)
         | Value::ChosenColorsOf(spec)
+        | Value::NotedCreatureTypeCount(spec)
+        | Value::TypeCountOf(spec)
+        | Value::TotalToxicValueOf(spec)
         | Value::ManaSymbolsInManaCostOf { spec, .. }
         | Value::CountersOn(spec, _) => choose_spec_contains_pending_effect_metric(spec),
         Value::SpellsCastThisTurnMatching { filter, .. }
@@ -505,8 +517,10 @@ pub fn condition_mentions_iterated_player(condition: &Condition) -> bool {
         | PlayerHasMoreLifeThanYou { player }
         | PlayerHasNoOpponentWithMoreLifeThan { player }
         | PlayerHasMoreLifeThanEachOtherPlayer { player }
+        | PlayerHasMoreLifeThanAnotherOpponent { player }
         | PlayerIsMonarch { player }
         | PlayerWasMonarchAtTurnStart { player }
+        | PlayerIsYou { player }
         | PlayerHasInitiative { player }
         | PlayerHasCitysBlessing { player }
         | PlayerHasEnduringStory { player }
@@ -552,6 +566,7 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
             || sacrifice.as_ref().is_some_and(object_filter_mentions_iterated_player),
         AdditionalLandPlays(player, _)
         | NoMaximumHandSize(player)
+        | ReduceMaximumHandSize(player, _)
         | DrawFromBottom(player)
         | ActivateAbilities(player)
         | GainLife(player)
@@ -559,12 +574,17 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | SearchOwnLibraryFromOwnEffects(player)
         | CastSpellsOnlyAsSorcery(player)
         | ActivateNonManaAbilities(player)
+        | ActivateNonManaNonLoyaltyAbilities(player)
+        | DamageAsThoughInfect(player)
         | DrawCards(player)
         | DrawExtraCards(player)
         | PoisonCounters(player)
+        | GetCounters(player)
+        | RadiationGainsLife(player)
         | LoseLife(player)
         | DamageCauseLifeLoss(player)
         | DamageReduceLifeBelowOne(player)
+        | DamageReduceLifeBelow { player, .. }
         | ChangeLifeTotal(player)
         | LoseGame(player)
         | LoseGameForZeroLife(player)
@@ -574,9 +594,15 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | BlockWithMoreThan { player, .. }
         | LoseUnspentMana(player, _)
         | BeTargetedPlayer(player) => player.mentions_iterated_player(),
-        PlayLandsMatching(player, filter)
-        | CastSpellsMatching(player, filter)
-        | CastMoreThanOneSpellEachTurn(player, filter)
+        // "Other players can't play lands or cast spells from their
+        // graveyards this turn" (Shaman's Trance): with no enclosing loop,
+        // the land-play and cast checks bind an unbound iterated player to
+        // the restricted player itself (`iterated_player.or(Some(player))`),
+        // so only the restricted-player filter needs an outer binder.
+        PlayLandsMatching(player, _) | CastSpellsMatching(player, _) => {
+            player.mentions_iterated_player()
+        }
+        CastMoreThanOneSpellEachTurn(player, filter)
         | CastMoreThanNSpellsEachTurn {
             player,
             spells: filter,
@@ -584,7 +610,14 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         } => {
             player.mentions_iterated_player() || object_filter_mentions_iterated_player(filter)
         }
-        BeSacrificedByCause { filter, cause } => {
+        DiscardByCause { player, cause } => {
+            player.mentions_iterated_player()
+                || cause
+                    .source_filter
+                    .as_ref()
+                    .is_some_and(object_filter_mentions_iterated_player)
+        }
+        BeSacrificedByCause { filter, cause } | BeExiledByCause { filter, cause } => {
             object_filter_mentions_iterated_player(filter)
                 || cause
                     .source_filter
@@ -592,6 +625,7 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
                     .is_some_and(object_filter_mentions_iterated_player)
         }
         ActivateLoyaltyAbilitiesOf(filter)
+        | ActivateKeywordAbilitiesOf { filter, .. }
         | ActivateAbilitiesOf(filter)
         | ActivateTapAbilitiesOf(filter)
         | ActivateNonManaAbilitiesOf(filter)
@@ -599,6 +633,8 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | MustBlock(filter)
         | Attack(filter)
         | AttackAlone(filter)
+        | AttackOnlyAlone(filter)
+        | AttackOnlyNearestOpponentInChosenDirection { attackers: filter }
         | Block(filter)
         | MustBeBlocked(filter)
         | BlockAlone(filter)
@@ -611,6 +647,8 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | MaximumBlockers { filter, .. }
         | HaveCountersPlaced(filter)
         | HaveCounterTypePlaced(filter, _)
+        | HaveCounterTypeRemoved(filter, _)
+        | DamageSourcesAreColorless(filter)
         | BeTargeted(filter)
         | BeCountered(filter)
         | TurnFaceUp(filter)
@@ -621,18 +659,29 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
         | AttackOrBlockAlone(filter)
         | EnterBattlefield(filter)
         | BecomeUntapped(filter)
-        | AttackBlockOrCrew(filter) => object_filter_mentions_iterated_player(filter),
+        | AttackBlockOrCrew(filter)
+        | MustBeBlockedByAtLeast {
+            attacker: filter, ..
+        } => object_filter_mentions_iterated_player(filter),
         AttackPlayerOrPlaneswalkersControlledBy { attackers, player }
         | AttackPlayer { attackers, player }
-        | MustAttackPlayer { attackers, player } => {
+        | MustAttackPlayer { attackers, player }
+        | GainControl(attackers, player) => {
             object_filter_mentions_iterated_player(attackers) || player.mentions_iterated_player()
         }
         BlockSpecificAttacker { blockers, attacker }
         | MustBlockSpecificAttacker { blockers, attacker }
         | MustBeBlockedBy { blockers, attacker }
+        | BeCounteredFrom(blockers, attacker)
         | BeTargetedFrom(blockers, attacker)
+        | BeTargetedByRequirementsLimitedTo(blockers, attacker)
         | BeAttachedBy(blockers, attacker)
+        | BeAttachedByNew(blockers, attacker)
         | AttackPermanents {
+            attackers: blockers,
+            permanents: attacker,
+        }
+        | MustAttackPermanents {
             attackers: blockers,
             permanents: attacker,
         } => {
@@ -643,8 +692,18 @@ fn restriction_mentions_iterated_player(restriction: &Restriction) -> bool {
             player.mentions_iterated_player() || object_filter_mentions_iterated_player(source)
         }
         PreventDamageFrom { sources, .. } => object_filter_mentions_iterated_player(sources),
+        PreventDamageTo { recipients, .. } => object_filter_mentions_iterated_player(recipients),
+        PreventDamageFromTo {
+            sources,
+            recipients,
+            ..
+        } => {
+            object_filter_mentions_iterated_player(sources)
+                || object_filter_mentions_iterated_player(recipients)
+        }
         AttackTax(rule) => object_filter_mentions_iterated_player(&rule.attackers),
-        PreventDamage | PreventCombatDamage | AttackYouUnlessControllerPaysPerAttacker(..) => false,
+        PreventDamage | PreventCombatDamage | AllDamageAsThoughWither
+        | AttackYouUnlessControllerPaysPerAttacker(..) => false,
     }
 }
 

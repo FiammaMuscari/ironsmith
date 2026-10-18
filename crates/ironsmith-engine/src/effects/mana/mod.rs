@@ -2,6 +2,7 @@
 //!
 //! This module contains effects that add mana to a player's mana pool.
 
+mod activate_mana_ability_of_each_land;
 mod add_colorless_mana;
 mod add_mana;
 mod add_mana_from_commander_color_identity;
@@ -9,6 +10,8 @@ mod add_mana_of_any_color;
 mod add_mana_of_any_one_color;
 mod add_mana_of_chosen_color;
 mod add_mana_of_colors_among;
+mod add_mana_equal_to_mana_cost;
+mod add_mana_lost_this_way;
 mod add_mana_of_imprinted_colors;
 mod add_mana_of_land_produced_types;
 mod add_one_mana_of_any_color_among;
@@ -23,6 +26,7 @@ mod noted_mana_type;
 mod pay_mana;
 mod retain_mana_until_end_of_turn;
 
+pub use activate_mana_ability_of_each_land::ActivateManaAbilityOfEachLandEffect;
 pub use add_colorless_mana::AddColorlessManaEffect;
 pub use add_mana::AddManaEffect;
 pub use add_mana_from_commander_color_identity::AddManaFromCommanderColorIdentityEffect;
@@ -30,14 +34,18 @@ pub use add_mana_of_any_color::AddManaOfAnyColorEffect;
 pub use add_mana_of_any_one_color::AddManaOfAnyOneColorEffect;
 pub use add_mana_of_chosen_color::AddManaOfChosenColorEffect;
 pub use add_mana_of_colors_among::AddManaOfColorsAmongEffect;
+pub use add_mana_equal_to_mana_cost::AddManaEqualToManaCostEffect;
+pub use add_mana_lost_this_way::AddManaLostThisWayEffect;
 pub use add_mana_of_imprinted_colors::AddManaOfImprintedColorsEffect;
 pub use add_mana_of_land_produced_types::AddManaOfLandProducedTypesEffect;
 pub use add_one_mana_of_any_color_among::AddOneManaOfAnyColorAmongEffect;
 pub use add_scaled_mana::AddScaledManaEffect;
 pub use double_mana_pool::DoubleManaPoolEffect;
 pub use empty_mana_pool::EmptyManaPoolEffect;
-pub use grant_mana_ability_until_eot::GrantManaAbilityUntilEotEffect;
+pub use grant_mana_ability_until_eot::{
+    GrantManaAbilityUntilEotEffect, GrantPayLifeManaAbilityUntilEndOfTurnEffect,
+};
 pub use ironsmith_core::ManaTypeSource;
-pub use noted_mana_type::{AddManaOfNotedTypeEffect, NoteActivationManaTypeEffect};
+pub use noted_mana_type::{AddManaOfNotedTypeEffect, NoteActivationManaTypeEffect, NoteActivationManaPaymentEffect, NoteTriggeringCreatureTypeEffect};
 pub use pay_mana::PayManaEffect;
 pub use retain_mana_until_end_of_turn::RetainManaUntilEndOfTurnEffect;

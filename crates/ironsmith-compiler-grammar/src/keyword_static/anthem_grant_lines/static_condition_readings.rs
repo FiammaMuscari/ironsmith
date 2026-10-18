@@ -220,7 +220,12 @@ const READINGS: &[Reading] = &[
     Reading {
         id: RuleId::new("conjoined-static-condition"),
         head: HeadDiscriminator::Any,
-        admits: |_| true,
+        // "an instant card and a sorcery card are in your graveyard" is one
+        // existential condition per independently articled card; a generic
+        // split of the same words is a weaker reading of it.
+        admits: |input| {
+            !input.read_by("independently-articled-graveyard-cards-static-condition")
+        },
         read: |input| input.outcome(read_conjoined_static_condition(input)),
     },
 ];
@@ -689,14 +694,16 @@ fn read_fixed_static_condition_kind(
                 })
             }
             FixedStaticConditionKind::YourTurn => Ok(PredicateAst::YourTurn),
-            FixedStaticConditionKind::SourcePowerEven => Err(CardTextError::ParseError(
-                "unsupported source power parity condition (clause: 'this power is even')"
-                    .to_string(),
-            )),
-            FixedStaticConditionKind::SourcePowerOdd => Err(CardTextError::ParseError(
-                "unsupported source power parity condition (clause: 'this power is odd')"
-                    .to_string(),
-            )),
+            FixedStaticConditionKind::SourcePowerEven => Ok(PredicateAst::CountParity {
+                count: AnthemCountExpression::SourcePower,
+                even: true,
+                display: Some(display.clone()),
+            }),
+            FixedStaticConditionKind::SourcePowerOdd => Ok(PredicateAst::CountParity {
+                count: AnthemCountExpression::SourcePower,
+                even: false,
+                display: Some(display.clone()),
+            }),
             FixedStaticConditionKind::NotYourTurn => {
                 Ok(PredicateAst::Not(Box::new(PredicateAst::YourTurn)))
             }

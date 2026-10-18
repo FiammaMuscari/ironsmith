@@ -70,6 +70,9 @@ pub struct ChoiceObjectReferenceFacts {
     pub references_it: bool,
     pub references_container_it: bool,
     pub explicit_container_reference: bool,
+    /// "from among them": the container is a previously referenced group of
+    /// objects (exiled, milled, revealed), never a player's hand.
+    pub references_object_group: bool,
     pub excludes_chosen_this_way: bool,
     /// "a creature at random this Aura can enchant" (Infectious Rage): the
     /// chosen object must be a legal host for the source Aura.
@@ -190,6 +193,9 @@ pub fn parse_choice_object_clause_tokens(
         references.references_it = true;
         references.references_container_it = true;
         references.explicit_container_reference = true;
+        if suffix == ContainerReferenceSuffix::FromAmongThem {
+            references.references_object_group = true;
+        }
     }
 
     let refs = string_word_refs(&words);
@@ -222,6 +228,11 @@ pub fn parse_choice_object_clause_tokens(
     merge_from_among_pool(&mut words);
     if parse_aura_eligibility_suffix(&words) {
         words.truncate(words.len().saturating_sub(4));
+        // The relative pronoun of "a creature that this Aura could enchant"
+        // belongs to the eligibility clause, not the noun phrase.
+        if words.len() > 1 && words.last().is_some_and(|word| word.as_str() == "that") {
+            words.pop();
+        }
         references.source_aura_can_enchant = true;
     }
     match &count_source {
@@ -312,6 +323,7 @@ pub fn parse_choice_player_clause_tokens(
     let filter = match base {
         ChoicePlayerBase::Opponent => alt((
             parse_opponent_controlled_count_tail_lexed,
+            parse_opponent_most_life_among_opponents_tail_lexed,
             eof.value(PlayerFilter::Opponent),
         ))
         .parse_next(&mut input)
@@ -650,6 +662,10 @@ fn parse_aura_eligibility_suffix(words: &[String]) -> bool {
         &["this", "aura", "could", "enchant"][..],
         &["that", "aura", "can", "enchant"][..],
         &["that", "aura", "could", "enchant"][..],
+        // "a creature that this card could enchant" (Takklemaggot): the
+        // Aura names itself as a card while it is in the graveyard.
+        &["this", "card", "can", "enchant"][..],
+        &["this", "card", "could", "enchant"][..],
     ]
     .into_iter()
     .any(|phrase| phrase_is_whole(tail, phrase))
@@ -689,6 +705,9 @@ fn parse_choice_player_ordinal_prefix_lexed(input: &mut LexStream<'_>) -> usize 
             ))
             .value(0usize),
             alt((primitives::kw("other"), primitives::kw("another"))).value(1usize),
+            primitives::kw("different").value(
+                ironsmith_compiler_semantic::model::ast::DISTINCT_FROM_EVERY_PRIOR_PLAYER_CHOICE,
+            ),
             primitives::kw("second").value(1usize),
             primitives::kw("third").value(2usize),
         ))
@@ -713,6 +732,8 @@ fn parse_choice_player_base_lexed<'a>(input: &mut LexStream<'a>) -> WResult<Choi
         primitives::kw("player").value(ChoicePlayerBase::Player),
         alt((primitives::kw("opponent"), primitives::kw("opponents")))
             .value(ChoicePlayerBase::Opponent),
+        // "choose one of your opponents" (Goblin Festival) names one opponent.
+        primitives::phrase(&["one", "of", "your", "opponents"]).value(ChoicePlayerBase::Opponent),
     ))
     .parse_next(input)
 }
@@ -735,7 +756,41 @@ fn parse_opponent_controlled_count_tail_lexed(input: &mut LexStream<'_>) -> WRes
         filter: Box::new(crate::ObjectFilter::default().with_type(card_type)),
         fewer: false,
         as_you_activate: false,
+        minimum_difference: 0,
     })
+}
+
+/// "an opponent with the most life [or tied for most life] among your
+/// opponents" (The Master, Gallifrey's End; Galactus): every opponent tied
+/// for the highest life total among your opponents is eligible.
+fn parse_opponent_most_life_among_opponents_tail_lexed(
+    input: &mut LexStream<'_>,
+) -> WResult<PlayerFilter> {
+    primitives::kw("with").parse_next(input)?;
+    opt(primitives::kw("the")).parse_next(input)?;
+    primitives::phrase(&["most", "life"]).parse_next(input)?;
+    opt(primitives::phrase(&["or", "tied", "for", "most", "life"])).parse_next(input)?;
+    primitives::phrase(&["among", "your", "opponents"]).parse_next(input)?;
+    eof.parse_next(input)?;
+    Ok(PlayerFilter::MostLifeTiedAmong {
+        base: Box::new(PlayerFilter::Opponent),
+    })
+}
+
+/// The complete player phrase "an opponent with the most life among your
+/// opponents" outside a choice clause (Galactus's attack requirement).
+pub fn parse_opponent_with_most_life_among_opponents_tokens(
+    tokens: &[OwnedLexToken],
+) -> Option<PlayerFilter> {
+    primitives::probe_all(
+        tokens,
+        |input: &mut LexStream<'_>| -> WResult<PlayerFilter> {
+            alt((primitives::kw("an"), primitives::kw("a"))).parse_next(input)?;
+            primitives::kw("opponent").parse_next(input)?;
+            parse_opponent_most_life_among_opponents_tail_lexed(input)
+        },
+        "opponent-with-most-life-among-opponents",
+    )
 }
 
 fn controlled_count_card_type_lexed(input: &mut LexStream<'_>) -> WResult<CardType> {
@@ -765,6 +820,7 @@ fn target_opponent_with_more_controlled_as_you_activate_lexed(
             filter: Box::new(crate::ObjectFilter::default().with_type(card_type)),
             fewer: false,
             as_you_activate: true,
+            minimum_difference: 0,
         },
     )))
 }
@@ -778,6 +834,53 @@ pub fn parse_target_opponent_with_more_controlled_as_you_activate_tokens(
     target_opponent_with_more_controlled_as_you_activate_lexed
         .parse(LexStream::new(tokens))
         .ok()
+        .or_else(|| {
+            target_opponent_with_graveyard_margin_as_you_activate_lexed
+                .parse(LexStream::new(tokens))
+                .ok()
+        })
+}
+
+/// "target opponent who has at least two fewer creature cards in their
+/// graveyard than you do as you activate this ability" (Keeper of the Dead):
+/// each player's count is the matching cards they own in that graveyard; the
+/// margin and comparison are checked as the target is chosen.
+fn target_opponent_with_graveyard_margin_as_you_activate_lexed(
+    input: &mut LexStream<'_>,
+) -> WResult<PlayerFilter> {
+    primitives::phrase(&["target", "opponent", "who", "has"]).parse_next(input)?;
+    let margin = opt((primitives::phrase(&["at", "least"]), primitives::number_token))
+        .map(|margin| margin.map_or(0, |(_, margin)| margin))
+        .parse_next(input)?;
+    let fewer = alt((
+        primitives::kw("fewer").value(true),
+        primitives::kw("more").value(false),
+    ))
+    .parse_next(input)?;
+    let card_type = alt((
+        primitives::kw("creature").value(CardType::Creature),
+        primitives::kw("land").value(CardType::Land),
+        primitives::kw("artifact").value(CardType::Artifact),
+        primitives::kw("enchantment").value(CardType::Enchantment),
+        primitives::kw("instant").value(CardType::Instant),
+        primitives::kw("sorcery").value(CardType::Sorcery),
+    ))
+    .parse_next(input)?;
+    primitives::phrase(&["cards", "in", "their", "graveyard", "than", "you"]).parse_next(input)?;
+    opt(primitives::kw("do")).parse_next(input)?;
+    primitives::phrase(&["as", "you", "activate", "this", "ability"]).parse_next(input)?;
+    primitives::sentence_end().parse_next(input)?;
+    let mut filter = crate::ObjectFilter::default().with_type(card_type);
+    filter.zone = Some(crate::Zone::Graveyard);
+    Ok(PlayerFilter::Target(Box::new(
+        PlayerFilter::OpponentWithMoreControlledObjectsThan {
+            player: Box::new(PlayerFilter::You),
+            filter: Box::new(filter),
+            fewer,
+            as_you_activate: true,
+            minimum_difference: margin,
+        },
+    )))
 }
 
 fn parse_choice_player_filter_tail_lexed<'a>(input: &mut LexStream<'a>) -> WResult<PlayerFilter> {

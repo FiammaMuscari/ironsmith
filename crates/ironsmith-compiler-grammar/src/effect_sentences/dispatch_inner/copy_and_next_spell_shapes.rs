@@ -601,6 +601,29 @@ pub fn parse_sentence_delayed_trigger_this_turn(
     let Some(shape) = delayed_shapes::parse_delayed_this_turn_shape(tokens) else {
         return Ok(None);
     };
+    if shape.until_end_of_combat {
+        // Read the combat-scoped form through the "this turn" family, then
+        // end each delayed trigger with the combat.
+        let mut rewritten = tokens.to_vec();
+        for index in 0..rewritten.len().saturating_sub(1) {
+            if rewritten[index].is_word("this") && rewritten[index + 1].is_word("combat") {
+                rewritten[index + 1].replace_word("turn");
+            }
+        }
+        let Some(mut effects) = parse_sentence_delayed_trigger_this_turn(&rewritten)? else {
+            return Ok(None);
+        };
+        for effect in &mut effects {
+            if let EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
+                until_end_of_combat,
+                ..
+            }) = effect
+            {
+                *until_end_of_combat = true;
+            }
+        }
+        return Ok(Some(effects));
+    }
     let trigger_tokens = shape.trigger_tokens;
     let trigger_clause = LexedClause::new(trigger_tokens).trimmed();
 
@@ -675,6 +698,42 @@ pub fn parse_sentence_delayed_trigger_this_turn(
             "missing delayed trigger clause before 'this turn' (clause: '{}')",
             clause_display.trim()
         )));
+    }
+
+    // "When you cast it this turn, ..." (Havengul Lich): the watched card
+    // becomes a new object as it moves to the stack (CR 400.7, 601.2a), so
+    // the delayed trigger follows its stable identity rather than the
+    // incarnation the preceding instruction named.
+    let core_words = crate::lexer::token_word_refs(trigger_core_tokens);
+    if matches!(
+        core_words.as_slice(),
+        ["you", "cast", "it"] | ["you", "cast", "that", "card"]
+    ) {
+        let delayed_effects = parse_effect_chain(shape.effect_tokens)?;
+        if delayed_effects.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing delayed cast-it effect clause (clause: '{}')",
+                clause_display.trim()
+            )));
+        }
+        return Ok(Some(vec![EffectAst::Delayed(DelayedEffectAst::DelayedTriggerThisTurn {
+            trigger: TriggerSpec::SpellCast {
+                filter: Some(ObjectFilter::default().same_stable_id_as_tagged(
+                    crate::tag::CompilerReferenceTag::It.bind(),
+                )),
+                mana_source_filter: None,
+                caster: PlayerFilter::You,
+                timing: None,
+                during_turn: None,
+                min_spells_this_turn: None,
+                exact_spells_this_turn: None,
+                from_not_hand: false,
+            },
+            effects: delayed_effects,
+            one_shot: true,
+            until_end_of_combat: false,
+            attach_to_previous_ability: false,
+        })]));
     }
 
     let delayed_target_shape =
@@ -921,6 +980,7 @@ pub fn parse_delayed_when_that_dies_this_turn_sentence(
     let Some(shape) = delayed_shapes::parse_delayed_dies_shape(tokens) else {
         return Ok(None);
     };
+    let rebound_remainder: Option<Vec<OwnedLexToken>>;
     let (delayed_filter, remainder) = match shape {
         delayed_shapes::DelayedDiesShape::ThatReference { effect_tokens } => (None, effect_tokens),
         // CR 603.7c / 603.10a: "under your control" is checked against the
@@ -948,7 +1008,14 @@ pub fn parse_delayed_when_that_dies_this_turn_sentence(
                 .get(1)
                 .and_then(|noun| ironsmith_core::DemonstrativeAntecedentSurface::from_noun(noun));
             filter.set_demonstrative_antecedent_surface(noun);
-            (Some(filter), effect_tokens)
+            // "When the creature dies this turn, exile the creature."
+            // (Whippoorwill): a repeat of the definite subject in the body
+            // names the object that died, never a fresh battlefield filter.
+            rebound_remainder = rebind_definite_delayed_subject_repeats(subject_tokens, effect_tokens);
+            (
+                Some(filter),
+                rebound_remainder.as_deref().unwrap_or(effect_tokens),
+            )
         }
         delayed_shapes::DelayedDiesShape::ThisWay {
             subject_tokens,
@@ -994,6 +1061,40 @@ pub fn parse_delayed_when_that_dies_this_turn_sentence(
         filter: delayed_filter,
         effects: delayed_effects,
     })]))
+}
+
+/// Replace each exact repeat of a definite delayed-trigger subject ("the
+/// creature") in the trigger body with the pronoun "it", so the body binds the
+/// triggering object. Returns `None` when the body never repeats the subject.
+fn rebind_definite_delayed_subject_repeats(
+    subject_tokens: &[OwnedLexToken],
+    effect_tokens: &[OwnedLexToken],
+) -> Option<Vec<OwnedLexToken>> {
+    let subject_words = crate::lexer::token_word_refs(subject_tokens);
+    if subject_words.len() < 2 || subject_words.len() != subject_tokens.len() {
+        return None;
+    }
+    let width = subject_tokens.len();
+    let mut rewritten = Vec::with_capacity(effect_tokens.len());
+    let mut changed = false;
+    let mut index = 0;
+    while index < effect_tokens.len() {
+        let window = effect_tokens.get(index..index + width);
+        if window.is_some_and(|window| {
+            window
+                .iter()
+                .zip(subject_words.iter())
+                .all(|(token, word)| token.is_word(word))
+        }) {
+            rewritten.push(OwnedLexToken::word("it", effect_tokens[index].span));
+            index += width;
+            changed = true;
+        } else {
+            rewritten.push(effect_tokens[index].clone());
+            index += 1;
+        }
+    }
+    changed.then_some(rewritten)
 }
 
 pub fn parse_delayed_when_that_leaves_battlefield_sentence(

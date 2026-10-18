@@ -1,7 +1,7 @@
 use ironsmith_core::tag::TagKeyWalk;
 
 use crate::diagnostics::TextSpan;
-use ironsmith_core::{ChoiceCount, TagKey, Value};
+use ironsmith_core::{ChoiceCount, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
 pub enum DamageBySpec {
@@ -11,6 +11,7 @@ pub enum DamageBySpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
+#[tag_walk(player_ref)]
 pub enum PlayerAst {
     You,
     Active,
@@ -57,6 +58,8 @@ pub enum ReturnControllerAst {
 pub enum LibraryConsultModeAst {
     Reveal,
     Exile,
+    /// One-card mills repeated until the stop condition (CR 701.13a).
+    Mill,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, TagKeyWalk)]
@@ -105,6 +108,10 @@ pub enum ControlDurationAst {
     DuringNextTurn,
     AsLongAsYouControlSource,
     Forever,
+    /// "during their next combat phase" (player control only).
+    DuringNextCombatPhase,
+    /// "until this spell finishes resolving" (player control only, CR 722).
+    UntilSourceFinishesResolving,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TagKeyWalk)]
@@ -180,6 +187,9 @@ pub enum RetargetModeAst<
 > {
     All,
     OneToFixed { target: Target },
+    /// "reselect the targets at random": every target slot is refilled
+    /// at random from its legal targets.
+    AllAtRandom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, TagKeyWalk)]
@@ -214,6 +224,8 @@ pub enum PreventNextTimeDamageTargetAst {
     /// "you and/or creatures you control": the controller plus every
     /// permanent matching the filter.
     YouAndPermanents(crate::target::ObjectFilter),
+    /// "to one or more players": damage dealt to any player.
+    AnyPlayer,
     Target(TargetAst),
 }
 

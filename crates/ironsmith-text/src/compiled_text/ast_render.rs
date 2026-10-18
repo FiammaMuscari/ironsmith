@@ -720,6 +720,7 @@ fn describe_prior_exile_until_next_turn_permission_program(
         || permission.filter.is_some()
         || permission.during_turns_counter_put_on_source.is_some()
         || permission.during_turns_attacked_with.is_some()
+        || permission.during_turns_cast_another_spell
         || permission.spell_cost_increase.is_some()
         || permission.lands_enter_tapped
         || permission.max_plays.is_some()
@@ -3887,7 +3888,7 @@ mod noncombat_source_anthem_tests {
                 if initially_both {
                     assert!(game.set_battle_protector(target, alice));
                 }
-                game.refresh_continuous_state();
+                game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                 let mut dm = ChooseWalker;
                 let mut ctx = crate::effects::EffectContext::new(source, alice, &mut dm);
                 let attacker = if path == "primitive" {
@@ -3958,7 +3959,7 @@ mod noncombat_source_anthem_tests {
                 );
                 crate::effects::execute_effect(&mut game, &Effect::new(remove_battle), &mut ctx)
                     .unwrap();
-                game.refresh_continuous_state();
+                game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                 assert!(game.current_has_card_type(target, CardType::Planeswalker));
                 assert!(!game.current_has_card_type(target, CardType::Battle));
                 let actual = &game.combat.as_ref().unwrap().attackers[0].target;
@@ -4163,7 +4164,7 @@ mod noncombat_source_anthem_tests {
         let carol = crate::PlayerId::from_index(2);
         game.turn.phase = crate::game_state::Phase::Combat;
         let source = game.create_object_from_definition(&definition, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
         assert_eq!(game.current_characteristics(source).unwrap().power, Some(4));
         game.take_pending_trigger_events();
         let effect = Effect::new(crate::effects::EnterAttackingEffect::new(
@@ -4243,7 +4244,7 @@ mod noncombat_source_anthem_tests {
                     if tapped {
                         game.tap(source);
                     }
-                    game.refresh_continuous_state();
+                    game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                     assert_eq!(
                         game.current_characteristics(source).unwrap().power,
                         Some(4),
@@ -4383,7 +4384,7 @@ mod noncombat_source_anthem_tests {
                 let enemy = game.create_object_from_definition(&enemy, bob, Zone::Battlefield);
                 game.remove_summoning_sickness(source);
                 game.remove_summoning_sickness(enemy);
-                game.refresh_continuous_state();
+                game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                 assert_eq!(
                     game.current_characteristics(source).unwrap().power,
                     Some(4),
@@ -4501,7 +4502,7 @@ mod noncombat_source_anthem_tests {
                 _ => {}
             }
             game.combat = Some(combat);
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
             let chars = game.current_characteristics(source).unwrap();
             assert_eq!(
                 chars.power,
@@ -4517,7 +4518,7 @@ mod noncombat_source_anthem_tests {
             let combat = game.combat.as_ref().unwrap();
             assert!(!crate::combat_state::is_attacking(combat, source));
             assert!(!crate::combat_state::is_blocking(combat, source));
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
             assert_eq!(
                 game.current_characteristics(source).unwrap().power,
                 Some(4),
@@ -6191,7 +6192,7 @@ mod all_subtypes_scope_ladder_tests {
                         if zone == Zone::Stack {
                             game.push_to_stack(crate::game_state::StackEntry::new(id, controller));
                         }
-                        game.refresh_continuous_state();
+                        game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                         let expected = is_creature
                             && match zone {
                                 Zone::Battlefield => controller == alice,
@@ -9527,6 +9528,7 @@ fn describe_cross_segment_destroy_then_grant_blocked_by_that_creature_window(
         || !grant.lock_filter_at_resolution
         || grant.resolve_set_pt_values_at_resolution
         || grant.require_creature_target
+        || grant.grant_only_if_absent
     {
         return None;
     }
@@ -13883,6 +13885,7 @@ fn describe_cross_segment_filtered_exile_cast_then_has_ability_window(
         || grant.filter.is_some()
         || grant.during_turns_counter_put_on_source.is_some()
         || grant.during_turns_attacked_with.is_some()
+        || grant.during_turns_cast_another_spell
         || grant.spell_cost_increase.is_some()
         || grant.lands_enter_tapped
         || grant.cast_pool_is_plural
@@ -13964,13 +13967,6 @@ fn describe_cross_segment_filtered_exile_cast_window(
     let [exile_effect] = exile_segment.default_effects.as_slice() else {
         return None;
     };
-    let exile = exile_effect.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>()?;
-    let [exiled_tag] = exile.moved_tags.as_slice() else {
-        return None;
-    };
-    if exile.player != PlayerFilter::You || exile.face_down || !exile.accumulated_tags.is_empty() {
-        return None;
-    }
     // The free-cast rider is a separate effect, so the paid window has two
     // effects in the permission segment and the free window has three.
     let (matching_effect, permission_effect, free_cast_effect) =
@@ -13981,6 +13977,71 @@ fn describe_cross_segment_filtered_exile_cast_window(
             }
             _ => return None,
         };
+    let text = describe_filtered_exile_cast_parts(
+        exile_effect,
+        matching_effect,
+        permission_effect,
+        free_cast_effect,
+    )?;
+    Some((text, 2))
+}
+
+/// The same exile-then-narrowed-cast window when both sentences resolve in one
+/// segment (spells such as Meeting of the Five), followed by any other effects
+/// of that segment.
+fn describe_same_segment_filtered_exile_cast_window(
+    segments: &[crate::resolution::ResolutionSegment],
+    start: usize,
+) -> Option<(String, usize)> {
+    let segment = segments.get(start)?;
+    if segment.starts_new_source_line || !segment.self_replacements.is_empty() {
+        return None;
+    }
+    let [exile_effect, matching_effect, permission_effect, rest @ ..] =
+        segment.default_effects.as_slice()
+    else {
+        return None;
+    };
+    let (free_cast_effect, rest) = match rest.split_first() {
+        Some((first, tail))
+            if first
+                .downcast_ref::<crate::effects::GrantTaggedSpellFreeCastUntilEndOfTurnEffect>()
+                .is_some() =>
+        {
+            (Some(first), tail)
+        }
+        _ => (None, rest),
+    };
+    let head = describe_filtered_exile_cast_parts(
+        exile_effect,
+        matching_effect,
+        permission_effect,
+        free_cast_effect,
+    )?;
+    if rest.is_empty() {
+        return Some((head, 1));
+    }
+    let tail = describe_effect_list(rest);
+    let tail = tail.trim().trim_end_matches('.');
+    if tail.is_empty() {
+        return Some((head, 1));
+    }
+    Some((format!("{head}. {}", capitalize_first(tail)), 1))
+}
+
+fn describe_filtered_exile_cast_parts(
+    exile_effect: &Effect,
+    matching_effect: &Effect,
+    permission_effect: &Effect,
+    free_cast_effect: Option<&Effect>,
+) -> Option<String> {
+    let exile = exile_effect.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>()?;
+    let [exiled_tag] = exile.moved_tags.as_slice() else {
+        return None;
+    };
+    if exile.player != PlayerFilter::You || exile.face_down || !exile.accumulated_tags.is_empty() {
+        return None;
+    }
     let matching = matching_effect.downcast_ref::<crate::effects::TagMatchingObjectsEffect>()?;
     let [constraint] = matching.filter.tagged_constraints.as_slice() else {
         return None;
@@ -14013,6 +14074,7 @@ fn describe_cross_segment_filtered_exile_cast_window(
         || grant.filter.is_some()
         || grant.during_turns_counter_put_on_source.is_some()
         || grant.during_turns_attacked_with.is_some()
+        || grant.during_turns_cast_another_spell
         || grant.spell_cost_increase.is_some()
         || grant.lands_enter_tapped
         || grant.cast_pool_is_plural
@@ -14044,9 +14106,8 @@ fn describe_cross_segment_filtered_exile_cast_window(
     } else {
         ""
     };
-    Some((
-        format!("{exile_text}. You may cast {spells} from among them this turn{payment}"),
-        2,
+    Some(format!(
+        "{exile_text}. You may cast {spells} from among them this turn{payment}"
     ))
 }
 
@@ -14433,6 +14494,7 @@ fn describe_cross_segment_treasure_look_exile_permission_window(
         || grant.filter.is_some()
         || grant.during_turns_counter_put_on_source.is_some()
         || grant.during_turns_attacked_with.is_some()
+        || grant.during_turns_cast_another_spell
         || grant.spell_cost_increase.is_some()
         || grant.lands_enter_tapped
         || grant.cast_pool_is_plural
@@ -15900,6 +15962,7 @@ mod relative_player_target_consult_program_tests {
                     filter: Box::new(ObjectFilter::creature()),
                     fewer: false,
                     as_you_activate: false,
+                    minimum_difference: 0,
                 },
             )))
             .with_chooser(PlayerFilter::Active),
@@ -17715,6 +17778,7 @@ fn describe_exile_top_treasure_conditional_cast_fallback_program(
         || grant.filter.is_some()
         || grant.during_turns_counter_put_on_source.is_some()
         || grant.during_turns_attacked_with.is_some()
+        || grant.during_turns_cast_another_spell
         || grant.spell_cost_increase.is_some()
         || grant.lands_enter_tapped
         || grant.cast_pool_is_plural
@@ -18582,6 +18646,7 @@ fn describe_prevent_next_damage_then_delayed_target_counters_program(
         || !prevention.follow_up_effects.is_empty()
         || prevention.source_of_your_choice
         || prevention.protect_you_and_permanents_you_control
+        || prevention.protect_all
     {
         return None;
     }
@@ -20660,6 +20725,7 @@ fn describe_you_life_change_exile_then_play_program(
         || permission.filter.is_some()
         || permission.during_turns_counter_put_on_source.is_some()
         || permission.during_turns_attacked_with.is_some()
+        || permission.during_turns_cast_another_spell
         || permission.spell_cost_increase.is_some()
         || permission.lands_enter_tapped
         || permission.cast_pool_is_plural
@@ -22085,6 +22151,13 @@ fn describe_resolution_program_inner(
         }
         if let Some((rendered, consumed)) =
             describe_cross_segment_filtered_exile_cast_window(&program.segments, segment_index)
+        {
+            rendered_segments.push(rendered);
+            skipped_segments = consumed - 1;
+            continue;
+        }
+        if let Some((rendered, consumed)) =
+            describe_same_segment_filtered_exile_cast_window(&program.segments, segment_index)
         {
             rendered_segments.push(rendered);
             skipped_segments = consumed - 1;
@@ -29484,7 +29557,7 @@ fn describe_inline_spell_attack_or_block_damage_choice(
         || modal.mode_point_costs != [1, 1]
         || modal.disallow_previously_chosen_modes
         || modal.disallow_previously_chosen_modes_this_turn
-        || modal.distinct_player_targets_per_mode
+        || modal.distinct_player_targets_per_mode || modal.optional_choice
         || modal.conditional_mode_range.is_some()
         || modal.presentation_label.is_some()
         || modal.modes.len() != 2
@@ -31507,6 +31580,7 @@ fn describe_structural_play_from_with_mana_permission_pair(
         if permission.player != PlayerFilter::You
             || *mana_filter != grant.filter
             || permission.any_color_mana_symbol.is_some()
+            || permission.mana_symbol_as.is_some()
             || permission.other_mana_only_as_colorless
         {
             return None;
@@ -32765,6 +32839,15 @@ pub(super) fn describe_alternative_cast_line(
                 }
                 return line;
             }
+            if parts.is_empty() && method.grants_instant_timing() {
+                let line = "You may cast this spell without paying its mana cost and as though it had flash".to_string();
+                return match cast_condition.and_then(|condition| {
+                    crate::static_abilities::describe_this_spell_cost_condition(condition)
+                }) {
+                    Some(condition_text) => format!("If {condition_text}, {}", lowercase_first(&line)),
+                    None => line,
+                };
+            }
             let clause = if parts.is_empty() {
                 "cast this spell without paying its mana cost".to_string()
             } else {
@@ -32875,7 +32958,9 @@ pub(super) fn describe_alternative_cast_line(
         AlternativeCastingMethod::Escape {
             cost, exile_count, additional_cost,
         } => {
-            if *exile_count == 0 && !additional_cost.is_free() {
+            if (*exile_count == 0 || additional_cost.as_all().is_some_and(|costs| costs.len() > 1))
+                && !additional_cost.is_free()
+            {
                 let extra = capitalize_first(&describe_alternative_costs(additional_cost.costs()));
                 return match cost {
                     Some(cost) => format!("Escape—{}, {extra}", cost.to_oracle()),
@@ -33100,7 +33185,7 @@ mod audit_20260927_keyword_tests {
                     .unwrap();
                     id = game.battlefield[0];
                 }
-                game.refresh_continuous_state();
+                game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                 assert_eq!(
                     game.current_has_static_ability_id(
                         id,
@@ -35591,6 +35676,14 @@ fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
                 ability_idx += 1;
                 continue;
             }
+            // "X is ... as you cast this spell" defines X as a matching pair of
+            // bounds; the minimum repeats the sentence its maximum renders.
+            if ability_idx > 0
+                && is_defined_x_minimum_half(&def.abilities[ability_idx - 1], ability)
+            {
+                ability_idx += 1;
+                continue;
+            }
             // Miracle's linked hand trigger is part of the "Miracle {cost}"
             // keyword line rendered from the alternative casting method.
             if is_miracle_linked_trigger(def, ability) {
@@ -37087,6 +37180,34 @@ fn describe_source_line_must_attack_or_block_group(
     .then(|| format!("{} attacks or blocks each combat if able", capitalize_first(subject)))
 }
 
+/// Independent permission budgets compiled from one authored sentence (one
+/// play permission per permanent type) each carry that sentence as their
+/// captured surface. The printed line is that single sentence.
+fn describe_source_line_shared_permission_surface_group(abilities: &[Ability]) -> Option<String> {
+    if abilities.len() < 2 {
+        return None;
+    }
+    let mut shared: Option<&str> = None;
+    for ability in abilities {
+        let AbilityKind::Static(static_ability) = &ability.kind else {
+            return None;
+        };
+        let model = static_ability.compiled_model()?;
+        let ironsmith_core::StaticAbilityPayload::Grants(spec) = &model.payload else {
+            return None;
+        };
+        if !spec.cast_this_way_grants.is_empty() {
+            return None;
+        }
+        let surface = spec.filtered_zone_surface.as_deref()?;
+        if shared.is_some_and(|shared| shared != surface) {
+            return None;
+        }
+        shared = Some(surface);
+    }
+    shared.map(str::to_string)
+}
+
 fn describe_source_line_free_cast_and_flash_group(abilities: &[Ability]) -> Option<String> {
     let [first, second] = abilities else {
         return None;
@@ -38105,6 +38226,7 @@ fn describe_source_line_static_group(
         .or_else(|| describe_source_line_anthem_untap_restriction_group(members))
         .or_else(|| describe_source_line_anthem_goad_group(members))
         .or_else(|| describe_source_line_free_cast_and_flash_group(members))
+        .or_else(|| describe_source_line_shared_permission_surface_group(members))
         .or_else(|| describe_source_line_must_attack_or_block_group(members, subject))
         .or_else(|| describe_source_line_turn_partitioned_source_base_pt_group(members, subject))
         .or_else(|| describe_source_line_attack_partitioned_characteristic_pt_group(members, subject))
@@ -43165,7 +43287,8 @@ fn describe_structural_station_keyword(ability: &Ability) -> Option<&'static str
     {
         return None;
     }
-    let Value::PowerOf(source) = put.amount.unhinted() else {
+    let (Value::PowerOf(source) | Value::StationContributionOf(source)) = put.amount.unhinted()
+    else {
         return None;
     };
     match source.unhinted() {
@@ -43361,6 +43484,31 @@ fn ability_precedes_spell_resolution(ability: &Ability) -> bool {
                     | crate::static_abilities::StaticAbilityId::DraftRuleText
                     | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
             )
+    )
+}
+
+fn is_defined_x_minimum_half(previous: &Ability, ability: &Ability) -> bool {
+    let (AbilityKind::Static(previous), AbilityKind::Static(current)) =
+        (&previous.kind, &ability.kind)
+    else {
+        return false;
+    };
+    let (Some(previous), Some(current)) = (previous.compiled_model(), current.compiled_model())
+    else {
+        return false;
+    };
+    matches!(
+        (&previous.payload, &current.payload),
+        (
+            ironsmith_core::StaticAbilityPayload::ThisSpellXMaximum {
+                display: maximum_display,
+                ..
+            },
+            ironsmith_core::StaticAbilityPayload::ThisSpellXMinimum {
+                display: minimum_display,
+                ..
+            },
+        ) if maximum_display == minimum_display
     )
 }
 
@@ -44581,7 +44729,7 @@ mod self_replacement_rendering_tests {
                 let target = game.create_object_from_definition(&subject, owner, Zone::Battlefield);
                 game.set_current_controller(target, alice)
                     .expect("finite controller fixture must refresh successfully");
-                game.refresh_continuous_state();
+                game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
                 assert_eq!(game.current_controller(target), Some(alice));
                 let stable = game.object(target).unwrap().stable_id;
                 let before_records = game.turn_store.turn_history.event_records.len();

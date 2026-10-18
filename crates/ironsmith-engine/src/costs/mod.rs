@@ -63,7 +63,7 @@ pub use dynamic_mana::DynamicManaPaymentCost;
 pub use mana::ManaPaymentCost;
 pub(crate) use mana::{
     pay_mana_cost_with_choices, pay_mana_cost_with_choices_and_outputs,
-    pay_mana_cost_with_choices_in_context,
+
 };
 
 use crate::color::ColorSet;
@@ -525,7 +525,10 @@ impl Cost {
 
     /// Create a mill cost.
     pub fn mill(count: u32) -> Self {
-        Self::validated_effect(crate::effect::Effect::mill(count as i32))
+        // The milled cards are the cost's result ("the milled card").
+        Self::validated_effect(
+            crate::effect::Effect::mill(count as i32).tag(ironsmith_core::tag::COST_MILLED_TAG),
+        )
     }
 
     // ========================================================================

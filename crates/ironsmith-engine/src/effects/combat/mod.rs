@@ -11,6 +11,7 @@
 
 mod assign_no_combat_damage;
 mod enter_attacking;
+mod exchange_blocks;
 mod exchange_values;
 mod fight;
 mod goad;
@@ -29,6 +30,9 @@ mod prevent_damage;
 pub(crate) mod prevention_helpers;
 mod become_blocked;
 mod remove_from_combat;
+mod unblock_sole_blocked;
+mod random_pile_blocks;
+mod block_attacker_of_choice;
 mod reselect_attack_target;
 mod set_base_power_toughness;
 
@@ -55,4 +59,8 @@ pub use prevent_damage::PreventDamageEffect;
 pub use become_blocked::BecomeBlockedEffect;
 pub use remove_from_combat::RemoveFromCombatEffect;
 pub use reselect_attack_target::ReselectAttackTargetEffect;
+pub use exchange_blocks::ExchangeBlocksEffect;
+pub use unblock_sole_blocked::UnblockSoleBlockedAttackersEffect;
+pub use random_pile_blocks::DeclareBlockersByRandomPilesThisTurnEffect;
+pub use block_attacker_of_choice::BlockAttackerOfChoiceEffect;
 pub use set_base_power_toughness::SetBasePowerToughnessEffect;

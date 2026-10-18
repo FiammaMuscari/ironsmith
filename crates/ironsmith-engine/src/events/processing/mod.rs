@@ -33,6 +33,7 @@ use crate::object::CounterType;
 use crate::replacement::{
     ReplacementAction, ReplacementEffect, ReplacementEffectId, ReplacementEffectKey,
 };
+#[cfg(test)]
 use crate::types::CardType;
 use crate::zone::Zone;
 use application::{
@@ -132,26 +133,40 @@ fn apply_enter_counter_choice_response(
     source: ObjectId,
     counter_types: &[CounterType],
     count: &crate::effect::Value,
+    kinds: u32,
 ) -> Event {
-    let Some(counter_type) = response
-        .selected_option_index()
-        .and_then(|index| counter_types.get(index))
-        .copied()
-        .or_else(|| counter_types.first().copied())
-    else {
-        return event;
-    };
-    let resolved_count = application::resolve_value_for_etb_for_choice(count, game, source);
-    apply_trait_enter_with_counters(&event, counter_type, resolved_count, &[], &[]).unwrap_or(event)
-}
-
-impl InteractiveReplacementResponse {
-    fn selected_option_index(&self) -> Option<usize> {
-        match self {
-            InteractiveReplacementResponse::Options(selected) => selected.first().copied(),
-            _ => None,
+    // "your choice of two different counters ... from among" (Grimdancer):
+    // every selected kind is distinct, and each gets `count` counters.
+    let wanted = (kinds.max(1) as usize).min(counter_types.len());
+    let mut chosen: Vec<CounterType> = Vec::new();
+    if let InteractiveReplacementResponse::Options(selected) = response {
+        for index in selected {
+            if let Some(counter_type) = counter_types.get(*index).copied()
+                && !chosen.contains(&counter_type)
+                && chosen.len() < wanted
+            {
+                chosen.push(counter_type);
+            }
         }
     }
+    for counter_type in counter_types {
+        if chosen.len() >= wanted {
+            break;
+        }
+        if !chosen.contains(counter_type) {
+            chosen.push(*counter_type);
+        }
+    }
+    if chosen.is_empty() {
+        return event;
+    }
+    let resolved_count = application::resolve_value_for_etb_for_choice(count, game, source);
+    let mut current = event;
+    for counter_type in chosen {
+        current = apply_trait_enter_with_counters(&current, counter_type, resolved_count, &[], &[])
+            .unwrap_or(current);
+    }
+    current
 }
 
 pub(super) fn tribute_opponents(game: &GameState, controller: PlayerId) -> Vec<PlayerId> {
@@ -176,6 +191,7 @@ pub(super) fn counter_choice_context(
     source: ObjectId,
     controller: PlayerId,
     counter_types: &[CounterType],
+    kinds: u32,
 ) -> crate::decisions::context::DecisionContext {
     let source_name = tribute_source_name(game, source);
     let options = counter_types
@@ -188,14 +204,20 @@ pub(super) fn counter_choice_context(
             )
         })
         .collect();
+    let picks = (kinds.max(1) as usize).min(counter_types.len().max(1));
+    let prompt = if picks > 1 {
+        format!("Choose {picks} different counter types for {source_name}")
+    } else {
+        format!("Choose a counter type for {source_name}")
+    };
     crate::decisions::context::DecisionContext::SelectOptions(
         crate::decisions::context::SelectOptionsContext::new(
             controller,
             Some(source),
-            format!("Choose a counter type for {source_name}"),
+            prompt,
             options,
-            1,
-            1,
+            picks,
+            picks,
         ),
     )
 }
@@ -306,6 +328,16 @@ pub(crate) fn replacement_effect_choice_description(
             let names: Vec<_> = templates
                 .iter()
                 .filter_map(|template| {
+                    if let Some(copy) =
+                        template.downcast_ref::<crate::effects::CreateTokenCopyEffect>()
+                        && let crate::target::ChooseSpec::SpecificObject(id) = copy.target.base()
+                    {
+                        return Some(format!(
+                            "copy of {}",
+                            game.current_name(*id)
+                                .unwrap_or_else(|| "Unknown object".to_string())
+                        ));
+                    }
                     template
                         .downcast_ref::<crate::effects::CreateTokenEffect>()
                         .map(|create| create.token.card.name.clone())
@@ -861,7 +893,7 @@ fn retain_additional_programs(
 
 fn process_event_direct(
     game: &mut GameState,
-    mut event: Event,
+    event: Event,
     state: &mut TraitEventProcessingState,
     additional_effects: &[ReplacementEffect],
     event_source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
@@ -1026,7 +1058,9 @@ fn process_event_direct_inner(
 
         // When multiple replacement effects are tied at the highest priority,
         // the affected player/controller chooses which one to apply next.
-        if at_highest.len() > 1 || at_highest[0].replacement.needs_mana_color_choice() {
+        if at_highest.len() > 1 || at_highest[0].replacement.needs_mana_color_choice()
+            || at_highest[0].optional_by_controller
+        {
             let affected_player = event.inner().affected_player(game);
             let effect_ids: Vec<_> = at_highest.iter().map(|e| e.id).collect();
 
@@ -2737,6 +2771,19 @@ fn trait_effect_matches_event(
         .effect_store
         .replacement_effects
         .available_in_damage_occurrence(effect.id)
+    {
+        return Ok(None);
+    }
+
+    // "Damage that would be dealt to that creature can't be ... dealt instead
+    // to another permanent or player": redirection replacements don't apply.
+    if matches!(
+        effect.replacement,
+        ReplacementAction::Redirect { .. } | ReplacementAction::RedirectDamageAmount { .. }
+    ) && let Some(damage) =
+        crate::events::downcast_event::<crate::events::DamageEvent>(event.inner())
+        && (!game.can_redirect_damage_to(damage.target)
+            || !game.can_redirect_damage_from_to(damage.source, damage.target, damage.is_combat))
     {
         return Ok(None);
     }
@@ -5003,6 +5050,14 @@ fn prepare_zone_change_with_context_inner(
     // Exile and command renew identity even without changing zones (400.8/400.10).
     if from == to && !matches!(to, Zone::Exile | Zone::Command) {
         return Ok(PreparedEventOutcome::pure(EventOutcome::NotApplicable));
+    }
+    // "Triggered abilities you control can't cause you to exile ...": a
+    // protected permanent is not exiled by a matching cause at all.
+    if from == Zone::Battlefield
+        && to == Zone::Exile
+        && !game.can_be_exiled_with_cause(object, &cause)
+    {
+        return Ok(PreparedEventOutcome::pure(EventOutcome::Prevented));
     }
     // Freeze lookback before an entry/replacement program can change sources.
     let pre_event_lookback = match inherited_lookback {
@@ -7475,7 +7530,8 @@ fn process_with_dm_and_additional_effects_and_applied_state_inner(
                 // Determine which effect to apply
                 let chosen_index = if applicable_effects.len() == 1
                     && find_effect_for_choice(game, additional_effects, applicable_effects[0])
-                        .is_some_and(|effect| effect.replacement.needs_mana_color_choice())
+                        .is_some_and(|effect| effect.replacement.needs_mana_color_choice()
+                            || effect.optional_by_controller)
                 {
                     vec![0]
                 } else {
@@ -7537,6 +7593,31 @@ fn process_with_dm_and_additional_effects_and_applied_state_inner(
                 };
 
                 let original_effect = chosen_effect.clone();
+                if chosen_effect.optional_by_controller {
+                    let question = crate::decisions::context::BooleanContext::new(
+                        chosen_effect.controller,
+                        Some(chosen_effect.source),
+                        format!("Apply {}?", replacement_effect_choice_description(game, &chosen_effect)),
+                    );
+                    let apply = dm.decide_boolean(game, &question);
+                    if dm.awaiting_choice() {
+                        return Ok(TraitEventResult::NeedsChoice {
+                            player,
+                            applicable_effects,
+                            event: boxed_event,
+                            applied_effects: state.applied_effects.clone(),
+                            applied_effect_keys: state.applied_effect_keys.clone(),
+                            zone_change_context: state.zone_change_context.clone(),
+                        });
+                    }
+                    if !apply {
+                        // Declining excludes this occurrence for this event,
+                        // without using up a registered one-shot replacement.
+                        mark_applied_replacement_choice(state, &original_effect);
+                        current_event = *boxed_event;
+                        continue;
+                    }
+                }
                 if chosen_effect.replacement.needs_mana_color_choice() {
                     let Some(color) =
                         choose_mana_rewrite_color(game, dm, &chosen_effect, &boxed_event)?
@@ -8340,6 +8421,16 @@ impl crate::events::ReplacementMatcher for PreventionShieldReplacementMatcher {
             }
             (crate::color::ColorSet::COLORLESS, Vec::new())
         };
+        // Silhouette: only damage whose causing spell or ability targets the
+        // damaged object (CR 115.1, 615.1).
+        if shield.damage_filter.cause_targets_protected {
+            let DamageTarget::Object(object) = damage.target else {
+                return false;
+            };
+            if !damage.cause.targeted_objects.contains(&object) {
+                return false;
+            }
+        }
         shield.damage_filter.matches(
             damage.is_combat,
             damage.source,
@@ -8441,8 +8532,10 @@ fn collect_simultaneous_prevention_allocations(
         for (index, item) in events.iter().enumerate() {
             if item.amount == 0
                 || item.unpreventable
-                || !game.can_prevent_damage_from(
+                || !game.can_prevent_damage_to(item.target)
+                || !game.can_prevent_damage_from_to(
                     item.source,
+                    Some(item.target),
                     item.is_combat,
                     item.source_snapshot.as_ref(),
                 )
@@ -8690,6 +8783,24 @@ fn process_simultaneous_damage_assignments_with_completion<R>(
     game.clear_pending_decision_controllers();
     let checkpoint = game.clone();
     let result = (|| {
+        let mut events = events.to_vec();
+        for item in &mut events {
+            if item.amount == 0 { continue; }
+            let expose_source = game.object_requires_turn_face_up_before_action(item.source);
+            if !game.prepare_turn_face_up_before_action(item.source, dm)
+                .map_err(|error| DamageProcessingError { source: item.source, error })?
+            { return Ok(PreparedDamageProcessingBatch::empty()); }
+            if let DamageTarget::Object(target) = item.target {
+                if !game.prepare_turn_face_up_before_action(target, dm)
+                    .map_err(|error| DamageProcessingError { source: target, error })?
+                { return Ok(PreparedDamageProcessingBatch::empty()); }
+            }
+            if expose_source {
+                item.source_snapshot = game.object(item.source).map(|object|
+                    crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, game));
+            }
+        }
+        let events = events.as_slice();
         game.update_cant_effects();
         game.update_replacement_effects()
             .map_err(|error| DamageProcessingError {
@@ -9001,8 +9112,9 @@ fn prepare_damage_proposal(
     source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
 ) -> Event {
     // Check if damage can be prevented
-    let can_prevent =
-        !unpreventable && game.can_prevent_damage_from(source, is_combat, source_snapshot);
+    let can_prevent = !unpreventable
+        && game.can_prevent_damage_to(target)
+        && game.can_prevent_damage_from_to(source, Some(target), is_combat, source_snapshot);
 
     // Create the event using the new Event type
     let event = if can_prevent {
@@ -9058,6 +9170,26 @@ fn process_damage_assignments_with_event_with_source_snapshot_opts_with_dm_and_a
     batch_allocation: Option<&PreventionBatchAllocation>,
     replacement_scope: &crate::effects::ReplacementExecutionContext,
 ) -> Result<ProcessedDamageResult, crate::effects::ExecutionError> {
+    let expose_source = amount > 0 && game.object_requires_turn_face_up_before_action(source);
+    if amount > 0 {
+        let ready = game.prepare_turn_face_up_before_action(source, dm)?;
+        let ready = if ready {
+            if let DamageTarget::Object(target) = target {
+                game.prepare_turn_face_up_before_action(target, dm)?
+            } else { true }
+        } else { false };
+        if !ready {
+            return Ok(ProcessedDamageResult {
+                assignments: Vec::new(), replacement_prevented: true,
+                original_payloads: Vec::new(), payload_outcome: None, programs: Vec::new(),
+            });
+        }
+    }
+    let exposed_snapshot = if expose_source {
+        game.object(source).map(|object|
+            crate::snapshot::ObjectSnapshot::from_object_with_calculated_characteristics(object, game))
+    } else { None };
+    let source_snapshot = exposed_snapshot.as_ref().or(source_snapshot);
     game.update_cant_effects();
     game.update_replacement_effects()
         .map_err(crate::effects::ExecutionError::ContinuousDiscovery)?;
@@ -9228,6 +9360,18 @@ fn finish_processed_damage_result(
                 }
         });
         if final_damage > 0 && target_is_in_source_range {
+            let ready = game.prepare_turn_face_up_before_action(replaced.source, dm)?;
+            let ready = if ready {
+                if let DamageTarget::Object(target) = replaced.target {
+                    game.prepare_turn_face_up_before_action(target, dm)?
+                } else { true }
+            } else { false };
+            if !ready {
+                return Ok(ProcessedDamageResult {
+                    assignments: Vec::new(), replacement_prevented: true,
+                    original_payloads: Vec::new(), payload_outcome: None, programs: Vec::new(),
+                });
+            }
             assignments.push(ProcessedDamageAssignment {
                 target: replaced.target,
                 amount: final_damage,
@@ -9806,7 +9950,7 @@ pub(crate) fn prepare_token_creation_deferred(
     cause: crate::events::cause::EventCause,
     ctx: &mut crate::effects::ExecutionContext,
 ) -> Result<PreparedTokenCreation, crate::effects::ExecutionError> {
-    use crate::effect::{EffectOutcome, OutcomeStatus, OutcomeValue};
+    use crate::effect::{EffectOutcome,  OutcomeValue};
     use crate::effects::ExecutionError;
     use crate::events::{CreateTokensEvent, downcast_event};
     if count == 0 || ctx.decision_maker.awaiting_choice() {
@@ -10338,7 +10482,7 @@ fn prepare_etb_replacements_inner(
         // One-shot instructions establish the original event before replacements
         // (such as entering untapped) modify it.
         let enters_tapped = initial_enters_tapped;
-        let mut enters_with_counters: Vec<(CounterType, u32)> = initial_enters_with_counters;
+        let enters_with_counters: Vec<(CounterType, u32)> = initial_enters_with_counters;
 
         // Gather ETB replacement effects from the object's abilities.
         let mut object_etb_effects: Vec<ReplacementEffect> = Vec::new();
@@ -10559,6 +10703,16 @@ fn prepare_etb_replacements_inner(
                     &mut completed_program_outputs,
                     choices.as_enters_outputs.iter().cloned(),
                 );
+                // "put this creature into its owner's graveyard instead of
+                // onto the battlefield" (Frankenstein's Monster): the entry
+                // program redirected the entering object (CR 614.1c).
+                if let Some(destination) = choices.entry_redirect.take() {
+                    return Ok(EtbEventResult {
+                        prevented: true,
+                        new_destination: Some(destination),
+                        ..Default::default()
+                    });
+                }
                 crate::effects::PublishedEffectOutputs::append_distinct(
                     &mut resumed.program_choices.as_enters_outputs,
                     choices.as_enters_outputs.drain(..),
@@ -11060,6 +11214,7 @@ fn prepare_etb_replacements_inner(
                             if let ReplacementAction::EnterWithCounterChoice {
                                 counter_types,
                                 count,
+                                kinds,
                             } = &chosen_effect.replacement
                             {
                                 current_event = apply_enter_counter_choice_response(
@@ -11069,6 +11224,7 @@ fn prepare_etb_replacements_inner(
                                     chosen_effect.source,
                                     counter_types,
                                     count,
+                                    *kinds,
                                 );
                                 if dm.awaiting_choice() {
                                     return Ok(EtbEventResult {
@@ -11248,6 +11404,7 @@ fn prepare_etb_replacements_inner(
                     if let Some(ReplacementAction::EnterWithCounterChoice {
                         counter_types,
                         count,
+                        kinds,
                     }) = find_effect_for_choice(game, &current_additional_effects, effect_id)
                         .map(|effect| effect.replacement)
                     {
@@ -11258,6 +11415,7 @@ fn prepare_etb_replacements_inner(
                             object_id,
                             &counter_types,
                             &count,
+                            kinds,
                         );
                         if dm.awaiting_choice() {
                             return Ok(EtbEventResult {
@@ -12508,9 +12666,9 @@ mod tests {
                 crate::continuous::EffectTarget::AllCreatures,
                 crate::continuous::Modification::AddAbility(StaticAbility::flying()),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let entering = create_creature_in_zone(&mut game, "Entering Bear", alice, Zone::Hand, 2, 2);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         // ETB processing must inspect the entering object's own characteristics
         // once for replacement abilities. Warm that required lookup so the
         // counter window below isolates external battlefield-source discovery.
@@ -13975,7 +14133,7 @@ mod tests {
                 crate::continuous::EffectTarget::Specific(damage_source),
                 crate::continuous::Modification::SetColors(crate::color::ColorSet::RED),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         assert_eq!(
             game.calculated_characteristics(damage_source)
                 .expect("damage source should have calculated characteristics")
@@ -14465,6 +14623,7 @@ mod tests {
                 ReplacementAction::EnterWithCounterChoice {
                     counter_types: vec![CounterType::PlusOnePlusOne, CounterType::Charge],
                     count: crate::effect::Value::Fixed(2),
+                    kinds: 1,
                 },
             ),
         );

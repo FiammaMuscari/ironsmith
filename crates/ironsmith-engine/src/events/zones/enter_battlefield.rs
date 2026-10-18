@@ -442,6 +442,9 @@ impl EnterBattlefieldEvent {
             if let Some(subtype) = choices.chosen_basic_land_type {
                 prospective.set_chosen_basic_land_type(self.object, subtype);
             }
+            if let Some(subtypes) = choices.chosen_basic_land_type_sequence.clone() {
+                prospective.set_chosen_basic_land_type_sequence(self.object, subtypes);
+            }
             if let Some(subtype) = choices.chosen_land_type {
                 prospective.set_chosen_land_type(self.object, subtype);
             }
@@ -459,6 +462,12 @@ impl EnterBattlefieldEvent {
             }
             if let Some(option) = &choices.chosen_named_option {
                 prospective.set_chosen_named_option(self.object, option.clone());
+            }
+            if !choices.player_named_options.is_empty() {
+                prospective.set_player_named_option_choices(
+                    self.object,
+                    choices.player_named_options.clone(),
+                );
             }
             for option in &choices.power_toughness_choices {
                 if let Some(object) = prospective.object_mut(self.object) {
@@ -706,6 +715,7 @@ mod entry_granted_occurrence_tests {
         game.effect_store.replacement_effects.add_resolution_effect(crate::replacement::ReplacementEffect::with_matcher(
             entrant, alice, crate::events::zones::matchers::ThisWouldEnterBattlefieldMatcher,
             crate::replacement::ReplacementAction::EnterWithCounters {
+                counter_kinds_from: None,
                 counter_type: CounterType::PlusOnePlusOne, count: crate::effect::Value::Fixed(0),
                 count_condition: None, otherwise_count: None, added_subtypes: Vec::new(), added_abilities: grants,
             },

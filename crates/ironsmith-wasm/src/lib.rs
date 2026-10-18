@@ -39,7 +39,7 @@ use ironsmith::decisions::context::{
 use ironsmith::game_loop::{
     ActivationStage, CastStage, PendingPriorityContinuation, PriorityActionPerfMetrics,
     PriorityAdvancePerfMetrics, PriorityLoopState, PriorityResponse, advance_priority_with_dm,
-    apply_decision_context_with_dm, apply_priority_response_with_dm, drain_pending_trigger_events,
+    apply_decision_context_with_dm, apply_priority_response_with_dm,
     last_priority_action_perf, last_priority_advance_perf,
 };
 use ironsmith::game_state::{GameState, HiddenInfoOperation, StackEntry, Target};
@@ -1643,7 +1643,9 @@ fn library_top_revealed_by_static_ability(game: &GameState, player: PlayerId) ->
 }
 
 fn hand_revealed_by_static_ability(game: &GameState, player: PlayerId) -> bool {
-    game.object_store.battlefield.iter().any(|id| {
+    // A resolved "play with their hand revealed for as long as ..." effect
+    // (Stromgald Spy) opens the same public hand view as the statics.
+    game.hand_revealed_by_effect(player) || game.object_store.battlefield.iter().any(|id| {
         !game.is_phased_out(*id) && game.object(*id).is_some_and(|object| {
             let controller = game.current_controller(*id).unwrap_or(object.owner);
             game.object_has_static_ability_id(*id, StaticAbilityId::PlayersPlayWithHandsRevealed)
@@ -1685,6 +1687,31 @@ fn append_static_visibility_views(game: &GameState, views: &mut Vec<ActiveViewed
                         description: "Static ability allows viewing the top card of a library"
                             .to_string(),
                     });
+                }
+            }
+            // A resolved permission over another player's library top
+            // ("look at the top card of their library any time") is a
+            // private view for its beneficiary only.
+            if !library_top_revealed_by_static_ability(game, player.id) {
+                for viewer in game.players.iter().map(|other| other.id).filter(|id| *id != player.id) {
+                    if game
+                        .effect_store
+                        .grant_registry
+                        .grants_private_library_top_view_of(game, viewer, player.id)
+                    {
+                        views.push(ActiveViewedCards {
+                            acknowledged_by: Vec::new(),
+                            viewer,
+                            subject: player.id,
+                            zone: Zone::Library,
+                            cards: vec![top_card],
+                            card_stable_ids: stable_ids_for_viewed_cards(game, &[top_card]),
+                            public: false,
+                            source: None,
+                            description: "Permission allows viewing the top card of another player's library"
+                                .to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -2783,6 +2810,9 @@ enum SpecialActionRef {
     },
     PerformRepeatableManaPaymentAction {
         action_index: usize,
+    },
+    DiscardFromHand {
+        card_id: u64,
     },
 }
 
@@ -3907,6 +3937,11 @@ struct CounterAllocation {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum UiCommand {
+    CancelPriorityYield { player: u8 },
+    PriorityYield {
+        mode: wasm_game_impl::PassMode,
+        stops: Vec<String>,
+    },
     PriorityAction {
         #[serde(default)]
         action_index: Option<usize>,
@@ -4223,6 +4258,8 @@ enum ReplayOutcome {
 
 fn ui_command_kind(command: &UiCommand) -> &'static str {
     match command {
+        UiCommand::CancelPriorityYield { .. } => "cancel_priority_yield",
+        UiCommand::PriorityYield { .. } => "priority_yield",
         UiCommand::PriorityAction { .. } => "priority_action",
         UiCommand::SelectTargets { .. } => "select_targets",
         UiCommand::SelectOptions { .. } => "select_options",
@@ -4761,6 +4798,7 @@ struct GrandMeleeHostLane {
 
 #[wasm_bindgen]
 pub struct WasmGame {
+    pass_intents: std::collections::BTreeMap<u8, wasm_game_impl::PassIntent>,
     /// Internal dispatch output policy; never persisted in a gameplay savepoint.
     previewing_crypto_requirements: bool,
     runtime_identity_origin_available: bool,
@@ -4882,6 +4920,8 @@ pub struct WasmGame {
     /// Timing breakdown for the most recent dispatch-like engine call.
     last_dispatch_perf: Option<DispatchPerfMetrics>,
     snapshot_object_view_cache: Box<SnapshotObjectViewCache>,
+    /// Hidden cards each player has seen, for presentation only.
+    hidden_card_memory: HiddenCardMemory,
     #[cfg(target_arch = "wasm32")]
     snapshot_js_encoding_cache: SnapshotJsEncodingCache,
     manabrew_game_id: String,
@@ -5767,6 +5807,8 @@ impl PregameState {
 
 mod wasm_game_impl;
 mod static_top_visibility;
+mod hidden_card_memory;
+use hidden_card_memory::HiddenCardMemory;
 use static_top_visibility::StaticLibraryTopVisibilityWindow;
 use wasm_game_impl::*;
 

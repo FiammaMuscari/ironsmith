@@ -111,7 +111,13 @@ impl GameState {
         // Other zones retain their printed/granted source abilities.
         for effect in effects {
             let decline = effect.optional_decline_effect();
-            for alternative in effect.token_template_alternatives() {
+            let game: &Self = self;
+            let alternatives: Vec<_> = effect
+                .token_template_alternatives()
+                .into_iter()
+                .flat_map(|alternative| alternative.token_copy_choice_alternatives(game))
+                .collect();
+            for alternative in alternatives {
                 self.effect_store
                     .replacement_effects
                     .add_static_ability_effect(alternative);
@@ -204,6 +210,9 @@ impl GameState {
         &self,
     ) -> Result<Self, crate::static_ability_processor::StaticEffectDiscoveryError> {
         let mut snapshot = self.clone();
+        snapshot.update_cant_effects();
+        snapshot.update_static_ability_effects()?;
+        snapshot.update_cant_effects();
         snapshot.update_static_ability_effects()?;
         snapshot.update_cant_effects();
         Ok(snapshot)
@@ -238,8 +247,11 @@ impl GameState {
         }
         let checkpoint = self.clone();
         let result = (|| {
-            // Update continuous effects from static abilities
+            // Refresh prohibitions before discovering or committing new
+            // controller assignments; source tap-state changes are live now.
+            self.update_cant_effects();
             self.update_static_ability_effects()?;
+            self.update_cant_effects();
             self.reconcile_continuous_control_changes();
 
             // A continuous effect may itself inspect summoning-sickness state.
@@ -247,6 +259,7 @@ impl GameState {
             // the newly sick permanent in this same refresh transaction.
             if !self.continuous_state_is_clean() {
                 self.update_static_ability_effects()?;
+                self.update_cant_effects();
                 self.reconcile_continuous_control_changes();
             }
 
@@ -258,6 +271,7 @@ impl GameState {
 
             if self.apply_day_nightbound_transformations_with_current_restrictions() {
                 self.update_static_ability_effects()?;
+                self.update_cant_effects();
                 self.reconcile_continuous_control_changes();
                 self.update_replacement_effects()?;
                 self.update_cant_effects();
@@ -271,6 +285,7 @@ impl GameState {
                 | self.grant_enduring_stories_from_permanent_storied()
             {
                 self.update_static_ability_effects()?;
+                self.update_cant_effects();
                 self.reconcile_continuous_control_changes();
                 self.update_replacement_effects()?;
                 self.update_cant_effects();
@@ -693,7 +708,9 @@ impl GameState {
             if !permission.allows(self, payer, source) {
                 continue;
             }
-            if let Some(symbol) = permission.permission.any_color_mana_symbol {
+            if let Some((symbol, as_symbol)) = permission.permission.mana_symbol_as {
+                policy.add_symbol_as_symbol(symbol, as_symbol);
+            } else if let Some(symbol) = permission.permission.any_color_mana_symbol {
                 policy.add_symbol_as_any_color(symbol);
             } else {
                 policy.allow_mode(permission.permission.mode);
@@ -945,8 +962,7 @@ impl GameState {
         reason: crate::costs::PaymentReason,
     ) -> bool {
         self.player_can_pay_black_with_life(payer, source)
-            && (!reason.is_cast_or_ability_payment()
-                || !self.player_cant_pay_life_to_cast_or_activate(payer))
+            && !self.player_cant_pay_life_for_payment_reason(payer, reason)
     }
 
     pub fn minimum_total_spell_mana_payment(&self) -> Option<u32> {
@@ -975,6 +991,40 @@ impl GameState {
                 .with_iterated_player(rule.iterated_player).with_tagged_objects(&rule.tagged_objects);
             filter.matches(subject, &context, self)
         }))
+    }
+
+    /// Whether a life-payment prohibition on casting/activating also covers
+    /// mana abilities: every one does except "to activate abilities that
+    /// aren't mana abilities" (Karn's Sylex).
+    pub fn player_cant_pay_life_for_mana_abilities(&self, player: PlayerId) -> bool {
+        if self.scoped_cast_or_activate_payment_restrictions().is_none_or(|rules| {
+            rules.iter().any(|rule| {
+                rule.payer == player && rule.pay_life && !rule.exempt_mana_abilities
+            })
+        }) {
+            return true;
+        }
+        if self.player(player).is_none() || !self.may_have_cast_or_activate_payment_restriction() {
+            return false;
+        }
+        self.with_active_battlefield_static_abilities(|_, _, ability| {
+            ability
+                .forbids_paying_life_for_cast_or_activate()
+                .then_some(true)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Whether `player` can't pay life for a payment of this kind (casting,
+    /// activating, and, unless exempt, mana abilities).
+    pub fn player_cant_pay_life_for_payment_reason(
+        &self,
+        player: PlayerId,
+        reason: crate::costs::PaymentReason,
+    ) -> bool {
+        reason.is_cast_or_ability_payment()
+            && self.player_cant_pay_life_to_cast_or_activate(player)
+            && (!reason.is_mana_ability() || self.player_cant_pay_life_for_mana_abilities(player))
     }
 
     pub fn player_cant_pay_life_to_cast_or_activate(&self, player: PlayerId) -> bool {
@@ -1202,7 +1252,6 @@ impl GameState {
 
     fn modification_may_change_enter_as_copy_presence(modification: &Modification) -> bool {
         match modification {
-            Modification::Restriction(_) => true,
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
             | Modification::RewriteText(_)
@@ -1322,6 +1371,61 @@ impl GameState {
             && self.player(player).is_some()
     }
 
+    /// CR 614.10 (Time Vault): a tapped permanent `player` controls whose
+    /// static ability lets them skip a turn they would begin, excluding the
+    /// sources already declined at this turn boundary.
+    pub fn turn_begin_skip_offer(&self, player: PlayerId) -> Option<ObjectId> {
+        let declined = &self.turn_store.turn_begin_skip_declined;
+        self.with_active_battlefield_static_abilities(|source, controller, ability| {
+            (controller == player
+                && ability.id()
+                    == crate::static_abilities::StaticAbilityId::MaySkipTurnWhileSourceTappedThenUntap
+                && self.is_tapped(source)
+                && !declined.contains(&source))
+            .then_some(source)
+        })
+    }
+
+    /// CR 614.10 (Fasting): a permanent `player` controls whose static
+    /// ability lets them skip the draw step they would begin, with the
+    /// program to run if they do. Sources already declined at this draw step
+    /// are excluded.
+    pub fn draw_step_skip_offer(
+        &self,
+        player: PlayerId,
+    ) -> Option<(ObjectId, Vec<crate::effect::Effect>)> {
+        let declined = &self.turn_store.draw_step_skip_declined;
+        self.with_active_battlefield_static_abilities(|source, controller, ability| {
+            if controller != player
+                || ability.id()
+                    != crate::static_abilities::StaticAbilityId::MaySkipDrawStepWithFollowup
+                || declined.contains(&source)
+            {
+                return None;
+            }
+            match &ability.compiled_model()?.payload {
+                ironsmith_core::StaticAbilityPayload::MaySkipDrawStepWithFollowup {
+                    if_you_do,
+                    ..
+                } => Some((source, if_you_do.clone())),
+                _ => None,
+            }
+        })
+    }
+
+    /// CR 702.170a (Fblthp, Lost on the Range): whether `player` controls an
+    /// active permanent letting them plot nonland cards from the top of their
+    /// library.
+    pub fn player_may_plot_nonland_from_top_of_library(&self, player: PlayerId) -> bool {
+        self.with_active_battlefield_static_abilities(|_, controller, ability| {
+            (controller == player
+                && ability.id()
+                    == crate::static_abilities::StaticAbilityId::MayPlotNonlandCardsFromTopOfLibrary)
+                .then_some(())
+        })
+        .is_some()
+    }
+
     fn may_have_player_skips_upkeep_static_ability(&self) -> bool {
         use crate::ability::AbilityKind;
         use crate::static_abilities::StaticAbilityId;
@@ -1356,7 +1460,6 @@ impl GameState {
         ability_id: crate::static_abilities::StaticAbilityId,
     ) -> bool {
         match modification {
-            Modification::Restriction(_) => true,
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
             | Modification::RewriteText(_)
@@ -1598,7 +1701,7 @@ impl GameState {
         // the actual life-payment owner once X and other operands are known.
         let known_positive_life = life_amount.map_or(cost.is_life_cost(), |amount|
             matches!(amount.unhinted(), crate::effect::Value::Fixed(value) if *value > 0));
-        if known_positive_life && self.player_cant_pay_life_to_cast_or_activate(payer) {
+        if known_positive_life && self.player_cant_pay_life_for_payment_reason(payer, reason) {
             return Err(crate::cost::CostPaymentError::InsufficientLife);
         }
 
@@ -1639,9 +1742,7 @@ impl GameState {
 
         let mut pips = cost.pips().to_vec();
 
-        if reason.is_cast_or_ability_payment()
-            && self.player_cant_pay_life_to_cast_or_activate(payer)
-        {
+        if self.player_cant_pay_life_for_payment_reason(payer, reason) {
             for pip in &mut pips {
                 pip.retain(|symbol| !matches!(symbol, ManaSymbol::Life(_)));
             }
@@ -1726,6 +1827,14 @@ impl GameState {
             .filter_context_for(controller, Some(unit.source))
             .with_caster(Some(controller));
         let mut stack_filter = filter.clone();
+        // A mana restriction can name a specific card in its prior zone.
+        // Casting creates a stack incarnation; the cast-origin receipt proves
+        // that it came from that exact card, rather than a later blink.
+        if let Some(expected) = stack_filter.specific {
+            if source_id != expected && !self.cast_origin_snapshot(source_id)
+                .is_some_and(|origin| origin.object_id == expected) { return false; }
+            stack_filter.specific = None;
+        }
         if let Some(zone) = stack_filter.zone {
             if !matches!(zone, Zone::Stack | Zone::Battlefield)
                 && !self
@@ -3465,6 +3574,7 @@ impl GameState {
                     enters_with_counters,
                     granted_abilities,
                     granted_keywords,
+                    enters_with_counter_values,
                 } if self.cast_spell_filter_matches_payment_source(
                     unit,
                     filter,
@@ -3476,15 +3586,33 @@ impl GameState {
                         enters_with_counters.clone(),
                         granted_abilities.clone(),
                         granted_keywords.clone(),
+                        enters_with_counter_values.clone(),
                     ))
                 }
                 _ => None,
             })
             .collect::<Vec<_>>();
 
-        for (grant_uncounterable, enters_with_counters, granted_abilities, granted_keywords) in
-            bonuses
+        for (
+            grant_uncounterable,
+            enters_with_counters,
+            granted_abilities,
+            granted_keywords,
+            enters_with_counter_values,
+        ) in bonuses
         {
+            for (counter_type, count) in enters_with_counter_values {
+                let ability =
+                    crate::static_abilities::StaticAbility::enters_with_counters_value(
+                        counter_type,
+                        count,
+                    );
+                self.install_authored_object_ability(
+                    spell_id,
+                    crate::ability::Ability::static_ability(ability),
+                    AuthoredAbilityDuplicatePolicy::PreserveAll,
+                );
+            }
             if grant_uncounterable {
                 let ability = crate::static_abilities::StaticAbility::uncounterable();
                 self.grant_temporary_static_ability_payload_to_object_until_end_of_turn(
@@ -4545,7 +4673,6 @@ impl GameState {
             // Rewrites the whole ability list or text box, so triggered
             // abilities can appear or disappear. SetAbilities replaces the
             // existing list even when it only sets static abilities.
-            Modification::Restriction(_) => true,
             Modification::CopyOf { .. }
             | Modification::ChangeText { .. }
             | Modification::RewriteText(_)
@@ -4664,27 +4791,39 @@ impl GameState {
     /// Devotion counts colored mana symbols in mana costs. Hybrid symbols count
     /// if they include the queried color.
     pub fn devotion_to_color(&self, controller: PlayerId, color: crate::color::Color) -> usize {
+        self.devotion_to_colors(controller, color.into())
+    }
+
+    pub fn devotion_to_colors(&self, controller: PlayerId, colors: crate::color::ColorSet) -> usize {
+        if colors.is_empty() { return 0; }
         self.permanents_controlled_by(controller)
             .into_iter()
-            .filter_map(|id| self.object(id))
-            .filter_map(|obj| obj.mana_cost.as_ref())
-            .map(|mana_cost| {
-                mana_cost
+            .filter_map(|id| self.current_characteristics(id))
+            .map(|chars| {
+                let symbols = chars.mana_cost.as_ref().map(|mana_cost| mana_cost
                     .pips()
                     .iter()
                     .map(|pip| {
                         usize::from(pip.iter().copied().any(|symbol| {
-                            matches!(
-                                (symbol, color),
-                                (crate::mana::ManaSymbol::White, crate::color::Color::White)
-                                    | (crate::mana::ManaSymbol::Blue, crate::color::Color::Blue)
-                                    | (crate::mana::ManaSymbol::Black, crate::color::Color::Black)
-                                    | (crate::mana::ManaSymbol::Red, crate::color::Color::Red)
-                                    | (crate::mana::ManaSymbol::Green, crate::color::Color::Green)
-                            )
+                            let color = match symbol {
+                                crate::mana::ManaSymbol::White => crate::color::Color::White,
+                                crate::mana::ManaSymbol::Blue => crate::color::Color::Blue,
+                                crate::mana::ManaSymbol::Black => crate::color::Color::Black,
+                                crate::mana::ManaSymbol::Red => crate::color::Color::Red,
+                                crate::mana::ManaSymbol::Green => crate::color::Color::Green,
+                                _ => return false,
+                            };
+                            colors.contains(color)
                         }))
                     })
-                    .sum::<usize>()
+                    .sum::<usize>()).unwrap_or(0);
+                let bonus = chars.static_abilities.iter().filter_map(|ability| {
+                    match &ability.compiled_model()?.payload {
+                        ironsmith_core::StaticAbilityPayload::DevotionIncrease { amount } => Some(*amount as usize),
+                        _ => None,
+                    }
+                }).sum::<usize>();
+                symbols.saturating_add(bonus)
             })
             .sum()
     }

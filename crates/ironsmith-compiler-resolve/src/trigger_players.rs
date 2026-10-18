@@ -24,7 +24,9 @@ pub fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFil
                 | crate::target::ChooseSpec::SourceController => Some(PlayerFilter::IteratedPlayer),
             _ => None,
         },
-        TriggerSpec::StateBased { .. } | TriggerSpec::DayNightChanged => None,
+        TriggerSpec::StateBased { .. }
+        | TriggerSpec::DayNightChanged
+        | TriggerSpec::DamageToPlayerPrevented(_) => None,
         // Private-zone possessors name the owner, even when a stolen permanent
         // was controlled by somebody else immediately before the move.
         TriggerSpec::ZoneChange(event) => {
@@ -177,7 +179,7 @@ pub fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFil
         TriggerSpec::PlayerGivesGift(_) => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerSearchesLibrary(_) => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerShufflesLibrary { .. } => Some(PlayerFilter::IteratedPlayer),
-        TriggerSpec::PlayerTapsForMana { .. } => Some(PlayerFilter::IteratedPlayer),
+        TriggerSpec::PlayerAddsManaFromSource { .. } | TriggerSpec::PlayerTapsForMana { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerRollsToVisitAttractions { .. }
         | TriggerSpec::PlayerRollsResult { .. }
         | TriggerSpec::PlayerRollsResultMatching { .. }
@@ -286,8 +288,12 @@ pub fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFil
             Some(PlayerFilter::Defending)
         }
         // "Whenever an opponent attacks with creatures, ... that opponent":
-        // the attacking player is the only player the event names.
+        // the attacking player is the only player the event names. The same
+        // holds for a counted declaration ("Whenever another player attacks
+        // with two or more creatures, they draw a card").
         TriggerSpec::AttacksOneOrMore(filter)
+        | TriggerSpec::AttacksOneOrMoreWithMinTotal { filter, .. }
+        | TriggerSpec::AttacksOneOrMoreWithExactTotal { filter, .. }
             if filter
                 .controller
                 .as_ref()

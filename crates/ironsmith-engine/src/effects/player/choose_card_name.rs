@@ -104,17 +104,28 @@ impl EffectExecutor for ChooseCardNameEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let chooser =
             crate::effects::helpers::resolve_player_filter_as_chooser(game, &self.chooser, ctx)?;
-        let choice_ctx = TextInputContext::new(chooser, Some(ctx.source), "Choose a card name")
-            .with_placeholder("Enter a card name")
-            .require_known_value(true);
-        let chosen_name = ctx.decision_maker.decide_text(game, &choice_ctx);
-        if ctx.decision_maker.awaiting_choice() {
-            return Ok(EffectOutcome::count(0));
-        }
+        let history = game.chosen_named_option(ctx.source)
+            .map(split_chosen_card_names).unwrap_or_default();
+        let chosen_name = if self.options.is_empty() {
+            let choice_ctx = TextInputContext::new(chooser, Some(ctx.source), "Choose a card name")
+                .with_placeholder("Enter a card name").require_known_value(true);
+            ctx.decision_maker.decide_text(game, &choice_ctx)
+        } else {
+            let menu = self.options.iter()
+                .filter(|name| !self.exclude_source_history || !history.iter().any(|prior| prior.eq_ignore_ascii_case(name)))
+                .map(|name| (name.clone(), name.clone())).collect::<Vec<_>>();
+            if menu.is_empty() { return Ok(EffectOutcome::count(0)); }
+            use crate::effects::composition::scoped_choice::{select_typed_option, SingleChoicePolicy};
+            let Some(chosen) = select_typed_option(game, ctx, chooser, "Choose a card name", &menu, SingleChoicePolicy::First)? else {
+                return Ok(EffectOutcome::count(0));
+            };
+            chosen
+        };
+        if ctx.decision_maker.awaiting_choice() { return Ok(EffectOutcome::count(0)); }
         let chosen_name = chosen_name.trim();
-        if chosen_name.is_empty() {
-            return Ok(EffectOutcome::count(0));
-        }
+        if chosen_name.is_empty()
+            || (self.exclude_source_history && history.iter().any(|name| name.eq_ignore_ascii_case(chosen_name)))
+        { return Ok(EffectOutcome::count(0)); }
 
         let mut registry = CardRegistry::new();
         registry.ensure_cards_loaded([chosen_name]);
@@ -166,12 +177,15 @@ impl EffectExecutor for ChooseCardNameEffect {
         // The resolution tag names this choice only. Persistent source names
         // may include other choices made by its abilities, but must not leak
         // into a later resolution's singular chosen-name comparison.
-        let snapshots = vec![synthetic_chosen_name_snapshot(
-            ctx.source,
-            chooser,
-            canonical_name,
-        )];
-        ctx.set_tagged_objects(self.tag.clone(), snapshots);
+        let mut snapshot = synthetic_chosen_name_snapshot(ctx.source, chooser, canonical_name);
+        if ctx.iteration.iterated_player.is_some() {
+            // "Each player chooses a card name": every chooser's name must
+            // survive the per-player tag merge, which keys snapshots by stable
+            // identity. A fresh synthetic identity keeps each choice distinct
+            // (its controller remains the chooser).
+            snapshot.stable_id = StableId::from(game.new_object_id());
+        }
+        ctx.set_tagged_objects(self.tag.clone(), vec![snapshot]);
         Ok(EffectOutcome::count(1))
     }
 }

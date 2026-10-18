@@ -269,12 +269,28 @@ pub fn parse_controlled_creatures_may_assign_as_unblocked_line(
         ),
         None => (None, tokens),
     };
-    if !crate::grammar::abilities::is_each_controlled_may_assign_damage_as_unblocked_lexed(body) {
+    let filter = if crate::grammar::abilities::is_each_controlled_may_assign_damage_as_unblocked_lexed(body) {
+        ObjectFilter::creature()
+            .in_zone(Zone::Battlefield)
+            .controlled_by(PlayerFilter::You)
+    } else if let Some(filter_tokens) =
+        crate::grammar::abilities::split_each_filtered_may_assign_damage_as_unblocked_lexed(body)
+    {
+        // "For each creature you control with no abilities, ..." (Ruxa):
+        // the same grant, restricted to the iterated creatures.
+        let mut filter = parse_object_filter(filter_tokens, false)?;
+        if filter.zone.is_none() {
+            filter.zone = Some(Zone::Battlefield);
+        }
+        if filter.zone != Some(Zone::Battlefield)
+            || !filter.card_types.contains(&crate::types::CardType::Creature)
+        {
+            return Ok(None);
+        }
+        filter
+    } else {
         return Ok(None);
-    }
-    let filter = ObjectFilter::creature()
-        .in_zone(Zone::Battlefield)
-        .controlled_by(PlayerFilter::You);
+    };
     Ok(Some(vec![StaticAbilityAst::GrantStaticAbility {
         filter,
         ability: Box::new(StaticAbilityAst::Static(
@@ -964,6 +980,12 @@ fn push_type_color_additions_for_anthem_subject(
             additions.card_types,
         ));
     }
+    if !additions.supertypes.is_empty() {
+        push_static(StaticAbility::add_supertypes(
+            filter.clone(),
+            additions.supertypes,
+        ));
+    }
     if !additions.subtypes.is_empty() {
         push_static(StaticAbility::add_subtypes(filter, additions.subtypes));
     }
@@ -1095,6 +1117,7 @@ fn add_static_ability_ast_condition(
         | StaticAbilityAst::EquipmentKeywordActionsGrant { .. }
         | StaticAbilityAst::EntryReplacementWithGrantedAbilities { .. }
         | StaticAbilityAst::SoulbondSharedObjectAbility { .. }
+        | StaticAbilityAst::SourceHasFullTextOfTopGraveyardCard { .. }
         | StaticAbilityAst::AttachmentRestriction { .. } => {
             return Err(CardTextError::ParseError(
                 "cannot apply leading static condition to unsupported static ability shape"
@@ -1901,6 +1924,28 @@ fn parse_heterogeneous_granted_tail_remaining(
 
         if let Some(additions) = parse_type_color_addition_clause(&segment)? {
             parsed.type_color_additions.push(additions);
+            continue;
+        }
+
+        // "Enchanted creature gets +3/+0 and can only attack alone."
+        // (Errantry): CR 508.1c restriction carried by the recipient.
+        if crate::grammar::primitives::parse_all(
+            trim_edge_punctuation_tokens(&segment),
+            winnow::combinator::alt((
+                crate::grammar::primitives::phrase(&["can", "only", "attack", "alone"]),
+                crate::grammar::primitives::phrase(&["can", "attack", "only", "alone"]),
+            )),
+            "granted can-only-attack-alone restriction",
+        )
+        .is_ok()
+        {
+            parsed.granted_static.push(
+                StaticAbility::restriction(
+                    crate::effect::Restriction::attack_only_alone(ObjectFilter::source()),
+                    "This creature can only attack alone".to_string(),
+                )
+                .into(),
+            );
             continue;
         }
 
@@ -4074,9 +4119,90 @@ fn parse_conditional_source_prevention_and_grant(
     Ok(Some(abilities))
 }
 
+/// "Equipped creature has lifelink if you control a Cleric, deathtouch if you
+/// control a Rogue, haste if you control a Warrior, and flying if you control
+/// a Wizard." (Multiclass Baldric): one subject with a list of grants, each
+/// gated by its own player condition. Each item is the ordinary conditional
+/// grant "<subject> has <ability> as long as <condition>" (CR 611.3a), read
+/// by the complete static-line grammar. Only player conditions ("if you ...")
+/// are owned here; per-object conditions ("if it's white") stay with their
+/// own readers.
+fn parse_per_item_conditional_grant_list_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if tokens
+        .iter()
+        .any(|token| token.kind == crate::lexer::TokenKind::Quote)
+    {
+        return Ok(None);
+    }
+    let body = trim_edge_punctuation(tokens);
+    let Some(has_idx) = body.iter().position(|token| token.is_any_word(&["has", "have"])) else {
+        return Ok(None);
+    };
+    let subject = &body[..has_idx];
+    if subject.is_empty()
+        || subject
+            .iter()
+            .any(|token| token.is_comma() || token.is_any_word(&["if", "as", "and"]))
+    {
+        return Ok(None);
+    }
+    // Split the predicate list on commas; the last item may open with "and".
+    let mut items: Vec<&[OwnedLexToken]> = Vec::new();
+    let mut start = has_idx + 1;
+    for index in has_idx + 1..=body.len() {
+        if index == body.len() || body[index].is_comma() {
+            let mut item = &body[start..index];
+            if item.first().is_some_and(|token| token.is_word("and")) {
+                item = &item[1..];
+            }
+            items.push(item);
+            start = index + 1;
+        }
+    }
+    if items.len() < 2 {
+        return Ok(None);
+    }
+    let mut abilities = Vec::new();
+    for item in items {
+        let Some(if_idx) = item.iter().position(|token| token.is_word("if")) else {
+            return Ok(None);
+        };
+        let ability = &item[..if_idx];
+        let condition = &item[if_idx + 1..];
+        if ability.is_empty()
+            || ability.iter().any(|token| token.is_any_word(&["and", "or", "if"]))
+            || !condition.first().is_some_and(|token| token.is_word("you"))
+            || condition.iter().skip(1).any(|token| token.is_word("if"))
+        {
+            return Ok(None);
+        }
+        let span = item[if_idx].span();
+        let mut line = subject.to_vec();
+        line.push(body[has_idx].clone());
+        line.extend_from_slice(ability);
+        for word in ["as", "long", "as"] {
+            line.push(OwnedLexToken::word(word.to_string(), span));
+        }
+        line.extend_from_slice(condition);
+        let Some(parsed) = crate::keyword_static::parse_static_ability_ast_line_lexed(&line)? else {
+            return Ok(None);
+        };
+        if parsed.is_empty() {
+            return Ok(None);
+        }
+        abilities.extend(parsed);
+    }
+    Ok(Some(abilities))
+}
+
 pub fn parse_filter_has_granted_ability_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
+    if let Some(abilities) = parse_per_item_conditional_grant_list_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     if parse_filtered_land_reset_and_grant_line(tokens)?.is_some() {
         return Ok(None);
     }
@@ -4091,6 +4217,8 @@ pub fn parse_filter_has_granted_ability_line(
     }
     crate::clause_support::validate_protection_static_line(tokens)?;
     if let Some(abilities) = parse_complete_miracle_cost_grant_line(tokens)? { return Ok(Some(abilities)); }
+    if let Some(abilities) = parse_complete_foretell_cost_grant_line(tokens)? { return Ok(Some(abilities)); }
+    if let Some(abilities) = parse_complete_plot_cost_grant_line(tokens)? { return Ok(Some(abilities)); }
 
     // A complete comma-separated predicate list owns every clause and every
     // local condition; this family cannot suffix-match one of its `has` verbs.

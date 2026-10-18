@@ -37,7 +37,7 @@ fn manifest_dread_counter_bundle_room_affects_only_the_new_creature() {
             crate::effects::execute_effect(&mut game, effect, &mut ctx).unwrap();
         }
     }
-    game.refresh_continuous_state();
+    game.refresh_continuous_state().expect("text regression fixture continuous state refresh succeeds");
     let new_creatures = game
         .battlefield
         .iter()
@@ -95,6 +95,8 @@ fn manifest_dread_counter_bundle_requires_a_shared_recipient() {
         target: ChooseSpec::tagged("counter_recipient"),
         target_count: None,
         distributed: false,
+        required_recipient: None,
+        counter_kind_from_trigger: false,
     };
     let render = |second| {
         super::super::effect_lists::describe_shared_recipient_counter_pair(&[

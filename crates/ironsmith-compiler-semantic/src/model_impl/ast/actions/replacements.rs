@@ -34,6 +34,8 @@ pub enum ReplacementActionAst {
         duration: ZoneReplacementDurationAst,
         player_target: Option<TargetAst>,
         display: Option<String>,
+        /// Replace the player's next game loss instead of a draw.
+        lose_game: bool,
     },
     RegisterManaReplacement {
         source_filter: ObjectFilter,
@@ -74,11 +76,23 @@ pub enum ReplacementActionAst {
         counter_type: CounterType,
         count: Value,
     },
+    /// "The next time one or more <filter> enter this turn, they enter as
+    /// copies of <source>" (Mystic Reflection).
+    RegisterNextBatchEnterAsCopy {
+        filter: ObjectFilter,
+        source: TargetAst,
+    },
     RegisterDamageMultiplier {
         spec: ironsmith_core::RegisterDamageMultiplierEffect,
     },
     RegisterDamageAddition {
         spec: ironsmith_core::RegisterDamageAdditionEffect,
+    },
+    /// "Until end of turn, if one or more tokens would be created under your
+    /// control, twice that many of those tokens are created instead." (Kaya,
+    /// Geist Hunter)
+    RegisterTokenCreationMultiplier {
+        spec: ironsmith_core::RegisterTokenCreationMultiplierEffect,
     },
     RegisterManaRewrite {
         rule: ironsmith_core::ManaOutputRewrite,

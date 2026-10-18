@@ -8,7 +8,9 @@ use crate::game_state::GameState;
 use crate::mana::ManaSymbol;
 
 pub type NoteActivationManaTypeEffect = ironsmith_core::NoteActivationManaTypeEffect;
+pub type NoteActivationManaPaymentEffect = ironsmith_core::NoteActivationManaPaymentEffect;
 pub type AddManaOfNotedTypeEffect = ironsmith_core::AddManaOfNotedTypeEffect;
+pub type NoteTriggeringCreatureTypeEffect = ironsmith_core::NoteTriggeringCreatureTypeEffect;
 
 const MANA_TYPES: [ManaSymbol; 6] = [
     ManaSymbol::White,
@@ -18,6 +20,13 @@ const MANA_TYPES: [ManaSymbol; 6] = [
     ManaSymbol::Green,
     ManaSymbol::Colorless,
 ];
+
+impl EffectExecutor for NoteActivationManaPaymentEffect {
+    fn execute(&self, game: &mut GameState, ctx: &mut ExecutionContext) -> Result<EffectOutcome, ExecutionError> {
+        game.note_mana_payment_for_source(ctx.source, ctx.mana.activation_payment.clone());
+        Ok(EffectOutcome::count(1))
+    }
+}
 
 impl EffectExecutor for NoteActivationManaTypeEffect {
     fn execute(
@@ -44,6 +53,7 @@ impl EffectExecutor for AddManaOfNotedTypeEffect {
     fn mana_production(&self) -> Option<crate::mana_payment::program::ManaProduction<'_>> {
         use crate::mana_payment::program::ManaProduction;
         Some(ManaProduction::NotedType {
+            use_noted_amount: self.use_noted_amount,
             amount: &self.amount,
             player: &self.player,
         })
@@ -68,8 +78,10 @@ impl EffectExecutor for AddManaOfNotedTypeEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<crate::effects::CompletedEffectOutputs, ExecutionError> {
         use super::production_resolution::{execute_production, ManaOutputProjection, ManaChoiceMenu};
-        execute_production(self.mana_production().expect("mana production descriptor"),
-            game, ctx, ManaOutputProjection::AuthoredCount, ManaChoiceMenu::AvailableColors)
+        let production = crate::mana_payment::program::ManaProduction::NotedType {
+            use_noted_amount: self.use_noted_amount, amount: &self.amount, player: &self.player,
+        };
+        execute_production(production, game, ctx, ManaOutputProjection::AuthoredCount, ManaChoiceMenu::AvailableColors)
     }
 
     fn producible_mana_symbols(
@@ -79,9 +91,61 @@ impl EffectExecutor for AddManaOfNotedTypeEffect {
         _controller: crate::ids::PlayerId,
     ) -> Option<Vec<ManaSymbol>> {
         Some(
-            game.noted_mana_type_for_source(source)
-                .into_iter()
-                .collect(),
+            if self.use_noted_amount {
+                game.noted_mana_payment_for_source(source).map(crate::mana_payment::program::pool_symbols).unwrap_or_default()
+            } else {
+                game.noted_mana_type_for_source(source).into_iter().collect()
+            },
         )
+    }
+}
+
+impl EffectExecutor for NoteTriggeringCreatureTypeEffect {
+    fn execute(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        use crate::effects::composition::scoped_choice::{select_typed_option, SingleChoicePolicy};
+        // "its creature types": the triggering object's types as it triggered.
+        let subtypes = match ctx.get_tagged("triggering") {
+            Some(snapshot) => snapshot.subtypes.clone(),
+            None => ctx
+                .triggering_event
+                .as_ref()
+                .and_then(|event| event.object_id())
+                .and_then(|id| game.object(id))
+                .map(|object| object.subtypes.iter().copied().collect::<Vec<_>>())
+                .unwrap_or_default(),
+        };
+        let noted = game.noted_creature_types_for_source(ctx.source);
+        let mut options = Vec::new();
+        for subtype in subtypes {
+            if subtype.is_creature_type() && !noted.contains(&subtype) && !options.contains(&subtype)
+            {
+                options.push(subtype);
+            }
+        }
+        if options.is_empty() {
+            return Ok(EffectOutcome::count(0));
+        }
+        let menu = options
+            .iter()
+            .map(|subtype| (*subtype, subtype.to_string()))
+            .collect::<Vec<_>>();
+        let chooser = ctx.controller;
+        let Some(subtype) = select_typed_option(
+            game,
+            ctx,
+            chooser,
+            "Note a creature type",
+            &menu,
+            SingleChoicePolicy::First,
+        )?
+        else {
+            return Ok(EffectOutcome::count(0));
+        };
+        let noted = game.note_creature_type_for_source(ctx.source, subtype);
+        Ok(EffectOutcome::count(i64::from(noted)))
     }
 }

@@ -33,10 +33,15 @@ fn player_filter_references_identity(
 
     match player {
         PlayerFilter::TaggedPlayer(found) => identity.tag.is_some_and(|tag| found == tag),
+        PlayerFilter::QuantityGreaterThanPlayer { base, other, .. } => {
+            player_filter_references_identity(base, identity)
+                || player_filter_references_identity(other, identity)
+        }
         PlayerFilter::Target(inner)
         | PlayerFilter::AliasedTarget(inner)
         | PlayerFilter::CardsInHandAtLeastMoreThanYou { base: inner, .. }
         | PlayerFilter::HasMoreLifeThanYou { base: inner }
+        | PlayerFilter::MostLifeTiedAmong { base: inner }
         | PlayerFilter::LostLifeThisTurn { base: inner }
         | PlayerFilter::OpponentOf(inner)
         | PlayerFilter::PlayerToLeftOf(inner)
@@ -47,7 +52,7 @@ fn player_filter_references_identity(
             player_filter_references_identity(player, identity)
                 || object_filter_references_identity(filter, identity)
         }
-        PlayerFilter::ControlsMost { filter } | PlayerFilter::ControlsFewestTied { filter } | PlayerFilter::OwnsMatchingObject { filter } => {
+        PlayerFilter::ControlsMost { filter } | PlayerFilter::ControlsFewestTied { filter } | PlayerFilter::OwnsMatchingObject { filter } | PlayerFilter::ControlsMatchingObject { filter } => {
             object_filter_references_identity(filter, identity)
         }
         PlayerFilter::Excluding { base, excluded } => {
@@ -228,6 +233,7 @@ fn value_references_identity(value: &Value, identity: &SyntheticTargetIdentity<'
         | Value::MaxDiceRolledThisTurn(player)
         | Value::LandsEnteredBattlefieldThisTurn(player)
         | Value::MaxCardsInHand(player)
+        | Value::MaxSpeed(player)
         | Value::CardsInGraveyard(player)
         | Value::SpellsCastThisTurn(player)
         | Value::SpellsCastBeforeThisTurn(player)
@@ -236,7 +242,8 @@ fn value_references_identity(value: &Value, identity: &SyntheticTargetIdentity<'
             player_filter_references_identity(player, identity)
         }
         Value::NoncombatDamageDealtBySourcesControlledThisTurn { player, .. }
-        | Value::Devotion { player, .. } => player_filter_references_identity(player, identity),
+        | Value::Devotion { player, .. }
+        | Value::DevotionToColors { player, .. } => player_filter_references_identity(player, identity),
         Value::SpellsCastThisTurnMatching { player, filter, .. }
         | Value::TotalManaValueOfSpellsCastThisTurnMatching { player, filter, .. } => {
             player_filter_references_identity(player, identity)
@@ -257,6 +264,7 @@ fn restriction_references_identity(
             || sacrifice.as_ref().is_some_and(|filter| object_filter_references_identity(filter, identity)),
         Restriction::AdditionalLandPlays(player, _)
         | Restriction::NoMaximumHandSize(player)
+        | Restriction::ReduceMaximumHandSize(player, _)
         | Restriction::DrawFromBottom(player)
         | Restriction::ActivateAbilities(player)
         | Restriction::GainLife(player)
@@ -264,12 +272,17 @@ fn restriction_references_identity(
         | Restriction::SearchOwnLibraryFromOwnEffects(player)
         | Restriction::CastSpellsOnlyAsSorcery(player)
         | Restriction::ActivateNonManaAbilities(player)
+        | Restriction::ActivateNonManaNonLoyaltyAbilities(player)
+        | Restriction::DamageAsThoughInfect(player)
         | Restriction::DrawCards(player)
         | Restriction::DrawExtraCards(player)
         | Restriction::PoisonCounters(player)
+        | Restriction::GetCounters(player)
+        | Restriction::RadiationGainsLife(player)
         | Restriction::LoseLife(player)
         | Restriction::DamageCauseLifeLoss(player)
         | Restriction::DamageReduceLifeBelowOne(player)
+        | Restriction::DamageReduceLifeBelow { player, .. }
         | Restriction::ChangeLifeTotal(player)
         | Restriction::LoseGame(player)
         | Restriction::LoseGameForZeroLife(player)
@@ -294,7 +307,8 @@ fn restriction_references_identity(
         }
         Restriction::AttackPlayerOrPlaneswalkersControlledBy { attackers, player }
         | Restriction::AttackPlayer { attackers, player }
-        | Restriction::MustAttackPlayer { attackers, player } => {
+        | Restriction::MustAttackPlayer { attackers, player }
+        | Restriction::GainControl(attackers, player) => {
             object_filter_references_identity(attackers, identity)
                 || player_filter_references_identity(player, identity)
         }
@@ -306,16 +320,31 @@ fn restriction_references_identity(
         Restriction::BlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBeBlockedBy { blockers, attacker }
+        | Restriction::BeCounteredFrom(blockers, attacker)
         | Restriction::BeTargetedFrom(blockers, attacker)
+        | Restriction::BeTargetedByRequirementsLimitedTo(blockers, attacker)
         | Restriction::BeAttachedBy(blockers, attacker)
+        | Restriction::BeAttachedByNew(blockers, attacker)
         | Restriction::AttackPermanents {
+            attackers: blockers,
+            permanents: attacker,
+        }
+        | Restriction::MustAttackPermanents {
             attackers: blockers,
             permanents: attacker,
         } => {
             object_filter_references_identity(blockers, identity)
                 || object_filter_references_identity(attacker, identity)
         }
-        Restriction::BeSacrificedByCause { filter, cause } => {
+        Restriction::DiscardByCause { player, cause } => {
+            player_filter_references_identity(player, identity)
+                || cause
+                    .source_filter
+                    .as_ref()
+                    .is_some_and(|source| object_filter_references_identity(source, identity))
+        }
+        Restriction::BeSacrificedByCause { filter, cause }
+        | Restriction::BeExiledByCause { filter, cause } => {
             object_filter_references_identity(filter, identity)
                 || cause
                     .source_filter
@@ -323,13 +352,19 @@ fn restriction_references_identity(
                     .is_some_and(|source| object_filter_references_identity(source, identity))
         }
         Restriction::ActivateLoyaltyAbilitiesOf(filter)
+        | Restriction::ActivateKeywordAbilitiesOf { filter, .. }
         | Restriction::ActivateAbilitiesOf(filter)
         | Restriction::ActivateTapAbilitiesOf(filter)
         | Restriction::ActivateNonManaAbilitiesOf(filter)
         | Restriction::Attack(filter)
         | Restriction::AttackAlone(filter)
+        | Restriction::AttackOnlyAlone(filter)
+        | Restriction::AttackOnlyNearestOpponentInChosenDirection { attackers: filter }
         | Restriction::Block(filter)
         | Restriction::MustBeBlocked(filter)
+        | Restriction::MustBeBlockedByAtLeast {
+            attacker: filter, ..
+        }
         | Restriction::MustAttack(filter)
         | Restriction::MustBlock(filter)
         | Restriction::BlockAlone(filter)
@@ -344,6 +379,8 @@ fn restriction_references_identity(
         | Restriction::MaximumBlockers { filter, .. }
         | Restriction::HaveCountersPlaced(filter)
         | Restriction::HaveCounterTypePlaced(filter, _)
+        | Restriction::HaveCounterTypeRemoved(filter, _)
+        | Restriction::DamageSourcesAreColorless(filter)
         | Restriction::BeTargeted(filter)
         | Restriction::BeCountered(filter)
         | Restriction::TurnFaceUp(filter)
@@ -355,12 +392,22 @@ fn restriction_references_identity(
         | Restriction::AttackOrBlockAlone(filter) => {
             object_filter_references_identity(filter, identity)
         }
-        Restriction::PreventDamageFrom { sources, .. } => {
+        Restriction::PreventDamageFrom { sources, .. }
+        | Restriction::PreventDamageTo { recipients: sources, .. } => {
             object_filter_references_identity(sources, identity)
+        }
+        Restriction::PreventDamageFromTo {
+            sources,
+            recipients,
+            ..
+        } => {
+            object_filter_references_identity(sources, identity)
+                || object_filter_references_identity(recipients, identity)
         }
         Restriction::AttackTax(rule) => object_filter_references_identity(&rule.attackers, identity),
         Restriction::PreventDamage
         | Restriction::PreventCombatDamage
+        | Restriction::AllDamageAsThoughWither
         | Restriction::AttackYouUnlessControllerPaysPerAttacker(..) => false,
     }
 }

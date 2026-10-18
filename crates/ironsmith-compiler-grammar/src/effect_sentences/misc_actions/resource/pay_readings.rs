@@ -151,6 +151,12 @@ const READINGS: &[Reading] = &[
         admits: |_| true,
         read: |input| input.outcome(read_energy_count_clause(input)),
     },
+    Reading {
+        id: RuleId::new("triggering-spell-mana-cost"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| input.outcome(read_triggering_spell_mana_cost(input)),
+    },
 ];
 
 /// The input's reading, if a rule has one. Every admitted reading runs.
@@ -275,7 +281,7 @@ fn read_any_amount_of_mana(input: &PayClause<'_>) -> Result<Option<EffectAst>, C
             x_value: None,
             x_maximum: None,
             independent_x_choice: true,
-
+            mana_cost_of: None,
         }),
     )))
 }
@@ -299,6 +305,31 @@ fn read_one_or_more_life(input: &PayClause<'_>) -> Result<Option<EffectAst>, Car
         return Ok(Some(EffectAst::subject_verb_pay_any_life(player, 1)));
     }
     Ok(None)
+}
+/// "pay that spell's mana cost" (Ice Cave): the triggering spell's exact
+/// current mana cost, colored symbols included.
+fn read_triggering_spell_mana_cost(
+    input: &PayClause<'_>,
+) -> Result<Option<EffectAst>, CardTextError> {
+    if !matches!(
+        input.clause_words,
+        ["that", "spell's" | "spells", "mana", "cost"]
+    ) {
+        return Ok(None);
+    }
+    Ok(Some(subject_verb_player_effect(
+        SubjectVerbRoleAst::AffectedPlayer,
+        input.player,
+        SubjectVerbActionAst::Mana(ManaActionAst::PayMana {
+            cost: ManaCost::new(),
+            x_value: None,
+            x_maximum: None,
+            independent_x_choice: false,
+            mana_cost_of: Some(crate::target::ChooseSpec::tagged(
+                crate::tag::CompilerReferenceTag::Triggering.key(),
+            )),
+        }),
+    )))
 }
 fn read_compound_pay(input: &PayClause<'_>) -> Result<Option<EffectAst>, CardTextError> {
     let tokens = input.tokens;
@@ -359,7 +390,7 @@ fn read_mana_for_each_count(input: &PayClause<'_>) -> Result<Option<EffectAst>, 
                     x_value: Some(count),
                     x_maximum: None,
                     independent_x_choice: false,
-
+                    mana_cost_of: None,
                 }),
             )));
         }
@@ -420,6 +451,38 @@ fn read_energy_amount(input: &PayClause<'_>) -> Result<Option<EffectAst>, CardTe
     }
     Ok(None)
 }
+/// "target nonland permanent's mana value": the mana value of an object
+/// target chosen with the ability.
+fn parse_target_object_mana_value_amount(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Value>, CardTextError> {
+    let tokens = crate::util::trim_edge_punctuation_tokens(tokens);
+    let len = tokens.len();
+    if len < 4
+        || !tokens[0].is_word("target")
+        || !tokens[len - 2].is_word("mana")
+        || !tokens[len - 1].is_word("value")
+    {
+        return Ok(None);
+    }
+    let Some(noun) = tokens[len - 3]
+        .as_word()
+        .and_then(|word| word.strip_suffix("'s").or_else(|| word.strip_suffix("’s")))
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    let mut filter_tokens = tokens[1..len - 3].to_vec();
+    filter_tokens.push(OwnedLexToken::word(
+        noun,
+        crate::cards::TextSpan::synthetic(),
+    ));
+    let filter = crate::object_filters::parse_object_filter(&filter_tokens, false)?;
+    Ok(Some(Value::ManaValueOf(Box::new(crate::target::ChooseSpec::target(
+        crate::target::ChooseSpec::Object(filter),
+    )))))
+}
+
 fn read_energy_count_clause(input: &PayClause<'_>) -> Result<Option<EffectAst>, CardTextError> {
     let tokens = input.tokens;
     let player = input.player;
@@ -437,6 +500,21 @@ fn read_energy_count_clause(input: &PayClause<'_>) -> Result<Option<EffectAst>, 
             if let Some(amount) = parse_dynamic_cost_modifier_value(amount_tokens)? {
                 return Ok(Some(EffectAst::subject_verb_pay_energy(player, amount)));
             }
+            // "pay an amount of {E} equal to target nonland permanent's mana
+            // value" (Behemoth of Vault 0): the amount names an object target.
+            if let Some(amount) = parse_target_object_mana_value_amount(amount_tokens)? {
+                return Ok(Some(EffectAst::subject_verb_pay_energy(player, amount)));
+            }
+        }
+        // "pay eight {E}" (Lightning Runner): a counted amount of a single
+        // energy symbol.
+        if energy_symbol_count == 1
+            && let Some((amount, used)) = parse_value(tokens)
+            && used > 0
+            && tokens[used..].len() == 1
+            && energy_symbol_token(&tokens[used])
+        {
+            return Ok(Some(EffectAst::subject_verb_pay_energy(player, amount)));
         }
         let mut energy_count = 0u32;
         for token in tokens {

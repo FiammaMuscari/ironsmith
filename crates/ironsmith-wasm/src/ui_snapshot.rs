@@ -96,6 +96,7 @@ struct PermanentObjectView {
     tapped: bool,
     damage: u32,
     lane: BattlefieldLane,
+    face_down: bool,
     characteristic_signature: String,
     counter_signature: String,
     mana_cost: Option<String>,
@@ -227,12 +228,24 @@ struct CombinedLookCards {
     exile: Arc<Vec<Arc<ViewedCardSnapshot>>>,
     output: Arc<Vec<Arc<ViewedCardSnapshot>>>,
 }
-fn viewed_card_snapshot(object: &ironsmith::object::Object) -> ViewedCardSnapshot {
+/// Cards above `object` in its owner's library; `None` outside a library.
+pub(super) fn library_position(game: &GameState, object: &ironsmith::object::Object) -> Option<usize> {
+    if object.zone != Zone::Library {
+        return None;
+    }
+    let library = &game.player(object.owner)?.library;
+    let index = library.iter().position(|id| *id == object.id)?;
+    Some(library.len() - 1 - index)
+}
+
+pub(super) fn viewed_card_snapshot(object: &ironsmith::object::Object) -> ViewedCardSnapshot {
     ViewedCardSnapshot {
         id: object.id.0,
         stable_id: object.stable_id.0.0,
         name: object.name.to_string(),
         oracle_text: object.compiled_card_text.to_string(),
+        zone: Some(super::decision_zone_name(object.zone)),
+        position: None,
     }
 }
 
@@ -553,7 +566,7 @@ impl IncrementalBattlefieldGroups {
                 characteristic_signature: view.characteristic_signature.clone(),
                 counter_signature: view.counter_signature.clone(),
                 token: view.token,
-                force_single_object: protected.contains(&id).then_some(id.0),
+                force_single_object: (protected.contains(&id) || view.face_down).then_some(id.0),
             };
             self.membership.insert(id, (player, key.clone(), label));
             let group = (player, key);
@@ -625,7 +638,9 @@ impl IncrementalBattlefieldGroups {
         player: PlayerId,
     ) -> (bool, bool) {
         let own = perspective == player || game.controlling_player_for(player) == perspective;
-        let top = (own && game.effect_store.grant_registry.grants_private_library_top_view(game, player)) || self.visibility.values().any(|(controller, flags)| {
+        let top = (own && game.effect_store.grant_registry.grants_private_library_top_view(game, player))
+            || (!own && game.effect_store.grant_registry.grants_private_library_top_view_of(game, perspective, player))
+            || self.visibility.values().any(|(controller, flags)| {
             flags & 4 != 0 || (*controller == player && (flags & 2 != 0 || (own && flags & 1 != 0)))
         });
         let hand = self
@@ -979,6 +994,7 @@ impl SnapshotObjectViewCache {
             tapped,
             damage,
             lane: battlefield_lane_for_card_types(current_card_types),
+            face_down: key.face_down,
             characteristic_signature: object_characteristic_signature(game, obj, true),
             counter_signature,
             mana_cost: obj.mana_cost.as_ref().map(|mc| mc.to_oracle()),
@@ -1107,6 +1123,7 @@ impl SnapshotJsEncodingCache {
         self.set_serde(&object, "phase", &snapshot.phase)?;
         self.set_serde(&object, "step", &snapshot.step)?;
         self.set_serde(&object, "combat_damage_step", &snapshot.combat_damage_step)?;
+        self.set_serde(&object, "pass_intents", &snapshot.pass_intents)?;
         self.set_serde(&object, "stack_size", &snapshot.stack_size)?;
         self.set_serde(&object, "stack_preview", &snapshot.stack_preview)?;
         self.set_serde(&object, "stack_objects", &snapshot.stack_objects)?;
@@ -1967,8 +1984,10 @@ fn grouped_battlefield_for_ids(
         };
         total += 1;
 
-        let force_single = protected_ids.contains(&obj.id).then_some(obj.id.0);
         let view = object_view_cache.battlefield_view(game, obj);
+        // A face-down permanent may be known to this perspective while an
+        // identical-looking one is not, so each stays its own entry.
+        let force_single = (protected_ids.contains(&obj.id) || view.face_down).then_some(obj.id.0);
         let key = BattlefieldGroupKey {
             lane: view.lane,
             name: view.name.clone(),
@@ -2048,6 +2067,7 @@ fn grouped_battlefield_for_ids(
                 stable_id,
                 name,
                 token: key.token,
+                face_down: representative.is_some_and(|view| view.face_down),
                 tapped: key.tapped,
                 damage: key.damage,
                 count: member_ids.len().max(1),
@@ -2198,7 +2218,9 @@ fn can_view_library_top(game: &GameState, perspective: PlayerId, player: PlayerI
 
 #[cfg(test)]
 fn hand_revealed_by_static_ability(game: &GameState, player: PlayerId) -> bool {
-    game.object_store.battlefield.iter().any(|id| {
+    // A resolved "play with their hand revealed for as long as ..." effect
+    // (Stromgald Spy) opens the same public hand view as the statics.
+    game.hand_revealed_by_effect(player) || game.object_store.battlefield.iter().any(|id| {
         !game.is_phased_out(*id) && game.object(*id).is_some_and(|object| {
             let controller = game.current_controller(*id).unwrap_or(object.owner);
             game.object_has_static_ability_id(*id, StaticAbilityId::PlayersPlayWithHandsRevealed)
@@ -2298,6 +2320,8 @@ pub(super) struct PermanentSnapshot {
     pub(super) stable_id: u64,
     pub(super) name: String,
     pub(super) token: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) face_down: bool,
     pub(super) tapped: bool,
     pub(super) damage: u32,
     pub(super) count: usize,
@@ -2474,6 +2498,7 @@ pub(super) struct ObjectDetailsSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct GameSnapshot {
+    pub(super) pass_intents: Vec<u8>,
     pub(super) snapshot_id: u64,
     pub(super) perspective: u8,
     pub(super) turn_number: u32,
@@ -2753,6 +2778,12 @@ pub(super) struct ViewedCardSnapshot {
     pub(super) stable_id: u64,
     pub(super) name: String,
     pub(super) oracle_text: String,
+    /// The zone the card is in now, so the UI can mark that zone as looked at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) zone: Option<String>,
+    /// Library cards only: how many cards sit above it (0 is the top).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) position: Option<usize>,
 }
 
 fn resolve_viewed_card(
@@ -3390,6 +3421,7 @@ impl GameSnapshot {
         Self {
             snapshot_id,
             perspective: perspective.0,
+            pass_intents: Vec::new(),
             turn_number: game.turn.turn_number,
             active_player: game.turn.active_player.0,
             active_players: game
@@ -3453,11 +3485,14 @@ impl GameSnapshot {
                         .map(|(index, id)| {
                             let (current_id, stable_id, name, oracle_text) =
                                 resolve_viewed_card(game, *id, view.stable_id_at(index, *id));
+                            let object = game.object(current_id);
                             ViewedCardSnapshot {
                                 id: current_id.0,
                                 stable_id,
                                 name,
                                 oracle_text,
+                                zone: object.map(|object| super::decision_zone_name(object.zone)),
+                                position: object.and_then(|object| library_position(game, object)),
                             }
                         })
                         .collect(),
@@ -4519,7 +4554,7 @@ mod tests {
             snapshot.abilities
         );
 
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state should refresh");
         let refreshed_effects = game.all_continuous_effects();
         let explicit_refreshed = game
             .calculated_characteristics_with_effects(yawgmoth_id, &refreshed_effects)
@@ -5614,6 +5649,7 @@ mod tests {
             check_incremental(&game, &mut incremental, &HashSet::new());
         }
     }
+    #[test]
     fn battlefield_snapshot_marks_summoning_sickness_and_active_aura() {
         let _id_counter_guard = crate::test_id_counter_guard();
         let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
@@ -6201,7 +6237,7 @@ mod tests {
         let card = test_bears_card();
         let first = game.create_object_from_card(&card, alice, Zone::Battlefield);
         game.create_object_from_card(&card, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state should refresh");
         let views = SnapshotObjectViewCache::default();
         let mut groups = IncrementalBattlefieldGroups::default();
         let protected = HashSet::new();
@@ -6240,7 +6276,7 @@ mod tests {
         let card = test_bears_card();
         let first = game.create_object_from_card(&card, alice, Zone::Battlefield);
         let second = game.create_object_from_card(&card, alice, Zone::Battlefield);
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state should refresh");
         let protected = HashSet::from([first, second]);
         let views = SnapshotObjectViewCache::default();
         let mut groups = IncrementalBattlefieldGroups::default();
@@ -6312,7 +6348,7 @@ mod tests {
             .until(Until::EndOfTurn)
             .with_expires_end_of_turn(game.turn.turn_number),
         );
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state should refresh");
 
         assert_eq!(
             game.current_controller(bear),
@@ -6431,7 +6467,7 @@ mod mana_payment_preview {
             wasm.add_card_to_zone(0, (*land).to_string(), "battlefield".to_string(), true)
                 .expect("land");
         }
-        wasm.game.refresh_continuous_state();
+        wasm.game.refresh_continuous_state().expect("test continuous state should refresh");
         (wasm, ObjectId::from_raw(source))
     }
 
@@ -6554,7 +6590,7 @@ mod hidden_zone_continuous_effects {
                 .unwrap_or_else(|_| panic!("a bear should go to the {zone}"));
             (label, ObjectId::from_raw(id))
         });
-        wasm.game.refresh_continuous_state();
+        wasm.game.refresh_continuous_state().expect("test continuous state should refresh");
 
         for (label, id) in placements {
             let chars = wasm

@@ -195,8 +195,25 @@ fn result_counter_followup(
     }
 }
 
+/// "Create a 0/0 token with two +1/+1 counters on it" / "The token enters
+/// with X +1/+1 counters on it": a token creation is an entry producer only
+/// for counters the grammar typed as entry-time (`InlineBattlefieldEntryCounter`);
+/// a later "put ... on it" stays a separate action.
+fn is_token_creation_producer(effect: &Effect) -> bool {
+    if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+        return is_token_creation_producer(&tagged.effect);
+    }
+    if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+        return is_token_creation_producer(&with_id.effect);
+    }
+    effect.downcast_ref::<crate::effects::CreateTokenEffect>().is_some()
+        || effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>().is_some()
+}
+
 fn is_entry_producer(effect: &Effect) -> bool {
-    effect
+    effect.downcast_ref::<crate::effects::CreateTokenEffect>().is_some()
+        || effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>().is_some()
+        || effect
         .downcast_ref::<crate::effects::ReturnFromGraveyardToBattlefieldEffect>()
         .is_some()
         || effect
@@ -320,6 +337,32 @@ fn producer_output_consumes_tag(
         && entry_producer_body_consumes_tag(effect, consumed_tag)
 }
 
+/// "... create a token that's a copy of it at the beginning of the next end
+/// step. The token enters with half that many +1/+1 counters on it" (Ochre
+/// Jelly): an entry-time ("enters with") follow-up whose pronoun still names
+/// the copied object can only mean the token copy, the one object that
+/// enters. Ordinary later counters on the copied object stay separate.
+fn token_copy_output_copies_tag(effect: &Effect, output_tag: &TagKey, copied_tag: &TagKey) -> bool {
+    if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+        if &tagged.tag == output_tag
+            && let Some(copy) = tagged.effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>()
+        {
+            return matches!(copy.target.base(), ChooseSpec::Tagged(target) if target == copied_tag);
+        }
+        return token_copy_output_copies_tag(&tagged.effect, output_tag, copied_tag);
+    }
+    if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+        return token_copy_output_copies_tag(&with_id.effect, output_tag, copied_tag);
+    }
+    if let Some(schedule) = effect.downcast_ref::<crate::effects::ScheduleDelayedTriggerEffect>() {
+        return schedule
+            .effects
+            .iter()
+            .any(|nested| token_copy_output_copies_tag(nested, output_tag, copied_tag));
+    }
+    false
+}
+
 fn normalize_followup_tags(
     producer: &Effect,
     producer_tag: &TagKey,
@@ -330,7 +373,11 @@ fn normalize_followup_tags(
         .map(|followup| {
             if followup.tag() == producer_tag {
                 Some(followup)
-            } else if producer_output_consumes_tag(producer, producer_tag, followup.tag()) {
+            } else if producer_output_consumes_tag(producer, producer_tag, followup.tag())
+                || (followup.amount().has_surface_hint(
+                    ironsmith_core::ValueSurfaceHint::InlineBattlefieldEntryCounter,
+                ) && token_copy_output_copies_tag(producer, producer_tag, followup.tag()))
+            {
                 Some(followup.with_tag(producer_tag.clone()))
             } else {
                 None
@@ -442,6 +489,21 @@ fn attach_counter_to_producer(
     }
     if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
         if &tagged.tag == tag {
+            if let Some(create) = tagged.effect.downcast_ref::<crate::effects::CreateTokenEffect>() {
+                if counter.condition.is_some() || counter.object_filter.is_some() {
+                    return None;
+                }
+                let replacement = create.clone().with_entry_counter(counter.clone());
+                return Some(Effect::new(tagged.with_effect(Effect::new(replacement))));
+            }
+            if let Some(copy) = tagged.effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>()
+            {
+                if counter.condition.is_some() || counter.object_filter.is_some() {
+                    return None;
+                }
+                let replacement = copy.clone().with_entry_counter(counter.clone());
+                return Some(Effect::new(tagged.with_effect(Effect::new(replacement))));
+            }
             if let Some(return_effect) = tagged
                 .effect
                 .downcast_ref::<crate::effects::ReturnFromGraveyardToBattlefieldEffect>(
@@ -888,6 +950,18 @@ fn fuse_effect_list(effects: &mut Vec<Effect>) {
             index += 1;
             continue;
         };
+        if is_token_creation_producer(&effects[index])
+            && (result_wrapper
+                || followups.iter().any(|followup| {
+                    !matches!(followup, CounterFollowup::Direct { .. })
+                        || !followup.amount().has_surface_hint(
+                            ironsmith_core::ValueSurfaceHint::InlineBattlefieldEntryCounter,
+                        )
+                }))
+        {
+            index += 1;
+            continue;
+        }
 
         let mut rewritten = effects[index].clone();
         let mut attached_all = true;
@@ -956,6 +1030,15 @@ fn fuse_across_segment_boundaries(segments: &mut Vec<crate::resolution::Resoluti
             index += 1;
             continue;
         };
+        if is_token_creation_producer(&producer)
+            && (result_wrapper
+                || followups
+                    .iter()
+                    .any(|followup| !matches!(followup, CounterFollowup::Direct { .. })))
+        {
+            index += 1;
+            continue;
+        }
 
         let mut rewritten = producer;
         let mut attached_all = true;

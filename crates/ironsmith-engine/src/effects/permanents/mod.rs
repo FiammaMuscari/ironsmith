@@ -244,6 +244,15 @@ pub(crate) fn attachment_can_attach_to_target(
                 .object(target_id)
                 .is_some_and(|object| filter.matches(object, &filter_ctx, game)));
         }
+        // "Equip planeswalker {1}" (Luxior, Giada's Gift): an Equipment whose
+        // own equip ability targets planeswalkers can attach to one; its
+        // static then makes the equipped permanent a creature.
+        if let AttachmentTarget::Object(target_id) = target
+            && game.object_has_card_type(target_id, CardType::Planeswalker)
+            && equipment_equips_planeswalkers(game, attachment_id)
+        {
+            return true;
+        }
         return matches!(target, AttachmentTarget::Object(target_id) if game.object_has_card_type(target_id, CardType::Creature));
     }
 
@@ -255,6 +264,28 @@ pub(crate) fn attachment_can_attach_to_target(
     }
 
     false
+}
+
+fn equipment_equips_planeswalkers(game: &GameState, attachment_id: ObjectId) -> bool {
+    let targets_planeswalkers = |spec: &crate::target::ChooseSpec| {
+        matches!(spec.base(), crate::target::ChooseSpec::Object(filter)
+            if filter.card_types.contains(&CardType::Planeswalker))
+    };
+    game.calculated_characteristics(attachment_id)
+        .is_some_and(|chars| {
+            chars.abilities.iter().any(|ability| {
+                matches!(&ability.kind, crate::ability::AbilityKind::Activated(activated)
+                if activated.keyword == Some(ironsmith_core::ActivatedAbilityKeyword::Equip)
+                    && activated.effects.iter().any(|effect| {
+                        effect
+                            .downcast_ref::<crate::effects::AttachToEffect>()
+                            .is_some_and(|attach| targets_planeswalkers(&attach.target))
+                            || effect
+                                .downcast_ref::<crate::effects::AttachObjectsEffect>()
+                                .is_some_and(|attach| targets_planeswalkers(&attach.target))
+                    }))
+            })
+        })
 }
 
 fn attachment_has_reconfigure_ability(game: &GameState, attachment_id: ObjectId) -> bool {
@@ -297,12 +328,100 @@ pub(crate) fn attach_battlefield_object_to_target(
     true
 }
 
+/// "As this Equipment becomes attached to a creature, choose a creature card
+/// name and a creature type." (Psychic Paper): the source's controller names
+/// a creature card and a creature type each time it becomes attached; the
+/// choices replace the previous ones on the attachment.
+fn choose_creature_card_name_and_type_as_becomes_attached(
+    game: &mut GameState,
+    ctx: &mut crate::effects::ExecutionContext<'_>,
+    attachment_id: ObjectId,
+    target: AttachmentTarget,
+) {
+    if !matches!(target, AttachmentTarget::Object(_)) {
+        return;
+    }
+    let has_choice_ability = game
+        .calculated_characteristics_arc(attachment_id)
+        .map(|chars| chars.static_abilities.clone())
+        .unwrap_or_else(|| {
+            game.object(attachment_id)
+                .map(|object| crate::ability::extract_static_abilities(&object.abilities))
+                .unwrap_or_default()
+                .into()
+        })
+        .into_iter()
+        .any(|ability| ability.creature_card_name_and_type_choice_as_becomes_attached());
+    if !has_choice_ability {
+        return;
+    }
+    let Some(chooser) = game.controller_of_id(attachment_id) else {
+        return;
+    };
+
+    let name_ctx = crate::decisions::context::TextInputContext::new(
+        chooser,
+        Some(attachment_id),
+        "Choose a creature card name",
+    )
+    .with_placeholder("Enter a creature card name")
+    .require_known_value(true);
+    let chosen_name = ctx.decision_maker.decide_text(game, &name_ctx);
+    if ctx.decision_maker.awaiting_choice() {
+        return;
+    }
+    let chosen_name = chosen_name.trim();
+    if !chosen_name.is_empty() {
+        let mut registry = crate::cards::CardRegistry::new();
+        registry.ensure_cards_loaded([chosen_name]);
+        if let Some(definition) = registry.get(chosen_name)
+            && definition
+                .card
+                .card_types
+                .contains(&crate::types::CardType::Creature)
+        {
+            let name = definition.name().to_string();
+            game.set_chosen_named_option(attachment_id, name);
+        }
+    }
+
+    let types = crate::types::Subtype::all_creature_types();
+    let selectable = types
+        .iter()
+        .enumerate()
+        .map(|(idx, subtype)| crate::decisions::SelectableOption::new(idx, subtype.to_string()))
+        .collect();
+    let type_ctx = crate::decisions::SelectOptionsContext::new(
+        chooser,
+        Some(attachment_id),
+        "Choose a creature type",
+        selectable,
+        1,
+        1,
+    );
+    let chosen = ctx
+        .decision_maker
+        .decide_options(game, &type_ctx)
+        .into_iter()
+        .next();
+    if ctx.decision_maker.awaiting_choice() {
+        return;
+    }
+    if let Some(subtype) = chosen.and_then(|idx| types.get(idx).copied()) {
+        game.set_chosen_creature_type(attachment_id, subtype);
+    }
+}
+
 pub(crate) fn choose_color_as_becomes_attached(
     game: &mut GameState,
     ctx: &mut crate::effects::ExecutionContext<'_>,
     attachment_id: ObjectId,
     target: AttachmentTarget,
 ) {
+    choose_creature_card_name_and_type_as_becomes_attached(game, ctx, attachment_id, target);
+    if ctx.decision_maker.awaiting_choice() {
+        return;
+    }
     let has_choice_ability = game
         .calculated_characteristics_arc(attachment_id)
         .map(|chars| chars.static_abilities.clone())
@@ -371,7 +490,7 @@ pub use become_creature_type_choice::BecomeCreatureTypeChoiceEffect;
 pub use conspire::ConspireCostEffect;
 pub use crew::CrewCostEffect;
 pub(crate) use crew::{
-    complete_crew_ability_resolution, complete_crew_ability_resolution_with_outputs,
+     complete_crew_ability_resolution_with_outputs,
 };
 pub use detain::DetainEffect;
 pub use earthbend::EarthbendEffect;
@@ -410,3 +529,4 @@ pub use untap::UntapEffect;
 pub(crate) mod face_down_entry;
 
 mod contributor_selection;
+pub(crate) use contributor_selection::stations_using_toughness;

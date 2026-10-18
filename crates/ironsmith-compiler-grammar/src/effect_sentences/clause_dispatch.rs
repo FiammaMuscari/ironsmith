@@ -157,8 +157,12 @@ fn player_filter_mentions_source_object(filter: &PlayerFilter) -> bool {
         PlayerFilter::Target(inner) | PlayerFilter::AliasedTarget(inner) => {
             player_filter_mentions_source_object(inner)
         }
+        PlayerFilter::QuantityGreaterThanPlayer { base, other, .. } => {
+            player_filter_mentions_source_object(base) || player_filter_mentions_source_object(other)
+        }
         PlayerFilter::CardsInHandAtLeastMoreThanYou { base, .. }
         | PlayerFilter::HasMoreLifeThanYou { base }
+        | PlayerFilter::MostLifeTiedAmong { base }
         | PlayerFilter::OpponentOf(base)
         | PlayerFilter::PlayerToLeftOf(base)
         | PlayerFilter::MaxSpeed { base, .. }
@@ -372,6 +376,18 @@ fn explicit_damage_source_effect(
             )
         }
         other => other,
+    };
+    // "Target creature deals 6 damage to itself" (Asmoranomardicadaistinaculdacar):
+    // the reflexive recipient is the explicit damage source, not the
+    // resolving ability's source object that a bare "itself" target reads as.
+    let target = if matches!(target, TargetAst::Source(_))
+        && crate::util::trim_edge_punctuation_tokens(action_tokens)
+            .last()
+            .is_some_and(|token| token.is_word("itself"))
+    {
+        source.clone()
+    } else {
+        target
     };
     // Within an explicit damage-source clause, "its" names the grammatical
     // subject, not an older object in reference memory. Preserve that
@@ -1436,6 +1452,39 @@ pub(crate) fn parse_get_pump_clause_with_bound_values(
             EffectAst::subject_verb_pump_all(filter, power, toughness, duration)
         }
     };
+    // "Each creature your opponents control gets -1/-1 ... for each poison
+    // counter its controller has" (Phyresis Outbreak): a per-object amount
+    // makes the set pump one pump per creature, each reading its own
+    // controller through the iterated `it` reference.
+    if let EffectAst::SubjectVerb(crate::cards::builders::SubjectVerbEffectAst {
+        action:
+            SubjectVerbActionAst::StatChanges(StatChangeActionAst::PumpAll {
+                filter,
+                power,
+                toughness,
+                duration,
+                ..
+            }),
+        ..
+    }) = &effect
+        && (value_reads_iterated_object_controller(power)
+            || value_reads_iterated_object_controller(toughness))
+    {
+        let pump = EffectAst::subject_verb_pump(
+            power.clone(),
+            toughness.clone(),
+            TargetAst::Tagged(
+                crate::tag::CompilerReferenceTag::It.bind(),
+                span_from_tokens(subject_shape.subject_tokens),
+            ),
+            duration.clone(),
+            None,
+        );
+        return Ok(Some(EffectAst::ForEach(ForEachEffectAst::ForEachObject {
+            filter: filter.clone(),
+            effects: vec![pump],
+        })));
+    }
     let authored_quantifier = if demonstrative_set_surface {
         Some(ironsmith_core::SetQuantifierSurface::Those)
     } else if subject_tokens
@@ -1471,6 +1520,17 @@ pub(crate) fn parse_get_pump_clause_with_bound_values(
         *set_quantifier_surface = Some(authored_quantifier);
     }
     Ok(Some(effect))
+}
+
+/// Whether a stat amount reads the controller of the iterated `it` object
+/// ("for each poison counter its controller has").
+fn value_reads_iterated_object_controller(value: &Value) -> bool {
+    let iterated = crate::filter::ObjectRef::Tagged(crate::tag::CompilerReferenceTag::It.bind().into());
+    match value.unhinted() {
+        Value::PlayerCounters(PlayerFilter::ControllerOf(object), _) => *object == iterated,
+        Value::Scaled(inner, _) => value_reads_iterated_object_controller(inner),
+        _ => false,
+    }
 }
 
 fn lower_direct_clause_shape(
@@ -1529,6 +1589,18 @@ fn lower_direct_clause_shape(
         clause_grammar::DirectClauseShape::DamagedPlayersCantGainLife => {
             EffectAst::subject_verb_cant(
                 crate::effect::Restriction::gain_life(PlayerFilter::DamagedPlayer),
+                Until::EndOfTurn,
+                None,
+            )
+        }
+        clause_grammar::DirectClauseShape::CastOnlyMoreSpellsThisTurn(more) => {
+            EffectAst::subject_verb_cant(
+                crate::effect::Restriction::cast_only_n_more_spells(
+                    PlayerFilter::You,
+                    // Any spell, as for "can't cast more than one spell".
+                    ObjectFilter::default(),
+                    more,
+                ),
                 Until::EndOfTurn,
                 None,
             )

@@ -74,6 +74,8 @@ impl StaticAbilityKind for EventReplacementWithEffects {
             | ReplacedEventSpec::DamageToObject { .. }
             | ReplacedEventSpec::LifeGain { .. }
             | ReplacedEventSpec::DrawInstruction { .. }
+            | ReplacedEventSpec::LifeReducedToZeroOrLess { .. }
+            | ReplacedEventSpec::LifePayment { .. }
             | ReplacedEventSpec::Untap { .. } => ReplacementEffect::with_matcher(
                 source,
                 controller,
@@ -137,6 +139,10 @@ pub struct ReplacedEventMatcher {
 }
 
 fn damage_source_matches(source: ObjectId, filter: &ObjectFilter, ctx: &EventContext) -> bool {
+    // Shared damage-source color hook (Ghostly Flame).
+    if let Some(colorless) = ctx.game.damage_source_color_snapshot(source, ctx.event_source_snapshot) {
+        return filter.matches_snapshot(&colorless, &ctx.filter_ctx, ctx.game);
+    }
     if !ctx.game.is_phased_out(source)
         && let Some(object) = ctx.game.object(source)
     {
@@ -172,6 +178,8 @@ impl ReplacementMatcher for ReplacedEventMatcher {
             ReplacedEventSpec::LifeGain { .. } => kind == EventKind::LifeGain,
             ReplacedEventSpec::DrawInstruction { .. } => kind == EventKind::KeywordAction,
             ReplacedEventSpec::Untap { .. } => kind == EventKind::BecomeUntapped,
+            ReplacedEventSpec::LifeReducedToZeroOrLess { .. } => kind == EventKind::LifeLoss,
+            ReplacedEventSpec::LifePayment { .. } => kind == EventKind::LifeLoss,
             // Installed through their dedicated matchers instead.
             ReplacedEventSpec::LifeLoss { .. }
             | ReplacedEventSpec::Destroy { .. }
@@ -224,10 +232,16 @@ impl ReplacementMatcher for ReplacedEventMatcher {
                         .as_ref()
                         .is_none_or(|filter| damage_source_matches(damage.source, filter, ctx))
             }
-            ReplacedEventSpec::LifeGain { player } => {
+            ReplacedEventSpec::LifeGain {
+                player,
+                from_own_spell_or_ability,
+            } => {
                 let Some(gain) = downcast_event::<LifeGainEvent>(event) else {
                     return false;
                 };
+                if *from_own_spell_or_ability && gain.effect_controller != Some(gain.player) {
+                    return false;
+                }
                 player.matches_player(gain.player, &ctx.filter_ctx)
             }
             ReplacedEventSpec::Untap {
@@ -261,6 +275,28 @@ impl ReplacementMatcher for ReplacedEventMatcher {
                     && action.amount >= *minimum
                     && player.matches_player(action.player, &ctx.filter_ctx)
             }
+            ReplacedEventSpec::LifePayment { player, require_library_capacity } => {
+                let Some(loss) = downcast_event::<crate::events::LifeLossEvent>(event) else {
+                    return false;
+                };
+                loss.from_payment && loss.amount > 0
+                    && player.matches_player(loss.player, &ctx.filter_ctx)
+                    && (!require_library_capacity || ctx.game.player(loss.player)
+                        .is_some_and(|state| state.library.len() >= loss.amount as usize))
+            }
+            // CR 119.3: the loss would leave the player's life total at 0 or
+            // less. The life total is read as the loss is proposed.
+            ReplacedEventSpec::LifeReducedToZeroOrLess { player } => {
+                let Some(loss) = downcast_event::<crate::events::LifeLossEvent>(event) else {
+                    return false;
+                };
+                if loss.amount == 0 || !player.matches_player(loss.player, &ctx.filter_ctx) {
+                    return false;
+                }
+                ctx.game.player(loss.player).is_some_and(|state| {
+                    i64::from(state.life) - i64::from(loss.amount) <= 0
+                })
+            }
             ReplacedEventSpec::LifeLoss { .. }
             | ReplacedEventSpec::Destroy { .. }
             | ReplacedEventSpec::ZoneChange { .. }
@@ -282,6 +318,9 @@ impl ReplacementMatcher for ReplacedEventMatcher {
             ReplacedEventSpec::LifeLoss { .. } => {
                 "When a matching player would lose life".to_string()
             }
+            ReplacedEventSpec::LifePayment { .. } => {
+                "When a matching player would pay life".to_string()
+            }
             ReplacedEventSpec::Destroy { .. } => {
                 "When a matching permanent would be destroyed".to_string()
             }
@@ -296,6 +335,9 @@ impl ReplacementMatcher for ReplacedEventMatcher {
             }
             ReplacedEventSpec::DrawInstruction { minimum, .. } => {
                 format!("When a matching player would draw {minimum} or more cards")
+            }
+            ReplacedEventSpec::LifeReducedToZeroOrLess { .. } => {
+                "When a matching player's life total would be reduced to 0 or less".to_string()
             }
         }
     }

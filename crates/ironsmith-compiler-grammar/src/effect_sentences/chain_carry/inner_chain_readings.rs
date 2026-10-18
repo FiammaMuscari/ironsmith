@@ -132,6 +132,12 @@ const READINGS: &[Reading] = &[
         read: |input| input.outcome(read_gain_then_get(input)),
     },
     Reading {
+        id: RuleId::new("borrowed-variant-gain"),
+        head: HeadDiscriminator::Any,
+        admits: |_| true,
+        read: |input| input.outcome(read_borrowed_variant_gain(input)),
+    },
+    Reading {
         id: RuleId::new("control-flow-plan"),
         head: HeadDiscriminator::Any,
         admits: |input| {
@@ -370,6 +376,17 @@ fn read_shuffle_graveyard_into_library(
     }
     Ok(None)
 }
+/// "creatures you control gain protection until end of turn if a creature you
+/// control has protection" (Concerted Effort): see
+/// `parse_borrowed_variant_gain_sentence`. Read before control flow splits
+/// the trailing condition off a family keyword it cannot grant.
+fn read_borrowed_variant_gain(
+    input: &InnerChain<'_>,
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    Ok(super::super::dispatch_entry::parse_borrowed_variant_gain_sentence(input.tokens)?
+        .map(|effect| vec![effect]))
+}
+
 fn read_gain_then_get(input: &InnerChain<'_>) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let tokens = input.tokens;
     let recognize_control_flow = input.recognize_control_flow;
@@ -395,6 +412,17 @@ fn read_control_flow_plan(input: &InnerChain<'_>) -> Result<Option<Vec<EffectAst
         // This requirement owns its leading duration. Keep it intact before
         // the generic control-flow reader separates scope from the body.
         if let Some(effect) = crate::effect_sentences::clause_primitives::parse_attack_player_if_able_clause(tokens)? {
+            return Ok(Some(vec![effect]));
+        }
+        // "Choose new targets for target spell or ability if it's controlled
+        // by <player> [and if it targets ...]" (Emissary of Grudges): the
+        // trailing if qualifies the retargeted stack object, so the retarget
+        // reader owns it; a generic control-flow split would test the source.
+        if crate::lexer::token_word_refs(tokens).starts_with(&["choose", "new", "targets"])
+            && tokens.iter().any(|token| token.is_word("if"))
+            && let Ok(Some(effect)) =
+                crate::effect_sentences::clause_primitives::parse_choose_new_targets_clause(tokens)
+        {
             return Ok(Some(vec![effect]));
         }
         match super::super::super::grammar::effects::control_flow::recognize_control_flow(tokens) {

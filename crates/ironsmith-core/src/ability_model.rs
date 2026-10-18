@@ -63,6 +63,9 @@ pub enum ActivationTiming {
     /// source's current controller may activate it, at any time they could
     /// activate an ability (CR 602.1, 602.5).
     AnyTimeByOpponents,
+    /// "Only this creature's owner may activate this ability" (Personal
+    /// Incarnation): the source's owner, whoever controls it (CR 602.5).
+    AnyTimeBySourceOwner,
     /// "Only your opponents may activate this ability and only as a
     /// sorcery": an opponent of the source's controller, during their own
     /// main phase with an empty stack (CR 307.1, 602.5d).
@@ -71,6 +74,13 @@ pub enum ActivationTiming {
     /// and only during the declare attackers step." (Capricopian): the
     /// activator is the player the source is attacking (CR 506.2, 508).
     DeclareAttackersStepByAttackedPlayer,
+    /// "Only you may activate this ability" on an ability an effect grants
+    /// (Martyrdom): only the player who controlled the granting effect may
+    /// activate it, and only while they also control the recipient (the
+    /// default CR 602.2 controller rule still applies). `None` before the
+    /// grant resolves; the grant binds it to its controller. Appended for
+    /// wire stability.
+    AnyTimeByGrantingPlayer(Option<crate::ids::PlayerId>),
 }
 
 impl ActivationTiming {
@@ -239,6 +249,11 @@ pub enum ManaUsageRestriction<E> {
         enters_with_counters: Vec<(crate::CounterType, u32)>,
         granted_abilities: Vec<(StaticAbilityId, ManaSpendAbilityGrantDuration)>,
         granted_keywords: Vec<ManaSpendGrantedKeyword>,
+        /// "it enters with a number of additional +1/+1 counters on it equal
+        /// to <value>" (Opal Palace): counters whose number is read as the
+        /// spell's permanent enters. Appended with a serde default.
+        #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Vec::is_empty"))]
+        enters_with_counter_values: Vec<(crate::CounterType, crate::Value)>,
     },
     CastSpellOrActivateAbilitySourceMatching {
         spell_filter: ObjectFilter,
@@ -305,6 +320,7 @@ impl<E> ManaUsageRestriction<E> {
                 enters_with_counters,
                 granted_abilities,
                 granted_keywords,
+                enters_with_counter_values,
             } => ManaUsageRestriction::CastSpellWithManaBonus {
                 filter,
                 condition,
@@ -312,6 +328,7 @@ impl<E> ManaUsageRestriction<E> {
                 enters_with_counters,
                 granted_abilities,
                 granted_keywords,
+                enters_with_counter_values,
             },
             Self::CastSpellOrActivateAbilitySourceMatching {
                 spell_filter,
@@ -686,6 +703,7 @@ pub enum ActivatedAbilityKeyword {
     Ninjutsu,
     Boast,
     Exhaust,
+    Craft,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1174,6 +1192,7 @@ impl<E: Clone, C: CoreCostComponent, Cond> ActivatedAbility<E, C, Cond> {
             ActivationTiming::AnyPlayerDuringTheirTurnBeforeEndStep
                 | ActivationTiming::AnyTimeByEnchantedCreatureController
                 | ActivationTiming::AnyTimeByOpponents
+                | ActivationTiming::AnyTimeBySourceOwner
                 | ActivationTiming::SorcerySpeedByOpponents
                 | ActivationTiming::DeclareAttackersStepByAttackedPlayer
         ) || self.additional_restrictions.iter().any(|restriction| {
@@ -1182,6 +1201,24 @@ impl<E: Clone, C: CoreCostComponent, Cond> ActivatedAbility<E, C, Cond> {
                     .to_ascii_lowercase()
                     .starts_with("any player may activate this ability")
             })
+    }
+
+    /// "This ability can't be copied." (Gogo, Master of Mimicry): copies of
+    /// this activated ability can't be created (CR 101.2: the prohibition
+    /// wins over an instruction to copy it). Kept on the ability as its
+    /// authored restriction surface.
+    pub fn ability_cant_be_copied(&self) -> bool {
+        self.additional_restrictions.iter().any(|restriction| {
+            let normalized = restriction
+                .trim()
+                .trim_end_matches('.')
+                .replace('’', "'")
+                .to_ascii_lowercase();
+            matches!(
+                normalized.as_str(),
+                "this ability can't be copied" | "this ability cant be copied"
+            )
+        })
     }
 
     /// Minimum X announced for this activation. Oracle currently expresses

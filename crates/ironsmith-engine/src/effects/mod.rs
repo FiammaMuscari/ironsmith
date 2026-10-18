@@ -137,7 +137,9 @@ pub use combat::{
     ModifyPowerToughnessAllEffect, ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
     PreventAllCombatDamageEffect, PreventAllCombatDamageFromEffect, PreventAllDamageEffect,
     PreventAllDamageToTargetEffect, PreventDamageEffect, RemoveFromCombatEffect,
-    ReselectAttackTargetEffect, SetBasePowerToughnessEffect,
+    ReselectAttackTargetEffect, ExchangeBlocksEffect, SetBasePowerToughnessEffect,
+    UnblockSoleBlockedAttackersEffect, BlockAttackerOfChoiceEffect,
+    DeclareBlockersByRandomPilesThisTurnEffect,
 };
 pub use composition::{
     AdaptEffect, AmplifyEffect, AuraSwapEffect, BackupEffect, BeholdEffect, BidLifeEffect,
@@ -155,6 +157,7 @@ pub use composition::{
     ReflexiveTriggerEffect, RepeatEffectsEffect, RepeatProcessEffect, RepeatProcessPromptEffect,
     SecretChoiceEffect, SecretChoiceResult, SequenceEffect, SupportEffect, TagAllEffect,
     TagAttachedToSourceEffect, TagMatchingObjectsEffect, TagOtherBlockParticipantEffect,
+    TagSplicedCardsEffect, TagLastDamageSourceEffect,
     TagTriggeringAttackerEffect, TagTriggeringBlockersEffect, TagTriggeringDamageTargetEffect,
     TagTriggeringObjectEffect, TagTriggeringSourceEffect, TaggedEffect, TargetOnlyEffect,
     UnlessActionEffect, UnlessPaysEffect, VOTE_WINNERS_TAG, VOTED_OBJECTS_TAG,
@@ -173,8 +176,9 @@ pub use counters::remove_any_counters_among_cost_display;
 pub(crate) use counters::remove_any_counters_among_valid_targets_with_tags;
 pub use counters::{
     DoubleCountersEffect, ForEachCounterKindPutOrRemoveEffect, MoveAllCountersEffect,
-    MoveCountersEffect, MoveOneCounterEffect, ProliferateEffect, PutCounterOfChosenKindEffect,
-    PutCounterOfKindChosenFromEffect,
+    MoveCountersEffect, MoveOneCounterEffect, NoteCountersEffect, ProliferateEffect,
+    PutCounterOfChosenKindEffect,
+    PutCounterOfKindChosenFromEffect, PutCounterOfRandomKindEffect,
     PutCountersEffect, RemoveAnyCountersAmongEffect, RemoveAnyCountersFromSourceEffect,
     RemoveCountersEffect, RemoveUpToAnyCountersEffect, RemoveUpToCountersEffect,
 };
@@ -193,15 +197,19 @@ pub use delayed::{
 };
 pub use life::{
     ExchangeLifeTotalsEffect, GainLifeEffect, LoseLifeEffect, NoteLifeTotalEffect, PayLifeEffect,
+    RedistributeLifeTotalsEffect,
     SetLifeTotalEffect,
 };
 pub use mana::{
-    AddColorlessManaEffect, AddManaEffect, AddManaFromCommanderColorIdentityEffect,
+    ActivateManaAbilityOfEachLandEffect, AddColorlessManaEffect, AddManaEffect, AddManaFromCommanderColorIdentityEffect,
     AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfChosenColorEffect,
-    AddManaOfColorsAmongEffect, AddManaOfLandProducedTypesEffect, AddManaOfNotedTypeEffect,
+    AddManaEqualToManaCostEffect, AddManaLostThisWayEffect, AddManaOfColorsAmongEffect, AddManaOfLandProducedTypesEffect,
+    AddManaOfNotedTypeEffect,
     AddOneManaOfAnyColorAmongEffect, AddScaledManaEffect, DoubleManaPoolEffect,
-    EmptyManaPoolEffect, GrantManaAbilityUntilEotEffect, ManaTypeSource,
-    NoteActivationManaTypeEffect, PayManaEffect, RetainManaUntilEndOfTurnEffect,
+    EmptyManaPoolEffect, GrantManaAbilityUntilEotEffect,
+    GrantPayLifeManaAbilityUntilEndOfTurnEffect, ManaTypeSource,
+    NoteActivationManaTypeEffect, NoteActivationManaPaymentEffect, NoteTriggeringCreatureTypeEffect, PayManaEffect,
+    RetainManaUntilEndOfTurnEffect,
 };
 pub use permanents::{
     AttachObjectsEffect, AttachToEffect, BecomeBasicLandTypeChoiceEffect, BecomeColorChoiceEffect,
@@ -216,9 +224,9 @@ pub use permanents::{
     TurnFaceDownEffect, TurnFaceUpEffect, UmbraArmorEffect, UnattachObjectsEffect, UnearthEffect,
     UnlockRoomDoorEffect, UntapEffect,
 };
-pub use player::{KeepGreatestManaValuePlayersEffect, TagPlayersEffect};
+pub use player::{KeepGreatestManaValuePlayersEffect, RollDieKeepHighestPlayersEffect, TagPlayersEffect};
 pub use player::{
-    AdditionalLandPlaysEffect, AdditionalPhase, AdditionalPhasesEffect, AscendEffect,
+    AdditionalLandPlaysEffect, AdditionalPhase, AdditionalPhasesEffect, AdditionalStepAnchor, AdditionalStepKind, AdditionalStepsEffect, AscendEffect,
     BecomeMonarchEffect, CascadeEffect, CastSourceEffect, CastTaggedEffect, ChooseCardNameEffect,
     ChooseCardTypeEffect, ChooseColorEffect, ChooseCreatureTypeEffect, ChooseLandTypeEffect,
     ChooseNamedOptionEffect, ChooseNumberAtRandomEffect, ChooseNumberEffect, ChoosePlayerEffect,
@@ -227,16 +235,17 @@ pub use player::{
     DrawTheGameEffect, EndCombatPhaseEffect, EndTurnEffect, EnergyCountersEffect,
     ExileInsteadOfGraveyardEffect, ExileThenGrantPlayEffect, ExileUntilMatchCastEffect,
     ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
-    ExtraTurnEffect, FlipCoinEffect, GrantBySpecEffect, GrantEffect, GrantNextSpellAbilityEffect,
+    ExtraTurnEffect, FlipCoinEffect, CoinFlipLifeStakesEffect, RedirectEnteringSourceEffect, GrantBySpecEffect, GrantEffect, GrantNextSpellAbilityEffect,
     GrantNextSpellCostReductionEffect, GrantPlayTaggedDuration, GrantPlayTaggedEffect,
     GrantTaggedSpellFreeCastUntilEndOfTurnEffect, GrantTaggedSpellLifeCostByManaValueEffect,
     IncreaseSpeedEffect, LoseTheGameEffect, GrantLoyaltyActivationAllowanceEffect,
+    CastFaceDownUsingActivationManaEffect, RegisterExtraDieReplacementEffect, GrantTapUncontrolledLandsForManaEffect, RerollStoredDieResultsEffect, RollAndStoreDieResultsEffect,
     LoyaltyActivationAllowance, LoyaltyActivationScope, MayCastForMadnessCostEffect,
     MayCastMatchingSpellWithoutPayingManaCostEffect, PayAnyEnergyEffect, PayAnyLifeEffect,
     PayEnergyEffect, PlaySubgameEffect, PlayerCountersEffect, PoisonCountersEffect,
     RadiationEffect, ReduceSpeedEffect, RestartGameEffect, RevealChosenSubtypeEffect,
     ReverseTurnOrderEffect, RingTemptsYouEffect, RippleEffect, RollDiceChooseResultEffect,
-    RollDieEffect, RollToVisitAttractionsEffect, SkipCombatPhasesEffect, SkipCombatPhasesThisTurnEffect, SkipDrawStepEffect,
+    RollDieEffect, RollPlanarDieEffect, RollToVisitAttractionsEffect, SkipCombatPhasesEffect, SkipCombatPhasesThisTurnEffect, SkipDrawStepEffect, PlayWithHandRevealedEffect, RevealSourceInHandUntilOwnersNextTurnEffect,
     SkipMainPhasesThisTurnEffect, SkipNextCombatPhaseThisTurnEffect, SkipScheduledEffect,
     SkipTurnEffect, TakeInitiativeEffect, TicketCountersEffect, VentureIntoDungeonEffect,
     WinTheGameEffect,
@@ -247,12 +256,14 @@ pub use replacement::{
     RegisterEnterTappedReplacementEffect, RegisterEnterUnderControlReplacementEffect,
     RegisterEnterWithCountersReplacementEffect, RegisterFutureZoneReplacementEffect,
     RegisterManaReplacementEffect, RegisterManaRewriteEffect, RegisterManaSpendPermissionEffect,
-    RegisterNextBatchEnterWithCountersEffect, RegisterZoneReplacementEffect, ReplacementApplyMode,
+    RegisterNextBatchEnterAsCopyEffect, RegisterNextBatchEnterWithCountersEffect,
+    RegisterZoneReplacementEffect, ReplacementApplyMode,
 };
 pub use restrictions::CantEffect;
 pub(crate) use stack::{CastStoredCardCopyEffect, EpicSpellCopyEffect};
 pub use stack::{
     ChooseNewTargetsEffect, CopySpellEffect, CopySpellForEachTargetEffect, CounterEffect,
+    PutRetainedSpellCopyOntoStackEffect, RetainSpellChoicesEffect,
     NewTargetRestriction, RetargetMode, RetargetStackObjectEffect, ScaleXValueEffect,
     VariableCasualtyPlaneswalkerCopyEffect,
 };
@@ -261,7 +272,7 @@ pub use tokens::{
     IncubateEffect, InvestigateEffect, TokenCopyReferenceSurface,
 };
 pub use zones::{
-    BattlefieldController, BecomePlottedEffect, DestroyEffect, DestroyNoRegenerationEffect,
+    BattlefieldController, BecomePlottedEffect, BecomeForetoldEffect, DestroyEffect, DestroyNoRegenerationEffect,
     EachPlayerSacrificesEffect, ExchangeZonesEffect, ExileEffect, ExileUntilDuration,
     ExileUntilEffect, HauntExileEffect, LibraryPlacementOrder, MayMoveToZoneEffect,
     MoveToLibraryNthFromTopEffect, MoveToLibraryTopOrBottomChoiceEffect,
@@ -275,6 +286,8 @@ pub use zones::{
 pub use damage::DealDamageToRecipientsEffect;
 pub use replacement::RegisterDamageAdditionEffect;
 pub use replacement::RegisterDamageMultiplierEffect;
+pub use replacement::RegisterTokenCreationMultiplierEffect;
+pub use replacement::{RegisterDamageCounterReplacementEffect, RegisteredReplacementExpiry};
 
 pub(crate) use composition::{
     TaggedRuntimeState, apply_outcome_tags, capture_tagged_runtime_state, is_object_selection,
@@ -285,7 +298,6 @@ pub(crate) use composition::{
     PreparedIfBranch, execute_if_branches_with_outputs, prepare_if_branches,
 };
 
-pub(crate) use composition::{ForPlayersDrawContinuation, ForPlayersDrawProgress};
 
 pub use damage::DealDamageBySourcesEffect;
 

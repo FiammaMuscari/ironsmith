@@ -58,6 +58,9 @@ pub struct ScheduleDelayedTriggerEffect {
     /// delayed trigger and expose its accumulated prevented damage as the
     /// delayed ability's numeric event value.
     pub event_value_from_prior_prevention: bool,
+    /// Player whose turns bound a next-turn duration, resolved at
+    /// registration and also tagged as `DELAYED_DURATION_PLAYER_TAG`.
+    pub duration_player: Option<PlayerFilter>,
 }
 
 impl ScheduleDelayedTriggerEffect {
@@ -88,7 +91,15 @@ impl ScheduleDelayedTriggerEffect {
             controller,
             prepayment: None,
             event_value_from_prior_prevention: false,
+            duration_player: None,
         }
+    }
+
+    /// Bound a next-turn duration by this player's turns instead of the
+    /// controller's (see `ironsmith_core::ScheduleDelayedTriggerEffect`).
+    pub fn with_duration_player(mut self, player: PlayerFilter) -> Self {
+        self.duration_player = Some(player);
+        self
     }
 
     pub fn from_tag(
@@ -118,6 +129,7 @@ impl ScheduleDelayedTriggerEffect {
             controller,
             prepayment: None,
             event_value_from_prior_prevention: false,
+            duration_player: None,
         }
     }
 
@@ -168,6 +180,15 @@ impl ScheduleDelayedTriggerEffect {
 
     pub fn until_controller_next_turn_end(mut self) -> Self {
         self.duration = ironsmith_core::DelayedTriggerDuration::UntilControllerNextTurnEnd;
+        self.until_end_of_turn = false;
+        self.until_end_of_combat = false;
+        self
+    }
+
+    /// "For as long as this creature remains tapped": the registration ends
+    /// once the ability's source untaps or leaves the battlefield.
+    pub fn until_source_untaps(mut self) -> Self {
+        self.duration = ironsmith_core::DelayedTriggerDuration::WhileSourceTapped;
         self.until_end_of_turn = false;
         self.until_end_of_combat = false;
         self
@@ -231,13 +252,25 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
         game.refresh_continuous_state().map_err(ExecutionError::ContinuousDiscovery)?;
         // New attack/damage observations start their own exact role. Other
         // delayed bodies inherit a selected actor at registration time.
+        let bound_trigger = if self.trigger.downcast_ref::<crate::triggers::SpellCastThroughPermissionTrigger>().is_some() {
+            for grant in &mut game.effect_store.grant_registry.grants {
+                if grant.permission_identity.as_ref().is_some_and(|identity| ctx.last_play_permissions.contains(identity)) {
+                    grant.play_from_constraints.requires_cast_receipt = true;
+                }
+            }
+            Trigger::new(crate::triggers::SpellCastThroughPermissionTrigger {
+                permissions: ctx.last_play_permissions.clone(),
+            })
+        } else { self.trigger.clone() };
         let new_combat_observation = self.trigger.subscribed_kinds().is_some_and(|kinds|
             kinds.iter().any(|kind| matches!(kind, crate::events::EventKind::CreatureAttacked
                 | crate::events::EventKind::PlayerAttackDeclaration
                 | crate::events::EventKind::CreatureAttackedAndUnblocked
                 | crate::events::EventKind::CreatureBecameBlocked | crate::events::EventKind::Damage)));
         let needs_defender = self.effects.all_effects().iter()
-            .any(|effect| effect.0.mentions_player_filter(&crate::target::PlayerFilter::Defending));
+            .any(|effect| effect.0.mentions_player_filter(&crate::target::PlayerFilter::Defending))
+            || self.duration_player.as_ref().is_some_and(|player|
+                player.mentions_player_filter(&crate::target::PlayerFilter::Defending));
         let defending_player_reference = if needs_defender && !new_combat_observation {
             if !ctx.bind_defending_player(game)? { return Ok(EffectOutcome::resolved()); }
             ctx.combat.defending_player_reference.or_else(|| ctx.combat.defending_player
@@ -254,8 +287,28 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
             if self.watch_ability_source { Some(ctx.source) }
             else { resolve_source_object_id(game, ctx) }
         }).unwrap_or(ctx.source);
+        let duration_player = self
+            .duration_player
+            .as_ref()
+            .map(|player| resolve_player_filter(game, player, ctx))
+            .transpose()?;
         let filter_ctx = ctx.filter_context(game);
         let mut tagged_players = filter_ctx.tagged_players.clone();
+        // "they draw a card at the beginning of the next end step" (Horn of
+        // Plenty): the player bound when the registration is created stays
+        // "that player" for the delayed ability. `IteratedPlayer` falls back
+        // to the `__it__` player tag when no loop binds it at resolution.
+        if let Some(player) = ctx.iteration.iterated_player {
+            tagged_players
+                .entry("__it__".into())
+                .or_insert_with(|| vec![player]);
+        }
+        if let Some(player) = duration_player {
+            tagged_players.insert(
+                ironsmith_core::DELAYED_DURATION_PLAYER_TAG.into(),
+                vec![player],
+            );
+        }
         if !ctx.targets_are_cost_choices {
             let mut target_players = ctx
                 .targets
@@ -318,6 +371,16 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
         {
             return Ok(EffectOutcome::count(0));
         }
+        // CR 611.2b: a "for as long as this remains tapped" registration whose
+        // source already untapped (or left) does nothing.
+        let while_source_tapped = (self.duration
+            == ironsmith_core::DelayedTriggerDuration::WhileSourceTapped)
+            .then_some(ability_source);
+        if while_source_tapped.is_some_and(|source| {
+            !crate::triggers::check::delayed_source_remains_tapped(game, source)
+        }) {
+            return Ok(EffectOutcome::count(0));
+        }
 
         if let Some(tag) = &self.target_tag {
             let Some(tagged) = tagged_objects.get(tag) else {
@@ -340,7 +403,7 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                     &mut delayed_tagged_objects,
                 );
                 let delayed = DelayedTriggerTemplate::new(
-                    self.trigger.clone(),
+                    bound_trigger.clone(),
                     self.effects.clone(),
                     self.one_shot,
                     controller_id,
@@ -375,6 +438,7 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                         .flatten(),
                 )
                 .while_any_tagged_object_in_zone_opt(self.while_any_tagged_object_in_zone.clone())
+                .while_source_tapped(while_source_tapped)
                 .with_tagged_objects(delayed_tagged_objects)
                 .with_tagged_players(tagged_players.clone())
                 .with_defending_player_reference(defending_player_reference)
@@ -397,7 +461,7 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
         let mut tagged_objects = tagged_objects;
         crate::effects::helpers::pin_tagged_objects_to_current(game, ctx, &mut tagged_objects);
         let delayed = DelayedTriggerTemplate::new(
-            self.trigger.clone(),
+            bound_trigger.clone(),
             self.effects.clone(),
             self.one_shot,
             controller_id,
@@ -434,6 +498,7 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                 .flatten(),
         )
         .while_any_tagged_object_in_zone_opt(self.while_any_tagged_object_in_zone.clone())
+        .while_source_tapped(while_source_tapped)
         .with_tagged_objects(tagged_objects)
         .with_tagged_players(tagged_players)
         .with_defending_player_reference(defending_player_reference)

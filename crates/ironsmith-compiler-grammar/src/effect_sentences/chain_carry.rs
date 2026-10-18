@@ -83,6 +83,18 @@ fn has_any_number_of_times_suffix(tokens: &[OwnedLexToken]) -> bool {
     crate::word_primitives::parse_sequence_suffix(&words, &["any", "number", "of", "times"])
 }
 
+/// "pay {G} up to three times": the bound and the instruction before it.
+fn split_up_to_times_suffix(tokens: &[OwnedLexToken]) -> Option<(u32, &[OwnedLexToken])> {
+    let trimmed = trim_lexed_commas(tokens);
+    let words = crate::lexer::parser_token_word_refs(trimmed);
+    let [.., "up", "to", count, "times"] = words.as_slice() else {
+        return None;
+    };
+    let max = crate::util::parse_number_word_u32(count).filter(|max| *max >= 2)?;
+    let up_index = trimmed.iter().rposition(|token| token.is_word("up"))?;
+    (up_index > 0).then(|| (max, &trimmed[..up_index]))
+}
+
 fn is_repeatable_optional_payment(effects: &[EffectAst]) -> bool {
     matches!(
         effects,
@@ -377,7 +389,46 @@ pub fn parse_reveal_source_exiled_permanents_sentence_lexed(
     })])
 }
 
+/// The target is announced even when the controller later declines the
+/// optional copy. Keep its controller exclusion relative to the entering
+/// token, before creation changes the ordinary object antecedent.
+pub(super) fn parse_optional_other_player_token_copy(tokens: &[OwnedLexToken]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let view = crate::lexer::TokenWordView::new(tokens);
+    let words = view.word_refs();
+    let prefix: &[&str] = &["you", "may", "have", "target", "player", "other", "than", "its", "controller"];
+    if !words.starts_with(prefix) || words.get(prefix.len()) != Some(&"create") {
+        return Ok(None);
+    }
+    let start = view.token_index_after_words(prefix.len()).unwrap_or(tokens.len());
+    let mut effects = parse_effect_chain_lexed(&tokens[start..])?;
+    let mut found = false;
+    let mut bind_copy = |effects: &mut Vec<EffectAst>| {
+        for effect in effects {
+            if let EffectAst::SubjectVerb(subject) = effect {
+                if let SubjectVerbActionAst::Tokens(crate::cards::builders::TokenActionAst::CreateTokenCopy { player, .. }) = &mut subject.action {
+                    *player = PlayerAst::That;
+                    subject.subject.player = PlayerAst::That;
+                    found = true;
+                }
+            }
+        }
+    };
+    bind_copy(&mut effects);
+    for effect in &mut effects {
+        for_each_nested_effect_vec_mut(effect, true, &mut bind_copy);
+    }
+    drop(bind_copy);
+    if !found { return Ok(None); }
+    let entering_controller = PlayerFilter::ControllerOf(crate::filter::ObjectRef::tagged(
+        crate::tag::CompilerReferenceTag::Triggering.bind()));
+    let target = TargetAst::Player(PlayerFilter::excluding(PlayerFilter::Any, entering_controller),
+        crate::util::span_from_tokens(tokens));
+    Ok(Some(vec![EffectAst::subject_verb_explicit_target_only(target),
+        EffectAst::Permissions(crate::cards::builders::PermissionEffectAst::May { effects })]))
+}
+
 pub fn parse_effect_chain_lexed(tokens: &[OwnedLexToken]) -> Result<Vec<EffectAst>, CardTextError> {
+    if let Some(effects) = parse_optional_other_player_token_copy(tokens)? { return Ok(effects); }
     crate::grammar::shared_util::value_expr::validate_result_quantity_bindings(tokens)?;
     super::pair_procedure::validate_discard_replacements(tokens)?;
     super::local_self_replacement::validate(tokens)?;
@@ -493,6 +544,44 @@ pub fn parse_counter_then_dynamic_token_creation_chain(
     }]))
 }
 
+/// "Remove two time counters from each permanent and each suspended card." /
+/// "Put two time counters on each permanent with a time counter on it and
+/// each suspended card." (Dust of Moments): the object-set union is one
+/// counter action's holder set, not two coordinated effects. The complete
+/// permanent-or-suspended-card filter owns the conjunction.
+pub(super) fn parse_atomic_permanent_and_suspended_counter_sentence(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let tokens = trim_lexed_commas(tokens);
+    let words = token_word_refs(tokens);
+    let Some(verb) = words.first().copied() else {
+        return Ok(None);
+    };
+    if !matches!(verb, "remove" | "put")
+        || !matches!(
+            words.as_slice(),
+            [.., "and", "each", "suspended", "card" | "cards"]
+        )
+        || !words.iter().any(|word| matches!(*word, "counter" | "counters"))
+        || !words.iter().any(|word| matches!(*word, "permanent" | "permanents"))
+        || words.iter().filter(|word| matches!(**word, "and" | "or")).count() != 1
+        || words.iter().filter(|word| matches!(**word, "remove" | "put")).count() != 1
+    {
+        return Ok(None);
+    }
+    // The verb helpers read the clause after its verb.
+    if !tokens.first().is_some_and(|token| token.is_word(verb)) {
+        return Ok(None);
+    }
+    let after_verb = &tokens[1..];
+    let effect = if verb == "remove" {
+        super::zone_handlers::parse_remove(after_verb)?
+    } else {
+        super::zone_counter_helpers::parse_put_counters(after_verb)?
+    };
+    Ok(Some(effect))
+}
+
 pub(super) fn is_atomic_put_counter_for_each_sentence(tokens: &[OwnedLexToken]) -> bool {
     super::super::grammar::effects::zone_counter_shapes::parse_atomic_put_counter_for_each_shape(
         tokens,
@@ -580,6 +669,7 @@ pub(crate) fn parse_simple_that_creature_owner_library_placement(
             player: PlayerAst::You,
         },
         action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::MoveToZone {
+            retained_reference_tags: Vec::new(),
             target: TargetAst::Object(filter, None, None),
             source_top_only: false,
             tagged_destinations: Vec::new(),
@@ -677,6 +767,15 @@ fn parse_effect_chain_lexed_inner(
     if let Some(effect) = super::attacked_turn_permission::parse(tokens)? {
         return Ok(vec![effect]);
     }
+    if let Some(effect) = super::referenced_player_graveyard_cast::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effects) = super::referenced_player_turn_lockout::parse(tokens)? {
+        return Ok(effects);
+    }
+    if let Some(effects) = super::top_card_land_or_spell_play::parse(tokens)? {
+        return Ok(effects);
+    }
     if let Some(effect) = super::graveyard_self_cast::parse(tokens)? {
         return Ok(vec![effect]);
     }
@@ -690,6 +789,12 @@ fn parse_effect_chain_lexed_inner(
         return Ok(effects);
     }
     if let Some(effect) = super::loyalty_activation_allowance::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effect) = super::uncontrolled_land_mana_permission::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effect) = super::stored_die_result_reroll::parse(tokens)? {
         return Ok(vec![effect]);
     }
     if let Some(effect) = matching_spell_cost_modifier_chain(tokens) {
@@ -1000,13 +1105,42 @@ fn parse_for_each_object_effect_chain_shape(
             "for-each object sentence missing effect payload".to_string(),
         ));
     }
+    let mut effects = effects;
+    if filter.power_greater_than_base_power {
+        bind_iterated_base_power_difference(&mut effects);
+    }
     Ok(Some(vec![EffectAst::ForEach(
         ForEachEffectAst::ForEachObject { filter, effects },
     )]))
 }
 
+/// "for each creature you control with power greater than that creature's
+/// base power, put a number of +1/+1 counters on that creature equal to the
+/// difference" (Sovereign Okinec Ahau): the difference is the iterated
+/// object's power minus its base power.
+fn bind_iterated_base_power_difference(effects: &mut [EffectAst]) {
+    for effect in effects {
+        let EffectAst::SubjectVerb(subject_verb) = effect else {
+            continue;
+        };
+        let crate::cards::builders::SubjectVerbActionAst::Counters(
+            crate::cards::builders::CounterActionAst::PutCounters { count, .. },
+        ) = &mut subject_verb.action
+        else {
+            continue;
+        };
+        if matches!(count.unhinted(), Value::PendingComparisonDifference) {
+            *count = Value::absolute_difference(
+                Value::PowerOf(Box::new(crate::target::ChooseSpec::Iterated)),
+                Value::BasePowerOf(Box::new(crate::target::ChooseSpec::Iterated)),
+            );
+        }
+    }
+}
+
 #[path = "chain_carry/chain_readings.rs"]
 mod chain_readings;
+pub use chain_readings::parse_any_other_player_may_pay_lexed;
 
 fn parse_effect_chain_uncoordinated_lexed(
     tokens: &[OwnedLexToken],
@@ -1159,6 +1293,16 @@ pub fn parse_or_action_clause_lexed(
     if has_unless_payment_choice(tokens)? {
         return Ok(None);
     }
+    // "each creature blocking or blocked by this creature gains first strike"
+    // (Spitting Slug): the `or` belongs to the combat-relation filter, not to
+    // a choice between two actions.
+    if crate::word_primitives::find_current_block_partner_relation(
+        &crate::lexer::token_word_refs(tokens),
+    )
+    .is_some()
+    {
+        return Ok(None);
+    }
 
     for split in chain_grammar::parse_or_action_splits_tokens(tokens) {
         let first = split.first_tokens;
@@ -1167,6 +1311,36 @@ pub fn parse_or_action_clause_lexed(
         let first_starts_effect = find_verb_lexed(first).is_some_and(|(_, verb_idx)| verb_idx == 0)
             || has_effect_head_without_verb_lexed(first);
         let second_gain_effect = parse_simple_gain_ability_clause_lexed(second)?;
+        // "exile up to one target legendary artifact card or legendary land
+        // card from a graveyard and put a counter on it" (Lara Croft): the
+        // `or` joins two nouns of one object phrase. A second branch that
+        // opens with a bare noun phrase (no subject determiner) and whose
+        // first verb only follows a coordinating "and" is not an action.
+        if second_gain_effect.is_none() {
+            let second_words = crate::lexer::token_word_refs(second);
+            let opens_with_subject = second_words.first().is_some_and(|word| {
+                matches!(
+                    *word,
+                    "that" | "it" | "its" | "target" | "each" | "you" | "they" | "this"
+                        | "enchanted" | "equipped" | "the" | "those" | "their" | "his" | "her"
+                )
+            });
+            let verb_only_after_and = match find_verb_lexed(second) {
+                None => true,
+                Some((_, verb_idx)) => {
+                    verb_idx > 0
+                        && second_words
+                            .get(verb_idx - 1)
+                            .is_some_and(|word| matches!(*word, "and" | "then"))
+                }
+            };
+            if !opens_with_subject
+                && verb_only_after_and
+                && crate::lexer::token_word_refs(first).contains(&"target")
+            {
+                continue;
+            }
+        }
         let second_starts_effect = find_verb_lexed(second)
             .is_some_and(|(_, verb_idx)| verb_idx == 0)
             || has_effect_head_without_verb_lexed(second)
@@ -1471,11 +1645,18 @@ pub(super) fn expand_shared_life_equal_to_amount(tokens: &[OwnedLexToken]) -> Op
     let and_idx = tokens.iter().position(|token| token.is_word("and"))?;
     let head = &tokens[..and_idx];
     let (life, before_life) = head.split_last()?;
-    if !life.is_word("life")
-        || !before_life
+    // "You draw cards and lose life equal to the number of counters removed
+    // this way" (Eventide's Shadow): a bare card count shares the amount the
+    // same way a bare life amount does.
+    let bare_life = life.is_word("life")
+        && before_life
             .last()
-            .is_some_and(|verb| verb.is_any_word(&["gain", "gains", "lose", "loses"]))
-    {
+            .is_some_and(|verb| verb.is_any_word(&["gain", "gains", "lose", "loses"]));
+    let bare_cards = life.is_word("cards")
+        && before_life.last().is_some_and(|verb| {
+            verb.is_any_word(&["draw", "draws", "discard", "discards", "mill", "mills"])
+        });
+    if !bare_life && !bare_cards {
         return None;
     }
     let tail = &tokens[and_idx + 1..];
@@ -1536,6 +1717,15 @@ fn parse_effect_chain_inner_lexed_unstacked(
     if let Some(effect) = super::attacked_turn_permission::parse(tokens)? {
         return Ok(vec![effect]);
     }
+    if let Some(effect) = super::referenced_player_graveyard_cast::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effects) = super::referenced_player_turn_lockout::parse(tokens)? {
+        return Ok(effects);
+    }
+    if let Some(effects) = super::top_card_land_or_spell_play::parse(tokens)? {
+        return Ok(effects);
+    }
     if let Some(effect) = super::graveyard_self_cast::parse(tokens)? {
         return Ok(vec![effect]);
     }
@@ -1549,6 +1739,12 @@ fn parse_effect_chain_inner_lexed_unstacked(
         return Ok(effects);
     }
     if let Some(effect) = super::loyalty_activation_allowance::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effect) = super::uncontrolled_land_mana_permission::parse(tokens)? {
+        return Ok(vec![effect]);
+    }
+    if let Some(effect) = super::stored_die_result_reroll::parse(tokens)? {
         return Ok(vec![effect]);
     }
     // Conditional sentence readers enter here directly. A value definition
@@ -1570,6 +1766,18 @@ fn parse_effect_chain_inner_lexed_unstacked(
     if let Some(effect) = matching_spell_cost_modifier_chain(tokens) {
         return Ok(vec![effect]);
     }
+    // "for each creature that dealt damage to this creature this turn,
+    // destroy that creature unless its controller pays 2 life" (Giant
+    // Albatross, under "If you do,"): the per-object body owns its comma and
+    // its unless rider. The inner control-flow and coordination readers would
+    // otherwise split the quantifier from its body.
+    if tokens.first().is_some_and(|token| token.is_word("for"))
+        && tokens.get(1).is_some_and(|token| token.is_word("each"))
+        && tokens.iter().any(|token| token.is_word("unless"))
+        && let Ok(Some(effects)) = parse_for_each_object_effect_chain_shape(tokens)
+    {
+        return Ok(effects);
+    }
     let input = inner_chain_readings::InnerChain {
         tokens,
         recognize_control_flow,
@@ -1582,7 +1790,15 @@ fn parse_effect_chain_inner_lexed_unstacked(
     }
     let leading_duration_shape = chain_grammar::parse_carry_duration_prefix_tokens(tokens);
     let choose_then_exile_reference = parse_choose_then_exile_reference_shape(tokens).is_some();
+    let that_player_scope_tokens;
     let (effect_chain_tokens, leading_duration) = match leading_duration_shape.as_ref() {
+        // "Until that player's next turn, they gain ... and their life total
+        // can't change" (Teferi's Reproach): within the duration's scope the
+        // pronouns name the duration's player, never an object.
+        Some(shape) if matches!(shape.duration, Until::PlayersNextTurn { .. }) => {
+            that_player_scope_tokens = bind_that_player_pronouns(shape.rest);
+            (that_player_scope_tokens.as_slice(), Some(shape.duration.clone()))
+        }
         Some(shape) => (shape.rest, Some(shape.duration.clone())),
         None => (tokens, None),
     };
@@ -1593,9 +1809,8 @@ fn parse_effect_chain_inner_lexed_unstacked(
     let mut effects = Vec::new();
     // "Add two mana in any combination of {U}, {B}, and/or {R}." (Relic of
     // Sauron) lists mana symbols; its conjunctions never coordinate actions.
-    let lists_mana_combination = effect_chain_tokens.windows(3).any(|window| {
-        window[0].is_word("any") && window[1].is_word("combination") && window[2].is_word("of")
-    });
+    let lists_mana_combination =
+        super::lex_chain_helpers::lists_mana_combination_without_chain_boundary(effect_chain_tokens);
     // "sacrifices a Plains or a white permanent" (Omen of Fire) names one
     // sacrificed object chosen from a union; the bare noun phrase after
     // "or" has no verb of its own, so it never coordinates a second action.
@@ -1774,6 +1989,7 @@ fn parse_effect_chain_inner_lexed_unstacked(
     let mut carried_duration: Option<Until> = leading_duration.clone();
     let mut carried_leading_duration = leading_duration.is_some();
     let mut previous_segment: Option<Vec<OwnedLexToken>> = None;
+    let mut after_where_x_binding = false;
     for segment in segments {
         let mut segment = segment;
         let segment_carry_facts =
@@ -1788,6 +2004,15 @@ fn parse_effect_chain_inner_lexed_unstacked(
         // been lowered, so keep the action list free of a synthetic
         // subject/verb parse for the binding text itself.
         if is_standalone_where_x_binding_segment(&segment) {
+            after_where_x_binding = true;
+            continue;
+        }
+        // "..., where X is half the number of artifacts you control, rounded
+        // down" (Imskir Iron-Eater): the rounding rider completes the skipped
+        // binding and is applied with it by the sentence dispatcher.
+        if std::mem::take(&mut after_where_x_binding)
+            && chain_grammar::is_rounding_rider_segment_tokens(&segment)
+        {
             continue;
         }
         // "destroy that creature and it can't be regenerated" (Consuming
@@ -2072,6 +2297,15 @@ fn parse_effect_chain_inner_lexed_unstacked(
             previous_segment = Some(segment);
             continue;
         }
+        // A complete resolving combat rule ("creatures your opponents control
+        // block this turn if able, and you choose how those creatures block")
+        // is one coordinated member; its subject is a described set, not an
+        // actor the generic subject/verb dispatcher can read.
+        if let Some(effect) = super::temporary_attack_requirement::parse(&segment)? {
+            effects.push(bind_source_exiled_effect(effect, bind_source_exiled));
+            previous_segment = Some(segment);
+            continue;
+        }
         // A later comma/then arm can introduce its own complete optional
         // action (`..., then you may pay ...`). The top-level leading-may
         // handler cannot see that nested arm after segmentation, while the
@@ -2249,6 +2483,20 @@ fn parse_effect_chain_inner_lexed_unstacked(
                 continue;
             }
         }
+        // "... loses all abilities and has \"{T}: Add {C}.\"" retains an
+        // explicit copular grant head. `has` is deliberately not an effect
+        // verb, so it must be read before the bare-keyword fallback prepends
+        // another subject and grant verb. Quoted activated rules remain whole.
+        if segment.iter().take(3).any(|token| token.is_any_word(&["has", "have"]))
+            && let Some(mut effect) = parse_simple_gain_ability_clause_lexed(&segment)?
+        {
+            if let Some(duration) = &carried_duration {
+                apply_carried_effect_duration(&mut effect, duration);
+            }
+            effects.push(bind_source_exiled_effect(effect, bind_source_exiled));
+            previous_segment = Some(segment);
+            continue;
+        }
         // Coordinated ability lists commonly omit the repeated "gains":
         // `gains flying, double strike, and vigilance until end of turn`.
         // The comma splitter leaves the later arms as bare keyword phrases;
@@ -2327,6 +2575,7 @@ fn parse_effect_chain_inner_lexed_unstacked(
     collapse_token_copy_next_end_step_exile_followup_lexed(&mut effects, tokens);
     collapse_token_copy_next_end_step_sacrifice_followup_lexed(&mut effects, tokens);
     collapse_token_copy_end_of_combat_exile_followup_lexed(&mut effects, tokens);
+    bind_singular_sacrifice_after_mass_move_to_source(&mut effects);
     append_missing_coordinated_return_discard_tail(tokens, &mut effects)?;
     bind_adjacent_discard_count_draws(&mut effects);
     bind_adjacent_implicit_draw_discard_subjects(
@@ -2437,6 +2686,14 @@ pub(super) fn parse_inline_looked_card_partition_chain(
     let effects = if let [look_tokens, partition_tokens] = comma_then_segments.as_slice()
         && let Some(effects) =
             super::sequence_rules::generic_subject_verb_sequences::reference_linked_programs::parse_inline_look_at_top_then_singleton_hand_partition(
+            look_tokens,
+            partition_tokens,
+        )
+    {
+        effects
+    } else if let [look_tokens, partition_tokens] = comma_then_segments.as_slice()
+        && let Some(effects) =
+            super::sequence_rules::generic_subject_verb_sequences::reference_linked_programs::parse_inline_look_at_top_then_counted_partition(
             look_tokens,
             partition_tokens,
         )
@@ -2691,6 +2948,8 @@ pub enum Verb {
     Suspect,
     Note,
     End,
+    /// "activate(s) a mana ability of each land they control".
+    Activate,
 }
 
 #[path = "chain_carry/chain_carry_zone.rs"]
@@ -2740,6 +2999,7 @@ mod chain_carry_condition_programs;
 use chain_carry_condition_programs::{parse_carried_cant_effects, trailing_if_predicate_supported};
 pub use chain_carry_condition_programs::{
     parse_effect_clause_with_trailing_if, parse_effect_clause_with_trailing_if_lexed,
+    sink_delayed_trailing_ifs,
 };
 #[path = "chain_carry/chain_carry_core.rs"]
 mod chain_carry_core_programs;
@@ -3181,6 +3441,15 @@ pub fn bind_prevention_followup(effects: &mut Vec<EffectAst>, sentence: &[OwnedL
                 follow_up_effects.push(follow_up);
                 return true;
             }
+            // Any other "If damage is prevented this way, <rider>" (Ria
+            // Ivor's "create that many ... tokens") runs as the shield
+            // prevents the damage, reading the prevented amount.
+            if let Ok(Some(super::prevention_source_riders::PreventionRider::Inline(rider))) =
+                super::prevention_source_riders::parse(sentence)
+            {
+                follow_up_effects.push(rider);
+                return true;
+            }
             false
         }
         SubjectVerbActionAst::DamagePrevention(DamagePreventionActionAst::PreventDamage {
@@ -3474,6 +3743,279 @@ pub fn bind_destroy_typed_subset(effects: &mut Vec<EffectAst>, sentence: &[Owned
     true
 }
 
+/// "Each card exiled this way that doesn't have suspend gains suspend."
+/// (Sinister Concierge, The Wedding of River Song): every card any earlier
+/// exile instruction of this ability exiled, across "If you do" branches.
+/// Each exile instruction keeps its own result tag (so a following "put
+/// three time counters on it" still names only that card); the grant runs
+/// once per card over each of those results.
+pub fn bind_each_card_exiled_this_way_gains_suspend(
+    effects: &mut Vec<EffectAst>,
+    sentence: &[OwnedLexToken],
+) -> bool {
+    let tokens = crate::util::trim_edge_punctuation_tokens(sentence);
+    let words = crate::lexer::parser_token_word_refs(tokens);
+    let singular = matches!(
+        words.as_slice(),
+        ["each", "card", "exiled", "this", "way", "that", "doesn't" | "doesnt" | "does", .., "suspend", "gains", "suspend"]
+    );
+    let plural = matches!(
+        words.as_slice(),
+        ["cards", "exiled", "this", "way", "that", "don't" | "dont" | "do", .., "suspend", "gain", "suspend"]
+    );
+    if !(singular || plural) {
+        return false;
+    }
+    let middle_ok = words
+        .iter()
+        .filter(|word| !matches!(**word, "each" | "card" | "cards" | "exiled" | "this" | "way" | "that"
+            | "doesn't" | "doesnt" | "don't" | "dont" | "does" | "do" | "not" | "have" | "suspend"
+            | "gains" | "gain"))
+        .count()
+        == 0;
+    if !middle_ok {
+        return false;
+    }
+    fn is_exile(effect: &EffectAst) -> bool {
+        matches!(
+            effect,
+            EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::ZoneMoves(
+                    ZoneMoveActionAst::Exile { .. }
+                        | ZoneMoveActionAst::ExileAll { .. }
+                        | ZoneMoveActionAst::MoveToZone { zone: Zone::Exile, .. }
+                ),
+                ..
+            })
+        )
+    }
+    fn tag_each_exile(effect: &mut EffectAst, base: &str, tags: &mut Vec<crate::tag::TagRef>) {
+        if is_exile(effect) {
+            let tag = crate::tag::TagRef::of(crate::tag::TagKey::from(format!(
+                "{base}_{}",
+                tags.len()
+            )));
+            let exile = effect.clone();
+            *effect = EffectAst::TagAffected {
+                effect: Box::new(exile),
+                tag: tag.clone(),
+            };
+            tags.push(tag);
+            return;
+        }
+        for_each_nested_effects_mut(effect, true, |nested| {
+            for nested_effect in nested {
+                tag_each_exile(nested_effect, base, tags);
+            }
+        });
+    }
+    let Ok(body_tokens) = crate::lexer::lex_line("if it doesn't have suspend, it gains suspend.", 0)
+    else {
+        return false;
+    };
+    let Ok(body) = super::parse_effect_sentence_lexed(
+        crate::util::trim_edge_punctuation_tokens(&body_tokens),
+    ) else {
+        return false;
+    };
+    if body.is_empty() {
+        return false;
+    }
+    let base = crate::util::helper_tag_for_tokens(sentence, "exiled_gains_suspend");
+    let mut tags = Vec::new();
+    for effect in effects.iter_mut() {
+        tag_each_exile(effect, base.as_str(), &mut tags);
+    }
+    if tags.is_empty() {
+        return false;
+    }
+    for tag in tags {
+        effects.push(EffectAst::ForEach(ForEachEffectAst::ForEachTagged {
+            tag,
+            effects: body.clone(),
+        }));
+    }
+    true
+}
+
+/// Rebinds the actor of a replayed instruction program from "you" to the
+/// iterated player of an enclosing player loop: every player reference the
+/// program carries (subjects, may-deciders, choosers, possessive zone
+/// filters such as "your hand", counted values) that names you or the
+/// implicit actor now names the iterated player. Returns `None` when the
+/// program already names another player antecedent or a player target,
+/// which a replay for a new actor cannot rebind unambiguously.
+pub fn rebind_you_actor_to_iterated_player(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
+    use crate::cards::builders::PlayerAst;
+    use ironsmith_core::tag::TagKeyWalk;
+    let mut rebound = effects.to_vec();
+    let mut conflict = false;
+    let mut changed = false;
+    rebound.map_player_refs(&mut |player| {
+        if let Some(player) = player.downcast_mut::<PlayerAst>() {
+            match *player {
+                PlayerAst::You | PlayerAst::Implicit => {
+                    *player = PlayerAst::That;
+                    changed = true;
+                }
+                PlayerAst::That
+                | PlayerAst::Target
+                | PlayerAst::TargetOpponent
+                | PlayerAst::AnotherTarget
+                | PlayerAst::ThatPlayerOrTargetController => conflict = true,
+                _ => {}
+            }
+            return true;
+        }
+        if let Some(filter) = player.downcast_mut::<PlayerFilter>() {
+            match filter {
+                PlayerFilter::You => {
+                    *filter = PlayerFilter::IteratedPlayer;
+                    changed = true;
+                    return true;
+                }
+                PlayerFilter::IteratedPlayer | PlayerFilter::Target(_) => {
+                    conflict = true;
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+        false
+    });
+    (!conflict && changed).then_some(rebound)
+}
+
+/// "Then target opponent does the same." (The Wedding of River Song): the
+/// preceding sentence's instructions replayed once for the named target
+/// player, with their actor rebound from you to that player (CR 608.2c reads
+/// "does the same" as the same instructions performed by the new subject).
+/// Possessive references inside nested optional and zone-move instructions
+/// ("you may exile a card from your hand") follow the new actor.
+pub fn parse_target_player_does_the_same(
+    previous: &[EffectAst],
+    sentence: &[OwnedLexToken],
+) -> Result<Option<EffectAst>, CardTextError> {
+    if previous.is_empty() {
+        return Ok(None);
+    }
+    let tokens = crate::util::trim_edge_punctuation_tokens(sentence);
+    let words = crate::lexer::parser_token_word_refs(tokens);
+    let words = words.strip_prefix(&["then"]).unwrap_or(words.as_slice());
+    let Some(subject_words) = words.strip_suffix(&["does", "the", "same"]) else {
+        return Ok(None);
+    };
+    if !matches!(subject_words, ["target", "player" | "opponent"]) {
+        return Ok(None);
+    }
+    let positions = crate::lexer::parser_token_word_positions(tokens);
+    let subject_start = positions
+        .iter()
+        .find(|(_, word)| *word == "target")
+        .map(|(index, _)| *index);
+    let subject_end = positions
+        .iter()
+        .find(|(_, word)| *word == "does")
+        .map(|(index, _)| *index);
+    let (Some(subject_start), Some(subject_end)) = (subject_start, subject_end) else {
+        return Ok(None);
+    };
+    let Ok(TargetAst::Player(filter, _)) = parse_target_phrase(&tokens[subject_start..subject_end])
+    else {
+        return Ok(None);
+    };
+    let Some(effects) = rebind_you_actor_to_iterated_player(previous) else {
+        return Ok(None);
+    };
+    Ok(Some(EffectAst::ForEach(ForEachEffectAst::ForEachTargetPlayers {
+        count: ChoiceCount::exactly(1),
+        filter,
+        effects,
+    })))
+}
+
+/// "Exile up to one target creature you own, then search your library for a
+/// basic land card. Put both cards onto the battlefield under your control,
+/// then shuffle." (Sword of Hearth and Home): one simultaneous move of the
+/// card the exile produced and the card the search chose (CR 701.23a keeps
+/// the searched card in the library until this instruction moves it).
+pub fn bind_put_both_cards_onto_battlefield(
+    effects: &mut Vec<EffectAst>,
+    sentence: &[OwnedLexToken],
+) -> bool {
+    use super::sequence_rules::generic_subject_verb_sequences::exiled_collections::tag_first_exile_in_effects;
+    let tokens = crate::util::trim_edge_punctuation_tokens(sentence);
+    let words = crate::lexer::parser_token_word_refs(tokens);
+    const HEAD: &[&str] = &[
+        "put", "both", "cards", "onto", "the", "battlefield", "under", "your", "control",
+    ];
+    let shuffle = if words.as_slice() == HEAD {
+        false
+    } else if words.len() == HEAD.len() + 2
+        && words[..HEAD.len()] == *HEAD
+        && words[HEAD.len()..] == ["then", "shuffle"]
+    {
+        true
+    } else {
+        return false;
+    };
+    fn searched_tag(effects: &[EffectAst]) -> Option<crate::tag::TagRef> {
+        let mut found = None;
+        for effect in effects.iter().rev() {
+            if found.is_some() {
+                break;
+            }
+            match effect {
+                EffectAst::ObjectChoices(
+                    crate::cards::builders::ObjectChoiceEffectAst::ChooseObjectsAcrossZones {
+                        tag,
+                        zones,
+                        ..
+                    },
+                ) if zones.contains(&Zone::Library) => found = Some(tag.clone()),
+                EffectAst::ObjectChoices(
+                    crate::cards::builders::ObjectChoiceEffectAst::ChooseObjects { tag, filter, .. },
+                ) if filter.zone == Some(Zone::Library) => found = Some(tag.clone()),
+                _ => for_each_nested_effects(effect, true, |nested| {
+                    if found.is_none() {
+                        found = searched_tag(nested);
+                    }
+                }),
+            }
+        }
+        found
+    }
+    let Some(searched) = searched_tag(effects) else {
+        return false;
+    };
+    let exiled_tag = crate::util::helper_tag_for_tokens(sentence, "exiled");
+    if !tag_first_exile_in_effects(effects, &exiled_tag) {
+        return false;
+    }
+    let exiled = crate::tag::TagRef::of(exiled_tag);
+    let mut union = ObjectFilter::default();
+    union.any_of = vec![
+        ObjectFilter::tagged(exiled.clone()).in_zone(Zone::Exile),
+        ObjectFilter::tagged(searched.clone()).in_zone(Zone::Library),
+    ];
+    effects.push(EffectAst::subject_verb_move_all_to_zone(
+        TargetAst::Object(union, None, None),
+        Zone::Battlefield,
+        false,
+        ReturnControllerAst::You,
+        false,
+        None,
+    ));
+    if shuffle {
+        effects.push(EffectAst::subject_verb(
+            crate::cards::builders::SubjectVerbRoleAst::LibraryOwner,
+            PlayerAst::You,
+            SubjectVerbActionAst::Library(crate::cards::builders::LibraryActionAst::ShuffleLibrary),
+        ));
+    }
+    true
+}
+
 /// "Then put all cards exiled this way into their owners' hands." after an
 /// exile (with any sentences between): the exiled cards, tagged on the exile,
 /// returned.
@@ -3501,6 +4043,114 @@ pub fn bind_return_exiled_to_owners_hands(
         false,
         None,
     ));
+    true
+}
+
+/// "Return each Aura card from your graveyard to the battlefield. Only
+/// creatures can be enchanted this way." The second sentence restricts what
+/// each returned Aura may choose to enchant (CR 303.4f); an Aura with no
+/// legal choice stays in its zone (CR 303.4i).
+pub fn bind_aura_attachment_restriction(
+    effects: &mut [EffectAst],
+    sentence: &[OwnedLexToken],
+) -> bool {
+    let tokens = crate::util::trim_edge_punctuation_tokens(sentence);
+    const SUFFIX: &[&str] = &["can", "be", "enchanted", "this", "way"];
+    if tokens.len() < SUFFIX.len() + 2
+        || !tokens.first().is_some_and(|token| token.is_word("only"))
+        || !tokens[tokens.len() - SUFFIX.len()..]
+            .iter()
+            .zip(SUFFIX)
+            .all(|(token, word)| token.is_word(word))
+    {
+        return false;
+    }
+    let filter_tokens = &tokens[1..tokens.len() - SUFFIX.len()];
+    let Ok(filter) = parse_object_filter(filter_tokens, false) else {
+        return false;
+    };
+    let Some(EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action:
+            SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ReturnAllToBattlefield {
+                filter: returned,
+                aura_attachment_filter,
+                ..
+            }),
+        ..
+    })) = effects.last_mut()
+    else {
+        return false;
+    };
+    if !returned.subtypes.contains(&crate::types::Subtype::Aura) || aura_attachment_filter.is_some() {
+        return false;
+    }
+    *aura_attachment_filter = Some(filter);
+    true
+}
+
+/// "Return those cards to the battlefield under their owner's control at the
+/// beginning of the next end step. If a land enters this way, it enters
+/// tapped." (Silver Surfer, Cosmic Voyager): the second sentence is a
+/// per-object entry status of the preceding return, inside its one
+/// simultaneous move (and inside its delayed wrapper, if any).
+pub fn bind_return_entry_tapped_if(
+    effects: &mut [EffectAst],
+    sentence: &[OwnedLexToken],
+) -> bool {
+    let tokens = crate::util::trim_edge_punctuation_tokens(sentence);
+    if !tokens.first().is_some_and(|token| token.is_word("if"))
+        || !tokens.get(1).is_some_and(|token| token.is_any_word(&["a", "an"]))
+    {
+        return false;
+    }
+    let Some(enters) = tokens.iter().position(|token| token.is_word("enters")) else {
+        return false;
+    };
+    if enters <= 2 {
+        return false;
+    }
+    let tail = crate::lexer::parser_token_word_refs(&tokens[enters..]);
+    if tail.as_slice() != ["enters", "this", "way", "it", "enters", "tapped"] {
+        return false;
+    }
+    let Ok(filter) = parse_object_filter(&tokens[2..enters], false) else {
+        return false;
+    };
+    fn last_return(effect: &mut EffectAst) -> Option<&mut EffectAst> {
+        if matches!(
+            effect,
+            EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ReturnToBattlefield { .. }),
+                ..
+            })
+        ) {
+            return Some(effect);
+        }
+        match effect {
+            EffectAst::Delayed(
+                crate::cards::builders::DelayedEffectAst::DelayedUntilNextEndStep { effects, .. }
+                | crate::cards::builders::DelayedEffectAst::DelayedUntilNextUpkeep { effects, .. }
+                | crate::cards::builders::DelayedEffectAst::DelayedUntilEndOfCombat { effects },
+            ) => effects.last_mut().and_then(last_return),
+            _ => None,
+        }
+    }
+    let Some(EffectAst::SubjectVerb(SubjectVerbEffectAst {
+        action:
+            SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::ReturnToBattlefield {
+                tapped,
+                tapped_if,
+                ..
+            }),
+        ..
+    })) = effects.last_mut().and_then(last_return)
+    else {
+        return false;
+    };
+    if *tapped || tapped_if.is_some() {
+        return false;
+    }
+    *tapped_if = Some(filter);
     true
 }
 
@@ -3678,3 +4328,146 @@ fn set_ability_modifier_target(effect: &mut EffectAst, subject: TargetAst) {
 
 mod extremum_choice;
 pub(crate) use extremum_choice::bind as bind_extremum_choice_followup;
+
+/// Rewrite the player pronouns inside an "until that player's next turn"
+/// scope ("they" -> "that player", "their" -> "that player's") so each arm
+/// reads its subject as the duration's player.
+fn bind_that_player_pronouns(tokens: &[OwnedLexToken]) -> Vec<OwnedLexToken> {
+    let mut rewritten = Vec::with_capacity(tokens.len() + 4);
+    for token in tokens {
+        let replacement: &[&str] = if token.is_word("they") {
+            &["that", "player"]
+        } else if token.is_word("their") {
+            &["that", "player's"]
+        } else {
+            rewritten.push(token.clone());
+            continue;
+        };
+        rewritten.extend(
+            replacement
+                .iter()
+                .map(|word| OwnedLexToken::word(word.to_string(), token.span)),
+        );
+    }
+    rewritten
+}
+
+/// "For as long as that creature has a duty counter on it, it is goaded,
+/// can't attack you or a permanent you control, and can't block creatures
+/// you control." (Immortal Obligation): one carried duration scopes a passive
+/// goad and the restriction list that follows it. The broad can't-sentence
+/// reader would otherwise treat "it is goaded" as the restriction's subject.
+pub(crate) fn parse_duration_goaded_and_restricted_sentence(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(shape) = chain_grammar::parse_carry_duration_prefix_tokens(tokens) else {
+        return Ok(None);
+    };
+    let Some((_, after_goaded)) =
+        grammar::parse_prefix(shape.rest, grammar::phrase(&["it", "is", "goaded"]))
+    else {
+        return Ok(None);
+    };
+    let after_goaded = trim_lexed_commas(after_goaded);
+    if !after_goaded
+        .first()
+        .is_some_and(|token| token.is_any_word(&["can't", "cant"]))
+    {
+        return Ok(None);
+    }
+    // Read each "can't ..." item of the serial list as its own "it can't
+    // ..." sentence: the compound ", and can't" list is not a shape the
+    // can't-sentence reader owns, and a failure here would hand the sentence
+    // to the static-line probe (which then compiles it as statics).
+    let starts = after_goaded
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.is_any_word(&["can't", "cant"]))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let mut restrictions = Vec::new();
+    for (position, start) in starts.iter().enumerate() {
+        let end = starts.get(position + 1).copied().unwrap_or(after_goaded.len());
+        let mut item = trim_lexed_commas(&after_goaded[*start..end]);
+        while item
+            .last()
+            .is_some_and(|token| token.is_word("and") || token.is_word("or"))
+        {
+            item = trim_lexed_commas(&item[..item.len() - 1]);
+        }
+        let mut restriction_tokens = crate::lexer::synthetic_word_tokens(["it"]);
+        restriction_tokens.extend(item.iter().cloned());
+        let parsed = match super::parse_cant_effect_sentence_lexed(&restriction_tokens) {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) | Err(_) => return Ok(None),
+        };
+        restrictions.extend(parsed);
+    }
+    if restrictions.is_empty() {
+        return Ok(None);
+    }
+    for effect in &mut restrictions {
+        apply_carried_effect_duration(effect, &shape.duration);
+    }
+    let mut effects = vec![EffectAst::subject_verb_goad_for(
+        TargetAst::Tagged(crate::tag::CompilerReferenceTag::It.bind(), None),
+        shape.duration.clone(),
+    )];
+    effects.extend(restrictions);
+    Ok(Some(effects))
+}
+
+/// "Put all permanent cards exiled with this enchantment onto the
+/// battlefield, then sacrifice it." (Journey to the Lost City): the singular
+/// pronoun cannot name the plural moved set, so it names the source.
+fn bind_singular_sacrifice_after_mass_move_to_source(effects: &mut [EffectAst]) {
+    let it_filter = ObjectFilter::tagged(crate::tag::CompilerReferenceTag::It.bind());
+    for idx in 1..effects.len() {
+        let previous_is_mass_move = matches!(
+            &effects[idx - 1],
+            EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                action: SubjectVerbActionAst::ZoneMoves(
+                    ZoneMoveActionAst::ReturnAllToBattlefield { .. }
+                        | ZoneMoveActionAst::MoveToZone {
+                            target_plural_surface: true,
+                            ..
+                        }
+                ),
+                ..
+            })
+        );
+        if !previous_is_mass_move {
+            continue;
+        }
+        if let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action:
+                SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::Sacrifice {
+                    filter,
+                    count: 1,
+                    target,
+                    one_of_referenced_set: false,
+                    ..
+                }),
+            ..
+        }) = &mut effects[idx]
+        {
+            let names_it = match target {
+                None => {
+                    *filter == it_filter
+                        || matches!(filter.tagged_constraints.as_slice(), [constraint]
+                            if constraint.tag == it_filter.tagged_constraints[0].tag
+                                && constraint.relation
+                                    == crate::target::TaggedOpbjectRelation::IsTaggedObject)
+                }
+                Some(TargetAst::Tagged(tag, _)) => {
+                    tag.as_str() == crate::tag::CompilerReferenceTag::It.bind().as_str()
+                }
+                Some(_) => false,
+            };
+            if names_it {
+                *filter = ObjectFilter::source();
+                *target = None;
+            }
+        }
+    }
+}

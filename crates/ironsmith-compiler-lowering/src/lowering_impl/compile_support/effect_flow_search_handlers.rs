@@ -7,6 +7,7 @@ use crate::cards::builders::LifeResourceActionAst;
 use crate::cards::builders::ObjectChoiceEffectAst;
 use crate::cards::builders::PermissionEffectAst;
 use crate::cards::builders::StackActionAst;
+use crate::cards::builders::TokenActionAst;
 use crate::cards::builders::VoteEffectAst;
 
 /// Rebind the actor of an action offered with "any player/opponent may" to the
@@ -661,6 +662,28 @@ fn try_compile_for_each_object_as_damage_source(
 /// Recognize the bounded compound payment from semantic actions, before
 /// lowering can wrap their results in tags or effect IDs. Ordinary optional
 /// actions retain their established result semantics.
+fn optional_payment_actions(effects: &[EffectAst], has_announced_x: bool) -> Option<Vec<EffectAst>> {
+    if !has_announced_x {
+        let mut actions = effects.to_vec();
+        if let [EffectAst::SubjectVerb(SubjectVerbEffectAst {
+            action: SubjectVerbActionAst::PermanentState(
+                crate::cards::builders::PermanentStateActionAst::Tap {
+                    target: TargetAst::WithCount(inner, count),
+                }), ..
+        })] = actions.as_mut_slice()
+            && count.dynamic_x
+            && matches!(inner.as_ref(), TargetAst::Object(_, None, _))
+        {
+            // An optional payment introduces its own X when none was
+            // announced. Choose any number; the payment receipt supplies
+            // the amount to the linked "if you do" effects.
+            *count = crate::effect::ChoiceCount::any_number();
+            return Some(actions);
+        }
+    }
+    compound_optional_payment_actions(effects)
+}
+
 fn compound_optional_payment_actions(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
     // An optional disjunction of payments is payable only when at least one
     // complete mode can be paid. The modal cost executor owns that check and
@@ -726,7 +749,7 @@ fn compound_optional_payment_actions(effects: &[EffectAst]) -> Option<Vec<Effect
                 x_value: None,
                 x_maximum: None,
                 independent_x_choice: false,
-
+                mana_cost_of: None,
             }),
         }),
         EffectAst::SubjectVerb(SubjectVerbEffectAst {
@@ -769,7 +792,7 @@ pub(super) fn try_compile_flow_and_iteration_effect(
             if let Some(compiled) = lower_may_imprint_from_hand_effect(effects, ctx)? {
                 return Ok(Some(compiled));
             }
-            let payment_actions = compound_optional_payment_actions(effects);
+            let payment_actions = optional_payment_actions(effects, ctx.has_announced_x);
             let (inner_effects, inner_choices) = compile_effects_preserving_last_effect(
                 payment_actions.as_deref().unwrap_or(effects), ctx,
             )?;
@@ -872,7 +895,7 @@ pub(super) fn try_compile_flow_and_iteration_effect(
             } else {
                 saved_last_player_filter
             };
-            let payment_actions = compound_optional_payment_actions(effects);
+            let payment_actions = optional_payment_actions(effects, ctx.has_announced_x);
             let (inner_effects, inner_choices) = compile_effects_preserving_last_effect(
                 payment_actions.as_deref().unwrap_or(effects), ctx,
             )?;
@@ -1036,7 +1059,7 @@ pub(super) fn try_compile_flow_and_iteration_effect(
             let mut choices = inner_choices;
             choices.append(&mut player_choices);
             let runtime_cost =
-                crate::lowering::cost_materialization::materialize_compiler_core_total_cost(cost)?;
+                crate::lowering::cost_materialization::materialize_compiler_core_payment_cost(cost)?;
             let payer_relative_cost = normalize_unless_cost_for_payer(runtime_cost);
             let mut cost_reference_env = current_reference_env(ctx);
             // A payment clause is evaluated after its primary instruction.
@@ -1429,8 +1452,36 @@ pub(super) fn try_compile_flow_and_iteration_effect(
                 return Ok(Some(compiled));
             }
             let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+            let mut scoped_effects = effects.clone();
+            // In "for each permanent attached to it, copy that permanent
+            // attached to that creature", the attachment destination is the
+            // outer host. Bind it before the loop makes `it` its attachment.
+            if let Some(host) = resolved_filter.tagged_constraints.iter().find(|constraint| {
+                constraint.relation == crate::filter::TaggedOpbjectRelation::AttachedToTaggedObject
+            }) {
+                for effect in &mut scoped_effects {
+                    if let EffectAst::SubjectVerb(SubjectVerbEffectAst {
+                        action: SubjectVerbActionAst::Tokens(
+                            TokenActionAst::CreateTokenCopy { attached_to, .. }
+                            | TokenActionAst::CreateTokenCopyFromSource { attached_to, .. }),
+                        ..
+                    }) = effect {
+                        let refers_to_it = attached_to.as_ref().is_some_and(|target| match target {
+                            TargetAst::Tagged(tag, _) => tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str(),
+                            TargetAst::Object(filter, _, _) => filter.tagged_constraints.iter().any(|constraint| {
+                                constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+                                    && constraint.tag.as_str() == crate::tag::CompilerReferenceTag::It.as_str()
+                            }),
+                            _ => false,
+                        });
+                        if refers_to_it {
+                            *attached_to = Some(TargetAst::Tagged(crate::tag::TagRef::of(host.tag.clone()), None));
+                        }
+                    }
+                }
+            }
             let (inner_effects, mut inner_choices) =
-                compile_effects_in_iterated_object_context(effects, ctx)?;
+                compile_effects_in_iterated_object_context(&scoped_effects, ctx)?;
             // "put a -1/-1 counter on each creature target player controls"
             // (Contagion Engine): the iteration filter's own player target
             // must be declared, since the loop exposes no target of its own.
@@ -1558,6 +1609,7 @@ pub(super) fn try_compile_flow_and_iteration_effect(
             effects,
             continue_effect_index,
             continue_predicate,
+            max_iterations,
         }) => {
             let (mut body_effects, choices, condition) = with_preserved_lowering_context(
                 ctx,
@@ -1588,7 +1640,8 @@ pub(super) fn try_compile_flow_and_iteration_effect(
                     condition,
                     effect_predicate_from_if_result(continue_predicate.clone()),
                 )
-                .with_choice_history(choice_history),
+                .with_choice_history(choice_history)
+                .with_max_iterations(*max_iterations),
             );
             compiled.push(effect);
             (compiled, choices)

@@ -141,7 +141,7 @@ pub(crate) fn describe_player_filter_subject(filter: &PlayerFilter) -> String {
         | PlayerFilter::HasMoreLifeThanYou { .. }
         | PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. } | PlayerFilter::MostLifeTiedAmong { .. } | PlayerFilter::QuantityGreaterThanPlayer { .. }
         | PlayerFilter::OpponentOf(_)
         | PlayerFilter::PlayerToLeftOf(_)
         | PlayerFilter::MaxSpeed { .. }
@@ -194,7 +194,7 @@ pub fn describe_player_filter_possessive(filter: &PlayerFilter) -> String {
         | PlayerFilter::HasMoreLifeThanYou { .. }
         | PlayerFilter::OpponentWithMoreControlledObjectsThan { .. }
         | PlayerFilter::ControlsMost { .. }
-        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }
+        | PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. } | PlayerFilter::MostLifeTiedAmong { .. } | PlayerFilter::QuantityGreaterThanPlayer { .. }
         | PlayerFilter::OpponentOf(_)
         | PlayerFilter::PlayerToLeftOf(_)
         | PlayerFilter::MaxSpeed { .. }
@@ -1169,6 +1169,18 @@ impl Trigger {
         ))
     }
 
+    /// "Whenever <source> deals damage to that <object>": the damaged object
+    /// must be one of the damage source's own targets (CR 115.1).
+    pub fn deals_damage_to_source_target(
+        source_filter: ObjectFilter,
+        target_filter: ObjectFilter,
+    ) -> Self {
+        Self::new(DealsDamageToTrigger::source_target_recipient(
+            source_filter,
+            target_filter,
+        ))
+    }
+
     pub fn deals_exact_damage_to_object_or_player_with_source_surface(
         source_filter: ObjectFilter,
         object_filter: ObjectFilter,
@@ -1415,6 +1427,15 @@ impl Trigger {
         ))
     }
 
+    /// "Whenever a permanent entering causes a triggered ability to trigger"
+    /// (Strict Proctor).
+    pub fn ability_triggered_by_permanent_entering() -> Self {
+        Self::new(
+            AbilityTriggeredTrigger::new_qualified(false, None, false)
+                .with_caused_by_permanent_entering(true),
+        )
+    }
+
     /// "Whenever a creature you control attacking causes a triggered ability
     /// of that creature to trigger".
     pub fn ability_triggered_by_source_attacking(source_filter: ObjectFilter) -> Self {
@@ -1490,6 +1511,10 @@ impl Trigger {
         Self::new(PlayerGivesGiftTrigger::new(player))
     }
 
+    /// Create a trigger for mana produced by a matching source.
+    pub fn player_adds_mana_from_source(player: PlayerFilter, filter: ObjectFilter) -> Self {
+        Self::new(ManaFromSourceTrigger { player, filter })
+    }
     /// Create a "whenever [player] taps [filter] for mana" trigger.
     pub fn player_taps_for_mana(player: PlayerFilter, filter: ObjectFilter) -> Self {
         Self::new(TapForManaTrigger::new(player, filter))
@@ -1530,6 +1555,14 @@ impl Trigger {
     }
 
     /// Create a "when this permanent becomes the target of a spell or ability" trigger.
+    pub fn state_based_objects(filter: ObjectFilter, display: String) -> Self {
+        Self::new(StateTrigger::matching_objects(filter, display))
+    }
+
+    pub fn stack_object_added() -> Self {
+        Self::new(spell_ability::StackObjectAddedTrigger)
+    }
+
     pub fn becomes_targeted() -> Self {
         Self::new(BecomesTargetedTrigger)
     }
@@ -1720,6 +1753,11 @@ impl Trigger {
         Self::new(FinalChapterAbilityResolvedTrigger::new(filter))
     }
 
+    /// Create a trigger for a final Saga chapter ability triggering.
+    pub fn final_chapter_ability_triggers(filter: ObjectFilter) -> Self {
+        Self::new(FinalChapterAbilityTriggersTrigger::new(filter))
+    }
+
     // === Other Triggers ===
 
     /// Create a "when this permanent becomes tapped" trigger.
@@ -1844,6 +1882,11 @@ impl Trigger {
             EventKind::BecameMonstrous,
             "When this creature becomes monstrous",
         ))
+    }
+
+    /// Create a "whenever a mana ability of this creature resolves" trigger.
+    pub fn source_mana_ability_resolves() -> Self {
+        Self::new(SourceManaAbilityResolvesTrigger::new())
     }
 
     /// Create a "when this phases out" trigger.
@@ -2398,5 +2441,3 @@ mod native_trigger_model_boundary_tests {
         );
     }
 }
-
-pub(crate) use check::verify_intervening_if_at_resolution;

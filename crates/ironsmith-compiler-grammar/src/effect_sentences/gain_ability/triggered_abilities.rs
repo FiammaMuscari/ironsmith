@@ -479,6 +479,21 @@ fn recognize_granted_trigger_ability(
                 tokens,
                 max_triggers_per_turn,
             );
+            // "becomes tapped for the first time during each of your turns"
+            // (Tale of Katara and Toph): only on its controller's turns.
+            let frequency = if trigger_surface::parse_becomes_tapped_during_your_turn_tokens(tokens)
+                .is_some()
+            {
+                Some(match frequency {
+                    Some(limit) => crate::cards::builders::PredicateAst::And(
+                        Box::new(crate::cards::builders::PredicateAst::YourTurn),
+                        Box::new(limit),
+                    ),
+                    None => crate::cards::builders::PredicateAst::YourTurn,
+                })
+            } else {
+                frequency
+            };
             // A leading "if" right after the trigger comma that governs the
             // whole body is the ability's intervening-if (CR 603.4).
             let leads_with_if = tokens
@@ -603,6 +618,21 @@ fn parse_granted_activated_or_triggered_ability_for_gain_remaining(
                         .is_some_and(|next| next.parser_text() == THE_WORD)))
     });
     if !has_colon && !looks_like_trigger {
+        return Ok(None);
+    }
+    // "loses all abilities and is a Citizen with base power and toughness
+    // 1/1 and "{T}: Add {C}" named Humble Merchant" (Honest Work): the colon
+    // belongs to a quoted ability embedded mid-clause, so the component is
+    // not itself an activated ability. A real granted activation has no
+    // opening quote before its cost colon once its edge quotes are trimmed.
+    if !looks_like_trigger
+        && let Some(colon_idx) = ability_tokens
+            .iter()
+            .position(|token| token.kind == TokenKind::Colon)
+        && ability_tokens[..colon_idx]
+            .iter()
+            .any(|token| token.kind == TokenKind::Quote)
+    {
         return Ok(None);
     }
 

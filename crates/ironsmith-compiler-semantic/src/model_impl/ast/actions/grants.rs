@@ -18,6 +18,7 @@ pub enum GrantActionAst {
         also_each: Option<ObjectFilter>,
     },
     GrantPlayTaggedUntilEndOfTurn {
+        spell_filter: Option<ObjectFilter>,
         tag: TagRef,
         player: PlayerAst,
         allow_land: bool,
@@ -31,6 +32,9 @@ pub enum GrantActionAst {
         max_plays: Option<u32>,
         /// Mana reduction attached to using this permission.
         spell_cost_reduction: Option<ManaCost>,
+        /// "If that spell doesn't target <filter>, it costs {N} more to cast
+        /// this way": the surcharge and the target filter that waives it.
+        spell_cost_increase_unless_targets: Option<(ManaCost, ObjectFilter)>,
         alternative_cost: Option<ironsmith_core::TotalCost<crate::model::CompilerCost>>,
         surface: Option<ironsmith_core::GrantPlayTaggedSurface>,
     },
@@ -45,10 +49,20 @@ pub enum GrantActionAst {
         allow_any_color_for_cast: ironsmith_core::value_model::ManaSpendMode,
         until_next_end_step: bool,
         until_next_turn_start: bool,
+        /// "During your next turn, you may play ...": usable only during
+        /// that turn, not for the rest of the current one.
+        during_next_turn: bool,
+        /// "Until end of combat on your next turn, you may play ..." (Brazen
+        /// Cannonade): through the combat phase of that turn.
+        until_end_of_combat_next_turn: bool,
         spell_filter: Option<ObjectFilter>,
         surface: Option<ironsmith_core::GrantPlayTaggedSurface>,
         /// Total plays shared by the tagged collection across the duration.
         max_plays: Option<u32>,
+        /// "you may play cards this way without paying their mana costs"
+        /// (Ignite the Future): spells cast through this permission are cast
+        /// without paying their mana costs (CR 118.9).
+        without_paying_mana_cost: bool,
     },
     GrantPlayTaggedForAsLongAsExiled {
         permission_bound_mana: bool,
@@ -70,6 +84,13 @@ pub enum GrantActionAst {
         /// Restrict the persistent permission to turns in which its player
         /// attacked with enough matching creatures.
         during_turns_attacked_with: Option<ironsmith_core::effect::AttackedWithTurnCondition>,
+        /// Restrict the persistent permission to turns in which its player
+        /// has already cast another spell ("as long as you've cast another
+        /// spell this turn").
+        during_turns_cast_another_spell: bool,
+        /// "That spell has undaunted." (Durnan of the Yawning Portal):
+        /// generic reduction per opponent for spells cast this way.
+        spell_cost_reduction_per_opponent: u32,
     },
     GrantPlayTaggedForAsLongAsYouControlSource {
         tag: TagRef,
@@ -77,6 +98,17 @@ pub enum GrantActionAst {
         allow_land: bool,
         allow_any_color_for_cast: ironsmith_core::value_model::ManaSpendMode,
         surface: Option<ironsmith_core::GrantPlayTaggedSurface>,
+        /// "you may play one of the exiled cards" (Kotose): a shared play
+        /// budget over the tagged collection; `None` grants each card.
+        max_plays: Option<u32>,
+        /// "... during your turn": usable only during the player's turns.
+        during_your_turns: bool,
+        /// "by waterbending {X} rather than paying its mana cost": the
+        /// required replacement price for a spell cast this way.
+        alternative_cost: Option<ironsmith_core::TotalCost<crate::model::CompilerCost>>,
+        /// "..., where X is its mana value": X in `alternative_cost` is the
+        /// granted card's mana value.
+        alternative_cost_x_is_mana_value: bool,
     },
     GrantAbilitiesAll {
         filter: ObjectFilter,
@@ -98,6 +130,12 @@ pub enum GrantActionAst {
         target: TargetAst,
         source: TargetAst,
         duration: Until,
+        /// "each Horror you control gains ...": every object matching the
+        /// recipient filter at resolution receives the copies.
+        each_recipient: bool,
+        /// "You may spend blue mana as though it were mana of any color to
+        /// activate those abilities": only the copies' costs widen.
+        symbol_as_any_color: Option<ironsmith_core::ManaSymbol>,
     },
     GrantAbilitiesToTarget {
         target: TargetAst,
@@ -105,6 +143,9 @@ pub enum GrantActionAst {
         duration: Until,
         condition: Option<PredicateAst>,
         set_quantifier_surface: Option<ironsmith_core::SetQuantifierSurface>,
+        /// "If it doesn't have \"...,\" it gains that ability" (Musician):
+        /// a recipient that already has the granted abilities is skipped.
+        only_if_absent: bool,
     },
     GrantToTarget {
         target: TargetAst,

@@ -1351,9 +1351,19 @@ fn check_permanent_sbas_for_ids(
                     power_lethal_controllers
                         .map(|controllers| controllers.contains(&game.controller_of(obj))),
                 );
-                if lethal_damage_threshold
-                    .is_some_and(|threshold| threshold > 0 && damage_marked >= threshold as u32)
-                    && !is_indestructible
+                // Ogre Enforcer: only lethal damage from a single source
+                // destroys it.
+                let single_source_required = game.current_has_static_ability_id(
+                    obj_id,
+                    crate::static_abilities::StaticAbilityId::LethalDamageMustBeFromSingleSource,
+                );
+                if lethal_damage_threshold.is_some_and(|threshold| {
+                    threshold > 0
+                        && damage_marked >= threshold as u32
+                        && (!single_source_required
+                            || game.max_damage_marked_from_single_source(obj_id)
+                                >= threshold as u32)
+                }) && !is_indestructible
                 {
                     actions.push(StateBasedAction::ObjectDies(obj_id));
                     continue;
@@ -3328,7 +3338,7 @@ mod tests {
         let ids: Vec<_> = (0..512)
             .map(|_| game.create_object_from_card(&card, alice, Zone::Battlefield))
             .collect();
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let incremental = |game: &GameState| {
             let view = crate::derived_view::DerivedGameView::new(game);
             collect_state_based_actions(game, &view, &StateBasedActionContext::default(), true)
@@ -3386,7 +3396,7 @@ mod tests {
         for pair in ids.chunks_exact(2) {
             game.set_soulbond_pair(pair[0], pair[1]);
         }
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let compare = |game: &GameState| {
             let view = crate::derived_view::DerivedGameView::new(game);
             let mut actual = Vec::new();
@@ -3438,7 +3448,7 @@ mod tests {
             .push(crate::ability::Ability::static_ability(
                 crate::static_abilities::StaticAbility::new(IndestructibleOnYourTurn),
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         game.mark_damage(id, 2);
         assert!(!check_state_based_actions(&game).contains(&StateBasedAction::ObjectDies(id)));
         game.turn.active_player = PlayerId::from_index(1);
@@ -3647,11 +3657,11 @@ mod tests {
             .map(|_| game.create_object_from_definition(&legend, alice, Zone::Battlefield))
             .collect();
 
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         game.prewarm_calculated_characteristics(&game.battlefield.to_vec());
         let before = game.work_counters();
 
-        apply_legend_rule_choice_from_group(&mut game, legends[0], &legends);
+        apply_legend_rule_choice_from_group(&mut game, legends[0], &legends).expect("selected legend group is applied successfully");
 
         let after = game.work_counters();
         assert!(
@@ -3698,12 +3708,12 @@ mod tests {
                     toughness: 1,
                 },
             ));
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
         let before = game.work_counters();
         let mut supplied_group = legends.clone();
         supplied_group.push(other_legend);
 
-        apply_legend_rule_choice_from_group(&mut game, legends[0], &supplied_group);
+        apply_legend_rule_choice_from_group(&mut game, legends[0], &supplied_group).expect("selected legend group is applied successfully");
 
         let after = game.work_counters();
         assert!(
@@ -3773,9 +3783,9 @@ mod tests {
                     crate::effect::Effect::gain_life(1),
                 ]));
         }
-        game.refresh_continuous_state();
+        game.refresh_continuous_state().expect("test continuous state refresh succeeds");
 
-        apply_legend_rule_choice_from_group(&mut game, legends[0], &legends);
+        apply_legend_rule_choice_from_group(&mut game, legends[0], &legends).expect("selected legend group is applied successfully");
         let mut trigger_queue = TriggerQueue::new();
         crate::game_loop::drain_pending_trigger_events(&mut game, &mut trigger_queue);
 
@@ -5150,7 +5160,7 @@ mod tests {
             if mode == 0 {
                 apply_legend_rule_choice_from_group_with_decision_maker(
                     game, legends[0], &legends, dm,
-                );
+                ).expect("legend choice transaction completes or suspends successfully");
             } else {
                 let effects = crate::static_ability_processor::get_all_continuous_effects(game);
                 let actions = check_state_based_actions_with_effects(game, &effects);

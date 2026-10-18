@@ -238,6 +238,8 @@ fn counted_shared_characteristic(tokens: &[OwnedLexToken]) -> Option<(u32, Objec
     // compared in that same canonical form.
     let characteristic = if has_relative(&["color"]) {
         ObjectCharacteristic::Color
+    } else if has_relative(&["all", "their", "card", "types"]) {
+        ObjectCharacteristic::AllCardTypes
     } else if has_relative(&["card", "type"]) {
         ObjectCharacteristic::CardType
     } else if has_relative(&["permanent", "type"]) {
@@ -373,6 +375,43 @@ fn parse_prior_result_object_filter(
     filter.tagged_constraints.clear();
     filter.set_prior_effect_action_surface(None);
     Some(filter)
+}
+
+/// "When you put one or more Equipment onto the battlefield this way, ..."
+/// (Gilgamesh, Master-at-Arms) / "When you put a creature card onto the
+/// battlefield this way, ..." (Hans Eriksson): a reflexive result gate on the
+/// cards the preceding instructions actually put onto the battlefield.
+/// Reflexive ("when") gates only; "if you put ..." keeps its own readings.
+pub fn parse_put_onto_battlefield_this_way_result(
+    tokens: &[OwnedLexToken],
+) -> Option<IfResultPredicate> {
+    let words = crate::lexer::token_word_refs(tokens);
+    if words.len() < 7
+        || words[..2] != ["you", "put"]
+        || words[words.len() - 5..] != ["onto", "the", "battlefield", "this", "way"]
+    {
+        return None;
+    }
+    let onto = tokens.iter().position(|token| token.is_word("onto"))?;
+    if tokens.iter().filter(|token| token.is_word("onto")).count() != 1 || onto <= 2 {
+        return None;
+    }
+    let put = tokens.iter().position(|token| token.is_word("put"))?;
+    let filter_tokens = &tokens[put + 1..onto];
+    let one_or_more = filter_tokens.first().is_some_and(|token| token.is_word("one"))
+        && filter_tokens.get(1).is_some_and(|token| token.is_word("or"))
+        && filter_tokens.get(2).is_some_and(|token| token.is_word("more"));
+    let filter = parse_prior_result_object_filter(filter_tokens)?;
+    Some(IfResultPredicate::PriorEffectResult(PriorEffectResultSurface::new(
+        PriorEffectAction::PutOntoBattlefield,
+        filter,
+        PriorEffectResultActor::You,
+        if one_or_more {
+            PriorEffectResultQuantifier::OneOrMore
+        } else {
+            PriorEffectResultQuantifier::One
+        },
+    )))
 }
 
 #[cfg(test)]

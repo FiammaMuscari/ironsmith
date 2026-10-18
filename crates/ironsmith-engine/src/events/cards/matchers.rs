@@ -1,6 +1,7 @@
 //! Card draw/discard replacement effect matchers.
 
 use crate::events::cause::{CauseFilter, CauseFilterRuntimeExt as _};
+#[cfg(test)]
 use crate::events::context::EventContext;
 use crate::events::traits::{EventKind, GameEventType, ReplacementMatcher, downcast_event};
 use crate::filter::{ObjectFilterExt as _, PlayerFilterExt};
@@ -197,6 +198,16 @@ impl WouldDiscardMatcher {
                 .with_controller(crate::events::cause::ControllerFilter::Opponent),
         )
         .with_card_filter(ObjectFilter::source())
+    }
+
+    /// Matches when a spell or ability an opponent controls would cause you
+    /// to discard any card (Nephalia Academy).
+    pub fn you_from_opponent_effect() -> Self {
+        Self::new(
+            PlayerFilter::You,
+            CauseFilter::effect_like()
+                .with_controller(crate::events::cause::ControllerFilter::Opponent),
+        )
     }
 
     /// Matches when any player would discard a card.

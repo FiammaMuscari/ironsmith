@@ -21,7 +21,10 @@ mod condition_shapes;
 mod continuing_shapes;
 mod count_shapes;
 
-pub use battlefield_population::{BattlefieldPopulationCondition, parse_battlefield_population_condition};
+pub use battlefield_population::{
+    BattlefieldPopulationCondition, parse_battlefield_population_condition,
+    parse_chosen_color_most_common_predicate,
+};
 pub use addition_shapes::{
     TypeColorScope, parse_anthem_and_addition_shape, parse_type_color_addition_shape,
     parse_where_x_y_bindings_shape,
@@ -41,7 +44,8 @@ mod subject_shapes;
 mod tail_static_shapes;
 
 pub use clause_shapes::{
-    AnthemPrefixConditionKind, AnthemTailShape, parse_fixed_prefix_condition_shape,
+    AnthemPrefixConditionKind, AnthemTailShape, leading_condition_boundary_comma,
+    parse_fixed_prefix_condition_shape,
     parse_modifier_shape, parse_prefix_condition_shape, parse_tail_shape,
     parse_word_token_candidates, split_trailing_modifier_maximum,
 };

@@ -56,7 +56,9 @@ fn starts_with_etb_source_reference(tokens: &[OwnedLexToken]) -> bool {
     // reference in one alias token. Use the parser word view so semantic
     // source recognition sees the same words as the ETB capture grammar.
     let words = crate::grammar::primitives::TokenWordView::new(tokens).to_word_refs();
-    crate::word_primitives::parse_any_sequence_complete(&words, &[&["it"], &["its"]])
+    // Character cards use gendered pronouns for themselves ("he enters with
+    // X +1/+1 counters on him", Scarlet Spider, Ben Reilly).
+    crate::word_primitives::parse_any_sequence_complete(&words, &[&["it"], &["its"], &["he"], &["she"]])
         || crate::util::this_source_surface_for_words(&words).is_some()
         || crate::util::source_reference_surface_for_words(&words).is_some()
 }
@@ -145,6 +147,17 @@ pub fn parse_enters_with_counters_line(
     if etb_starts_with_trigger_intro_after_label(tokens) {
         return Ok(None);
     }
+    if let Some(shape) = etb_grammar::parse_enters_with_source_counter_kinds_tokens(tokens) {
+        let source_words = crate::lexer::parser_token_word_refs(shape.source_tokens);
+        let surface = crate::util::source_reference_surface_for_words(&source_words)
+            .ok_or_else(|| CardTextError::ParseError("unsupported counter-kind source reference".into()))?;
+        let source = crate::util::source_choose_spec_for_surface(surface);
+        let crate::cards::builders::TargetAst::Object(mut filter, None, _) = crate::util::parse_target_phrase(shape.filter_tokens)? else {
+            return Err(CardTextError::ParseError("entry counter-kind recipients must be a non-targeted object filter".into()));
+        };
+        filter.zone = Some(Zone::Battlefield);
+        return Ok(Some(vec![StaticAbility::enters_with_counter_kinds_for_filter(filter, source, Value::Fixed(1))]));
+    }
     // The complete tapped-and-counters production owns both entry effects.
     // Its grammar also recognizes the optional conjunction in "tapped and
     // with ..."; the counters-only reader must not drop that entry modifier.
@@ -213,7 +226,33 @@ pub fn parse_enters_with_counters_line(
         }
     }
 
+    if let Some((counter_types, kinds)) = parse_enters_with_distinct_counter_kinds(after_with) {
+        if condition.is_some() || !added_abilities.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported conditional self ETB distinct counter choice clause (clause: '{}')",
+                full_words.join(" ")
+            )));
+        }
+        return Ok(Some(vec![StaticAbility::enters_with_distinct_counter_choice(
+            counter_types,
+            Value::Fixed(1),
+            kinds,
+        )]));
+    }
     if let Some(choice) = etb_grammar::parse_enters_with_counter_choice_tokens(after_with) {
+        // "escapes with your choice of a +1/+1 counter or a flying counter
+        // on it" (Tizerus Charger): the choice applies only to an escaped
+        // entry.
+        if let Some((predicate, display)) = condition.clone()
+            && added_abilities.is_empty()
+        {
+            return Ok(Some(vec![StaticAbility::enters_with_counter_choice_if_condition(
+                choice.counter_types,
+                choice.count,
+                predicate,
+                display,
+            )]));
+        }
         if condition.is_some() || !added_abilities.is_empty() {
             return Err(CardTextError::ParseError(format!(
                 "unsupported conditional self ETB counter choice clause (clause: '{}')",
@@ -298,6 +337,17 @@ pub fn parse_enters_with_counters_line(
         };
         if let Some(abilities) = parse_enters_with_added_abilities_tail(&tail) {
             added_abilities = abilities;
+        } else if let Some(and_with) =
+            crate::grammar::static_line_support::parse_and_with_delimiter(&tail)
+            && let Some(sibling_counters) =
+                parse_enters_with_counter_conjunction_tail_tokens(&tail[..and_with.delimiter.start])
+            && let Some(abilities) =
+                parse_enters_with_added_abilities_tail(&tail[and_with.delimiter.start..])
+        {
+            // "two +1/+1 counters and a trample counter on it and with haste"
+            // (Voidpouncer): sibling counters, then entry-granted abilities.
+            additional_counters = sibling_counters;
+            added_abilities = abilities;
         } else if let Some(sibling_counters) =
             parse_enters_with_counter_conjunction_tail_tokens(&tail)
         {
@@ -362,6 +412,20 @@ pub fn parse_enters_with_counters_line(
         } else if let Some(dynamic) = parse_enters_with_counter_for_each_tail_tokens(&tail)? {
             count =
                 scaled_for_each_count(dynamic, &count).with_surface_hint(ValueSurfaceHint::ForEach);
+        } else if let Some((symbol, group_size, reference)) =
+            crate::grammar::effects::for_each_shapes::parse_for_each_mana_symbol_spent_subject(
+                &tail,
+            )
+        {
+            // "enters with three +1/+1 counters on it for each {G}{G} spent
+            // to cast it" (Clay Champion): complete symbol groups paid.
+            let base = Value::ManaSymbolSpentToCastThisSpell { symbol, reference };
+            let spent = if group_size == 1 {
+                base
+            } else {
+                Value::DividedRoundedDown(Box::new(base), group_size as i32)
+            };
+            count = scaled_for_each_count(spent, &count).with_surface_hint(ValueSurfaceHint::ForEach);
         } else if matches!(
             tail_facts.prefix,
             crate::grammar::static_line_support::CounterTailPrefix::ForEach
@@ -427,7 +491,7 @@ pub fn parse_enters_with_counters_line(
         return Ok(Some(abilities));
     }
 
-    if !additional_counters.is_empty() {
+    if !additional_counters.is_empty() && added_abilities.is_empty() {
         let mut abilities = vec![StaticAbility::enters_with_counters_value(
             counter_type,
             count,
@@ -452,6 +516,46 @@ pub fn parse_enters_with_counters_line(
         counter_type,
         count,
     )]))
+}
+
+/// "your choice of two different counters on it from among menace,
+/// deathtouch, and lifelink" (Grimdancer): `kinds` distinct kinds chosen from
+/// the listed counter kinds, one counter of each.
+fn parse_enters_with_distinct_counter_kinds(
+    tokens: &[OwnedLexToken],
+) -> Option<(Vec<CounterType>, u32)> {
+    let words = crate::lexer::token_word_refs(tokens);
+    let ["your", "choice", "of", count, "different", "counters", "on", "it", "from", "among", ..] =
+        words.as_slice()
+    else {
+        return None;
+    };
+    let kinds = crate::util::parse_number_word_u32(count).filter(|kinds| *kinds >= 2)?;
+    let among = tokens.iter().position(|token| token.is_word("among"))?;
+    let rest = &tokens[among + 1..];
+    let mut counter_types: Vec<CounterType> = Vec::new();
+    let mut item_start = 0;
+    for idx in 0..=rest.len() {
+        let boundary = idx == rest.len()
+            || rest[idx].is_comma()
+            || rest[idx].is_word("and")
+            || rest[idx].is_word("or")
+            || rest[idx].kind == crate::lexer::TokenKind::Period;
+        if !boundary {
+            continue;
+        }
+        let item = &rest[item_start..idx];
+        item_start = idx + 1;
+        if item.is_empty() {
+            continue;
+        }
+        let counter_type = parse_counter_type_from_tokens(item)?;
+        if counter_types.contains(&counter_type) {
+            return None;
+        }
+        counter_types.push(counter_type);
+    }
+    (counter_types.len() > kinds as usize).then_some((counter_types, kinds))
 }
 
 fn parse_enters_with_counter_conjunction_tail_tokens(
@@ -559,6 +663,10 @@ fn parse_enters_with_counter_known_for_each_tail_tokens(
                 scale_by_base_count: true,
             })
         }
+        EntersWithCounterKnownForEachKind::ManaSpent => Some(EntersWithCounterKnownForEachTail {
+            value: Value::ManaSpentToCastThisSpell,
+            scale_by_base_count: true,
+        }),
         EntersWithCounterKnownForEachKind::KickCount => Some(EntersWithCounterKnownForEachTail {
             value: Value::KickCount,
             scale_by_base_count: true,
@@ -885,6 +993,13 @@ pub fn parse_value_binding_clause(tokens: &[OwnedLexToken]) -> Option<Value> {
         | Some(["the", "life", "paid", "as", "it", "entered"])) {
         return Some(Value::SourceChosenNumber { if_unset: Some(0), pair: None });
     }
+    // "the greatest number of stored results on it of the same value"
+    // (Centaur of Attention): die results stored on the source.
+    if matches!(words.get(3..),
+        Some(["the", "greatest", "number", "of", "stored", "results", "on", "it" | "this", "of", "the", "same", "value"])
+        | Some(["the", "greatest", "number", "of", "stored", "results", "on", "this", "creature", "of", "the", "same", "value"])) {
+        return Some(Value::GreatestEqualStoredDieResultsOnSource);
+    }
     // "... as you activate this ability": an activation-time sampling clause
     // on the whole binding, not part of the counted noun phrase.
     {
@@ -1046,8 +1161,32 @@ pub fn parse_where_x_named_source_stat_value(
 }
 
 fn parse_enters_with_fallback_counter_value(tail: &[OwnedLexToken]) -> Option<Value> {
+    if let Some(value) = parse_enters_with_returned_cost_mana_value(tail) {
+        return Some(value.with_surface_hint(ValueSurfaceHint::WhereXIs));
+    }
     parse_value_binding_clause(tail)
         .map(|value| value.with_surface_hint(ValueSurfaceHint::WhereXIs))
+}
+
+/// "where X is the mana value of the returned creature" (Scarlet Spider, Ben
+/// Reilly): the permanent returned to hand while paying this object's casting
+/// cost (web-slinging). Cost payment publishes it as the first return-cost
+/// object, which the resolving permanent keeps as cast-tagged memory.
+fn parse_enters_with_returned_cost_mana_value(tail: &[OwnedLexToken]) -> Option<Value> {
+    let words = crate::lexer::token_word_refs(tail);
+    let words: Vec<&str> = words.into_iter().filter(|word| *word != ",").collect();
+    let noun = match words.as_slice() {
+        ["where", "x", "is", "the", "mana", "value", "of", "the", "returned", noun] => *noun,
+        ["where", "x", "is", "the", "returned", noun, "mana", "value"] => {
+            noun.trim_end_matches("'s").trim_end_matches("’s")
+        }
+        _ => return None,
+    };
+    if !matches!(noun, "creature" | "permanent" | "card") {
+        return None;
+    }
+    let tag = crate::tag::CompilerCostObjectTag::ReturnToHand.key(0);
+    Some(Value::ManaValueOf(Box::new(ChooseSpec::Tagged(tag.into()))))
 }
 
 pub fn parse_where_x_is_fixed_plus_reference_value(tokens: &[OwnedLexToken]) -> Option<Value> {
@@ -1194,7 +1333,12 @@ pub fn parse_where_x_is_aggregate_filter_value(tokens: &[OwnedLexToken]) -> Opti
         && filter_words
             .iter()
             .any(|word| etb_word_is_any(word, ETB_CONTROL_OWN_WORDS));
-    let mut filter = parse_cast_time_controlled_objects_filter(filter_tokens)
+    // Demonstratives retain the previously named set (including an attack
+    // group); parsing only the noun would widen it to every creature.
+    let referenced_set = matches!(filter_words.as_slice(),
+        ["those", "creatures" | "permanents" | "cards" | "objects"])
+        .then(|| ObjectFilter::tagged(crate::tag::CompilerReferenceTag::It.bind()));
+    let mut filter = referenced_set.or_else(|| parse_cast_time_controlled_objects_filter(filter_tokens))
         .or_else(|| {
             if should_try_split {
                 let segments = crate::grammar::primitives::split_lexed_slices_on_and(filter_tokens);
@@ -1536,6 +1680,26 @@ pub fn parse_where_x_is_number_of_filter_value(tokens: &[OwnedLexToken]) -> Opti
     ) {
         return Some(Value::PlayersBeingAttacked);
     }
+    // "where X is the number of opponents who voted for a choice you
+    // [didn't] vote for" (Erestor of the Council): the vote-relation player
+    // groups bound by a finished vote (CR 701.38).
+    {
+        let joined = counted.join(" ").replace('\'', "");
+        let tag = match joined.as_str() {
+            "the number of opponents who voted for a choice you voted for" => {
+                Some(crate::tag::CompilerReferenceTag::VotedWithYou)
+            }
+            "the number of opponents who voted for a choice you didnt vote for"
+            | "the number of opponents who voted for a choice you didn t vote for"
+            | "the number of opponents who voted for a choice you did not vote for" => {
+                Some(crate::tag::CompilerReferenceTag::VotedAgainstYou)
+            }
+            _ => None,
+        };
+        if let Some(tag) = tag {
+            return Some(Value::CountPlayers(PlayerFilter::TaggedPlayer(tag.bind().into())));
+        }
+    }
     if words.iter().any(|word| matches!(*word, "plus" | "minus"))
         || crate::word_primitives::sequence_occurs(&words, &["in", "excess", "of"])
     {
@@ -1723,12 +1887,61 @@ pub fn parse_where_x_is_fixed_plus_number_of_filter_value(
             Box::new(value),
         ));
     }
-    let filter =
+    // "2 plus the number of cards in your graveyard that are instant cards,
+    // sorcery cards, and/or have an Adventure" (Frantic Firebolt): the
+    // relative selector list shares the authored graveyard domain.
+    if let Some(filter) = parse_shared_domain_relative_selector_filter(filter_tokens) {
+        return Some(Value::Add(
+            Box::new(Value::Fixed(fixed_value as i32)),
+            Box::new(Value::Count(filter)),
+        ));
+    }
+    let mut filter =
         crate::grammar::primitives::probe_shape(parse_object_filter(filter_tokens, false))?;
+    share_relative_selector_zone_domain(&mut filter, &filter_words);
     Some(Value::Add(
         Box::new(Value::Fixed(fixed_value as i32)),
         Box::new(Value::Count(filter)),
     ))
+}
+
+/// "cards in your graveyard that are instant cards, sorcery cards, and/or
+/// have an Adventure" (Frantic Firebolt): every relative-selector branch
+/// counts in the authored zone domain. A branch-scoped union can leave the
+/// zone/owner on its first branch only, so a later branch (here "have an
+/// Adventure") would otherwise default to the battlefield.
+fn share_relative_selector_zone_domain(filter: &mut ObjectFilter, filter_words: &[&str]) {
+    let Some(relative_idx) = filter_words.iter().position(|word| matches!(*word, "that" | "which"))
+    else {
+        return;
+    };
+    if !filter_words[..relative_idx]
+        .iter()
+        .any(|word| matches!(*word, "graveyard" | "graveyards" | "exile" | "hand" | "library"))
+    {
+        return;
+    }
+    if filter.any_of.len() < 2 {
+        return;
+    }
+    let Some(domain) = filter
+        .any_of
+        .iter()
+        .find(|branch| matches!(branch.zone, Some(zone) if zone != Zone::Battlefield))
+        .map(|branch| (branch.zone, branch.owner.clone(), branch.single_graveyard))
+    else {
+        return;
+    };
+    for branch in &mut filter.any_of {
+        if matches!(branch.zone, None | Some(Zone::Battlefield))
+            && branch.owner.is_none()
+            && branch.controller.is_none()
+        {
+            branch.zone = domain.0;
+            branch.owner = domain.1.clone();
+            branch.single_graveyard = domain.2;
+        }
+    }
 }
 
 pub fn parse_where_x_is_sum_of_number_of_filter_values(tokens: &[OwnedLexToken]) -> Option<Value> {
@@ -2030,12 +2243,48 @@ pub fn parse_as_enters_reveal_from_hand_line(
     )))
 }
 
+/// "As this land enters, you may behold a Jace. If you don't, this land
+/// enters tapped." (Theorist's Sanctum): beholding (CR 701.66) is choosing a
+/// matching permanent you control or revealing a matching card from your
+/// hand, so the land enters untapped exactly when either exists. The line is
+/// a two-sentence compound like the reveal lands, so the compound reader
+/// (`parse_reveal_card_or_enter_tapped_line`) consults this first.
+pub(crate) fn parse_behold_or_enters_tapped_line(tokens: &[OwnedLexToken]) -> Option<StaticAbility> {
+    let without_reminder = tokens
+        .iter()
+        .position(|token| token.kind == crate::lexer::TokenKind::LParen)
+        .map_or(tokens, |paren| &tokens[..paren]);
+    let behold_words = parser_token_word_refs(without_reminder);
+    let [
+        "as", "this", "land", "enters", "you", "may", "behold", "a" | "an", subtype_word,
+        "if", "you", "dont" | "don't", "this", "land", "enters", "tapped",
+    ] = behold_words.as_slice()
+    else {
+        return None;
+    };
+    let subtype = crate::util::parse_subtype_flexible(subtype_word)?;
+    let mut in_hand = ObjectFilter::default();
+    in_hand.subtypes.push(subtype);
+    let mut controlled = ObjectFilter::default().in_zone(Zone::Battlefield);
+    controlled.subtypes.push(subtype);
+    Some(StaticAbility::enters_tapped_unless_condition(
+        PredicateAst::Or(
+            Box::new(PredicateAst::YouHaveCardInHandMatching(in_hand)),
+            Box::new(PredicateAst::YouControl(controlled)),
+        ),
+        crate::lexer::token_word_refs(without_reminder).join(" "),
+    ))
+}
+
 pub fn parse_reveal_from_hand_or_enters_tapped_line(
     tokens: &[OwnedLexToken],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let clause_words = crate::lexer::token_word_refs(tokens);
     if etb_grammar::parse_as_this_land_enters_prefix_tokens(tokens).is_none() {
         return Ok(None);
+    }
+    if let Some(ability) = parse_behold_or_enters_tapped_line(tokens) {
+        return Ok(Some(ability));
     }
     if !etb_grammar::etb_tokens_have_reveal_from_hand_marker(tokens) {
         return Ok(None);
@@ -3059,6 +3308,13 @@ pub fn parse_enters_with_additional_counter_for_filter_line(
         }
     }
 
+    // "Face-down creatures you control enter with a flying counter on them."
+    // (Veiled Ascension): a filtered entry replacement without "additional".
+    if !etb_grammar::etb_tokens_have_with_additional_counters(tokens)
+        && let Some(ability) = parse_filtered_enters_with_counter_line(tokens)
+    {
+        return Ok(Some(ability));
+    }
     if !etb_grammar::etb_tokens_have_with_additional_counters(tokens) {
         return Ok(None);
     }
@@ -3223,6 +3479,47 @@ pub fn parse_enters_with_additional_counter_for_filter_line(
             count,
             added_subtypes,
         ),
+    ))
+}
+
+/// "<plural filter> enter with <a|N> <kind> counter(s) on them": the exact
+/// non-"additional" filtered entry replacement. Source subjects belong to the
+/// self-entry readers.
+fn parse_filtered_enters_with_counter_line(tokens: &[OwnedLexToken]) -> Option<StaticAbility> {
+    let tokens = trim_edge_punctuation(tokens);
+    let enter_idx = tokens
+        .iter()
+        .position(|token| token.is_any_word(&["enter", "enters"]))?;
+    let subject_tokens = trim_commas(&tokens[..enter_idx]);
+    if subject_tokens.is_empty()
+        || starts_with_etb_source_reference(&subject_tokens)
+        || etb_grammar::parse_etb_trigger_intro_prefix_tokens(&subject_tokens).is_some()
+        || subject_tokens.iter().any(|token| !token.as_word().is_some() && !token.is_comma())
+    {
+        return None;
+    }
+    let tail = &tokens[enter_idx + 1..];
+    let tail_words = parser_token_word_refs(tail);
+    let ["with", count_word, middle @ .., "counter" | "counters", "on", "them" | "it"] =
+        tail_words.as_slice()
+    else {
+        return None;
+    };
+    if middle.is_empty() {
+        return None;
+    }
+    let count = match *count_word {
+        "a" | "an" | "one" => 1,
+        other => crate::util::parse_number_word_u32(other)?,
+    };
+    // `with` and the count are single word tokens; the counter phrase follows.
+    let counter_type = parse_counter_type_from_tokens(tail.get(2..)?)?;
+    let filter = parse_enters_with_counter_object_filter_tokens(&subject_tokens)?;
+    Some(StaticAbility::enters_with_counters_and_subtypes_for_filter(
+        filter,
+        counter_type,
+        Value::Fixed(count as i32),
+        Vec::new(),
     ))
 }
 
@@ -3705,6 +4002,69 @@ pub fn parse_as_enters_becomes_characteristics_for_filter_line(
 
     Ok(Some(StaticAbility::enters_with_characteristics_for_filter(
         filter, card_types, subtypes, power, toughness,
+    )))
+}
+
+/// "As this creature enters, flip a coin. If the coin comes up heads, this
+/// creature enters as a 5/2 creature with haste. If it comes up tails, this
+/// creature enters as a 2/5 creature with defender." (Molten Sentry): one of
+/// two entry characteristics, picked by the flip rather than a player.
+pub fn parse_as_enters_coin_flip_characteristics_line(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = crate::lexer::token_word_refs(tokens);
+    let Some(enters) = clause_words.iter().position(|word| *word == "enters") else {
+        return Ok(None);
+    };
+    if clause_words.first() != Some(&"as")
+        || enters < 2
+        || clause_words.get(enters + 1..enters + 4) != Some(&["flip", "a", "coin"][..])
+    {
+        return Ok(None);
+    }
+    let subject = &clause_words[1..enters];
+    let rest = &clause_words[enters + 4..];
+    // Each branch: "if <the coin|it> comes up <face> <subject> enters as <option>".
+    let branch = |words: &[&str], face: &str| -> Option<(usize, usize)> {
+        let start = match words {
+            ["if", "the", "coin", "comes", "up", f, ..] if *f == face => 6,
+            ["if", "it", "comes", "up", f, ..] if *f == face => 5,
+            _ => return None,
+        };
+        let after_subject = words.get(start..start + subject.len())
+            .filter(|candidate| *candidate == subject)
+            .map(|_| start + subject.len())?;
+        (words.get(after_subject..after_subject + 2) == Some(&["enters", "as"][..]))
+            .then_some((after_subject + 2, start))
+    };
+    let Some((heads_start, _)) = branch(rest, "heads") else {
+        return Ok(None);
+    };
+    let Some(tails_if) = rest
+        .iter()
+        .enumerate()
+        .skip(heads_start)
+        .find_map(|(idx, word)| (*word == "if").then_some(idx))
+    else {
+        return Ok(None);
+    };
+    let Some((tails_start, _)) = branch(&rest[tails_if..], "tails") else {
+        return Ok(None);
+    };
+    let heads = parse_pt_choice_characteristic_options(&rest[heads_start..tails_if], &clause_words)?;
+    let tails = parse_pt_choice_characteristic_options(&rest[tails_if + tails_start..], &clause_words)?;
+    let ([heads], [tails]) = (heads.as_slice(), tails.as_slice()) else {
+        return Ok(None);
+    };
+    let subject_text = subject.join(" ");
+    let display = format!(
+        "As {subject_text} enters, flip a coin. If the coin comes up heads, {subject_text} enters as {}. If it comes up tails, {subject_text} enters as {}",
+        render_pt_choice_characteristic_options(std::slice::from_ref(heads)),
+        render_pt_choice_characteristic_options(std::slice::from_ref(tails)),
+    );
+    Ok(Some(StaticAbility::power_toughness_options_at_random_as_enters(
+        vec![heads.clone(), tails.clone()],
+        display,
     )))
 }
 

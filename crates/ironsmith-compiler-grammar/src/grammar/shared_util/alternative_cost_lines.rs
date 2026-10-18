@@ -145,6 +145,65 @@ pub fn parse_flash_with_additional_cost(
     ))
 }
 
+/// "You may cast this spell as though it had flash by tapping three untapped
+/// creatures you control with flying in addition to paying its other costs."
+/// "You may cast this spell as though it had flash if you behold a Dragon as
+/// an additional cost to cast it."
+/// The non-mana payment is an optional additional cost that grants flash
+/// timing when announced (CR 601.2b, 601.2f), exactly like the mana-only
+/// "if you pay {N} more" form.
+pub fn parse_flash_timing_optional_payment(
+    tokens: &[OwnedLexToken],
+) -> Result<Option<crate::model::CompilerOptionalCost>, CardTextError> {
+    let tokens = trim_edge_punctuation(tokens);
+    let view = TokenWordView::new(&tokens);
+    let words = view.word_refs();
+    let head = [
+        "you", "may", "cast", "this", "spell", "as", "though", "it", "had", "flash",
+    ];
+    if !permission_shapes::prefix_words(&words, &head) {
+        return Ok(None);
+    }
+    let rest = &words[head.len()..];
+    let (cost_word_start, suffix_len, gerund) = if rest.first() == Some(&"by")
+        && rest.ends_with(&["in", "addition", "to", "paying", "its", "other", "costs"])
+    {
+        (head.len() + 1, 7, true)
+    } else if rest.starts_with(&["if", "you"])
+        && rest.ends_with(&["as", "an", "additional", "cost", "to", "cast", "it"])
+        // The mana-only "if you pay {N} more" form keeps its own reader.
+        && !rest.starts_with(&["if", "you", "pay"])
+    {
+        (head.len() + 2, 7, false)
+    } else {
+        return Ok(None);
+    };
+    let cost_word_end = words.len() - suffix_len;
+    if cost_word_end <= cost_word_start {
+        return Ok(None);
+    }
+    let starts = view.token_start_indices();
+    let cost_start = starts[cost_word_start];
+    let cost_end = starts[cost_word_end];
+    let mut cost_tokens = tokens[cost_start..cost_end].to_vec();
+    if gerund {
+        for index in 0..cost_tokens.len() {
+            if index == 0 || cost_tokens[index - 1].is_word("and") {
+                for (gerund, verb) in [("tapping", "tap"), ("paying", "pay"), ("sacrificing", "sacrifice"),
+                    ("exiling", "exile"), ("discarding", "discard"), ("returning", "return"),
+                    ("beholding", "behold"), ("revealing", "reveal")] {
+                    if cost_tokens[index].is_word(gerund) { cost_tokens[index].replace_word(verb); }
+                }
+            }
+        }
+    }
+    let cost = crate::activation_and_restrictions::activated_line_core::parse_compiler_activation_cost(&cost_tokens)?;
+    if cost.is_free() {
+        return Ok(None);
+    }
+    Ok(Some(crate::model::CompilerOptionalCost::flash_timing(cost)))
+}
+
 pub fn parse_you_may_rather_than_spell_cost(
     tokens: &[OwnedLexToken],
     line: &str,
@@ -249,10 +308,24 @@ pub fn parse_if_conditional_alternative_cost(
     let line = render_token_slice(line_tokens);
     let line = line.as_str();
     let clause_words = TokenWordView::new(tokens).word_refs();
-    if !permission_shapes::prefix_words(&clause_words, &["if"]) {
+    // "As long as you've discarded a card this turn, you may pay {B/R} to
+    // cast this spell." (Asmoranomardicadaistinaculdacar): an alternative
+    // cost whose condition is checked as the spell is cast, the same as an
+    // "if" condition (CR 118.9).
+    let as_long_as = permission_shapes::prefix_words(&clause_words, &["as", "long", "as"]);
+    if !as_long_as && !permission_shapes::prefix_words(&clause_words, &["if"]) {
         return Ok(None);
     }
-    let Some((condition_tokens, tail_tokens)) = split_condition_and_cost_tail(tokens) else {
+    let condition_source: Vec<OwnedLexToken> = if as_long_as {
+        let Some(start) = TokenWordView::new(tokens).token_start_indices().get(2).copied() else {
+            return Ok(None);
+        };
+        tokens[start..].to_vec()
+    } else {
+        tokens.to_vec()
+    };
+    let Some((condition_tokens, tail_tokens)) = split_condition_and_cost_tail(&condition_source)
+    else {
         return Ok(None);
     };
     // "If you control a Forest, rather than pay this spell's mana cost, you
@@ -260,6 +333,27 @@ pub fn parse_if_conditional_alternative_cost(
     // cost with the "rather than" clause leading.
     let reordered_tail = leading_rather_than_tail(tail_tokens);
     let tail_tokens = reordered_tail.as_deref().unwrap_or(tail_tokens);
+    // "you may pay {B/R} to cast this spell": the payment replaces the
+    // spell's mana cost.
+    let to_cast_tail = {
+        let view = TokenWordView::new(tail_tokens);
+        let words = view.word_refs();
+        let suffix = ["to", "cast", "this", "spell"];
+        if permission_shapes::prefix_words(&words, &["you", "may", "pay"])
+            && words.len() > suffix.len() + 3
+            && words.ends_with(&suffix)
+            && let Some(to_token) = view.token_start_indices().get(words.len() - suffix.len()).copied()
+        {
+            let mut rewritten = tail_tokens[..to_token].to_vec();
+            rewritten.extend(crate::lexer::synthetic_word_tokens([
+                "rather", "than", "pay", "this", "spell", "mana", "cost",
+            ]));
+            Some(rewritten)
+        } else {
+            None
+        }
+    };
+    let tail_tokens = to_cast_tail.as_deref().unwrap_or(tail_tokens);
     // "If this spell is ..., you may cast it without paying its mana cost":
     // `it` repeats the condition's own subject, this spell.
     let condition_names_this_spell = permission_shapes::prefix_words(
@@ -272,7 +366,21 @@ pub fn parse_if_conditional_alternative_cost(
                 == [
                     "you", "may", "cast", "it", "without", "paying", "its", "mana", "cost",
                 ]);
-    if !self_free_cast && parse_you_may_rather_than_spell_cost(tail_tokens, line)?.is_none() {
+    // "If ..., you may cast this creature without paying its mana cost and as
+    // though it had flash" (Qasali Ambusher): the free method carries its own
+    // instant-timing permission.
+    let free_cast_with_flash = matches!(
+        TokenWordView::new(tail_tokens).word_refs().as_slice(),
+        [
+            "you", "may", "cast", "this", "spell" | "creature" | "card" | "permanent",
+            "without", "paying", "its", "mana", "cost", "and", "as", "though", "it", "had",
+            "flash",
+        ]
+    );
+    if !self_free_cast
+        && !free_cast_with_flash
+        && parse_you_may_rather_than_spell_cost(tail_tokens, line)?.is_none()
+    {
         return Ok(None);
     }
 
@@ -287,6 +395,14 @@ pub fn parse_if_conditional_alternative_cost(
         })?
     };
 
+    if free_cast_with_flash {
+        return Ok(Some(AlternativeCastingMethod::alternative_cost_with_condition(
+            ironsmith_core::FREE_CAST_AS_THOUGH_FLASH_METHOD,
+            None,
+            Vec::new(),
+            condition,
+        )));
+    }
     if self_free_cast {
         let method = AlternativeCastingMethod::alternative_cost_with_condition(
             "Parsed alternative cost",

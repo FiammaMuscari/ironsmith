@@ -11,6 +11,7 @@ mod player_becomes_targeted;
 mod spell_cast;
 mod spell_copied;
 mod spell_countered;
+mod mana_ability_resolves;
 mod tap_for_mana;
 mod you_cast_this_spell;
 
@@ -31,5 +32,12 @@ pub use player_becomes_targeted::PlayerBecomesTargetedTrigger;
 pub use spell_cast::SpellCastTrigger;
 pub use spell_copied::SpellCopiedTrigger;
 pub use spell_countered::SpellCounteredTrigger;
-pub use tap_for_mana::TapForManaTrigger;
+pub use mana_ability_resolves::SourceManaAbilityResolvesTrigger;
+pub use tap_for_mana::{TapForManaTrigger, ManaFromSourceTrigger};
 pub use you_cast_this_spell::YouCastThisSpellTrigger;
+
+mod stack_object_added;
+pub use stack_object_added::StackObjectAddedTrigger;
+
+mod spell_cast_through_permission;
+pub use spell_cast_through_permission::SpellCastThroughPermissionTrigger;

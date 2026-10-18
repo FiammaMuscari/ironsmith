@@ -101,6 +101,16 @@ pub fn is_spend_mana_restriction_sentence_lexed(tokens: &[OwnedLexToken]) -> boo
 pub fn parse_mana_usage_restriction_sentence_lexed(
     tokens: &[OwnedLexToken],
 ) -> Option<ManaUsageRestriction> {
+    let words = crate::lexer::parser_token_word_refs(tokens);
+    if words.starts_with(&["spend", "this", "mana", "only", "to", "cast", "the", "last", "card", "exiled", "with"])
+        && crate::util::is_source_reference_words(&words[11..])
+    {
+        return Some(ManaUsageRestriction::CastSpellMatching {
+            filter: ObjectFilter::tagged(crate::tag::declared_key(ironsmith_core::tag::LAST_SOURCE_EXILED_AT_PRODUCTION_TAG)),
+            restrict_to_matching_spell: true, grant_uncounterable: false,
+            enters_with_counters: Vec::new(), granted_abilities: Vec::new(),
+        });
+    }
     parse_generic_mana_transaction(tokens)
         .or_else(|| mana_usage_payment_branches::parse(tokens))
         .or_else(|| parse_cast_unlock_turn_face_up(tokens))
@@ -238,6 +248,9 @@ pub fn parse_mana_spend_bonus_sentence_lexed(
     {
         return Some(transaction);
     }
+    if let Some(bonus) = parse_commander_cast_count_counter_bonus(tokens) {
+        return Some(bonus);
+    }
     let parsed = parse_mana_spend_bonus_shape(tokens)?;
     let spec_tokens = trim_lexed_commas(parsed.spec_tokens);
     if TokenWordView::new(spec_tokens).is_empty() {
@@ -328,6 +341,7 @@ pub fn parse_mana_spend_bonus_sentence_lexed(
             enters_with_counters,
             granted_abilities: duration_grants,
             granted_keywords,
+            enters_with_counter_values: Vec::new(),
         });
     }
 
@@ -361,6 +375,49 @@ pub fn parse_mana_spend_bonus_sentence_lexed(
         grant_uncounterable: false,
         enters_with_counters: vec![(counter_type, count)],
         granted_abilities: vec![],
+    })
+}
+
+/// "If you spend this mana to cast your commander, it enters with a number of
+/// additional +1/+1 counters on it equal to the number of times it's been
+/// cast from the command zone this game." (Opal Palace): a bonus carried by
+/// the mana unit; the count is read as the commander enters, when that cast
+/// is already counted.
+fn parse_commander_cast_count_counter_bonus(
+    tokens: &[OwnedLexToken],
+) -> Option<ManaUsageRestriction> {
+    let words = TokenWordView::new(tokens).word_refs();
+    let words: Vec<&str> = words.into_iter().filter(|word| *word != ".").collect();
+    let rest = words.strip_prefix(
+        &["if", "you", "spend", "this", "mana", "to", "cast", "your", "commander", "it", "enters", "with", "a", "number", "of", "additional"][..],
+    )?;
+    let counters_at = rest.iter().position(|word| *word == "counters")?;
+    let counter_words = rest.get(..counters_at)?;
+    let tail = rest.get(counters_at + 1..)?;
+    let count_words = tail.strip_prefix(&["on", "it", "equal", "to", "the", "number", "of", "times"][..])?;
+    if !matches!(
+        count_words,
+        ["it's" | "its", "been", "cast", "from", "the", "command", "zone", "this", "game"]
+            | ["it", "has" | "s", "been", "cast", "from", "the", "command", "zone", "this", "game"]
+    ) {
+        return None;
+    }
+    let mut kind_words = counter_words.to_vec();
+    kind_words.push("counter");
+    let counter_type = crate::grammar::filters::parse_counter_type_words(&kind_words)?;
+    Some(ManaUsageRestriction::CastSpellWithManaBonus {
+        filter: ObjectFilter::default()
+            .commander()
+            .owned_by(crate::target::PlayerFilter::You),
+        condition: ManaSpendBonusCondition::IfThisManaIsSpentToCast,
+        grant_uncounterable: false,
+        enters_with_counters: Vec::new(),
+        granted_abilities: Vec::new(),
+        granted_keywords: Vec::new(),
+        enters_with_counter_values: vec![(
+            counter_type,
+            crate::effect::Value::CommanderCastCount(crate::target::PlayerFilter::You),
+        )],
     })
 }
 
@@ -466,6 +523,26 @@ fn parse_generic_mana_transaction(tokens: &[OwnedLexToken]) -> Option<ManaUsageR
         )
     } else if crate::word_primitives::sequence_occurs(
         &words,
+        &["instant", "or", "sorcery", "spell", "with", "mana", "value"],
+    ) && let Some(limit) = words
+        .windows(10)
+        .find_map(|window| match window {
+            ["instant", "or", "sorcery", "spell", "with", "mana", "value", limit, "or", "less"] => {
+                crate::util::parse_number_word_u32(limit)
+            }
+            _ => None,
+        })
+    {
+        // "an instant or sorcery spell with mana value 3 or less" (Forger's
+        // Foundry).
+        let mut filter =
+            ObjectFilter::default().with_mana_value(crate::filter::Comparison::LessThanOrEqual(
+                limit as i32,
+            ));
+        filter.card_types = vec![CardType::Instant, CardType::Sorcery];
+        (filter, None)
+    } else if crate::word_primitives::sequence_occurs(
+        &words,
         &["red", "instant", "or", "sorcery", "spell"],
     ) {
         let mut filter = ObjectFilter::default().with_colors(crate::color::ColorSet::RED);
@@ -496,6 +573,30 @@ fn parse_generic_mana_transaction(tokens: &[OwnedLexToken]) -> Option<ManaUsageR
                 count: Value::CommanderCastCount(PlayerFilter::You),
             }),
         )
+    } else if crate::word_primitives::sequence_occurs(
+        &words,
+        &["you", "may", "exile", "that", "spell", "instead", "of", "putting", "it", "into"],
+    ) && crate::word_primitives::sequence_occurs(&words, &["graveyard", "as", "it", "resolves"])
+    {
+        // "you may exile that spell instead of putting it into its owner's
+        // graveyard as it resolves" (Forger's Foundry): an optional one-shot
+        // replacement on the paid spell's resolution move, linking the exiled
+        // card to this source ("cards exiled with this artifact").
+        EffectAst::Permissions(crate::cards::builders::PermissionEffectAst::MayByPlayer {
+            player: PlayerAst::You,
+            effects: vec![EffectAst::subject_verb_register_future_zone_replacement(
+                ObjectFilter::default().match_tagged(
+                    crate::tag::CompilerReferenceTag::ManaPaidObject.bind(),
+                    crate::target::TaggedOpbjectRelation::IsTaggedObject,
+                ),
+                Some(Zone::Stack),
+                Some(Zone::Graveyard),
+                Zone::Exile,
+                crate::cards::builders::ZoneReplacementDurationAst::OneShot,
+                crate::cards::builders::FutureZoneReplacementCausePolicyAst::Any,
+                true,
+            )],
+        })
     } else if crate::word_primitives::sequence_occurs(&words, &["copy", "that", "spell"]) {
         let may_choose_new_targets =
             crate::word_primitives::sequence_occurs(&words, &["choose", "new", "targets"]);

@@ -24,7 +24,11 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyOneColor { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaLostThisWay { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaColorsAmong { .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaEqualToManaCost { .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColorAmong { .. })
+            | SubjectVerbActionAst::Mana(ManaActionAst::AddManaDraftChosenColors { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaCommanderIdentity { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaFromLandCouldProduce { .. })
             | SubjectVerbActionAst::Mana(ManaActionAst::AddManaImprintedColors)
@@ -32,6 +36,9 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Mana(ManaActionAst::AddOneManaAnyColorAmong { .. })
             | SubjectVerbActionAst::TurnStructure(
                 TurnStructureActionAst::AdditionalLandPlays { .. }
+            )
+            | SubjectVerbActionAst::TurnStructure(
+                TurnStructureActionAst::AdditionalSteps { .. }
             )
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::CollectEvidence { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::EmpowerJace { .. })
@@ -110,8 +117,10 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Library(LibraryActionAst::Mill { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Monstrosity { .. })
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::NoteLifeTotal)
+            | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::RedistributeLifeTotals)
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::OpenAttraction { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollToVisitAttractions)
+            | SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollPlanarDie)
             | SubjectVerbActionAst::LifeResources(LifeResourceActionAst::PayLife { .. })
             | SubjectVerbActionAst::KeywordActions(KeywordActionAst::Populate { .. })
             | SubjectVerbActionAst::DamagePrevention(
@@ -192,6 +201,7 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterDamageMultiplier { .. }
                     | ReplacementActionAst::RegisterDamageAddition { .. }
+                    | ReplacementActionAst::RegisterTokenCreationMultiplier { .. }
             )
             | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterEnterWithCountersReplacement { .. }
@@ -200,9 +210,13 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
                 ReplacementActionAst::RegisterNextBatchEnterWithCounters { .. }
             )
             | SubjectVerbActionAst::Replacements(
+                ReplacementActionAst::RegisterNextBatchEnterAsCopy { .. }
+            )
+            | SubjectVerbActionAst::Replacements(
                 ReplacementActionAst::RegisterZoneReplacement { .. }
             )
             | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyard)
+            | SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyardAtRandom)
             | SubjectVerbActionAst::Library(LibraryActionAst::ReorderTopOfLibrary { .. })
             | SubjectVerbActionAst::ReorderTopPlanarDeck { .. }
             | SubjectVerbActionAst::DamagePrevention(
@@ -214,6 +228,7 @@ pub(super) fn handles_action(action: &SubjectVerbActionAst) -> bool {
             | SubjectVerbActionAst::RevealLook(RevealLookActionAst::RevealTagged { .. })
             | SubjectVerbActionAst::RevealLook(RevealLookActionAst::RevealTop)
             | SubjectVerbActionAst::Random(RandomActionAst::RollDiceChooseResult { .. })
+            | SubjectVerbActionAst::Random(RandomActionAst::RollDiceTotal { .. })
             | SubjectVerbActionAst::Random(RandomActionAst::RollDie { .. })
             | SubjectVerbActionAst::Random(RandomActionAst::ChooseNumberAtRandom { .. })
             | SubjectVerbActionAst::ZoneMoves(ZoneMoveActionAst::SacrificeSourceWhenLeaves { .. })
@@ -443,12 +458,22 @@ pub(super) fn compile_subject_verb_early(
     let role = subject_verb_role(subject_verb.subject.role);
     let player = subject_verb.subject.player;
     let result = match &subject_verb.action {
-        SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom { target, source, duration }) => {
+        SubjectVerbActionAst::Grants(GrantActionAst::GrantActivatedAbilitiesFrom {
+            target, source, duration, each_recipient, symbol_as_any_color,
+        }) => {
             let (target, mut choices) = resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+            // "each Horror you control gains ...": the whole matching set.
+            let target = match target {
+                crate::target::ChooseSpec::Object(filter) if *each_recipient => {
+                    crate::target::ChooseSpec::All(filter)
+                }
+                target => target,
+            };
             let (source, source_choices) = resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
             for choice in source_choices { push_choice(&mut choices, choice); }
             let mut grant = crate::effects::GrantAbilitiesTargetEffect::new(target, Vec::new(), duration.clone());
             grant.activated_from = Some(source);
+            grant.activated_from_symbol_as_any_color = *symbol_as_any_color;
             Ok((vec![Effect::new(grant)], choices))
         }
         SubjectVerbActionAst::LifeResources(LifeResourceActionAst::Draw { count }) => {
@@ -760,14 +785,35 @@ pub(super) fn compile_subject_verb_early(
             Ok((vec![effect], Vec::new()))
         }
         SubjectVerbActionAst::KeywordActions(KeywordActionAst::Amass { subtype, amount }) => {
-            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
-            let mut effect = Effect::amass(*subtype, amount);
-            if ctx.auto_tag_object_targets {
+            // "Its controller amasses Goblins X" (Azog, Moria's Ruin): a
+            // named player amasses under their own control.
+            let subtype = *subtype;
+            let (mut effects, choices) = if matches!(player, PlayerAst::Implicit | PlayerAst::You) {
+                let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+                (vec![Effect::amass(subtype, amount)], Vec::new())
+            } else {
+                compile_subject_verb_player_value_effect(
+                    role,
+                    player,
+                    amount,
+                    ctx,
+                    true,
+                    true,
+                    true,
+                    true,
+                    |amount| Effect::amass(subtype, amount),
+                    |amount, player| {
+                        Effect::new(crate::effects::AmassEffect::new(subtype, amount).with_player(player))
+                    },
+                )?
+            };
+            if ctx.auto_tag_object_targets && effects.len() == 1 {
                 let tag = ctx.next_tag("amassed");
                 ctx.last_object_tag = Some(tag.clone());
-                effect = effect.tag(tag);
+                let effect = effects.remove(0).tag(tag);
+                effects.push(effect);
             }
-            Ok((vec![effect], Vec::new()))
+            Ok((effects, choices))
         }
         SubjectVerbActionAst::KeywordActions(KeywordActionAst::Bolster { amount }) => {
             let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
@@ -1057,6 +1103,7 @@ pub(super) fn compile_subject_verb_early(
         }
         SubjectVerbActionAst::Mana(ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn {
             color,
+            until_end_of_combat,
         }) if !matches!(player, PlayerAst::Implicit | PlayerAst::You) => {
             // "They don't lose this mana ..." names the player who added it
             // (for example the upkeep player in "that player adds ..."), not
@@ -1066,15 +1113,19 @@ pub(super) fn compile_subject_verb_early(
                     crate::effects::RetainManaUntilEndOfTurnEffect::new(
                         subject.into_player_filter(),
                     )
-                    .with_color(*color),
+                    .with_color(*color)
+                    .with_until_end_of_combat(*until_end_of_combat),
                 )
             })
         }
         SubjectVerbActionAst::Mana(ManaActionAst::DontLoseThisManaAsStepsAndPhasesEndThisTurn {
             color,
+            until_end_of_combat,
         }) => Ok((
             vec![Effect::new(
-                crate::effects::RetainManaUntilEndOfTurnEffect::you().with_color(*color),
+                crate::effects::RetainManaUntilEndOfTurnEffect::you()
+                    .with_color(*color)
+                    .with_until_end_of_combat(*until_end_of_combat),
             )],
             Vec::new(),
         )),
@@ -1089,6 +1140,14 @@ pub(super) fn compile_subject_verb_early(
             let subject = resolve_subject_verb_subject(role, player, ctx, false, false, true)?;
             Ok((
                 vec![Effect::roll_to_visit_attractions(subject.clone_player_filter())],
+                Vec::new(),
+            ))
+        }
+        SubjectVerbActionAst::KeywordActions(KeywordActionAst::RollPlanarDie) => {
+            // CR 901.9: an effect-driven planar die roll by the subject player.
+            let subject = resolve_subject_verb_subject(role, player, ctx, false, false, true)?;
+            Ok((
+                vec![Effect::roll_planar_die(subject.clone_player_filter())],
                 Vec::new(),
             ))
         }
@@ -1233,19 +1292,55 @@ pub(super) fn compile_subject_verb_early(
                 Effect::new(effect)
             })
         }
+        SubjectVerbActionAst::Random(RandomActionAst::RollDiceTotal {
+            count,
+            sides,
+            surface,
+            highest_only: true,
+        }) => {
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
+            compile_player_role_effect(role, player, ctx, false, false, true, |subject| {
+                let mut effect = crate::effects::RollDiceChooseResultEffect::new_with_die_text(
+                    subject.into_player_filter(),
+                    0,
+                    *sides,
+                    surface.map(|surface| surface.render(*sides)),
+                )
+                .with_ignore_lower(true);
+                effect.count_value = Some(count.clone());
+                Effect::new(effect)
+            })
+        }
+        SubjectVerbActionAst::Random(RandomActionAst::RollDiceTotal { count, sides, surface, .. }) => {
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
+            compile_player_role_effect(role, player, ctx, false, false, true, |subject| {
+                Effect::roll_dice_total_with_surface(
+                    count.clone(),
+                    *sides,
+                    subject.into_player_filter(),
+                    *surface,
+                )
+            })
+        }
         SubjectVerbActionAst::Random(RandomActionAst::RollDiceChooseResult {
             count,
             sides,
             surface,
             ignore_lower,
+            in_order,
         }) => compile_player_role_effect(role, player, ctx, false, false, true, |subject| {
-            Effect::roll_dice_choose_result_with_surface_ignoring_lower(
-                *count,
-                *sides,
-                subject.into_player_filter(),
-                *surface,
-                *ignore_lower,
-            )
+            let player = subject.into_player_filter();
+            if *in_order {
+                Effect::roll_dice_in_order_with_surface(*count, *sides, player, *surface)
+            } else {
+                Effect::roll_dice_choose_result_with_surface_ignoring_lower(
+                    *count,
+                    *sides,
+                    player,
+                    *surface,
+                    *ignore_lower,
+                )
+            }
         }),
         SubjectVerbActionAst::Library(LibraryActionAst::ShuffleHandAndGraveyardIntoLibrary) => {
             compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
@@ -1270,6 +1365,13 @@ pub(super) fn compile_subject_verb_early(
         SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyard) => {
             compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
                 Effect::reorder_graveyard_player(subject.into_player_filter())
+            })
+        }
+        SubjectVerbActionAst::Library(LibraryActionAst::ReorderGraveyardAtRandom) => {
+            compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
+                Effect::new(crate::effects::ReorderGraveyardEffect::at_random(
+                    subject.into_player_filter(),
+                ))
             })
         }
         SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseColor) => {
@@ -1304,6 +1406,7 @@ pub(super) fn compile_subject_verb_early(
             secretly,
             excluded_subtypes,
             family,
+            note_for_source,
         }) => compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
             let mut effect = crate::effects::ChooseCreatureTypeEffect::for_family(
                 subject.into_player_filter(),
@@ -1312,6 +1415,7 @@ pub(super) fn compile_subject_verb_early(
             effect.excluded_subtypes = excluded_subtypes.clone();
             effect.allowed_subtypes = allowed_subtypes.clone();
             effect.secretly = *secretly;
+            effect.note_for_source = *note_for_source;
             Effect::new(effect)
         }),
         SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseLandType {
@@ -1324,15 +1428,16 @@ pub(super) fn compile_subject_verb_early(
                 Effect::choose_land_type(subject.into_player_filter(), *exclude_basic)
             }
         }),
-        SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardName { filter, tag }) => {
+        SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseCardName { filter, tag, options, exclude_source_history }) => {
             let subject = resolve_subject_verb_subject(role, player, ctx, true, true, true)?;
             let chooser = subject.clone_player_filter();
             let mut effects = subject.target_prelude();
-            effects.push(Effect::choose_card_name(
-                chooser.clone(),
-                filter.clone(),
-                tag.clone(),
-            ));
+            let mut choice = crate::effects::ChooseCardNameEffect::new(
+                chooser.clone(), filter.clone(), tag.clone(),
+            );
+            choice.options = options.clone();
+            choice.exclude_source_history = *exclude_source_history;
+            effects.push(Effect::new(choice));
             ctx.last_object_tag = Some(tag.clone().into());
             ctx.last_player_filter = Some(chooser);
             Ok((effects, subject.into_choices()))
@@ -1350,6 +1455,8 @@ pub(super) fn compile_subject_verb_early(
             } else {
                 tag.clone().into()
             };
+            let distinct_in_loop = *exclude_previous_choices
+                == ironsmith_compiler_semantic::model::ast::DISTINCT_FROM_EVERY_PRIOR_PLAYER_CHOICE;
             let excluded_tags = if *exclude_previous_choices == 0 {
                 Vec::new()
             } else {
@@ -1359,12 +1466,18 @@ pub(super) fn compile_subject_verb_early(
                     .cloned()
                     .collect::<Vec<_>>()
             };
+            // "a different <player>" also excludes this instruction's own
+            // choices in earlier iterations of its loop.
+            let accumulate_into = distinct_in_loop.then(|| {
+                crate::tag::TagKey::from(format!("{}_chosen_so_far", resolved_tag.as_str()))
+            });
             let (effects, choices) = compile_choose_player_with_subject(
                 subject,
                 resolved_filter,
                 resolved_tag.clone(),
                 *random,
                 excluded_tags,
+                accumulate_into,
             );
             ctx.last_player_filter = Some(PlayerFilter::TaggedPlayer(resolved_tag.clone()));
             ctx.recent_player_choice_tags.push(resolved_tag.clone());
@@ -1372,6 +1485,13 @@ pub(super) fn compile_subject_verb_early(
         }
         SubjectVerbActionAst::LifeResources(LifeResourceActionAst::NoteLifeTotal) => {
             Ok((vec![Effect::note_life_total()], Vec::new()))
+        }
+        SubjectVerbActionAst::LifeResources(LifeResourceActionAst::RedistributeLifeTotals) => {
+            compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
+                Effect::new(crate::effects::RedistributeLifeTotalsEffect::new(
+                    subject.into_player_filter(),
+                ))
+            })
         }
         SubjectVerbActionAst::Choices(ChoiceActionAst::ChooseSpellCastHistory {
             cast_by,
@@ -1488,15 +1608,31 @@ pub(super) fn compile_subject_verb_early(
                 |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
             )
         }
-        SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount }) => {
+        SubjectVerbActionAst::Mana(ManaActionAst::AddManaLostThisWay { amount }) => {
             let (amount, player_filter, choices) =
                 resolve_player_scoped_value(amount, player, ctx, true, true, true)?;
             compile_player_effect_from_resolved_filter(
                 player_filter,
                 choices,
-                || Effect::add_mana_of_noted_type(amount.clone(), PlayerFilter::You),
-                |filter| Effect::add_mana_of_noted_type(amount.clone(), filter),
+                || {
+                    Effect::new(crate::effects::mana::AddManaLostThisWayEffect::new(
+                        amount.clone(),
+                        PlayerFilter::You,
+                    ))
+                },
+                |filter| {
+                    Effect::new(crate::effects::mana::AddManaLostThisWayEffect::new(
+                        amount.clone(),
+                        filter,
+                    ))
+                },
             )
+        }
+        SubjectVerbActionAst::Mana(ManaActionAst::AddManaNotedType { amount, use_noted_amount }) => {
+            let (amount, player_filter, choices) = resolve_player_scoped_value(amount, player, ctx, true, true, true)?;
+            let mut effect = crate::effects::AddManaOfNotedTypeEffect::new(amount, player_filter);
+            effect.use_noted_amount = *use_noted_amount;
+            Ok((vec![Effect::new(effect)], choices))
         }
         SubjectVerbActionAst::Mana(ManaActionAst::AddManaChosenColor {
             amount,
@@ -1575,6 +1711,29 @@ pub(super) fn compile_subject_verb_early(
                 },
             )
         }
+        SubjectVerbActionAst::Mana(ManaActionAst::AddManaAnyColorAmong { amount, filter }) => {
+            let filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+            let (amount, player_filter, choices) =
+                resolve_player_scoped_value(amount, player, ctx, true, true, true)?;
+            compile_player_effect_from_resolved_filter(
+                player_filter,
+                choices,
+                || {
+                    Effect::new(crate::effects::AddManaOfAnyColorEffect::among(
+                        amount.clone(),
+                        PlayerFilter::You,
+                        filter.clone(),
+                    ))
+                },
+                |player_filter| {
+                    Effect::new(crate::effects::AddManaOfAnyColorEffect::among(
+                        amount.clone(),
+                        player_filter,
+                        filter.clone(),
+                    ))
+                },
+            )
+        }
         SubjectVerbActionAst::Mana(ManaActionAst::AddManaColorsAmong { filter }) => {
             let subject = resolve_subject_verb_subject(role, player, ctx, true, true, true)?;
             compile_player_effect_from_resolved_filter(
@@ -1591,6 +1750,34 @@ pub(super) fn compile_subject_verb_early(
                         filter.clone(),
                         player_filter,
                     ))
+                },
+            )
+        }
+        SubjectVerbActionAst::Mana(ManaActionAst::AddManaEqualToManaCost {
+            filter,
+            colored_symbols_only,
+        }) => {
+            let subject = resolve_subject_verb_subject(role, player, ctx, true, true, true)?;
+            compile_player_effect_from_resolved_filter(
+                subject.clone_player_filter(),
+                subject.into_choices(),
+                || {
+                    Effect::new(
+                        crate::effects::mana::AddManaEqualToManaCostEffect::new(
+                            filter.clone(),
+                            PlayerFilter::You,
+                        )
+                        .with_colored_symbols_only(*colored_symbols_only),
+                    )
+                },
+                |player_filter| {
+                    Effect::new(
+                        crate::effects::mana::AddManaEqualToManaCostEffect::new(
+                            filter.clone(),
+                            player_filter,
+                        )
+                        .with_colored_symbols_only(*colored_symbols_only),
+                    )
                 },
             )
         }
@@ -1619,6 +1806,37 @@ pub(super) fn compile_subject_verb_early(
                         )
                         .with_choose_color_of_object_surface(*choose_color_of_object_surface),
                     )
+                },
+            )
+        }
+        SubjectVerbActionAst::Mana(ManaActionAst::AddManaDraftChosenColors {
+            amount,
+            card_name,
+            chosen_at_deck_construction,
+        }) => {
+            let (amount, player_filter, choices) =
+                resolve_player_scoped_value(amount, player, ctx, true, true, true)?;
+            let pregame_colors = |effect: crate::effects::AddManaOfAnyColorEffect| {
+                if *chosen_at_deck_construction {
+                    effect.with_colors_chosen_at_deck_construction()
+                } else {
+                    effect.with_colors_chosen_while_drafting_named(card_name.clone())
+                }
+            };
+            compile_player_effect_from_resolved_filter(
+                player_filter,
+                choices,
+                || {
+                    Effect::new(pregame_colors(crate::effects::AddManaOfAnyColorEffect::new(
+                        amount.clone(),
+                        PlayerFilter::You,
+                    )))
+                },
+                |player_filter| {
+                    Effect::new(pregame_colors(crate::effects::AddManaOfAnyColorEffect::new(
+                        amount.clone(),
+                        player_filter,
+                    )))
                 },
             )
         }
@@ -1918,6 +2136,7 @@ pub(super) fn compile_subject_verb_early(
             duration,
             player_target,
             display,
+            lose_game,
         }) => {
             let player_filter = player.clone();
             let mut choices = Vec::new();
@@ -1954,12 +2173,16 @@ pub(super) fn compile_subject_verb_early(
             );
             registration.player_target = player_target;
             registration.display = display.clone();
+            registration.lose_game = *lose_game;
             let effect = Effect::new(registration);
             Ok((vec![effect], choices))
         }
         SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterDamageAddition {
             spec,
         }) => Ok((vec![Effect::new(spec.clone())], Vec::new())),
+        SubjectVerbActionAst::Replacements(
+            ReplacementActionAst::RegisterTokenCreationMultiplier { spec },
+        ) => Ok((vec![Effect::new(spec.clone())], Vec::new())),
         SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterDamageMultiplier {
             spec,
         }) => {
@@ -2145,6 +2368,20 @@ pub(super) fn compile_subject_verb_early(
             )],
             Vec::new(),
         )),
+        SubjectVerbActionAst::Replacements(ReplacementActionAst::RegisterNextBatchEnterAsCopy {
+            filter,
+            source,
+        }) => {
+            let (source, choices) =
+                resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
+            Ok((
+                vec![Effect::new(crate::effects::RegisterNextBatchEnterAsCopyEffect::new(
+                    filter.clone(),
+                    source,
+                ))],
+                choices,
+            ))
+        }
         SubjectVerbActionAst::Replacements(
             ReplacementActionAst::RegisterNextBatchEnterWithCounters {
                 filter,
@@ -2416,8 +2653,11 @@ pub(super) fn compile_subject_verb_early(
             let subject = resolve_subject_verb_subject(role, player, ctx, true, true, true)?;
             let player_filter = subject.clone_player_filter();
             let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
-            // A captured collection identifies the cards independently of the viewer.
-            if !resolved_filter.tagged_constraints.iter().any(|constraint| {
+            // A captured collection identifies the cards independently of the viewer,
+            // and a look at face-down permanents ("each face-down creature that's
+            // attacking or blocking") names them whoever controls them.
+            if resolved_filter.zone != Some(Zone::Battlefield)
+                && !resolved_filter.tagged_constraints.iter().any(|constraint| {
                 matches!(
                     constraint.relation,
                     TaggedOpbjectRelation::IsTaggedObject | TaggedOpbjectRelation::SameObjectId
@@ -2491,6 +2731,31 @@ pub(super) fn compile_subject_verb_early(
                     duration.clone(),
                 )
             })
+        }
+        SubjectVerbActionAst::TurnStructure(TurnStructureActionAst::AdditionalSteps {
+            step,
+            count,
+            anchor,
+            player_gets,
+        }) => {
+            let resolved_count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
+            let build = |player: Option<crate::target::PlayerFilter>| {
+                Effect::new(crate::effects::AdditionalStepsEffect {
+                    step: *step,
+                    count: resolved_count.clone(),
+                    anchor: *anchor,
+                    player,
+                })
+            };
+            if *player_gets {
+                compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
+                    build(Some(subject.into_player_filter()))
+                })
+            } else {
+                // "There is an additional end step after this step": no
+                // player owns the addition (CR 500.10).
+                Ok((vec![build(None)], Vec::new()))
+            }
         }
         SubjectVerbActionAst::Game(GameActionAst::ExtraTurnAfterTurn { anchor }) => {
             compile_player_role_effect(role, player, ctx, true, true, true, |subject| {
@@ -2884,6 +3149,10 @@ pub(super) fn compile_subject_verb_early(
                 PreventNextTimeDamageTargetAst::You => {
                     (crate::effects::PreventNextTimeDamageTarget::You, Vec::new())
                 }
+                PreventNextTimeDamageTargetAst::AnyPlayer => (
+                    crate::effects::PreventNextTimeDamageTarget::AnyPlayer,
+                    Vec::new(),
+                ),
                 PreventNextTimeDamageTargetAst::YouAndPermanents(filter) => (
                     crate::effects::PreventNextTimeDamageTarget::YouAndPermanents(resolve_it_tag(
                         filter,
@@ -2980,15 +3249,36 @@ pub(super) fn compile_subject_verb_early(
             combat_only,
             source_of_your_choice,
             protect_you_and_permanents_you_control,
+            protect_all,
             follow_up_effects,
             divided,
+            source,
         }) => {
             let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
-            let damage_filter = if *combat_only {
+            let mut damage_filter = if *combat_only {
                 ironsmith_core::DamageFilter::combat()
             } else {
                 ironsmith_core::DamageFilter::all()
             };
+            // "by <named grantor>": the shield prevents only that source's
+            // damage. The engine binds a tagged reference to its exact object
+            // as the shield is created.
+            if let Some(source) = source {
+                let (source_spec, source_choices) =
+                    resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
+                if !source_choices.is_empty() {
+                    return Err(CardTextError::ParseError(
+                        "finite prevention source cannot declare a target".into(),
+                    ));
+                }
+                damage_filter.from_source = Some(match source_spec.base() {
+                    ChooseSpec::Source => ObjectFilter::source(),
+                    ChooseSpec::Tagged(tag) => ObjectFilter::tagged(tag.clone()),
+                    _ => return Err(CardTextError::ParseError(
+                        "finite prevention source must name an existing object".into(),
+                    )),
+                });
+            }
             let (follow_up_effects, follow_up_choices) = if follow_up_effects.is_empty() {
                 (Vec::new(), Vec::new())
             } else {
@@ -3002,7 +3292,7 @@ pub(super) fn compile_subject_verb_early(
             // CR 601.2d / 615.7: the amount is divided among the announced
             // targets, one shield per target.
             if *divided {
-                if *source_of_your_choice || *protect_you_and_permanents_you_control {
+                if *source_of_your_choice || *protect_you_and_permanents_you_control || *protect_all {
                     return Err(CardTextError::ParseError(
                         "divided prevention cannot also choose a source or protect a set".into(),
                     ));
@@ -3018,14 +3308,15 @@ pub(super) fn compile_subject_verb_early(
                 choices.extend(follow_up_choices);
                 return Ok(Some((effects, choices)));
             }
-            if *protect_you_and_permanents_you_control {
+            if *protect_you_and_permanents_you_control || *protect_all {
                 let mut prevent = crate::effects::PreventDamageEffect::new(
                     amount,
                     ChooseSpec::SourceController,
                     duration.clone(),
                 )
-                .with_filter(damage_filter.clone())
-                .protecting_you_and_permanents_you_control();
+                .with_filter(damage_filter.clone());
+                prevent.protect_all = *protect_all;
+                prevent.protect_you_and_permanents_you_control = *protect_you_and_permanents_you_control;
                 if *source_of_your_choice {
                     prevent = prevent.with_source_of_your_choice();
                 }
@@ -3244,17 +3535,23 @@ pub(super) fn compile_subject_verb_early(
                 }
                 Ok((vec![Effect::new(effect)], Vec::new()))
             } else {
-                if *source_of_your_choice {
+                if *source_of_your_choice && *source_choice_shares_activation_mana_color {
                     return Err(CardTextError::ParseError(
-                        "prevent-all damage by a source of your choice currently supports non-targeted recipients"
+                        "prevent-all damage by a source sharing the activation mana color currently supports non-targeted recipients"
                             .to_string(),
                     ));
                 }
+                // "Prevent all damage that would be dealt to any target this
+                // turn by a source of your choice" (Shieldmage Advocate).
+                let choose_source = *source_of_your_choice;
                 compile_effect_for_target(target, ctx, |spec| {
                     let mut prevent =
                         crate::effects::PreventAllDamageToTargetEffect::new(spec, duration.clone());
                     if *combat_only {
                         prevent = prevent.combat_only();
+                    }
+                    if choose_source {
+                        prevent = prevent.with_source_of_your_choice();
                     }
                     Effect::new(prevent)
                 })
@@ -3325,6 +3622,7 @@ pub(super) fn compile_subject_verb_early(
                 of_chosen_color,
                 source_of_your_choice,
                 follow_up_effects,
+                cause_targets_protected,
             },
         ) => {
             let source_filter = resolve_it_tag(source_filter, &current_reference_env(ctx))?;
@@ -3332,6 +3630,7 @@ pub(super) fn compile_subject_verb_early(
             if source_filter != ObjectFilter::default() {
                 damage_filter.from_source = Some(source_filter);
             }
+            damage_filter.cause_targets_protected = *cause_targets_protected;
             // CR 615.5: the additional part runs as each damage event is
             // prevented, reading that prevented amount and its source. A
             // fresh "target" in it is declared with the spell (CR 601.2c).
@@ -3675,6 +3974,7 @@ pub(super) fn compile_subject_verb_early(
                     combat_only: scope.combat_only,
                     destination: scope.destination,
                     mode: scope.mode,
+                    optional_by_controller: scope.optional_by_controller,
                     display: scope.display.clone(),
                 });
                 return Ok(Some((vec![Effect::new(effect)], choices)));

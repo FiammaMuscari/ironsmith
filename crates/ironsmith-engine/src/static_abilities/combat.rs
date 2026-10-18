@@ -1533,6 +1533,26 @@ impl StaticAbilityKind for CantBeBlockedWhileDefendingPlayerControlsMostCreature
     }
 }
 
+/// "Can't be blocked unless it's attacking its owner or a permanent its owner
+/// controls." Checked against the attack target when blockers are declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantBeBlockedUnlessAttackingOwnerOrOwnersPermanent;
+
+impl StaticAbilityKind for CantBeBlockedUnlessAttackingOwnerOrOwnersPermanent {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedUnlessAttackingOwnerOrOwnersPermanent
+    }
+
+    fn display(&self) -> String {
+        "Can't be blocked unless it's attacking its owner or a permanent its owner controls"
+            .to_string()
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+}
+
 /// Can't be blocked by creatures with power N or less.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CantBeBlockedByPowerOrLess {
@@ -1748,6 +1768,15 @@ define_combat_ability!(
     CanAttackAsThoughHaste,
     CanAttackAsThoughHaste,
     "Can attack as though it had haste"
+);
+
+// "All creatures can attack your opponents and planeswalkers your opponents
+// control as though those creatures had haste." (Frenzied Saddlebrute): a
+// source-level permission read by attack legality per defending player.
+define_combat_ability!(
+    CreaturesCanAttackOpponentsAsThoughHaste,
+    CreaturesCanAttackOpponentsAsThoughHaste,
+    "All creatures can attack your opponents and planeswalkers your opponents control as though those creatures had haste"
 );
 
 /// Must attack each combat if able.
@@ -2936,6 +2965,93 @@ impl StaticAbilityKind for CantAttackItsOwner {
     }
 }
 
+/// "This creature can't be destroyed by lethal damage unless lethal damage
+/// dealt by a single source is marked on it." (Ogre Enforcer); the state-based
+/// lethal-damage check consults the per-source marked damage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LethalDamageMustBeFromSingleSource;
+
+impl StaticAbilityKind for LethalDamageMustBeFromSingleSource {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::LethalDamageMustBeFromSingleSource
+    }
+
+    fn display(&self) -> String {
+        "This creature can't be destroyed by lethal damage unless lethal damage dealt by a single source is marked on it.".to_string()
+    }
+}
+
+/// "This creature can't attack a player it has already attacked this turn."
+/// (Port Razer): consults this turn's attack declarations of this object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantAttackPlayerAlreadyAttackedThisTurn;
+
+impl StaticAbilityKind for CantAttackPlayerAlreadyAttackedThisTurn {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantAttackPlayerAlreadyAttackedThisTurn
+    }
+
+    fn display(&self) -> String {
+        "This creature can't attack a player it has already attacked this turn.".to_string()
+    }
+
+    fn can_attack_specific_defender(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        _controller: PlayerId,
+        defending_player: PlayerId,
+    ) -> Option<bool> {
+        let attacked_already = game
+            .turn_store
+            .turn_history
+            .projected_records()
+            .filter_map(|record| {
+                record
+                    .event
+                    .downcast::<crate::events::combat::CreatureAttackedEvent>()
+            })
+            .any(|attack| {
+                attack.attacker == source
+                    && attack.target
+                        == crate::triggers::event::AttackEventTarget::Player(defending_player)
+            });
+        Some(!attacked_already)
+    }
+}
+
+/// "Creatures can't attack a player unless that player cast a spell or put a
+/// nontoken permanent onto the battlefield during their last turn."
+/// (Arboria): a global restriction read by attack legality for each
+/// defending player (see `rules::combat::can_attack_target_with_view`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CreaturesCantAttackPlayersInactiveLastTurn;
+
+impl StaticAbilityKind for CreaturesCantAttackPlayersInactiveLastTurn {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CreaturesCantAttackPlayersInactiveLastTurn
+    }
+
+    fn display(&self) -> String {
+        "Creatures can't attack a player unless that player cast a spell or put a nontoken permanent onto the battlefield during their last turn.".to_string()
+    }
+}
+
+/// Whether `player` cast a spell or put a nontoken permanent onto the
+/// battlefield during their most recent turn (Arboria).
+pub fn player_was_active_during_their_last_turn(
+    game: &GameState,
+    player: PlayerId,
+) -> bool {
+    game.last_turn_history_for_player(player).is_some_and(|history| {
+        history.spells_cast_by_player(player) > 0
+            || history
+                .entered_battlefield_snapshots_this_turn()
+                .iter()
+                .any(|snapshot| snapshot.controller == player && !snapshot.is_token)
+    })
+}
+
 /// Can't attack unless you've cast a creature spell this turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CantAttackUnlessControllerCastCreatureSpellThisTurn;
@@ -3061,6 +3177,29 @@ define_combat_ability!(
     "You may have this creature assign its combat damage as though it weren't blocked"
 );
 
+// Assigns combat damage as though it weren't blocked (Outmaneuver).
+define_combat_ability!(
+    AssignsDamageAsUnblocked,
+    AssignsDamageAsUnblocked,
+    "This creature assigns its combat damage as though it weren't blocked"
+);
+
+// "If this creature is unblocked, you may have it assign its combat damage to
+// a creature defending player controls." (Cunning Giant)
+define_combat_ability!(
+    MayAssignUnblockedDamageToDefendingCreature,
+    MayAssignUnblockedDamageToDefendingCreature,
+    "If this creature is unblocked, you may have it assign its combat damage to a creature defending player controls"
+);
+
+// "You may assign this creature's combat damage divided as you choose among
+// defending player and/or any number of creatures they control." (Butcher Orgg)
+define_combat_ability!(
+    MayDivideCombatDamageAmongDefendingPlayerAndCreatures,
+    MayDivideCombatDamageAmongDefendingPlayerAndCreatures,
+    "You may assign this creature's combat damage divided as you choose among defending player and/or any number of creatures they control"
+);
+
 define_combat_ability!(
     YouAssignCombatDamageOfCreaturesAttackingYou,
     YouAssignCombatDamageOfCreaturesAttackingYou,
@@ -3113,7 +3252,7 @@ mod tests {
                 vec![crate::ability::Ability::static_ability(
                     super::super::StaticAbility::new(ability.clone()),
                 )];
-            game.refresh_continuous_state();
+            game.refresh_continuous_state().expect("test continuous state refresh succeeds");
             let view = crate::derived_view::DerivedGameView::new(game);
             imposed_attack_costs_for_target(game, attacker, target, &view)
                 .first()

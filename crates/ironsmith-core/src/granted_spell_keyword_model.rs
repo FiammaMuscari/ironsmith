@@ -32,6 +32,17 @@ pub enum GrantedSpellKeywordKind {
     /// CR 702.144a: no cost; a cast trigger may copy the spell and, if it
     /// does, an opponent also copies it.
     Demonstrate,
+    /// "Sticker kicker {1}" (Wicker Picker, Unfinity): an optional additional
+    /// cost; if it was paid, you get {TK}, then you may put a sticker on the
+    /// resulting permanent. Appended for wire stability.
+    StickerKicker,
+    /// "As an additional cost to cast creature spells, you may pay any amount
+    /// of mana. If you do, that creature enters with that many additional
+    /// +1/+1 counters on it." (Chorus of the Conclave): an optional
+    /// additional cost of {1} that may be paid any number of times (CR
+    /// 601.2b, 601.2f); the resulting permanent enters with one +1/+1
+    /// counter per payment (CR 614.1c). Appended for wire stability.
+    AnyAmountOfManaForEntryCounters,
 }
 
 impl GrantedSpellKeywordKind {
@@ -41,6 +52,8 @@ impl GrantedSpellKeywordKind {
             Self::Offspring => "offspring",
             Self::Conspire => "conspire",
             Self::Demonstrate => "demonstrate",
+            Self::StickerKicker => "sticker kicker",
+            Self::AnyAmountOfManaForEntryCounters => "any amount of mana",
         }
     }
 
@@ -52,7 +65,10 @@ impl GrantedSpellKeywordKind {
     /// Whether the keyword's own definition fixes what is paid (conspire's
     /// tapping) or pays nothing (demonstrate), so no price is written.
     pub fn has_intrinsic_price(self) -> bool {
-        matches!(self, Self::Conspire | Self::Demonstrate)
+        matches!(
+            self,
+            Self::Conspire | Self::Demonstrate | Self::AnyAmountOfManaForEntryCounters
+        )
     }
 }
 

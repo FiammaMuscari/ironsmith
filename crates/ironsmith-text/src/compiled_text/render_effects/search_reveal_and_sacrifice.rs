@@ -1827,12 +1827,42 @@ pub(crate) fn describe_choose_same_controller_sacrifice_one_return_other(
         return None;
     }
 
-    let plural_noun = simple_filter_plural_noun(target_filter)?;
+    // "controlled by the same opponent" (Retribution) narrows the shared
+    // controller to an opponent; the noun itself stays the simple one.
+    let (plural_noun, same_controller_noun) =
+        if target_filter.controller == Some(PlayerFilter::Opponent) {
+            let mut uncontrolled = target_filter.clone();
+            uncontrolled.controller = None;
+            (simple_filter_plural_noun(&uncontrolled)?, "opponent")
+        } else {
+            (simple_filter_plural_noun(target_filter)?, "player")
+        };
     let Some(return_effect) = return_effect else {
         return Some(format!(
-            "Choose two target {plural_noun} controlled by the same player. That player sacrifices one of them of their choice"
+            "Choose two target {plural_noun} controlled by the same {same_controller_noun}. That player sacrifices one of them of their choice"
         ));
     };
+    // "Put a -1/-1 counter on the other" (Retribution) is the counter
+    // variant of the trailing other-target clause.
+    if let Some(put) = unwrap_basic_tag_wrappers(return_effect)
+        .downcast_ref::<crate::effects::PutCountersEffect>()
+    {
+        let ChooseSpec::Object(put_filter) = &put.target else {
+            return None;
+        };
+        if put.target_count.is_some()
+            || put.distributed
+            || put.maximum_total.is_some()
+            || put.completion_action.is_some()
+            || !is_tagged_only_filter_except_tag(put_filter, &tagged.tag, &choose.tag)
+        {
+            return None;
+        }
+        return Some(format!(
+            "Choose two target {plural_noun} controlled by the same {same_controller_noun}. That player chooses and sacrifices one of those {plural_noun}. Put {} on the other",
+            describe_put_counter_phrase(&put.amount, put.counter_type)
+        ));
+    }
     let return_to_hand = unwrap_basic_tag_wrappers(return_effect)
         .downcast_ref::<crate::effects::ReturnToHandEffect>()?;
     let ChooseSpec::Object(return_filter) = return_to_hand.spec.base() else {
@@ -1843,7 +1873,7 @@ pub(crate) fn describe_choose_same_controller_sacrifice_one_return_other(
     }
 
     Some(format!(
-        "Choose two target {plural_noun} controlled by the same player. Their controller chooses and sacrifices one of them. Return the other to its owner's hand"
+        "Choose two target {plural_noun} controlled by the same {same_controller_noun}. Their controller chooses and sacrifices one of them. Return the other to its owner's hand"
     ))
 }
 
@@ -3138,13 +3168,28 @@ fn describe_duration_scoped_targeted_graveyard_cast_replacement(
         || grant.filter.is_some()
         || grant.during_turns_counter_put_on_source.is_some()
         || grant.during_turns_attacked_with.is_some()
+        || grant.during_turns_cast_another_spell
         || grant.cast_pool_is_plural
-        || !surface.leading_duration
+        || grant.spell_cost_reduction.is_some()
+        || grant.spell_cost_increase.is_some() != grant.spell_cost_increase_unless_targets.is_some()
         || surface.object != Some(ironsmith_core::GrantPlayTaggedObjectSurface::ThatCard)
         || surface.mana_reference.is_some()
     {
         return None;
     }
+    // "If that spell doesn't target a creature you control, it costs {8}
+    // more to cast this way."
+    let surcharge_text = match (
+        grant.spell_cost_increase.as_ref(),
+        grant.spell_cost_increase_unless_targets.as_ref(),
+    ) {
+        (Some(cost), Some(filter)) => format!(
+            ". If that spell doesn't target {}, it costs {} more to cast this way",
+            with_indefinite_article(&filter.description()),
+            cost.to_oracle()
+        ),
+        _ => String::new(),
+    };
 
     let mut replacement_idx = 0;
     let without_paying_mana_cost = rest.first().is_some_and(|effect| {
@@ -3199,9 +3244,18 @@ fn describe_duration_scoped_targeted_graveyard_cast_replacement(
     } else {
         ""
     };
+    let permission_text = if surface.leading_duration {
+        format!(
+            "Until end of turn, you may cast target {color_text}{card_types_text} card{mana_value_text} from {graveyard_text}{free_cast_text}"
+        )
+    } else {
+        format!(
+            "You may cast target {color_text}{card_types_text} card{mana_value_text} from {graveyard_text}{free_cast_text} this turn"
+        )
+    };
     Some((
         format!(
-            "Until end of turn, you may cast target {color_text}{card_types_text} card{mana_value_text} from {graveyard_text}{free_cast_text}. If that spell would be put into {graveyard_text}, exile it instead"
+            "{permission_text}{surcharge_text}. If that spell would be put into {graveyard_text}, exile it instead"
         ),
         3 + usize::from(without_paying_mana_cost),
     ))
@@ -4256,6 +4310,7 @@ pub(super) fn is_exact_consult_remainder_shuffle(
     let zone = match consult.mode {
         crate::effects::consult_helpers::LibraryConsultMode::Reveal => Zone::Library,
         crate::effects::consult_helpers::LibraryConsultMode::Exile => Zone::Exile,
+        crate::effects::consult_helpers::LibraryConsultMode::Mill => Zone::Graveyard,
     };
     let target = ChooseSpec::Object(
         ObjectFilter::tagged(consult.all_tag.clone())
@@ -5464,7 +5519,7 @@ pub(super) fn describe_for_players_simple_iterated_action(
     let subject = if matches!(for_players.filter, PlayerFilter::ControlsMost { .. }) {
         leader_subject = capitalize_first(&for_players.filter.description());
         leader_subject.as_str()
-    } else if matches!(for_players.filter, PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. }) {
+    } else if matches!(for_players.filter, PlayerFilter::ControlsFewestTied { .. } | PlayerFilter::OwnsMatchingObject { .. } | PlayerFilter::ControlsMatchingObject { .. }) {
         leader_subject = format!(
             "Each {}",
             strip_leading_article(&for_players.filter.description())

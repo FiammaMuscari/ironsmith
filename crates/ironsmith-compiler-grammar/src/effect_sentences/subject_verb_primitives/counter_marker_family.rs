@@ -78,6 +78,7 @@ fn retarget_it_restriction_for_counter_followup(
         | Restriction::Block(filter)
         | Restriction::MustBeBlocked(filter)
         | Restriction::MustAttack(filter)
+        | Restriction::GainControl(filter, _)
         | Restriction::MustBlock(filter)
         | Restriction::BlockAlone(filter)
         | Restriction::Untap(filter)
@@ -91,6 +92,8 @@ fn retarget_it_restriction_for_counter_followup(
         | Restriction::MaximumBlockers { filter, .. }
         | Restriction::HaveCountersPlaced(filter)
         | Restriction::HaveCounterTypePlaced(filter, _)
+        | Restriction::HaveCounterTypeRemoved(filter, _)
+        | Restriction::DamageSourcesAreColorless(filter)
         | Restriction::BeTargeted(filter)
         | Restriction::BeCountered(filter)
         | Restriction::TurnFaceUp(filter)
@@ -108,7 +111,8 @@ fn retarget_it_restriction_for_counter_followup(
         Restriction::BlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBlockSpecificAttacker { blockers, attacker }
         | Restriction::MustBeBlockedBy { blockers, attacker }
-        | Restriction::BeAttachedBy(blockers, attacker) => {
+        | Restriction::BeAttachedBy(blockers, attacker)
+        | Restriction::BeAttachedByNew(blockers, attacker) => {
             retarget_it_filter_for_counter_followup(blockers, source_filter);
             retarget_it_filter_for_counter_followup(attacker, source_filter);
         }
@@ -120,12 +124,13 @@ fn retarget_it_restriction_for_counter_followup(
         | Restriction::CastMoreThanOneSpellEachTurn(_, attackers) => {
             retarget_it_filter_for_counter_followup(attackers, source_filter);
         }
-        Restriction::BeTargetedFrom(target, source) => {
+        Restriction::BeTargetedFrom(target, source) | Restriction::BeCounteredFrom(target, source) => {
             retarget_it_filter_for_counter_followup(target, source_filter);
             retarget_it_filter_for_counter_followup(source, source_filter);
         }
         Restriction::ActivateLoyaltyAbilitiesOf(source)
         | Restriction::PreventDamageFrom { sources: source, .. }
+        | Restriction::PreventDamageTo { recipients: source, .. }
         | Restriction::PlayerHexproofFrom(_, source)
         | Restriction::BeTargetedPlayerFrom(_, source) => {
             retarget_it_filter_for_counter_followup(source, source_filter);
@@ -178,6 +183,27 @@ pub fn parse_put_counter_choice_sequence(
     };
     let target = parse_target_phrase(shape.target_tokens)?;
     let target_phrase = crate::lexer::render_token_slice(shape.target_tokens);
+    if shape.shared_that_many {
+        // "put that many +1/+1 counters or charge counters on an artifact you
+        // control": one referential amount, then the counter kind is chosen.
+        let mode_texts = shape
+            .counter_types
+            .iter()
+            .map(|counter_type| {
+                format!(
+                    "Put that many {} counters on {target_phrase}",
+                    counter_type.description()
+                )
+            })
+            .collect();
+        return Ok(Some(vec![EffectAst::subject_verb_put_counter_choice(
+            shape.counter_types,
+            Value::EventValue(crate::effect::EventValueSpec::Amount),
+            mode_texts,
+            target,
+            None,
+        )]));
+    }
     if shape.counter_counts.iter().any(|count| *count != 1) {
         // "put your choice of a +1/+1 counter or two charge counters on up to
         // one other target artifact" (Inspirit, Flagship Vessel): one shared
@@ -900,6 +926,7 @@ pub use counter_programs::{
     parse_sacrifice_then_put_onto_battlefield_with_additional_counters_sentence,
     parse_tagged_conditional_entry_counters_sentence,
     parse_tagged_enters_with_additional_counter_sentence,
+    parse_created_token_enters_with_counters_sentence,
 };
 #[path = "counter_marker_family/resource.rs"]
 mod resource_programs;

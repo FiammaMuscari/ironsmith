@@ -59,6 +59,9 @@ pub struct ReplacementEffect {
     /// Optional effects are expanded into an explicit no-op CR 616 choice
     /// carrying the declined effect's stable application key.
     pub optional: bool,
+    /// The replacement's controller chooses whether to apply it after the
+    /// affected player has selected its place in replacement ordering.
+    pub optional_by_controller: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -242,6 +245,7 @@ pub enum ReplacementAction {
     /// Enter with additional counters
     EnterWithCounters {
         counter_type: CounterType,
+        counter_kinds_from: Option<ChooseSpec>,
         count: Value,
         /// Selects `count` when true and `otherwise_count` when false. The
         /// condition is evaluated with the entering object as its source.
@@ -255,6 +259,8 @@ pub enum ReplacementAction {
     EnterWithCounterChoice {
         counter_types: Vec<CounterType>,
         count: Value,
+        /// Number of different kinds chosen; each gets `count` counters.
+        kinds: u32,
     },
 
     /// As this enters, an opponent may put counters on it and mark a keyword paid.
@@ -338,6 +344,11 @@ pub enum ReplacementAction {
 
     /// Add an additional effect
     Additionally(Vec<Effect>),
+
+    /// Heal all damage already marked on the damage event's recipient, then
+    /// let that same damage event happen ("instead that damage is dealt, but
+    /// all other damage already dealt to him is healed").
+    HealRecipientThenProceed,
 
     /// Explicitly decline one optional replacement for this event.
     DeclineOptional(ReplacementEffectKey),
@@ -485,6 +496,11 @@ pub enum EventModification {
     /// "half that damage, rounded down" (Ghosts of the Innocent): halve the
     /// proposed amount. Appended to preserve the existing schema.
     Halve { round_up: bool },
+
+    /// "instead all but one of those counters are removed" (Deification): a
+    /// counter removal is reduced so one counter of its kind remains on its
+    /// target. Other events are unchanged. Appended to preserve the schema.
+    LeaveOneCounter,
 }
 
 /// Where to redirect an effect.
@@ -1275,6 +1291,7 @@ impl ReplacementEffect {
             static_ability_instance: None,
             ability_origin: None,
             optional: false,
+            optional_by_controller: false,
         }
     }
 
@@ -1296,6 +1313,7 @@ impl ReplacementEffect {
             static_ability_instance: None,
             ability_origin: None,
             optional: false,
+            optional_by_controller: false,
         }
     }
 
@@ -1313,6 +1331,11 @@ impl ReplacementEffect {
 
     pub fn optional(mut self) -> Self {
         self.optional = true;
+        self
+    }
+
+    pub fn with_controller_option(mut self, optional: bool) -> Self {
+        self.optional_by_controller = optional;
         self
     }
 
@@ -1334,6 +1357,72 @@ impl ReplacementEffect {
         }).collect()
     }
 
+    /// "choose a creature other than Esix and create that many tokens that
+    /// are copies of that creature" (Esix, Fractal Bloom): a copy template
+    /// naming a filter of permanents, rather than one fixed permanent, is a
+    /// choice among the matching permanents made as the replacement applies
+    /// (CR 616.1, 707.2). Offer one alternative per candidate; like a
+    /// choose-one template list, every alternative shares this effect's
+    /// application identity, so accepting any of them (or declining) uses the
+    /// same CR 614.5 opportunity. A unique or absent match stays as is.
+    pub fn token_copy_choice_alternatives(
+        &self,
+        game: &crate::game_state::GameState,
+    ) -> Vec<Self> {
+        use crate::filter::ObjectFilterExt as _;
+        let ReplacementAction::TokenCreationTemplates {
+            templates,
+            mode,
+            choose_one: false,
+            choice_parent,
+        } = &self.replacement
+        else {
+            return vec![self.clone()];
+        };
+        let Some((index, copy, filter)) = templates.iter().enumerate().find_map(|(index, template)| {
+            let copy = template.downcast_ref::<crate::effects::CreateTokenCopyEffect>()?;
+            match copy.target.base() {
+                crate::target::ChooseSpec::Object(filter) => Some((index, copy, filter)),
+                _ => None,
+            }
+        }) else {
+            return vec![self.clone()];
+        };
+        let filter_ctx = game.filter_context_for(self.controller, Some(self.source));
+        let candidates: Vec<ObjectId> = game
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|id| {
+                game.object(*id)
+                    .is_some_and(|object| filter.matches(object, &filter_ctx, game))
+            })
+            .collect();
+        if candidates.len() <= 1 {
+            return vec![self.clone()];
+        }
+        let parent = choice_parent
+            .clone()
+            .unwrap_or_else(|| self.application_key());
+        candidates
+            .into_iter()
+            .map(|candidate| {
+                let mut chosen = copy.clone();
+                chosen.target = crate::target::ChooseSpec::SpecificObject(candidate);
+                let mut chosen_templates = templates.clone();
+                chosen_templates[index] = Effect::new(chosen);
+                let mut alternative = self.clone();
+                alternative.replacement = ReplacementAction::TokenCreationTemplates {
+                    templates: chosen_templates,
+                    mode: *mode,
+                    choose_one: false,
+                    choice_parent: Some(parent.clone()),
+                };
+                alternative
+            })
+            .collect()
+    }
+
     /// Build the alternative for declining this same effect. For persistent
     /// effects, derive this from the registered effect so it carries the
     /// registration identity rather than the pre-registration fingerprint.
@@ -1349,6 +1438,7 @@ impl ReplacementEffect {
             static_ability_instance: self.static_ability_instance,
             ability_origin: self.ability_origin.clone(),
             optional: false,
+            optional_by_controller: false,
         })
     }
 
@@ -1394,6 +1484,7 @@ impl ReplacementEffect {
             controller,
             ThisWouldEnterBattlefieldMatcher,
             ReplacementAction::EnterWithCounters {
+                counter_kinds_from: None,
                 counter_type,
                 count,
                 count_condition: None,

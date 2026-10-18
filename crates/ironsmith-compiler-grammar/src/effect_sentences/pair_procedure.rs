@@ -43,6 +43,10 @@ use crate::registry::{
 mod kinds;
 #[path = "pair_procedure/life_gain.rs"]
 mod life_gain;
+#[path = "pair_procedure/draw_up_to_shortfall.rs"]
+mod draw_up_to_shortfall;
+#[path = "pair_procedure/put_entry_counters.rs"]
+mod put_entry_counters;
 #[path = "pair_procedure/keyword_replacement.rs"]
 mod keyword_replacement;
 #[path = "pair_procedure/discard_replacement.rs"]
@@ -61,6 +65,14 @@ mod collect_mana_payments;
 mod variable_mana_payments;
 #[path = "pair_procedure/life_bid.rs"]
 mod life_bid;
+#[path = "pair_procedure/type_order_sacrifice.rs"]
+mod type_order_sacrifice;
+#[path = "pair_procedure/relative_power_choices.rs"]
+mod relative_power_choices;
+#[path = "pair_procedure/per_counter_delayed_removal.rs"]
+mod per_counter_delayed_removal;
+#[path = "pair_procedure/damaged_by_creature_riders.rs"]
+mod damaged_by_creature_riders;
 #[path = "pair_procedure/same_way_balance.rs"]
 pub(super) mod same_way_balance;
 #[path = "pair_procedure/moved_entry.rs"]
@@ -69,6 +81,26 @@ mod moved_entry;
 mod viewer_face_down_play;
 #[path = "pair_procedure/each_opponent_consult_cast.rs"]
 mod each_opponent_consult_cast;
+#[path = "pair_procedure/controlled_player_plays_chosen.rs"]
+mod controlled_player_plays_chosen;
+#[path = "pair_procedure/each_player_named_top_guess.rs"]
+mod each_player_named_top_guess;
+#[path = "pair_procedure/paired_top_reveal.rs"]
+mod paired_top_reveal;
+#[path = "pair_procedure/reveal_put_rest_do_same.rs"]
+pub(super) mod reveal_put_rest_do_same;
+#[path = "pair_procedure/greatest_exchange.rs"]
+mod greatest_exchange;
+#[path = "pair_procedure/next_cast_procedure_body.rs"]
+mod next_cast_procedure_body;
+#[path = "pair_procedure/flip_result_reflexives.rs"]
+mod flip_result_reflexives;
+#[path = "pair_procedure/mutual_turn_control.rs"]
+mod mutual_turn_control;
+#[path = "pair_procedure/copy_exiled_pile_cast.rs"]
+mod copy_exiled_pile_cast;
+#[path = "pair_procedure/two_slot_graveyard_free_cast.rs"]
+mod two_slot_graveyard_free_cast;
 
 pub(super) fn recognizes_scalar_self_replacement_sentence(tokens: &[crate::lexer::OwnedLexToken]) -> bool {
     life_gain::recognizes_replacement_sentence(tokens)
@@ -91,6 +123,9 @@ enum Pair {
     /// The creature-type choice, awaiting the "becomes that type" statement;
     /// the two are read together when the second arrives.
     ChosenCreatureType(Vec<EffectAst>),
+    /// "..., then choose a color." awaiting "<object> becomes the chosen
+    /// color." (Puca's Eye): one choice that sets the object's color.
+    ChosenColorBecome(Vec<EffectAst>),
     /// "At the beginning of your next upkeep, pay {3}{U}{U}." awaiting "If
     /// you don't, you lose the game."
     DelayedUpkeepPayment(EffectAst),
@@ -174,6 +209,44 @@ struct Shape {
 /// and equal readings are one; two readings that disagree are an ambiguity.
 const PAIR_SHAPES: &[Shape] = &[
     Shape {
+        id: RuleId::new("resolving-spell-exile-instead-then-gains-suspend"),
+        head: HeadDiscriminator::words(&["exile"]),
+        consumed: 2,
+        read: |sentences, index| {
+            statements(sentences, index, read_resolving_spell_exile_then_gains_suspend(sentences, index))
+        },
+    },
+    Shape {
+        id: RuleId::new("play-permission-linked-cast-trigger"),
+        head: HeadDiscriminator::words(&["until"]),
+        consumed: 2,
+        read: |sentences, index| statements(sentences, index, variable_mana_payments::read_play_permission_cast_rider(sentences, index)),
+    },
+    Shape {
+        id: RuleId::new("optional-payment-with-composite-failure-consequence"),
+        head: HeadDiscriminator::words(&["that"]),
+        consumed: 2,
+        read: |sentences, index| statements(sentences, index, variable_mana_payments::read_failure_consequence(sentences, index)),
+    },
+    Shape {
+        id: RuleId::new("random-pile-blocker-declaration"),
+        head: HeadDiscriminator::words(&["this"]),
+        consumed: 4,
+        read: |sentences, index| statements(sentences, index, Ok(random_pile_blocks::read(sentences, index))),
+    },
+    Shape {
+        id: RuleId::new("random-pile-blocker-declaration-with-reminder"),
+        head: HeadDiscriminator::words(&["this"]),
+        consumed: 5,
+        read: |sentences, index| statements(sentences, index, Ok(random_pile_blocks::read_with_reminder(sentences, index))),
+    },
+    Shape {
+        id: RuleId::new("until-end-of-turn-player-mana-ability"),
+        head: HeadDiscriminator::words(&["until"]),
+        consumed: 2,
+        read: |sentences, index| statements(sentences, index, player_mana_ability_grant::read(sentences, index)),
+    },
+    Shape {
         id: RuleId::new("round-robin-exiled-pool"),
         head: HeadDiscriminator::words(&["exile"]),
         consumed: 3,
@@ -184,6 +257,12 @@ const PAIR_SHAPES: &[Shape] = &[
         head: HeadDiscriminator::words(&["reveal"]),
         consumed: 3,
         read: |sentences, index| statements(sentences, index, super::ordered_group_choice::read_revealed_group_ordered_choice(sentences, index)),
+    },
+    Shape {
+        id: RuleId::new("revealed-group-color-slot-choice-hand-rest-bottom"),
+        head: HeadDiscriminator::words(&["reveal"]),
+        consumed: 3,
+        read: |sentences, index| statements(sentences, index, super::ordered_group_choice::read_revealed_group_color_slot_choice(sentences, index)),
     },
     Shape {
         id: RuleId::new("greatest-mana-value-tie-break"),
@@ -252,11 +331,47 @@ const PAIR_SHAPES: &[Shape] = &[
         },
     },
     Shape {
+        id: RuleId::new("consult-cast-one-then-hand-one"),
+        head: HeadDiscriminator::words(&["exile", "reveal"]),
+        consumed: 4,
+        read: |sentences, index| {
+            statements(
+                sentences,
+                index,
+                each_opponent_consult_cast::read_cast_one_then_hand_one(sentences, index),
+            )
+        },
+    },
+    Shape {
         id: RuleId::new("each-opponent-consult-then-cast"),
         head: HeadDiscriminator::words(&["each"]),
         consumed: 2,
         read: |sentences, index| {
             statements(sentences, index, each_opponent_consult_cast::read(sentences, index))
+        },
+    },
+    Shape {
+        id: RuleId::new("controlled-player-plays-chosen-card"),
+        head: HeadDiscriminator::words(&["you"]),
+        consumed: 4,
+        read: |sentences, index| {
+            statements(sentences, index, controlled_player_plays_chosen::read(sentences, index))
+        },
+    },
+    Shape {
+        id: RuleId::new("two-slot-graveyard-free-cast-copy-each"),
+        head: HeadDiscriminator::words(&["you"]),
+        consumed: 4,
+        read: |sentences, index| {
+            statements(sentences, index, two_slot_graveyard_free_cast::read(sentences, index))
+        },
+    },
+    Shape {
+        id: RuleId::new("copy-exiled-pile-then-cast-each-copy"),
+        head: HeadDiscriminator::words(&["then", "that", "the", "you"]),
+        consumed: 2,
+        read: |sentences, index| {
+            statements(sentences, index, copy_exiled_pile_cast::read(sentences, index))
         },
     },
     Shape {
@@ -361,6 +476,66 @@ const PAIR_SHAPES: &[Shape] = &[
         },
     },
     Shape {
+        id: RuleId::new("for-each-color-counter-choice-then-distinct-count"),
+        head: HeadDiscriminator::words(&["for"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                reference_linked_programs::parse_for_each_color_counter_choice_then_distinct_count(
+                    sentences,
+                    sentence_idx,
+                ),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("each-player-rolls-then-highest-result-attack-restriction"),
+        head: HeadDiscriminator::words(&["each"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                reference_linked_programs::parse_each_player_rolls_then_highest_result_attack_restriction(
+                    sentences,
+                    sentence_idx,
+                ),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("token-copy-of-chosen-card-with-x-mana-value"),
+        head: HeadDiscriminator::words(&["create"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                reference_linked_programs::parse_token_copy_of_chosen_card_with_x_mana_value(
+                    sentences,
+                    sentence_idx,
+                ),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("each-player-secret-own-and-other-then-destroy"),
+        head: HeadDiscriminator::words(&["each"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                reference_linked_programs::parse_each_player_secret_own_and_other_creature_then_destroy(
+                    sentences,
+                    sentence_idx,
+                ),
+            )
+        },
+    },
+    Shape {
         id: RuleId::new("participant-secret-choice"),
         head: HeadDiscriminator::words(&["you"]),
         consumed: 2,
@@ -388,18 +563,40 @@ const PAIR_SHAPES: &[Shape] = &[
         head: HeadDiscriminator::words(&["choose"]),
         consumed: 3,
         read: |sentences, sentence_idx| {
-            if !(super::sequence_rules::sentence_words_contain(
-                sentences,
-                sentence_idx,
-                &["controlled", "by", "the", "same", "player"],
-            ) || super::sequence_rules::sentence_words_contain(
-                sentences,
-                sentence_idx,
-                &["controlled", "by", "same", "player"],
-            )) {
+            if ![
+                &["controlled", "by", "the", "same", "player"][..],
+                &["controlled", "by", "same", "player"][..],
+                &["controlled", "by", "the", "same", "opponent"][..],
+                &["controlled", "by", "same", "opponent"][..],
+            ]
+            .into_iter()
+            .any(|phrase| super::sequence_rules::sentence_words_contain(sentences, sentence_idx, phrase))
+            {
                 return ParseOutcome::NoMatch;
             }
             statements(sentences, sentence_idx, reference_linked_programs::parse_choose_same_controller_targets_then_sacrifice_one_return_other(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("same-controller-choose-damage-other-cant-block"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            if !super::sequence_rules::sentence_words_contain(
+                sentences,
+                sentence_idx,
+                &["controlled", "by", "the", "same"],
+            ) {
+                return ParseOutcome::NoMatch;
+            }
+            statements(
+                sentences,
+                sentence_idx,
+                reference_linked_programs::parse_choose_same_controller_targets_then_damage_chosen_other_cant_block(
+                    sentences,
+                    sentence_idx,
+                ),
+            )
         },
     },
     Shape {
@@ -407,15 +604,15 @@ const PAIR_SHAPES: &[Shape] = &[
         head: HeadDiscriminator::words(&["choose"]),
         consumed: 2,
         read: |sentences, sentence_idx| {
-            if !(super::sequence_rules::sentence_words_contain(
-                sentences,
-                sentence_idx,
-                &["controlled", "by", "the", "same", "player"],
-            ) || super::sequence_rules::sentence_words_contain(
-                sentences,
-                sentence_idx,
-                &["controlled", "by", "same", "player"],
-            )) {
+            if ![
+                &["controlled", "by", "the", "same", "player"][..],
+                &["controlled", "by", "same", "player"][..],
+                &["controlled", "by", "the", "same", "opponent"][..],
+                &["controlled", "by", "same", "opponent"][..],
+            ]
+            .into_iter()
+            .any(|phrase| super::sequence_rules::sentence_words_contain(sentences, sentence_idx, phrase))
+            {
                 return ParseOutcome::NoMatch;
             }
             statements(
@@ -695,6 +892,16 @@ const PAIR_SHAPES: &[Shape] = &[
         },
     },
     Shape {
+        id: RuleId::new(
+            "reveal-top-exile-one-per-card-type-rest-graveyard-threshold-cast-rest-hand",
+        ),
+        head: HeadDiscriminator::words(&["reveal"]),
+        consumed: 5,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, super::sequence_rules::generic_subject_verb_sequences::ordered_control_flow_programs::parse_reveal_top_exile_one_per_card_type_rest_graveyard_threshold_cast_rest_hand(sentences, sentence_idx))
+        },
+    },
+    Shape {
         id: RuleId::new("top-cards-for-each-card-type-put-matching-into-hand-rest-bottom"),
         head: HeadDiscriminator::words(&["reveal"]),
         consumed: 3,
@@ -843,6 +1050,18 @@ const PAIR_SHAPES: &[Shape] = &[
         },
     },
     Shape {
+        id: RuleId::new("chosen-color-become"),
+        head: HeadDiscriminator::Any,
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            reading(
+                sentences,
+                sentence_idx,
+                kinds::open_chosen_color_become(sentences, sentence_idx),
+            )
+        },
+    },
+    Shape {
         id: RuleId::new("delayed-upkeep-payment"),
         head: HeadDiscriminator::Any,
         consumed: 2,
@@ -896,6 +1115,122 @@ const PAIR_SHAPES: &[Shape] = &[
         consumed: 2,
         read: |sentences, sentence_idx| {
             statements(sentences, sentence_idx, keyword_replacement::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("put-onto-battlefield-conditional-entry-counters"),
+        head: HeadDiscriminator::words(&["you", "put"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, put_entry_counters::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("two-target-players-mutual-turn-control"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, mutual_turn_control::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("if-you-do-flip-result-reflexives-4"),
+        head: HeadDiscriminator::words(&["if"]),
+        consumed: 4,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                flip_result_reflexives::read(sentences, sentence_idx, 4),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("if-you-do-flip-result-reflexives-3"),
+        head: HeadDiscriminator::words(&["if"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                flip_result_reflexives::read(sentences, sentence_idx, 3),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("next-cast-delayed-procedure-body-3"),
+        head: HeadDiscriminator::words(&["when"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                next_cast_procedure_body::read(sentences, sentence_idx, 3),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("next-cast-delayed-procedure-body-2"),
+        head: HeadDiscriminator::words(&["when"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                next_cast_procedure_body::read(sentences, sentence_idx, 2),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("reveal-put-rest-do-the-same-fight"),
+        head: HeadDiscriminator::words(&["target"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, reveal_put_rest_do_same::read(sentences, sentence_idx, true))
+        },
+    },
+    Shape {
+        id: RuleId::new("reveal-put-rest-do-the-same"),
+        head: HeadDiscriminator::words(&["target"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, reveal_put_rest_do_same::read(sentences, sentence_idx, false))
+        },
+    },
+    Shape {
+        id: RuleId::new("greatest-mana-value-exchange-same-way"),
+        head: HeadDiscriminator::words(&["you"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, greatest_exchange::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("paired-top-reveal-cross-reference"),
+        head: HeadDiscriminator::words(&["you"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, paired_top_reveal::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("each-player-named-top-card-guess"),
+        head: HeadDiscriminator::words(&["then", "each"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            statements(
+                sentences,
+                sentence_idx,
+                each_player_named_top_guess::read(sentences, sentence_idx),
+            )
+        },
+    },
+    Shape {
+        id: RuleId::new("each-player-draw-up-to-shortfall-life"),
+        head: HeadDiscriminator::words(&["each"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, draw_up_to_shortfall::read(sentences, sentence_idx))
         },
     },
     Shape {
@@ -1103,11 +1438,143 @@ const PAIR_SHAPES: &[Shape] = &[
         },
     },
     Shape {
+        id: RuleId::new("source-recipient-damage-rider"),
+        head: HeadDiscriminator::Any,
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 2).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::source_recipient_damage_rider::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    Shape {
+        id: RuleId::new("exiled-pool-exchange-cast"),
+        head: HeadDiscriminator::Any,
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 2).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::exiled_pool_exchange_cast::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    Shape {
+        id: RuleId::new("guessed-card-name-in-hand"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 4,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 4).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::guessed_card_name_in_hand::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    Shape {
+        id: RuleId::new("guessed-top-card-kind"),
+        head: HeadDiscriminator::Any,
+        consumed: 5,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 5).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::guessed_top_card_kind::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    Shape {
+        id: RuleId::new("another-token-per-poisoned-opponent"),
+        head: HeadDiscriminator::words(&["create"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 2).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::another_token_per_player::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    // The same guess without an "If you don't cast a spell this way" fallback
+    // (Master of Predicaments).
+    Shape {
+        id: RuleId::new("guessed-wrong-free-cast-no-fallback"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 3,
+        read: |sentences, sentence_idx| {
+            let window = sentences.get(sentence_idx..sentence_idx + 3).map(|window| {
+                window.iter().map(SentenceInput::lowered).collect::<Vec<_>>()
+            });
+            let effects = match window {
+                Some(window) => super::guessed_free_cast::read(&window),
+                None => Ok(None),
+            };
+            statements(sentences, sentence_idx, effects)
+        },
+    },
+    Shape {
         id: RuleId::new("bid-life-for-control"),
         head: HeadDiscriminator::words(&["each"]),
         consumed: 5,
         read: |sentences, sentence_idx| {
             statements(sentences, sentence_idx, life_bid::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("two-player-life-bid"),
+        head: HeadDiscriminator::words(&["you"]),
+        consumed: 6,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, life_bid::read_two_player(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("damaged-by-creature-regeneration-and-exile-riders"),
+        head: HeadDiscriminator::words(&["if"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, damaged_by_creature_riders::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("distribute-then-per-counter-delayed-removal"),
+        head: HeadDiscriminator::words(&["distribute"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, per_counter_delayed_removal::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("relative-power-choices-exile-unchosen"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, relative_power_choices::read(sentences, sentence_idx))
+        },
+    },
+    Shape {
+        id: RuleId::new("type-order-positional-sacrifices"),
+        head: HeadDiscriminator::words(&["choose"]),
+        consumed: 2,
+        read: |sentences, sentence_idx| {
+            statements(sentences, sentence_idx, type_order_sacrifice::read(sentences, sentence_idx))
         },
     },
     Shape {
@@ -1146,6 +1613,46 @@ fn reading(
 }
 
 /// The outcome of a shape parser that reads the statements themselves.
+/// "exile that card with three time counters on it instead of putting it
+/// into your graveyard as it resolves. Then if the exiled card doesn't have
+/// suspend, it gains suspend." (Gandalf of the Secret Fire): a replacement of
+/// the triggering spell's resolution destination (CR 608.2n, 614.1a) whose
+/// suspend grant applies to the exiled card only once the replacement has
+/// exiled it. Claimed as one fixed pair so neither sentence is read alone
+/// (an immediate exile that drops the "instead ... as it resolves" tail).
+fn read_resolving_spell_exile_then_gains_suspend(
+    sentences: &[SentenceInput],
+    sentence_idx: usize,
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let (Some(exile), Some(suspend)) = (sentences.get(sentence_idx), sentences.get(sentence_idx + 1))
+    else {
+        return Ok(None);
+    };
+    if !crate::grammar::effects::is_resolving_spell_exile_instead_shape(exile.lowered())
+        || !crate::grammar::effects::is_then_if_exiled_card_lacks_suspend_it_gains_suspend_shape(
+            suspend.lowered(),
+        )
+    {
+        return Ok(None);
+    }
+    let counters = crate::grammar::effects::dispatch_entry_shapes::parse_future_zone_counter_tokens(
+        exile.lowered(),
+    )
+    .map(|shape| vec![(shape.counter_type, shape.count)])
+    .unwrap_or_default();
+    Ok(Some(vec![
+        EffectAst::subject_verb_register_zone_replacement_with_counters_and_linked_exile_follow_up(
+            TargetAst::Tagged(crate::tag::CompilerReferenceTag::Triggering.bind(), None),
+            Some(Zone::Stack),
+            Some(Zone::Graveyard),
+            Zone::Exile,
+            crate::cards::builders::ZoneReplacementDurationAst::OneShot,
+            counters,
+            ironsmith_core::LinkedExileFollowUp::GainSuspendIfMissing,
+        ),
+    ]))
+}
+
 fn statements(
     sentences: &[SentenceInput],
     sentence_idx: usize,
@@ -1234,6 +1741,7 @@ pub(super) fn continue_with(
         // The opener read the completing sentences; these are the ones it read.
         Pair::FlashbackGrant(_)
         | Pair::ChosenCreatureType(_)
+        | Pair::ChosenColorBecome(_)
         | Pair::DelayedUpkeepPayment(_)
         | Pair::ChooseThenRest(_)
         | Pair::TargetChoosesCantBlock(_)
@@ -1263,6 +1771,7 @@ pub(super) fn feature_tag(group: &PairGroup) -> &'static str {
         Pair::CopyForEachTarget(_) => "copy-target-assignment",
         Pair::FlashbackGrant(_) => "flashback-cost-followup",
         Pair::ChosenCreatureType(_) => "choose-creature-type",
+        Pair::ChosenColorBecome(_) => "choose-color-become",
         Pair::DelayedUpkeepPayment(_) => "delayed-upkeep-payment",
         Pair::ChooseThenRest(_) => "choose-then-rest",
         Pair::TargetChoosesCantBlock(_) => "target-chooses-cant-block",
@@ -1287,6 +1796,7 @@ pub(super) fn finish(group: PairGroup) -> Vec<EffectAst> {
         | Pair::DelayedUpkeepPayment(effect)
         | Pair::CopyNextSpellRetarget(effect) => vec![effect],
         Pair::ChosenCreatureType(effects)
+        | Pair::ChosenColorBecome(effects)
         | Pair::ChooseThenRest(effects)
         | Pair::TargetChoosesCantBlock(effects)
         | Pair::DestroyThenSearchShuffle(effects)
@@ -1411,3 +1921,7 @@ mod chosen_basic_land_type_program_tests {
 
 #[path = "pair_procedure/life_payment_limit.rs"]
 pub(super) mod life_payment_limit;
+#[path = "pair_procedure/player_mana_ability_grant.rs"]
+mod player_mana_ability_grant;
+#[path = "pair_procedure/random_pile_blocks.rs"]
+mod random_pile_blocks;
