@@ -51,6 +51,44 @@ export function mergeLookCards(...groups) {
   }])).values()];
 }
 
+/**
+ * The looked-at cards a select_objects decision chooses among, by id, when
+ * every candidate is one of them (Devourer of Destiny, impulse draws...).
+ * The decision panel then shows them as cards and the Look pile steps aside,
+ * so the same cards are not offered in two places at once.
+ */
+export function lookChoiceCards(state) {
+  const decision = state?.decision;
+  if (decision?.kind !== "select_objects") return null;
+  const candidates = decision.candidates || [];
+  const view = temporaryLookView(state);
+  if (!candidates.length || !view?.cards?.length) return null;
+  const byId = new Map(mergeLookCards(view.cards).map((card) => [String(card.id), card]));
+  return candidates.every((candidate) => byId.has(String(candidate?.id))) ? byId : null;
+}
+
+/**
+ * The cards a select_objects decision chooses among, by id, when every
+ * candidate is a card off the battlefield and out of the hand whose face is
+ * known: looked-at cards, graveyards, face-up exile. The decision panel then
+ * offers them as cards, whatever spell asks.
+ */
+export function zoneChoiceCards(state) {
+  const decision = state?.decision;
+  if (decision?.kind !== "select_objects") return null;
+  const candidates = decision.candidates || [];
+  if (!candidates.length) return null;
+  const look = lookChoiceCards(state);
+  if (look) return look;
+  const zoneCards = (state?.players || []).flatMap((player) => [
+    ...(player.graveyard_cards || []),
+    ...(player.exile_cards || []).filter((card) => !card.face_down),
+  ]);
+  const byId = new Map(mergeLookCards(temporaryLookView(state)?.cards || [], zoneCards)
+    .map((card) => [String(card.id), card]));
+  return candidates.every((candidate) => byId.has(String(candidate?.id))) ? byId : null;
+}
+
 const playerKey = (player) => String(player?.id ?? player?.index ?? "");
 
 // The zone a looked-at card sits in now. Snapshots from older WASM bundles
@@ -105,4 +143,20 @@ export function knownHandCards(player) {
     if (visibleName(card)) known.set(String(card.id), card);
   }
   return [...known.values()];
+}
+
+const CHOICE_ZONES = new Set(["library", "graveyard", "exile"]);
+
+// The zone a decision option's card comes from, when it is off the table and
+// out of the hand: a graveyard, exile, or the library a look revealed.
+export function choiceCardZone(state, id) {
+  const key = String(id);
+  for (const player of state?.players || []) {
+    if ((player.graveyard_cards || []).some((card) => String(card.id) === key)) return "graveyard";
+    if ((player.exile_cards || []).some((card) => String(card.id) === key)) return "exile";
+  }
+  const view = temporaryLookView(state);
+  const looked = (view?.cards || []).find((card) => String(card.id) === key);
+  const zone = looked ? lookedCardZone(looked, view.zone ?? "library") : "";
+  return CHOICE_ZONES.has(zone) ? zone : null;
 }

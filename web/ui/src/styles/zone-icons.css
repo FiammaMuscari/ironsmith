@@ -292,3 +292,18 @@
 [data-local-zone-piles="true"] > .zone-icon-row {
   top: var(--local-zone-rows-shift, 0px);
 }
+
+/* A decision option naming a card off the table leads with its zone glyph. */
+.decision-option-zone {
+  --zone-icon-ink: #14120f;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-right: 6px;
+  color: #e8d6a8;
+}
+.decision-option-zone > .zone-icon {
+  width: 16px;
+  height: 16px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7));
+}

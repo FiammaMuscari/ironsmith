@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { persistentLookCards, temporaryLookView, mergeLookCards } from "../src/lib/look-pile.js";
+import { choiceCardZone, persistentLookCards, temporaryLookView, mergeLookCards } from "../src/lib/look-pile.js";
 
 test("ongoing permissions use authoritative cards and do not retain a revoked permission", () => {
   const player = {can_view_library_top: true, library_top: "Island", persistent_look_cards: [{id: 1, name: "Island"}]};
@@ -35,4 +35,14 @@ test("library reveals still need Look even after moving into our hand", () => {
   assert.equal(temporaryLookView(state), view);
   const privateView = {...view, zone: "Hand", visibility: "private"};
   assert.equal(temporaryLookView({...state, viewed_cards: privateView}), privateView);
+});
+test("decision options name the zone their card comes from", () => {
+  const state = {
+    players: [{id: 0, graveyard_cards: [{id: 1, name: "Bolt"}], exile_cards: [{id: 2, name: "Elves"}], hand_cards: [{id: 4, name: "Opt"}]}],
+    viewed_cards: {zone: "library", cards: [{id: 3, name: "Island"}]},
+  };
+  assert.equal(choiceCardZone(state, 1), "graveyard");
+  assert.equal(choiceCardZone(state, 2), "exile");
+  assert.equal(choiceCardZone(state, 3), "library");
+  assert.equal(choiceCardZone(state, 4), null);
 });

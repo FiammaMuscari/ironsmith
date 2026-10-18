@@ -8,7 +8,7 @@ import { useI18n } from "@/i18n/I18nContext";
 import { useCastTargeting, useCastZoneHovered } from "@/context/DragContext";
 import { useHover } from "@/context/HoverContext";
 import ZoneArt from "./ZonePileArt";
-import { freshLookInZone, lookedZoneCards } from "@/lib/look-pile";
+import { freshLookInZone, lookedZoneCards, zoneChoiceCards } from "@/lib/look-pile";
 import { samePlayerId } from "@/lib/player-display";
 import { isFaceUpZoneCard, pileZonesFor, zonePileCards } from "@/lib/zone-piles";
 import { isObjectChosen, requestObjectSelection } from "@/lib/object-selection";
@@ -82,15 +82,31 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
       // Strips beside a small trigger take the battlefield's card size instead.
       const fieldCard = battlefield.querySelector(".battlefield-row-card");
       const cardWidth = beside ? Math.max(52, Math.min(80, fieldCard?.offsetWidth || 64)) : anchor.width;
-      const right = beside ? anchor.left - 6 : anchor.right;
-      setStripBounds({ width: Math.max(0, (right - Math.max(field.left, 8)) + 6), cardWidth });
+      // An open decision panel (a choice among these very cards, say) keeps
+      // its place: the strip ends at the panel's left edge instead of
+      // opening over it.
+      const panel = [...document.querySelectorAll(".battlefield-human-action-dock")]
+        .map((element) => element.getBoundingClientRect())
+        .find((rect) => rect.width > 0 && rect.left < anchor.left && rect.right > anchor.left - 160
+          && rect.top < anchor.bottom + 12 && rect.bottom > anchor.top - 12);
+      const right = panel ? panel.left - 8 : beside ? anchor.left - 6 : anchor.right;
+      setStripBounds({
+        width: Math.max(0, (right - Math.max(field.left, 8)) + 6),
+        cardWidth,
+        offset: panel ? anchor.left - right : null,
+      });
     };
     measure();
+    // The pile shrinks back from its target growth as the strip opens (a
+    // transform, which no observer reports); measure again once it settles.
+    const settle = setTimeout(measure, ZONE_TARGET_GROW_MS + 40);
     const observer = new ResizeObserver(measure);
     observer.observe(battlefield);
     observer.observe(trigger);
+    const dock = document.querySelector(".battlefield-human-action-dock");
+    if (dock) observer.observe(dock);
     window.addEventListener("resize", measure);
-    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+    return () => { clearTimeout(settle); observer.disconnect(); window.removeEventListener("resize", measure); };
   }, [open, zone, beside]);
   const cards = cardsOverride ?? zonePileCards(player, zone);
   // The inspector and its portaled glossary are part of this pile's surface.
@@ -141,7 +157,10 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     : legalTargetObjectIds?.has(Number(card.id)) || (decision?.requirements || []).some((req) =>
       (req.legal_targets || []).some((target) => target.kind === "object" && String(target.object) === String(card.id))
     );
-  const hasLegalCards = canChoose && (choosingTarget || choosingObject) && cards.some(isLegal);
+  // When the decision panel shows the choice as cards, the piles do not grow
+  // and call for the same pick a second time.
+  const choiceInPanel = choosingObject && Boolean(zoneChoiceCards(state));
+  const hasLegalCards = canChoose && (choosingTarget || choosingObject) && !choiceInPanel && cards.some(isLegal);
   const hoverOpensZone = Boolean(castIntent && hasLegalCards && castZoneHovered);
   useEffect(() => {
     if (!hoverOpensZone) return undefined;
@@ -208,7 +227,7 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
       .find(Boolean)
     : null;
   const collapsedCard = optionHoveredCard || latestChosenCard || topCard;
-  const chosenInPile = !open && choosingObject
+  const chosenInPile = !open && choosingObject && !choiceInPanel
     ? latestChosenCard || cards.find((card) => isObjectChosen(chosenObjectIds, card.id))
     : null;
 
@@ -321,7 +340,9 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
     </>
     : <ZoneArt card={open ? topCard : collapsedCard} />;
   return (
-    <Popover open={open && cards.length > 0} onOpenChange={changeOpen}>
+    // While the decision panel offers the choice as cards, a pile does not
+    // open a second strip of them beside it.
+    <Popover open={open && cards.length > 0 && !choiceInPanel} onOpenChange={changeOpen}>
       {/* The slot carries its transitions inline, so the growth a legal target
           brings has to be listed here too or the stylesheet's is overridden. */}
       <div className={`zone-pile-slot zone-pile-slot--${variant}`} style={{
@@ -367,7 +388,7 @@ function ZonePile({ player, zone, onCardClick, legalTargetObjectIds, cardsOverri
       </div>
       {/* Keep the top card over its pile and extend the strip to the left. */}
       <PopoverContent ref={menuRef} className={`zone-pile-menu zone-pile-menu--${variant}`} side="left" align={beside ? "center" : "start"}
-        sideOffset={beside ? 6 : -(stripBounds.cardWidth + 6)} alignOffset={beside ? 0 : -6} avoidCollisions={beside} collisionPadding={8}
+        sideOffset={stripBounds.offset ?? (beside ? 6 : -(stripBounds.cardWidth + 6))} alignOffset={beside ? 0 : -6} avoidCollisions={beside} collisionPadding={8}
         updatePositionStrategy={zone === "look" ? "always" : "optimized"}
         data-local-zone-strip={samePlayerId(player.id ?? player.index, state?.perspective) ? "true" : undefined}
         style={{ "--zone-strip-width": `${stripBounds.width}px`, "--zone-strip-card-width": `${stripBounds.cardWidth}px` }}

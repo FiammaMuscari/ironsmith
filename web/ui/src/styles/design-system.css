@@ -7975,4 +7975,3 @@ html[data-hand-pointer-suspended="true"] * {
 :is(.player-priority-hold, .battlefield-auto-pass-toggle)[data-resolve-mode="all"] svg {
   filter: drop-shadow(0 0 3px currentColor);
 }
-
